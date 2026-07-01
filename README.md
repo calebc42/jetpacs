@@ -2,6 +2,8 @@
 
 **Don't approximate Emacs — connect to it.**
 
+LLM-Generated Proof of Concept
+
 Every mobile org app parses the org file and reconstructs what Emacs would have
 computed. That works, but the file is a serialization format, not a
 specification: the canonical computation lives in Emacs. Custom TODO sequences,

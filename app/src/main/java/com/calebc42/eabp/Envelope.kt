@@ -1,0 +1,68 @@
+package com.calebc42.eabp
+
+import org.json.JSONObject
+
+/** Protocol version the companion speaks. */
+const val EABP_PROTOCOL_VERSION = 1
+
+/** Namespaced message kinds. Extended as later phases land. */
+object Kind {
+    const val SESSION_HELLO = "session.hello"
+    const val SESSION_WELCOME = "session.welcome"
+    const val ACK = "ack"
+    const val ERROR = "error"
+    const val PING = "ping"
+    const val PONG = "pong"
+    const val STATE_CHANGED = "state.changed"
+    const val DIALOG_SHOW = "dialog.show"
+    const val DIALOG_DISMISS = "dialog.dismiss"
+    const val PIE_MENU_SHOW = "pie_menu.show"
+    const val PIE_MENU_DISMISS = "pie_menu.dismiss"
+    // surface.*, capability.*, trigger.*, event.*, queue.* arrive later.
+}
+
+/**
+ * One EABP frame: { v, id, reply_to, kind, payload }.
+ *
+ * A thin wrapper over [JSONObject] so later phases can read payload fields
+ * directly without a serialization framework.
+ */
+class Frame(
+    val kind: String,
+    val payload: JSONObject = JSONObject(),
+    val id: String = nextId(),
+    val replyTo: String? = null,
+    val v: Int = EABP_PROTOCOL_VERSION,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("v", v)
+        put("id", id)
+        put("reply_to", replyTo ?: JSONObject.NULL)
+        put("kind", kind)
+        put("payload", payload)
+    }
+
+    /** Compact, single-line JSON — required so NDJSON framing stays safe. */
+    override fun toString(): String = toJson().toString()
+
+    companion object {
+        private var counter = 0L
+
+        @Synchronized
+        fun nextId(): String =
+            "m-${(counter++).toString(16)}-${(0..0xffff).random().toString(16)}"
+
+        fun fromJson(obj: JSONObject): Frame {
+            val replyRaw = obj.opt("reply_to")
+            val replyTo = if (replyRaw == null || replyRaw === JSONObject.NULL) null
+            else replyRaw.toString()
+            return Frame(
+                kind = obj.optString("kind"),
+                payload = obj.optJSONObject("payload") ?: JSONObject(),
+                id = obj.optString("id"),
+                replyTo = replyTo,
+                v = obj.optInt("v", EABP_PROTOCOL_VERSION),
+            )
+        }
+    }
+}

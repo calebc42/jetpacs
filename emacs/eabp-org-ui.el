@@ -101,7 +101,8 @@ building. SWITCH-TO additionally forces the companion onto that view
 
 (defun eabp-org-ui--view-names ()
   "All view names included in a dashboard push."
-  (append '("agenda" "tasks" "clock" "buffers" "eval" "files" "search" "settings")
+  (append '("agenda" "tasks" "clock" "buffers" "eval" "files" "search"
+            "settings" "messages")
           (when eabp-files--file '("edit"))
           (when eabp-org-ui--detail-ref '("detail"))))
 
@@ -114,6 +115,7 @@ building. SWITCH-TO additionally forces the companion onto that view
          (is-buffer-view (and (equal name "buffers")
                               eabp-emacs-ui--viewing-buffer))
          (is-settings (equal name "settings"))
+         (is-messages (equal name "messages"))
          (is-tab (and (not is-buffer-view)
                       (member name '("agenda" "tasks" "clock" "buffers" "eval" "files"))))
          (body (condition-case body-err
@@ -136,6 +138,7 @@ building. SWITCH-TO additionally forces the companion onto that view
                        ("buffers"  (eabp-emacs-ui--buffer-list-body))
                        ("eval"     (eabp-emacs-ui--eval-body))
                        ("settings" (eabp-org-ui--settings-body))
+                       ("messages" (eabp-emacs-ui--messages-body))
                        (_          (eabp-text "Unknown tab")))))
                  (error
                   (eabp-column
@@ -190,6 +193,17 @@ building. SWITCH-TO additionally forces the companion onto that view
                                   :nav-icon "arrow_back"
                                   :nav-action (eabp-org-ui--switch-view
                                                eabp-org-ui--current-tab)))
+                   (is-messages
+                    (eabp-top-bar "Messages"
+                                  :nav-icon "arrow_back"
+                                  :nav-action (eabp-org-ui--switch-view
+                                               eabp-org-ui--current-tab)
+                                  :actions (list
+                                            (eabp-icon-button
+                                             "refresh"
+                                             (eabp-action "emacs.messages.refresh"
+                                                          :when-offline "drop")
+                                             :content-description "Refresh"))))
                    (is-buffer-view
                     ;; Content swap within the buffers view: stays an
                     ;; Emacs round-trip (the list must be rebuilt).
@@ -217,7 +231,7 @@ building. SWITCH-TO additionally forces the companion onto that view
                                                                (eabp-action "dashboard.refresh"
                                                                             :when-offline "drop"))))))))
          (fab (cond
-               ((or is-detail is-edit is-search) nil)
+               ((or is-detail is-edit is-search is-settings is-messages) nil)
                ;; Buffer view: keyboard FAB opens the radial keymap menu
                (is-buffer-view
                 (eabp-fab "keyboard"
@@ -260,6 +274,8 @@ building. SWITCH-TO additionally forces the companion onto that view
    (list
     (eabp-drawer-item "view_list" "Buffers"
                       (eabp-org-ui--switch-view "buffers"))
+    (eabp-drawer-item "history" "Messages"
+                      (eabp-org-ui--switch-view "messages"))
     (eabp-drawer-item "terminal" "M-x"
                       (eabp-action "emacs.mx.show"))
     (eabp-drawer-item "sync" "Reload config"

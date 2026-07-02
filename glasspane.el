@@ -516,6 +516,12 @@ or demotes."
               'args args
               'dedupe dedupe))
 
+(defun eabp-clipboard-action (text)
+  "A companion-local action that copies TEXT to the device clipboard.
+Handled entirely on-device (like the `view.switch' builtin) — no
+round-trip to Emacs, works offline."
+  (eabp--node nil 'builtin "clipboard.copy" 'text text))
+
 (cl-defun eabp-button (label action &key icon variant weight padding)
   "A button. VARIANT is filled/outlined/text/tonal."
   (eabp--node "button"
@@ -3441,9 +3447,17 @@ drills into the live transient's own pie.")
   "Name of the buffer currently being viewed, or nil for the buffer list.")
 
 (defvar eabp-emacs-ui--eval-history nil
-  "List of (input . output) pairs from the eval REPL.")
+  "List of (input . output) pairs from the eval REPL, newest first.")
 
-(defvar eabp-emacs-ui--messages-line-count 50
+(defcustom eabp-emacs-ui-eval-history-max 50
+  "Maximum eval-history entries kept (and shipped in the dashboard spec)."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-emacs-ui-eval-output-max 2000
+  "Eval results longer than this many characters are truncated for display."
+  :type 'integer :group 'eabp)
+
+(defvar eabp-emacs-ui--messages-line-count 100
   "Number of tail lines to show from *Messages*.")
 
 ;; ─── Buffer List ─────────────────────────────────────────────────────────────
@@ -3489,49 +3503,134 @@ bespoke translator."
 
 ;; ─── *Messages* Tail ─────────────────────────────────────────────────────────
 
+(defun eabp-emacs-ui--messages-tail ()
+  "The last `eabp-emacs-ui--messages-line-count' lines of *Messages*."
+  (if-let ((msgs-buf (get-buffer "*Messages*")))
+      (with-current-buffer msgs-buf
+        (let* ((lines (split-string
+                       (buffer-substring-no-properties (point-min) (point-max))
+                       "\n" t))
+               (tail (last lines eabp-emacs-ui--messages-line-count)))
+          (mapconcat #'identity tail "\n")))
+    "No *Messages* buffer."))
+
 (defun eabp-emacs-ui--messages-body ()
-  "Build UI showing the tail of *Messages*."
-  (let* ((msgs-buf (get-buffer "*Messages*"))
-         (content (if msgs-buf
-                      (with-current-buffer msgs-buf
-                        (let* ((lines (split-string
-                                       (buffer-substring-no-properties
-                                        (point-min) (point-max))
-                                       "\n" t))
-                               (tail (last lines eabp-emacs-ui--messages-line-count)))
-                          (mapconcat #'identity tail "\n")))
-                    "No *Messages* buffer.")))
-    (eabp-lazy-column
-     (eabp-card
-      (list (eabp-text content 'body nil nil t))))))
+  "Build the Messages view: selectable monospace tail plus a copy-all button.
+The text node is selectable (long-press to select/copy on the device);
+Copy all uses the companion-local clipboard builtin."
+  (let ((content (eabp-emacs-ui--messages-tail)))
+    (eabp-column
+     (eabp-row
+      (eabp-text (format "Last %d lines" eabp-emacs-ui--messages-line-count)
+                 'caption)
+      (eabp-spacer :weight 1)
+      (eabp-button "Copy all" (eabp-clipboard-action content) :variant "text"))
+     (eabp-box
+      (list (eabp-lazy-column
+             (eabp-card (list (eabp-text content 'mono nil nil t)))))
+      :weight 1))))
+
+;; ─── *Messages* → device toasts ──────────────────────────────────────────────
+
+(defcustom eabp-forward-messages t
+  "When non-nil, echo-area messages mirror to the companion as toasts.
+Throttled to at most one per second (latest wins); EABP's own bridge
+chatter is filtered out so it can never echo back to the phone."
+  :type 'boolean :group 'eabp)
+
+(defvar eabp-emacs-ui--toast-last 0
+  "Time of the last toast sent, for throttling.")
+(defvar eabp-emacs-ui--toast-timer nil)
+(defvar eabp-emacs-ui--toast-pending nil
+  "Latest message held back by the throttle, flushed by the timer.")
+(defvar eabp-emacs-ui--in-toast nil
+  "Reentrancy guard: non-nil while forwarding a message.")
+
+(defun eabp-emacs-ui--toast-send (text)
+  (setq eabp-emacs-ui--toast-last (float-time))
+  (eabp-send "toast.show" `((text . ,text))))
+
+(defun eabp-emacs-ui--message-advice (format-string &rest args)
+  "Mirror `message' output to the companion as a toast.
+Runs as :after advice on `message'; never signals, never recurses."
+  (when (and eabp-forward-messages
+             (not eabp-emacs-ui--in-toast)
+             format-string
+             (eabp-connected-p))
+    (let* ((eabp-emacs-ui--in-toast t)
+           (msg (ignore-errors (apply #'format-message format-string args))))
+      (when (and (stringp msg)
+                 (not (string-empty-p (string-trim msg)))
+                 (not (string-prefix-p "EABP" msg)))
+        (when (> (length msg) 200)
+          (setq msg (concat (substring msg 0 200) "…")))
+        (if (> (- (float-time) eabp-emacs-ui--toast-last) 1.0)
+            (eabp-emacs-ui--toast-send msg)
+          ;; Throttle window: hold only the LATEST message and flush once.
+          (setq eabp-emacs-ui--toast-pending msg)
+          (unless (timerp eabp-emacs-ui--toast-timer)
+            (setq eabp-emacs-ui--toast-timer
+                  (run-at-time
+                   1.0 nil
+                   (lambda ()
+                     (setq eabp-emacs-ui--toast-timer nil)
+                     (when eabp-emacs-ui--toast-pending
+                       (eabp-emacs-ui--toast-send
+                        (prog1 eabp-emacs-ui--toast-pending
+                          (setq eabp-emacs-ui--toast-pending nil))))))))))))
+  nil)
+
+(advice-add 'message :after #'eabp-emacs-ui--message-advice)
 
 ;; ─── Eval REPL ───────────────────────────────────────────────────────────────
 
+(defun eabp-emacs-ui--eval-card (entry)
+  "One REPL history card for ENTRY (INPUT . OUTPUT).
+Input line, then the (selectable) result, with copy and re-run buttons."
+  (let* ((input (car entry))
+         (output (cdr entry))
+         (shown (if (> (length output) eabp-emacs-ui-eval-output-max)
+                    (concat (substring output 0 eabp-emacs-ui-eval-output-max)
+                            " …")
+                  output)))
+    (eabp-card
+     (list (eabp-column
+            (eabp-row
+             (eabp-box (list (eabp-text (concat "λ> " input) 'label))
+                       :weight 1)
+             (eabp-icon-button "content_copy"
+                               (eabp-clipboard-action output)
+                               :content-description "Copy result")
+             (eabp-icon-button "play_arrow"
+                               (eabp-action "emacs.eval.submit"
+                                            :args `((value . ,input)))
+                               :content-description "Re-run"))
+            (eabp-text shown 'mono nil nil t))))))
+
 (defun eabp-emacs-ui--eval-body ()
-  "Build UI for the elisp eval REPL."
-  (let* ((history-cards
-          (mapcar (lambda (entry)
-                    (let ((input (car entry))
-                          (output (cdr entry)))
-                      (eabp-card
-                       (list (eabp-column
-                              (eabp-text (concat "λ> " input) 'label)
-                              (eabp-text output 'body nil nil t))))))
-                  (reverse eabp-emacs-ui--eval-history)))
+  "Build UI for the elisp eval REPL.
+History (newest first) scrolls in a weighted region; the input field and
+Eval button stay pinned below it, so they can never be pushed off-screen
+by a long history — the layout bug the old plain-column version had."
+  (let* ((history-cards (mapcar #'eabp-emacs-ui--eval-card
+                                eabp-emacs-ui--eval-history))
          (input-field (eabp-text-input "eval-input"
                                        :label "Elisp Expression"
                                        :hint "(message \"hello\")"
                                        :multi-line t
-                                       :min-lines 6
-                                       :max-lines 12
+                                       :min-lines 2
+                                       :max-lines 6
                                        :monospace t
                                        :syntax "elisp"
                                        :on-submit (eabp-action "emacs.eval.submit"))))
     (eabp-column
-     (if history-cards
-         (apply #'eabp-lazy-column history-cards)
-       (eabp-card
-        (list (eabp-text "Type an expression below and tap Eval" 'caption))))
+     (eabp-box
+      (list (if history-cards
+                (apply #'eabp-lazy-column history-cards)
+              (eabp-empty-state :icon "code"
+                                :title "Elisp REPL"
+                                :caption "Results appear here, newest first.")))
+      :weight 1)
      input-field
      (eabp-row
       (eabp-spacer :weight 1)
@@ -3549,6 +3648,14 @@ bespoke translator."
   (lambda (_ _)
     (setq eabp-emacs-ui--viewing-buffer nil)
     (eabp-org-ui-push-dashboard)))
+
+(defun eabp-emacs-ui--eval-record (input output)
+  "Push (INPUT . OUTPUT) onto the eval history, bounded by the max."
+  (push (cons input output) eabp-emacs-ui--eval-history)
+  (when (> (length eabp-emacs-ui--eval-history) eabp-emacs-ui-eval-history-max)
+    (setcdr (nthcdr (1- eabp-emacs-ui-eval-history-max)
+                    eabp-emacs-ui--eval-history)
+            nil)))
 
 ;; Eval REPL
 (eabp-defaction "emacs.eval.submit"
@@ -3568,7 +3675,7 @@ bespoke translator."
                          (format "%S" val))
                      (error (format "ERROR: %s" (error-message-string err))))))
       (unless (string-empty-p (string-trim expr))
-        (push (cons expr result) eabp-emacs-ui--eval-history))
+        (eabp-emacs-ui--eval-record expr result))
       (eabp-org-ui-push-dashboard))))
 
 ;; M-x — runs `completing-read' over all commands, which the minibuffer
@@ -3584,19 +3691,18 @@ bespoke translator."
         (let ((cmd (intern-soft cmd-name)))
           (cond
            ((not (commandp cmd))
-            (push (cons (concat "M-x " cmd-name)
-                        (format "'%s' is not a command." cmd-name))
-                  eabp-emacs-ui--eval-history))
+            (eabp-emacs-ui--eval-record (concat "M-x " cmd-name)
+                                        (format "'%s' is not a command." cmd-name)))
            (t
             (condition-case err
                 (progn
                   (call-interactively cmd)
-                  (push (cons (concat "M-x " cmd-name) "Command executed.")
-                        eabp-emacs-ui--eval-history))
+                  (eabp-emacs-ui--eval-record (concat "M-x " cmd-name)
+                                              "Command executed."))
               (error
-               (push (cons (concat "M-x " cmd-name)
-                           (format "ERROR: %s" (error-message-string err)))
-                     eabp-emacs-ui--eval-history))))))
+               (eabp-emacs-ui--eval-record
+                (concat "M-x " cmd-name)
+                (format "ERROR: %s" (error-message-string err))))))))
         (eabp-org-ui-push-dashboard "eval")))))
 
 ;; Messages refresh
@@ -4156,7 +4262,8 @@ building. SWITCH-TO additionally forces the companion onto that view
 
 (defun eabp-org-ui--view-names ()
   "All view names included in a dashboard push."
-  (append '("agenda" "tasks" "clock" "buffers" "eval" "files" "search" "settings")
+  (append '("agenda" "tasks" "clock" "buffers" "eval" "files" "search"
+            "settings" "messages")
           (when eabp-files--file '("edit"))
           (when eabp-org-ui--detail-ref '("detail"))))
 
@@ -4169,6 +4276,7 @@ building. SWITCH-TO additionally forces the companion onto that view
          (is-buffer-view (and (equal name "buffers")
                               eabp-emacs-ui--viewing-buffer))
          (is-settings (equal name "settings"))
+         (is-messages (equal name "messages"))
          (is-tab (and (not is-buffer-view)
                       (member name '("agenda" "tasks" "clock" "buffers" "eval" "files"))))
          (body (condition-case body-err
@@ -4191,6 +4299,7 @@ building. SWITCH-TO additionally forces the companion onto that view
                        ("buffers"  (eabp-emacs-ui--buffer-list-body))
                        ("eval"     (eabp-emacs-ui--eval-body))
                        ("settings" (eabp-org-ui--settings-body))
+                       ("messages" (eabp-emacs-ui--messages-body))
                        (_          (eabp-text "Unknown tab")))))
                  (error
                   (eabp-column
@@ -4245,6 +4354,17 @@ building. SWITCH-TO additionally forces the companion onto that view
                                   :nav-icon "arrow_back"
                                   :nav-action (eabp-org-ui--switch-view
                                                eabp-org-ui--current-tab)))
+                   (is-messages
+                    (eabp-top-bar "Messages"
+                                  :nav-icon "arrow_back"
+                                  :nav-action (eabp-org-ui--switch-view
+                                               eabp-org-ui--current-tab)
+                                  :actions (list
+                                            (eabp-icon-button
+                                             "refresh"
+                                             (eabp-action "emacs.messages.refresh"
+                                                          :when-offline "drop")
+                                             :content-description "Refresh"))))
                    (is-buffer-view
                     ;; Content swap within the buffers view: stays an
                     ;; Emacs round-trip (the list must be rebuilt).
@@ -4272,7 +4392,7 @@ building. SWITCH-TO additionally forces the companion onto that view
                                                                (eabp-action "dashboard.refresh"
                                                                             :when-offline "drop"))))))))
          (fab (cond
-               ((or is-detail is-edit is-search) nil)
+               ((or is-detail is-edit is-search is-settings is-messages) nil)
                ;; Buffer view: keyboard FAB opens the radial keymap menu
                (is-buffer-view
                 (eabp-fab "keyboard"
@@ -4315,6 +4435,8 @@ building. SWITCH-TO additionally forces the companion onto that view
    (list
     (eabp-drawer-item "view_list" "Buffers"
                       (eabp-org-ui--switch-view "buffers"))
+    (eabp-drawer-item "history" "Messages"
+                      (eabp-org-ui--switch-view "messages"))
     (eabp-drawer-item "terminal" "M-x"
                       (eabp-action "emacs.mx.show"))
     (eabp-drawer-item "sync" "Reload config"

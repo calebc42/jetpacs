@@ -18,6 +18,7 @@ object Kind {
     const val DIALOG_DISMISS = "dialog.dismiss"
     const val PIE_MENU_SHOW = "pie_menu.show"
     const val PIE_MENU_DISMISS = "pie_menu.dismiss"
+    const val TOAST_SHOW = "toast.show"
     // surface.*, capability.*, trigger.*, event.*, queue.* arrive later.
 }
 

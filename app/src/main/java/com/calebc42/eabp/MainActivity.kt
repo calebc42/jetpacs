@@ -1,11 +1,14 @@
 package com.calebc42.eabp
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -80,29 +83,39 @@ private fun BridgeScreen() {
     /**
      * Central action dispatch.
      *
-     * `view.switch` builtins are the local-navigation fast path: the view
-     * flips immediately from cache (works with Emacs dead), and Emacs is
-     * merely *informed* via a drop-policy `view.switched` event so it can
-     * push fresher data for that view in the background. Everything else
-     * goes through the normal ActionReceiver pipeline (live / queue / wake).
+     * Builtins are the companion-local fast path (they work with Emacs dead):
+     * `view.switch` flips the view immediately from cache and merely informs
+     * Emacs via a drop-policy `view.switched` event; `clipboard.copy` puts
+     * the action's `text` on the device clipboard. Everything else goes
+     * through the normal ActionReceiver pipeline (live / queue / wake).
      */
     val dispatch = { action: JSONObject ->
-        if (action.optString("builtin") == "view.switch") {
-            val view = action.optString("view")
-            if (view.isNotEmpty()) {
-                surfaceManager?.setCurrentView(DASHBOARD_SURFACE, view)
-                val notify = JSONObject().apply {
-                    put("action", "view.switched")
-                    put("args", JSONObject().apply {
-                        put("surface", DASHBOARD_SURFACE)
-                        put("view", view)
-                    })
-                    put("when_offline", "drop")
+        when (action.optString("builtin")) {
+            "view.switch" -> {
+                val view = action.optString("view")
+                if (view.isNotEmpty()) {
+                    surfaceManager?.setCurrentView(DASHBOARD_SURFACE, view)
+                    val notify = JSONObject().apply {
+                        put("action", "view.switched")
+                        put("args", JSONObject().apply {
+                            put("surface", DASHBOARD_SURFACE)
+                            put("view", view)
+                        })
+                        put("when_offline", "drop")
+                    }
+                    context.sendBroadcast(actionIntent(context, notify, dashboardRecord?.revision ?: 0))
                 }
-                context.sendBroadcast(actionIntent(context, notify, dashboardRecord?.revision ?: 0))
             }
-        } else {
-            context.sendBroadcast(actionIntent(context, action, dashboardRecord?.revision ?: 0))
+            "clipboard.copy" -> {
+                val text = action.optString("text")
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("eabp", text))
+                // Android 13+ shows its own clipboard confirmation overlay.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                }
+            }
+            else -> context.sendBroadcast(actionIntent(context, action, dashboardRecord?.revision ?: 0))
         }
     }
 

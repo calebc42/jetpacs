@@ -120,6 +120,19 @@ class EabpConnection(
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 
+            // Echo-area messages mirrored from Emacs (throttled Emacs-side).
+            // Toast genuinely needs the main looper — unlike the StateFlow
+            // paths above, it constructs platform UI.
+            Kind.TOAST_SHOW -> {
+                val text = frame.payload.optString("text")
+                if (text.isNotEmpty()) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+
             // capability.*, trigger.*, state.* dispatch lands in later phases.
             else -> send(error(frame.id, "spec-invalid", "unhandled kind '${frame.kind}'"))
         }

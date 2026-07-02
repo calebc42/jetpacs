@@ -167,6 +167,12 @@ or demotes."
               'args args
               'dedupe dedupe))
 
+(defun eabp-clipboard-action (text)
+  "A companion-local action that copies TEXT to the device clipboard.
+Handled entirely on-device (like the `view.switch' builtin) — no
+round-trip to Emacs, works offline."
+  (eabp--node nil 'builtin "clipboard.copy" 'text text))
+
 (cl-defun eabp-button (label action &key icon variant weight padding)
   "A button. VARIANT is filled/outlined/text/tonal."
   (eabp--node "button"

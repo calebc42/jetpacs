@@ -32,6 +32,7 @@ object IconMap {
             "chevron_left" -> Icons.Outlined.ChevronLeft
             "chevron_right" -> Icons.Outlined.ChevronRight
             "call_split" -> Icons.Outlined.CallSplit
+            "view_list" -> Icons.Outlined.ViewList
             "terminal" -> Icons.Outlined.Terminal
             "code" -> Icons.Outlined.Code
             "send" -> Icons.Outlined.Send

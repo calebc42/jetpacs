@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -69,25 +70,32 @@ internal fun SduiText(node: JSONObject, modifier: Modifier) {
     val styleStr = node.optString("style", "body")
     val style = textStyleForName(styleStr)
     val syntax = node.optString("syntax")
-    if (syntax.isNotEmpty()) {
-        val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-        val sc = remember(dark) { SyntaxColors.forBackground(dark) }
-        val mono = syntax.lowercase() != "org"
-        val annotated = remember(text, syntax, sc) {
-            when (syntax.lowercase()) {
-                "org" -> highlightOrg(text, sc)
-                "elisp", "emacs-lisp", "lisp" -> highlightElisp(text, sc)
-                else -> AnnotatedString(text)
+    val selectable = node.optBoolean("selectable", false)
+    val content: @Composable () -> Unit = {
+        if (syntax.isNotEmpty()) {
+            val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+            val sc = remember(dark) { SyntaxColors.forBackground(dark) }
+            val mono = syntax.lowercase() != "org"
+            val annotated = remember(text, syntax, sc) {
+                when (syntax.lowercase()) {
+                    "org" -> highlightOrg(text, sc)
+                    "elisp", "emacs-lisp", "lisp" -> highlightElisp(text, sc)
+                    else -> AnnotatedString(text)
+                }
             }
+            Text(
+                text = annotated,
+                style = if (mono) style.copy(fontFamily = FontFamily.Monospace) else style,
+                modifier = modifier
+            )
+        } else {
+            Text(text = text, style = style, modifier = modifier)
         }
-        Text(
-            text = annotated,
-            style = if (mono) style.copy(fontFamily = FontFamily.Monospace) else style,
-            modifier = modifier
-        )
-    } else {
-        Text(text = text, style = style, modifier = modifier)
     }
+    // `selectable` enables long-press selection/copy (used by the Messages
+    // view and eval results); plain labels stay non-selectable so taps on
+    // surrounding cards aren't intercepted.
+    if (selectable) SelectionContainer { content() } else content()
 }
 
 /**

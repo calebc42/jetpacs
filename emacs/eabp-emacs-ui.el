@@ -145,7 +145,12 @@ bespoke translator."
                      (eabp-ui-state "eval-input")
                      ""))
            (result (condition-case err
-                       (let ((val (eval (read expr) t)))
+                       ;; Wrap in progn so multi-sexp input evaluates fully
+                       ;; (bare `read' silently ignored everything after the
+                       ;; first form).
+                       (let ((val (eval (car (read-from-string
+                                              (format "(progn %s\n)" expr)))
+                                        t)))
                          (format "%S" val))
                      (error (format "ERROR: %s" (error-message-string err))))))
       (unless (string-empty-p (string-trim expr))

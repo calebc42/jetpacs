@@ -15,7 +15,15 @@ import kotlinx.coroutines.flow.asStateFlow
 @SuppressLint("StaticFieldLeak")
 object EabpRuntime {
     var server: EabpServer? = null
-    var surfaceManager: SurfaceManager? = null
+
+    // StateFlow-backed so the UI can react to the service coming up instead
+    // of polling; the plain property keeps non-Compose callers unchanged.
+    private val _surfaceManager = MutableStateFlow<SurfaceManager?>(null)
+    val surfaceManagerFlow: StateFlow<SurfaceManager?> = _surfaceManager.asStateFlow()
+    var surfaceManager: SurfaceManager?
+        get() = _surfaceManager.value
+        set(value) { _surfaceManager.value = value }
+
     var database: EabpDatabase? = null
     val dialogState = EabpDialogState()
     val pieMenuState = EabpPieMenuState()

@@ -108,10 +108,15 @@ frame answers, or nil for a top-level message."
 
 (defun eabp-request (kind payload callback)
   "Send a frame and call CALLBACK with the reply frame's payload alist.
-Correlation is by `reply_to' matching this frame's id."
+Correlation is by `reply_to' matching this frame's id.  When
+disconnected the frame is dropped and CALLBACK is never registered —
+otherwise every dropped request would leak a pending-table entry."
   (let ((id (eabp--next-id)))
-    (puthash id callback eabp--pending)
-    (eabp--raw-send (eabp--encode kind payload nil id))
+    (if (and eabp--process (process-live-p eabp--process))
+        (progn
+          (puthash id callback eabp--pending)
+          (eabp--raw-send (eabp--encode kind payload nil id)))
+      (message "EABP: not connected; dropping request %s" kind))
     id))
 
 (defun eabp-send-dialog (spec)
@@ -328,8 +333,13 @@ and nothing else here changes."
   (eabp-request "ping" nil
                 (lambda (_payload) (message "EABP: pong received"))))
 
-;; Automatically connect when Emacs finishes initializing
-(add-hook 'after-init-hook #'eabp-connect)
+;; Auto-connect: at init when loaded from init.el; when the library is
+;; loaded (or reloaded) later, `after-init-hook' has already run and would
+;; never fire — connect from a zero-delay timer instead, so the handshake
+;; can't start until the whole file (or bundle) has finished loading.
+(if after-init-time
+    (run-at-time 0 nil #'eabp-connect)
+  (add-hook 'after-init-hook #'eabp-connect))
 
 (provide 'eabp)
 ;;; eabp.el ends here
@@ -3151,6 +3161,26 @@ greedy last-dash strip turned `forward-paragraph' into \"paragraph\"."
                   (bindings . ,(vconcat (cddr cat)))))
               categories)))))))
 
+;; ─── Tier 1 registry: curated pie menus per major mode ─────────────────────
+
+(defvar eabp-keymap-tier1-menus nil
+  "Alist of (MAJOR-MODE . BUILDER) curated Tier 1 pie menus.
+BUILDER is called with the buffer and returns a pie-menu spec alist
+\(same shape as `eabp-keymap--build-pie-spec').  A buffer whose mode
+derives from a registered mode gets its curated pie instead of the
+default command palette; the first matching entry wins.")
+
+(defun eabp-keymap-register-tier1 (mode builder)
+  "Register BUILDER as the curated Tier 1 pie menu for MODE."
+  (setf (alist-get mode eabp-keymap-tier1-menus) builder))
+
+(defun eabp-keymap--tier1-builder (buf)
+  "The registered Tier 1 menu builder for BUF's major mode, or nil."
+  (with-current-buffer buf
+    (seq-some (lambda (cell)
+                (and (derived-mode-p (car cell)) (cdr cell)))
+              eabp-keymap-tier1-menus)))
+
 ;; ─── Command palette (Tier 0 default) ──────────────────────────────────────
 
 (defun eabp-keymap--palette-candidates (buf)
@@ -3221,6 +3251,10 @@ it belonged to has finished."
        ;; suffix set — exactly what the radial menu is good at.
        ((eabp-keymap--transient-active-p)
         (eabp-send "pie_menu.show" (eabp-keymap--build-pie-spec buf)))
+       ;; Tier 1: a curated pie registered for this major mode (e.g. magit).
+       ((when-let ((builder (eabp-keymap--tier1-builder buf)))
+          (eabp-send "pie_menu.show" (funcall builder buf))
+          t))
        ;; Tier 0 default: the searchable command palette.
        (t (eabp-keymap--show-palette buf))))))
 
@@ -3286,6 +3320,91 @@ which is more reliable than simulating keystrokes through the transient's
 
 (provide 'eabp-keymap)
 ;;; eabp-keymap.el ends here
+
+;;; ==================================================================
+;;; BEGIN eabp-magit.el
+;;; ==================================================================
+
+;;; eabp-magit.el --- Curated Tier 1 magit pie menu -*- lexical-binding: t; -*-
+
+;; The first curated Tier 1 radial menu: magit-status.  Four categories
+;; fan out as a speed dial; each opens a pie of hand-labelled bindings.
+;; Entries marked as prefixes (Commit, Push, Branch, …) are magit's
+;; transient commands — running one activates the transient, and
+;; `eabp-keymap--sync-pie' then pushes the live transient's own pie, so
+;; the drill-in continues seamlessly into magit's real menus.
+;;
+;; This is pure data plus key dispatch: nothing here requires magit at
+;; load time.  Keys are executed in the magit buffer through the same
+;; allowlisted `eabp.keymap.run' action as everything else.
+
+;;; Code:
+
+(require 'eabp-keymap)
+
+(defconst eabp-magit--menu
+  '(("Stage" "add"
+     ("s"   "Stage")
+     ("u"   "Unstage")
+     ("S"   "Stage all")
+     ("U"   "Unstage all")
+     ("k"   "Discard")
+     ("g"   "Refresh"))
+    ("Share" "sync"
+     ("c"   "Commit" t)
+     ("P"   "Push" t)
+     ("F"   "Pull" t)
+     ("f"   "Fetch" t)
+     ("!"   "Run" t))
+    ("Branch" "call_split"
+     ("b"   "Branch" t)
+     ("m"   "Merge" t)
+     ("r"   "Rebase" t)
+     ("z"   "Stash" t)
+     ("t"   "Tag" t))
+    ("Inspect" "history"
+     ("l"   "Log" t)
+     ("d"   "Diff" t)
+     ("y"   "Refs" t)
+     ("$"   "Process")))
+  "Curated magit-status pie menu: (CATEGORY ICON (KEY LABEL [PREFIX-P])...).
+PREFIX-P marks a transient prefix — the pie shows a ▸ and running it
+drills into the live transient's own pie.")
+
+(defun eabp-magit--binding-spec (entry buffer-name)
+  "Build one pie binding spec from ENTRY (KEY LABEL [PREFIX-P])."
+  (pcase-let ((`(,key ,label ,prefix-p) entry))
+    (append
+     `((key . ,key)
+       (label . ,label)
+       (action . ,(eabp-action "eabp.keymap.run"
+                               :args `((buffer . ,buffer-name)
+                                       (key . ,key))
+                               :when-offline "drop")))
+     (when prefix-p '((is_prefix . t))))))
+
+(defun eabp-magit-pie-spec (buffer)
+  "Curated Tier 1 pie-menu spec for magit BUFFER."
+  (let ((buffer-name (buffer-name buffer)))
+    `((center_label . "Magit")
+      (buffer . ,buffer-name)
+      (categories
+       . ,(vconcat
+           (mapcar
+            (lambda (cat)
+              (pcase-let ((`(,label ,icon . ,entries) cat))
+                `((label . ,label)
+                  (icon . ,icon)
+                  (bindings . ,(vconcat
+                                (mapcar (lambda (e)
+                                          (eabp-magit--binding-spec e buffer-name))
+                                        entries))))))
+            eabp-magit--menu))))))
+
+(eabp-keymap-register-tier1 'magit-status-mode #'eabp-magit-pie-spec)
+
+(provide 'eabp-magit)
+;;; eabp-magit.el ends here
 
 ;;; ==================================================================
 ;;; BEGIN eabp-emacs-ui.el
@@ -3438,7 +3557,12 @@ bespoke translator."
                      (eabp-ui-state "eval-input")
                      ""))
            (result (condition-case err
-                       (let ((val (eval (read expr) t)))
+                       ;; Wrap in progn so multi-sexp input evaluates fully
+                       ;; (bare `read' silently ignored everything after the
+                       ;; first form).
+                       (let ((val (eval (car (read-from-string
+                                              (format "(progn %s\n)" expr)))
+                                        t)))
                          (format "%S" val))
                      (error (format "ERROR: %s" (error-message-string err))))))
       (unless (string-empty-p (string-trim expr))
@@ -3940,6 +4064,7 @@ state (the same pattern as the capture form)."
 (require 'eabp-org-reader)
 (require 'eabp-files)
 (require 'eabp-keymap)
+(require 'eabp-magit)
 (require 'cl-lib)
 
 (defvar eabp-org-ui--current-tab "agenda"

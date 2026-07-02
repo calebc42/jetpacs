@@ -433,6 +433,26 @@ greedy last-dash strip turned `forward-paragraph' into \"paragraph\"."
                   (bindings . ,(vconcat (cddr cat)))))
               categories)))))))
 
+;; ─── Tier 1 registry: curated pie menus per major mode ─────────────────────
+
+(defvar eabp-keymap-tier1-menus nil
+  "Alist of (MAJOR-MODE . BUILDER) curated Tier 1 pie menus.
+BUILDER is called with the buffer and returns a pie-menu spec alist
+\(same shape as `eabp-keymap--build-pie-spec').  A buffer whose mode
+derives from a registered mode gets its curated pie instead of the
+default command palette; the first matching entry wins.")
+
+(defun eabp-keymap-register-tier1 (mode builder)
+  "Register BUILDER as the curated Tier 1 pie menu for MODE."
+  (setf (alist-get mode eabp-keymap-tier1-menus) builder))
+
+(defun eabp-keymap--tier1-builder (buf)
+  "The registered Tier 1 menu builder for BUF's major mode, or nil."
+  (with-current-buffer buf
+    (seq-some (lambda (cell)
+                (and (derived-mode-p (car cell)) (cdr cell)))
+              eabp-keymap-tier1-menus)))
+
 ;; ─── Command palette (Tier 0 default) ──────────────────────────────────────
 
 (defun eabp-keymap--palette-candidates (buf)
@@ -503,6 +523,10 @@ it belonged to has finished."
        ;; suffix set — exactly what the radial menu is good at.
        ((eabp-keymap--transient-active-p)
         (eabp-send "pie_menu.show" (eabp-keymap--build-pie-spec buf)))
+       ;; Tier 1: a curated pie registered for this major mode (e.g. magit).
+       ((when-let ((builder (eabp-keymap--tier1-builder buf)))
+          (eabp-send "pie_menu.show" (funcall builder buf))
+          t))
        ;; Tier 0 default: the searchable command palette.
        (t (eabp-keymap--show-palette buf))))))
 

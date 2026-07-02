@@ -11,6 +11,7 @@
 (require 'eabp-org-reader)
 (require 'eabp-files)
 (require 'eabp-keymap)
+(require 'eabp-magit)
 (require 'cl-lib)
 
 (defvar eabp-org-ui--current-tab "agenda"

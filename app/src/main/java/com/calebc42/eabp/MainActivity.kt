@@ -26,7 +26,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import com.calebc42.eabp.ui.theme.EabpTheme
-import kotlinx.coroutines.delay
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
@@ -63,13 +61,9 @@ private fun BridgeScreen() {
         }
     }
 
-    var surfaceManager by remember { mutableStateOf<SurfaceManager?>(null) }
-    LaunchedEffect(Unit) {
-        while (surfaceManager == null) {
-            surfaceManager = EabpRuntime.surfaceManager
-            delay(100)
-        }
-    }
+    // Reactive, not polled: the flow fires when BridgeService publishes the
+    // manager (and again if the service is ever recreated).
+    val surfaceManager by EabpRuntime.surfaceManagerFlow.collectAsState()
 
     var version by remember { mutableIntStateOf(0) }
     LaunchedEffect(surfaceManager) {
@@ -195,13 +189,7 @@ private fun WaitingScreen() {
             style = MaterialTheme.typography.bodyMedium
         )
 
-        var isConnected by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) {
-            while (true) {
-                isConnected = EabpRuntime.server?.connection()?.helloComplete == true
-                delay(1000)
-            }
-        }
+        val isConnected by EabpRuntime.connected.collectAsState()
         StatusRow("Connection", if (isConnected) "Connected" else "Listening", isConnected)
     }
 }

@@ -109,16 +109,14 @@ class EabpConnection(
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 
+            // StateFlow setters are thread-safe; Compose collects on the UI
+            // thread — no main-looper hop needed (the dialog path never had one).
             Kind.PIE_MENU_SHOW -> {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    EabpRuntime.pieMenuState.show(frame.payload)
-                }
+                EabpRuntime.pieMenuState.show(frame.payload)
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
             Kind.PIE_MENU_DISMISS -> {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    EabpRuntime.pieMenuState.dismiss()
-                }
+                EabpRuntime.pieMenuState.dismiss()
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 

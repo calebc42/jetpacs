@@ -95,10 +95,15 @@ frame answers, or nil for a top-level message."
 
 (defun eabp-request (kind payload callback)
   "Send a frame and call CALLBACK with the reply frame's payload alist.
-Correlation is by `reply_to' matching this frame's id."
+Correlation is by `reply_to' matching this frame's id.  When
+disconnected the frame is dropped and CALLBACK is never registered —
+otherwise every dropped request would leak a pending-table entry."
   (let ((id (eabp--next-id)))
-    (puthash id callback eabp--pending)
-    (eabp--raw-send (eabp--encode kind payload nil id))
+    (if (and eabp--process (process-live-p eabp--process))
+        (progn
+          (puthash id callback eabp--pending)
+          (eabp--raw-send (eabp--encode kind payload nil id)))
+      (message "EABP: not connected; dropping request %s" kind))
     id))
 
 (defun eabp-send-dialog (spec)
@@ -315,8 +320,13 @@ and nothing else here changes."
   (eabp-request "ping" nil
                 (lambda (_payload) (message "EABP: pong received"))))
 
-;; Automatically connect when Emacs finishes initializing
-(add-hook 'after-init-hook #'eabp-connect)
+;; Auto-connect: at init when loaded from init.el; when the library is
+;; loaded (or reloaded) later, `after-init-hook' has already run and would
+;; never fire — connect from a zero-delay timer instead, so the handshake
+;; can't start until the whole file (or bundle) has finished loading.
+(if after-init-time
+    (run-at-time 0 nil #'eabp-connect)
+  (add-hook 'after-init-hook #'eabp-connect))
 
 (provide 'eabp)
 ;;; eabp.el ends here

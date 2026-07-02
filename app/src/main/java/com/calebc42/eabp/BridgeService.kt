@@ -8,9 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
 import androidx.core.app.NotificationCompat
-import kotlin.concurrent.thread
 
 /**
  * Long-lived host for [EabpServer] and the [SurfaceManager].
@@ -43,21 +41,6 @@ class BridgeService : Service() {
         // Render anything we already hold BEFORE Emacs connects — principle #1.
         surfaces.renderAllCached()
 
-        // One-time migration: drain any events the old NDJSON stash captured
-        // before the Room queue existed (off-main: Room forbids main thread).
-        thread(name = "EabpStashMigration") {
-            runCatching {
-                val orphans = PendingActionStash.drainAll(applicationContext)
-                if (orphans.isNotEmpty()) {
-                    val dao = EabpRuntime.database?.eventDao()
-                    orphans.forEach { event ->
-                        dao?.insert(QueuedEvent(kind = "event.action", payload = event.toString()))
-                    }
-                    Log.i(TAG, "Migrated ${orphans.size} stashed events into the queue")
-                }
-            }.onFailure { Log.w(TAG, "Stash migration failed: ${it.message}") }
-        }
-
         server.start()
     }
 
@@ -89,7 +72,6 @@ class BridgeService : Service() {
     }
 
     companion object {
-        private const val TAG = "BridgeService"
         private const val CHANNEL_ID = "eabp_bridge"
         private const val NOTIF_ID = 7711
 

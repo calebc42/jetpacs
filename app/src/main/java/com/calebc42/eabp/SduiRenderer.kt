@@ -231,12 +231,27 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
             } else VisualTransformation.None
 
+            // Debounced state.changed: a broadcast per keystroke flooded the
+            // bridge (one frame — or one queue insert offline — per character,
+            // and a full dialog re-push from the live-filter picker). 250ms
+            // after typing pauses is fresh enough.
+            var lastSent by remember(id) { mutableStateOf<String?>(null) }
+            LaunchedEffect(text) {
+                if (lastSent == null) {
+                    lastSent = text          // initial composition: nothing typed yet
+                    return@LaunchedEffect
+                }
+                if (text == lastSent) return@LaunchedEffect
+                delay(250)
+                if (text != lastSent) {
+                    lastSent = text
+                    dispatchStateChanged(context, id, JSONObject.quote(text))
+                }
+            }
+
             OutlinedTextField(
                 value = text,
-                onValueChange = {
-                    text = it
-                    dispatchStateChanged(context, id, JSONObject.quote(it))
-                },
+                onValueChange = { text = it },
                 label = if (label.isNotEmpty()) { { Text(label) } } else null,
                 placeholder = if (hint.isNotEmpty()) { { Text(hint) } } else null,
                 singleLine = singleLine,
@@ -254,12 +269,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                     imeAction = if (singleLine) ImeAction.Done else ImeAction.Default
                 ),
                 keyboardActions = KeyboardActions(onDone = {
-                    if (onSubmit != null) {
-                        val payload = JSONObject(onSubmit.toString()).apply {
-                            put("args", (onSubmit.optJSONObject("args") ?: JSONObject()).apply { put("value", text) })
-                        }
-                        dispatch(payload)
-                    }
+                    if (onSubmit != null) dispatchWithValue(dispatch, onSubmit, text)
+                    // Flush immediately; the debounce may still be pending.
+                    lastSent = text
                     dispatchStateChanged(context, id, JSONObject.quote(text))
                 })
             )
@@ -407,12 +419,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                     Button(
                         onClick = {
                             if (onSave != null) {
-                                val payload = JSONObject(onSave.toString()).apply {
-                                    put("args", (onSave.optJSONObject("args") ?: JSONObject()).apply {
-                                        put("value", tfv.text)
-                                    })
-                                }
-                                dispatch(payload)
+                                dispatchWithValue(dispatch, onSave, tfv.text)
                                 seed = tfv.text
                             }
                         },
@@ -513,13 +520,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                             val millis = pickerState.selectedDateMillis
                             show = false
                             if (millis != null && onPick != null) {
-                                val date = isoDateFromUtcMillis(millis)
-                                val payload = JSONObject(onPick.toString()).apply {
-                                    put("args", (onPick.optJSONObject("args") ?: JSONObject()).apply {
-                                        put("value", date)
-                                    })
-                                }
-                                dispatch(payload)
+                                dispatchWithValue(dispatch, onPick, isoDateFromUtcMillis(millis))
                             }
                         }) { Text("OK") }
                     },
@@ -654,13 +655,10 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                         TextButton(onClick = {
                             show = false
                             if (onPick != null) {
-                                val time = String.format("%02d:%02d", pickerState.hour, pickerState.minute)
-                                val payload = JSONObject(onPick.toString()).apply {
-                                    put("args", (onPick.optJSONObject("args") ?: JSONObject()).apply {
-                                        put("value", time)
-                                    })
-                                }
-                                dispatch(payload)
+                                dispatchWithValue(
+                                    dispatch, onPick,
+                                    String.format("%02d:%02d", pickerState.hour, pickerState.minute)
+                                )
                             }
                         }) { Text("OK") }
                     },
@@ -788,6 +786,13 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
 
             var showAddDialog by remember { mutableStateOf(false) }
 
+            // Shared commit path for chip toggles and newly added options.
+            val applySelection: (MutableSet<String>) -> Unit = { newSet ->
+                selected = newSet
+                dispatchStateChanged(context, id, JSONArray(newSet).toString())
+                if (onChange != null) dispatchWithValue(dispatch, onChange, JSONArray(newSet))
+            }
+
             FlowRow(
                 modifier = baseModifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -798,22 +803,11 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                         selected = selected.contains(opt),
                         onClick = {
                             val newSet = selected.toMutableSet()
-                            if (newSet.contains(opt)) {
-                                newSet.remove(opt)
-                            } else {
+                            if (!newSet.remove(opt)) {
                                 if (!multiSelect) newSet.clear()
                                 newSet.add(opt)
                             }
-                            selected = newSet
-                            dispatchStateChanged(context, id, JSONArray(newSet).toString())
-                            if (onChange != null) {
-                                val payload = JSONObject(onChange.toString()).apply {
-                                    put("args", (onChange.optJSONObject("args") ?: JSONObject()).apply {
-                                        put("value", JSONArray(newSet))
-                                    })
-                                }
-                                dispatch(payload)
-                            }
+                            applySelection(newSet)
                         },
                         label = { Text(opt) }
                     )
@@ -828,6 +822,17 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
 
             if (showAddDialog) {
                 var newOption by remember { mutableStateOf("") }
+                val addOption = {
+                    val opt = newOption.trim()
+                    if (opt.isNotEmpty() && !options.contains(opt)) {
+                        options = (options + opt).toMutableList()
+                        val newSet = selected.toMutableSet()
+                        if (!multiSelect) newSet.clear()
+                        newSet.add(opt)
+                        applySelection(newSet)
+                    }
+                    showAddDialog = false
+                }
                 AlertDialog(
                     onDismissRequest = { showAddDialog = false },
                     title = { Text("Add Option") },
@@ -837,49 +842,11 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                             onValueChange = { newOption = it },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = {
-                                if (newOption.isNotBlank() && !options.contains(newOption.trim())) {
-                                    val opt = newOption.trim()
-                                    options = (options + opt).toMutableList()
-                                    val newSet = selected.toMutableSet()
-                                    if (!multiSelect) newSet.clear()
-                                    newSet.add(opt)
-                                    selected = newSet
-                                    dispatchStateChanged(context, id, JSONArray(newSet).toString())
-                                    if (onChange != null) {
-                                        val payload = JSONObject(onChange.toString()).apply {
-                                            put("args", (onChange.optJSONObject("args") ?: JSONObject()).apply {
-                                                put("value", JSONArray(newSet))
-                                            })
-                                        }
-                                        dispatch(payload)
-                                    }
-                                }
-                                showAddDialog = false
-                            })
+                            keyboardActions = KeyboardActions(onDone = { addOption() })
                         )
                     },
                     confirmButton = {
-                        TextButton(onClick = {
-                            if (newOption.isNotBlank() && !options.contains(newOption.trim())) {
-                                val opt = newOption.trim()
-                                options = (options + opt).toMutableList()
-                                val newSet = selected.toMutableSet()
-                                if (!multiSelect) newSet.clear()
-                                newSet.add(opt)
-                                selected = newSet
-                                dispatchStateChanged(context, id, JSONArray(newSet).toString())
-                                if (onChange != null) {
-                                    val payload = JSONObject(onChange.toString()).apply {
-                                        put("args", (onChange.optJSONObject("args") ?: JSONObject()).apply {
-                                            put("value", JSONArray(newSet))
-                                        })
-                                    }
-                                    dispatch(payload)
-                                }
-                            }
-                            showAddDialog = false
-                        }) { Text("Add") }
+                        TextButton(onClick = addOption) { Text("Add") }
                     },
                     dismissButton = {
                         TextButton(onClick = { showAddDialog = false }) { Text("Cancel") }
@@ -1157,6 +1124,18 @@ private fun isoDateFromUtcMillis(millis: Long): String {
         "%04d-%02d-%02d",
         cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH)
     )
+}
+
+/**
+ * Clone [action], inject [value] into its args, and hand it to [dispatch] —
+ * the shared tail of every value-carrying widget callback (submit, save,
+ * date/time pick, selection change).
+ */
+private fun dispatchWithValue(dispatch: (JSONObject) -> Unit, action: JSONObject, value: Any) {
+    val payload = JSONObject(action.toString()).apply {
+        put("args", (optJSONObject("args") ?: JSONObject()).apply { put("value", value) })
+    }
+    dispatch(payload)
 }
 
 private fun dispatchStateChanged(context: Context, id: String, valueJson: String) {

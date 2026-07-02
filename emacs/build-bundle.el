@@ -25,6 +25,7 @@
                 "eabp-org-reader.el"
                 "eabp-org.el"
                 "eabp-keymap.el"
+                "eabp-magit.el"
                 "eabp-emacs-ui.el"
                 "eabp-files.el"
                 "eabp-org-ui.el")))

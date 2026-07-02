@@ -56,6 +56,9 @@ files must not round-trip through the editor."
 (defvar eabp-files--read-mode nil
   "When non-nil, org files open in the foldable reader instead of the editor.")
 
+(defvar eabp-files--refile-mode nil
+  "When non-nil, org reader shows a flat drag-to-reorder heading list.")
+
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 
 ;; The directory listing is backed by a real dired buffer — the standard Emacs
@@ -183,8 +186,11 @@ plain-text editor."
     (if (not (and file (file-readable-p file)))
         (eabp-column (eabp-text "No file open." 'body))
       (if (and eabp-files--read-mode (eabp-files--org-p file))
-          (apply #'eabp-lazy-column (or (eabp-org-reader-file file)
-                                        (list (eabp-text "No headings to show." 'caption))))
+          (if eabp-files--refile-mode
+              (or (eabp-org-reader-refile-list file)
+                  (eabp-text "No headings to show." 'caption))
+            (apply #'eabp-lazy-column (or (eabp-org-reader-file file)
+                                          (list (eabp-text "No headings to show." 'caption)))))
       (let* ((size (or (file-attribute-size (file-attributes file)) 0))
              (read-only (> size eabp-files-max-bytes))
              (content
@@ -239,6 +245,11 @@ plain-text editor."
 (eabp-defaction "files.toggle-read"
   (lambda (_ _)
     (setq eabp-files--read-mode (not eabp-files--read-mode))
+    (eabp-org-ui-push-dashboard nil :switch-to "edit")))
+
+(eabp-defaction "files.toggle-refile"
+  (lambda (_ _)
+    (setq eabp-files--refile-mode (not eabp-files--refile-mode))
     (eabp-org-ui-push-dashboard nil :switch-to "edit")))
 
 (eabp-defaction "files.delete"

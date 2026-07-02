@@ -239,5 +239,8 @@ and forwarded to the companion as dialogs."
 ;; Load the minibuffer bridge AFTER `provide' so `eabp-defaction' and the
 ;; rest of the surfaces infrastructure are available when it registers its
 ;; prompt.reply / prompt.dismiss action handlers.
-(require 'eabp-minibuffer)
+;;
+;; In the single-file glasspane.el bundle, this require will fail silently,
+;; but that's fine because eabp-minibuffer is evaluated immediately afterward.
+(require 'eabp-minibuffer nil t)
 ;;; eabp-surfaces.el ends here

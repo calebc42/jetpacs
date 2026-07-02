@@ -130,6 +130,17 @@ the header (used by the org reader to open the heading detail view)."
     (when on-long-tap (push `(on_long_tap . ,on-long-tap) node))
     node))
 
+(cl-defun eabp-reorderable-list (items &key on-reorder)
+  "A drag-reorderable list of ITEMS.
+Each item is an alist with at least (label . STRING) and (level . INT).
+ON-REORDER is an action template dispatched with additional keys
+\(from_pos . N) (after_pos . M) (new_level . L) when the user drops
+a dragged item.  Dragging vertically reorders; horizontally promotes
+or demotes."
+  `((t . "reorderable_list")
+    (items . ,(vconcat items))
+    (on_reorder . ,on-reorder)))
+
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
 (cl-defun eabp-action (action &key args (when-offline "queue") dedupe)

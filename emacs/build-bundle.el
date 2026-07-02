@@ -18,8 +18,8 @@
        ;; Dependency order. Do not reorder without re-checking the require graph.
        (files '("eabp.el"
                 "eabp-widgets.el"
-                "eabp-minibuffer.el"
                 "eabp-surfaces.el"
+                "eabp-minibuffer.el"
                 "eabp-buffer.el"
                 "eabp-org-rich.el"
                 "eabp-org-reader.el"

@@ -161,14 +161,20 @@ building. SWITCH-TO additionally forces the companion onto that view
                                     "Editor")
                                   :nav-icon "arrow_back"
                                   :nav-action (eabp-org-ui--switch-view "files")
-                                  ;; Read/Edit toggle, org files only.
                                   :actions (when (eabp-files--org-p eabp-files--file)
-                                             (list
-                                              (eabp-icon-button
-                                               (if eabp-files--read-mode "edit" "visibility")
-                                               (eabp-action "files.toggle-read")
-                                               :content-description
-                                               (if eabp-files--read-mode "Edit" "Read"))))))
+                                             (delq nil
+                                                   (list
+                                                    (when eabp-files--read-mode
+                                                      (eabp-icon-button
+                                                       (if eabp-files--refile-mode "visibility" "swap_vert")
+                                                       (eabp-action "files.toggle-refile")
+                                                       :content-description
+                                                       (if eabp-files--refile-mode "Reader" "Refile")))
+                                                    (eabp-icon-button
+                                                     (if eabp-files--read-mode "edit" "visibility")
+                                                     (eabp-action "files.toggle-read")
+                                                     :content-description
+                                                     (if eabp-files--read-mode "Edit" "Read")))))))
                    ((and is-files eabp-files--dir)
                     (eabp-top-bar (abbreviate-file-name eabp-files--dir)
                                   :nav-icon "arrow_back"
@@ -1170,6 +1176,44 @@ Returns non-nil on success; messages and returns nil on failure."
           (error
            (eabp-org-ui-snackbar
             (format "Toggle failed: %s" (error-message-string err)))))))))
+
+(eabp-defaction "heading.reorder"
+  (lambda (args _)
+    (let* ((file      (alist-get 'file args))
+           (from-pos  (alist-get 'from_pos args))
+           (after-pos (alist-get 'after_pos args))  ;; 0 or nil = move to top
+           (new-level (alist-get 'new_level args)))
+      (when (and file from-pos (file-readable-p file))
+        (with-current-buffer (find-file-noselect file)
+          (org-with-wide-buffer
+           (goto-char from-pos)
+           (org-back-to-heading t)
+           (let* ((from-level (org-outline-level))
+                  (subtree-beg (point))
+                  (subtree-end (save-excursion (org-end-of-subtree t t) (point)))
+                  (subtree-size (- subtree-end subtree-beg)))
+             ;; Cut the subtree
+             (org-cut-subtree)
+             ;; Navigate to the insertion point
+             (if (and after-pos (> after-pos 0))
+                 (let ((target (if (> after-pos from-pos)
+                                   (- after-pos subtree-size)
+                                 after-pos)))
+                   (goto-char (min target (point-max)))
+                   (org-back-to-heading t)
+                   (org-end-of-subtree t t))
+               ;; Move to top of file (before first heading)
+               (goto-char (point-min))
+               (when (re-search-forward org-heading-regexp nil t)
+                 (goto-char (line-beginning-position))))
+             ;; Paste at the new level (or original level if nil)
+             (org-paste-subtree (or new-level from-level)))))
+        (let ((eabp-org--inhibit-save-refresh t)
+              (save-silently t))
+          (with-current-buffer (find-file-noselect file)
+            (save-buffer)))
+        (eabp-org-cache-invalidate)
+        (eabp-org-ui-push-dashboard nil :switch-to "edit")))))
 
 (eabp-defaction "file.view"
   ;; Legacy (old cached UIs): now routes into the eabp-files editor.

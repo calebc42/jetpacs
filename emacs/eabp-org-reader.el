@@ -167,5 +167,24 @@ When SKIP-PROPS is non-nil, the top-level PROPERTIES drawer is omitted."
          (when root
            (eabp-org-reader--content-nodes root file skip-props)))))))
 
+(defun eabp-org-reader-refile-list (file)
+  "Render all headings in FILE as a flat reorderable item list.
+Returns a single `eabp-reorderable-list' node for refile mode."
+  (when (and file (file-readable-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (let* ((records (eabp-org-reader--cap
+                        (eabp-org-reader--collect (point-min) (point-max) nil)))
+              (items (mapcar (lambda (r)
+                               `((label . ,(plist-get r :line))
+                                 (level . ,(plist-get r :level))
+                                 (pos   . ,(plist-get r :pos))
+                                 (file  . ,file)))
+                             records)))
+         (eabp-reorderable-list
+          items
+          :on-reorder (eabp-action "heading.reorder"
+                                   :args `((file . ,file)))))))))
+
 (provide 'eabp-org-reader)
 ;;; eabp-org-reader.el ends here

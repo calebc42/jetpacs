@@ -69,6 +69,8 @@ object IconMap {
             "arrow_downward" -> Icons.Outlined.ArrowDownward
             "undo" -> Icons.Outlined.Undo
             "redo" -> Icons.Outlined.Redo
+            "swap_vert" -> Icons.Outlined.SwapVert
+            "drag_handle" -> Icons.Outlined.DragHandle
             else -> Icons.Outlined.HelpOutline
         }
     }

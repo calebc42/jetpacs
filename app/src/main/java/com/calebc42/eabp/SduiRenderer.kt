@@ -618,6 +618,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 }
             }
         }
+        "reorderable_list" -> {
+            ReorderableList(node = node, dispatch = dispatch, modifier = baseModifier)
+        }
         "image" -> {
             // Loaded via Coil from whatever URI Emacs supplies: an http(s) URL,
             // or a file:// path that the companion can read.

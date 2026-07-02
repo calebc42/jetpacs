@@ -275,18 +275,152 @@ building. SWITCH-TO additionally forces the companion onto that view
 
 ;; ─── Tab Bodies ──────────────────────────────────────────────────────────────
 
+;; ── Agenda navigation ──
+;; The agenda is anchored on a date (UI state "agenda-anchor", nil = today).
+;; The ‹ › buttons shift the anchor by one day/week/month according to the
+;; active span, and the anchor feeds `eabp-org--agenda-items' as START-DAY —
+;; whose cache keys already include it, so each visited range memoises
+;; independently.
+
+(defun eabp-org-ui--agenda-anchor ()
+  "The agenda's anchor date as \"YYYY-MM-DD\"; today when unset."
+  (let ((a (eabp-ui-state "agenda-anchor")))
+    (if (and (stringp a) (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" a))
+        a
+      (format-time-string "%Y-%m-%d"))))
+
+(defun eabp-org-ui--shift-date (date n unit)
+  "Shift DATE (\"YYYY-MM-DD\") by N UNITs (`day', `week', or `month').
+Month arithmetic clamps the day into the target month, so Jan 31 + 1
+month is Feb 28, not an invalid date."
+  (pcase-let ((`(,y ,m ,d) (mapcar #'string-to-number (split-string date "-"))))
+    (if (eq unit 'month)
+        (let* ((total (+ (* 12 y) (1- m) n))
+               (ny (/ total 12))
+               (nm (1+ (% total 12))))
+          (format "%04d-%02d-%02d" ny nm
+                  (min d (calendar-last-day-of-month nm ny))))
+      (let ((days (* n (if (eq unit 'week) 7 1))))
+        ;; Noon avoids DST-transition off-by-one-day surprises.
+        (format-time-string "%Y-%m-%d"
+                            (time-add (encode-time 0 0 12 d m y)
+                                      (* days 86400)))))))
+
+(defun eabp-org-ui--format-date (date fmt)
+  "Render DATE (\"YYYY-MM-DD\") through `format-time-string' FMT."
+  (pcase-let ((`(,y ,m ,d) (mapcar #'string-to-number (split-string date "-"))))
+    (format-time-string fmt (encode-time 0 0 12 d m y))))
+
+(defun eabp-org-ui--agenda-nav-row (mode anchor)
+  "The ‹ [range label] [today] › navigation row for the agenda header."
+  (let* ((today (format-time-string "%Y-%m-%d"))
+         (at-today (pcase mode
+                     ("month" (equal (substring anchor 0 7) (substring today 0 7)))
+                     (_ (equal anchor today))))
+         (label (pcase mode
+                  ("month" (eabp-org-ui--format-date anchor "%B %Y"))
+                  ("week" (concat "Week of "
+                                  (eabp-org-ui--format-date anchor "%b %d")))
+                  (_ (if at-today
+                         (concat "Today · " (eabp-org-ui--format-date anchor "%a, %b %d"))
+                       (eabp-org-ui--format-date anchor "%a, %b %d"))))))
+    (apply #'eabp-row
+           (delq nil
+                 (list
+                  (eabp-icon-button "chevron_left"
+                                    (eabp-action "agenda.nav" :args '((dir . -1)))
+                                    :content-description "Previous")
+                  (eabp-box (list (eabp-text label 'label))
+                            :weight 1 :alignment "center")
+                  (unless at-today
+                    (eabp-icon-button "today" (eabp-action "agenda.today")
+                                      :content-description "Back to today"))
+                  (eabp-icon-button "chevron_right"
+                                    (eabp-action "agenda.nav" :args '((dir . 1)))
+                                    :content-description "Next"))))))
+
+;; ── Agenda cards ──
+
+(defun eabp-org-ui--agenda-type-icon (type)
+  "Return (ICON . COLOR) for an agenda item TYPE string (color may be nil)."
+  (cond
+   ((null type) '("event" . nil))
+   ((string-match-p "past-scheduled" type) '("history" . "#E53935"))
+   ((string-match-p "deadline" type) '("flag" . nil))
+   ((string-match-p "scheduled" type) '("schedule" . nil))
+   (t '("event" . nil))))
+
+(defun eabp-org-ui--agenda-type-label (type)
+  "Short human label for an agenda item TYPE string, or nil to omit."
+  (pcase type
+    ("past-scheduled" "overdue")
+    ("upcoming-deadline" "deadline soon")
+    ("deadline" "deadline")
+    ("scheduled" "scheduled")
+    (_ nil)))
+
 (defun eabp-org-ui--agenda-card (it)
-  (let* ((headline (or (alist-get 'headline it) "?"))
+  "A detail-rich agenda card for item IT.
+Leading time (or a type icon), priority-prefixed headline (struck
+through when done), a todo/type/file caption, tag chips when present,
+and a quick complete button for open todos."
+  (let* ((headline (or (alist-get 'headline it) "Untitled"))
          (todo (alist-get 'todo it))
          (time (alist-get 'time it))
+         (type (alist-get 'type it))
+         (file (alist-get 'file it))
+         (priority (alist-get 'priority it))
+         (tags (append (alist-get 'tags it) nil))
          (ref (alist-get 'ref it))
-         (caption (string-join (delq nil (list time todo)) "  ·  ")))
+         (done (and todo (member todo (or (default-value 'org-done-keywords)
+                                          '("DONE" "CANCELLED")))))
+         (icon+color (eabp-org-ui--agenda-type-icon type))
+         (caption (string-join
+                   (delq nil (list todo
+                                   (and (stringp type)
+                                        (eabp-org-ui--agenda-type-label type))
+                                   (and file (file-name-nondirectory file))))
+                   "  ·  "))
+         (lead (if (and (stringp time) (not (string-empty-p time)))
+                   (eabp-text time 'label)
+                 (eabp-icon (car icon+color) :size 18 :color (cdr icon+color))))
+         (headline-node
+          (eabp-rich-text
+           (delq nil
+                 (list
+                  (when priority
+                    (eabp-span (format "[#%s] " priority) :bold t :color "#F57C00"))
+                  (if done
+                      (eabp-span headline :strike t)
+                    (eabp-span headline))))))
+         (middle
+          (apply #'eabp-column
+                 (delq nil
+                       (list
+                        headline-node
+                        (unless (string-empty-p caption)
+                          (eabp-text caption 'caption))
+                        (when tags
+                          (apply #'eabp-flow-row
+                                 (mapcar (lambda (tg)
+                                           (eabp-assist-chip (concat "#" tg)))
+                                         tags)))))))
+         (complete-btn
+          (when (and todo (not done))
+            (eabp-icon-button
+             "check"
+             (eabp-action "heading.todo-set"
+                          :args (cons '(state . "DONE") ref)
+                          :dedupe (format "todo-set/%s"
+                                          (or (alist-get 'id ref)
+                                              (alist-get 'headline ref)
+                                              "?")))
+             :content-description "Mark done"))))
     (eabp-card
-     (list (eabp-column
-            (eabp-text (or headline "Untitled") 'body)
-            (if (string-empty-p caption)
-                (eabp-spacer :height 0)
-              (eabp-text caption 'caption))))
+     (list (apply #'eabp-row
+                  (delq nil (list lead
+                                  (eabp-box (list middle) :weight 1)
+                                  complete-btn))))
      :on-tap (eabp-action "heading.tap" :args ref))))
 
 (defun eabp-org-ui--agenda-day-view (items)
@@ -295,7 +429,7 @@ building. SWITCH-TO additionally forces the companion onto that view
         (apply #'eabp-lazy-column cards)
       (eabp-empty-state :icon "event_busy"
                         :title "No agenda items"
-                        :caption "Nothing scheduled for today."))))
+                        :caption "Nothing scheduled for this day."))))
 
 (defun eabp-org-ui--agenda-week-view (items)
   (let ((elements nil)
@@ -312,14 +446,21 @@ building. SWITCH-TO additionally forces the companion onto that view
                         :title "No agenda items"
                         :caption "Nothing scheduled for this week."))))
 
-(defun eabp-org-ui--agenda-month-view (items)
-  (let* ((selected-date (eabp-ui-state "agenda-selected-date"))
-         (selected-date (if (stringp selected-date) selected-date (format-time-string "%Y-%m-%d")))
+(defun eabp-org-ui--agenda-month-view (items anchor)
+  "Month grid for ITEMS, showing the month containing ANCHOR (YYYY-MM-DD)."
+  (let* ((today (format-time-string "%Y-%m-%d"))
+         (month-prefix (substring anchor 0 7))
+         (sel (eabp-ui-state "agenda-selected-date"))
+         ;; A remembered selection only counts inside the shown month;
+         ;; otherwise select today (when visible) or the anchor day.
+         (selected-date (cond
+                         ((and (stringp sel) (string-prefix-p month-prefix sel)) sel)
+                         ((string-prefix-p month-prefix today) today)
+                         (t anchor)))
          (items-by-date (seq-group-by (lambda (it) (alist-get 'date it)) items))
          (selected-items (cdr (assoc selected-date items-by-date)))
-         (decoded-now (decode-time))
-         (month (nth 4 decoded-now))
-         (year (nth 5 decoded-now))
+         (month (string-to-number (substring anchor 5 7)))
+         (year (string-to-number (substring anchor 0 4)))
          (days-in-month (calendar-last-day-of-month month year))
          (first-day-of-month (calendar-day-of-week (list month 1 year)))
          (grid-rows nil)
@@ -363,7 +504,12 @@ building. SWITCH-TO additionally forces the companion onto that view
 
 (defun eabp-org-ui--agenda-body ()
   (let* ((mode (or (eabp-ui-state "agenda-mode") "day"))
-         (start-day (if (equal mode "month") (format-time-string "%Y-%m-01") nil))
+         (is-span (member mode '("day" "week" "month")))
+         (anchor (eabp-org-ui--agenda-anchor))
+         ;; The month span always starts on the 1st so the grid and the
+         ;; extraction agree on the visible range.
+         (start-day (cond ((equal mode "month") (concat (substring anchor 0 7) "-01"))
+                          (is-span anchor)))
          (items (cond
                  ((equal mode "day") (condition-case nil (eabp-org--agenda-items 'day start-day) (error nil)))
                  ((equal mode "week") (condition-case nil (eabp-org--agenda-items 'week start-day) (error nil)))
@@ -375,32 +521,36 @@ building. SWITCH-TO additionally forces the companion onto that view
                                               :selected (equal mode name)
                                               :on-tap (eabp-action "agenda.set-mode" :args `((mode . ,name))))))
                                eabp-org-custom-agendas)))
-    (eabp-column
-     (apply #'eabp-flow-row
-            (eabp-chip "Day"
-                       :selected (equal mode "day")
-                       :on-tap (eabp-action "agenda.set-mode" :args '((mode . "day"))))
-            (eabp-chip "Week"
-                       :selected (equal mode "week")
-                       :on-tap (eabp-action "agenda.set-mode" :args '((mode . "week"))))
-            (eabp-chip "Month"
-                       :selected (equal mode "month")
-                       :on-tap (eabp-action "agenda.set-mode" :args '((mode . "month"))))
-            custom-chips)
-     (eabp-spacer :height 8)
-     (cond
-      ((equal mode "day")
-       (eabp-org-ui--agenda-day-view items))
-      ((equal mode "week")
-       (eabp-org-ui--agenda-week-view items))
-      ((equal mode "month")
-       (eabp-org-ui--agenda-month-view items))
-      (t
-       (if items
-           (apply #'eabp-lazy-column (mapcar #'eabp-org-ui--agenda-card items))
-         (eabp-empty-state :icon "event_busy"
-                           :title "No results"
-                           :caption "This custom agenda found no items.")))))))
+    (apply #'eabp-column
+           (delq nil
+                 (list
+                  (apply #'eabp-flow-row
+                         (eabp-chip "Day"
+                                    :selected (equal mode "day")
+                                    :on-tap (eabp-action "agenda.set-mode" :args '((mode . "day"))))
+                         (eabp-chip "Week"
+                                    :selected (equal mode "week")
+                                    :on-tap (eabp-action "agenda.set-mode" :args '((mode . "week"))))
+                         (eabp-chip "Month"
+                                    :selected (equal mode "month")
+                                    :on-tap (eabp-action "agenda.set-mode" :args '((mode . "month"))))
+                         custom-chips)
+                  (when is-span
+                    (eabp-org-ui--agenda-nav-row mode anchor))
+                  (eabp-spacer :height 4)
+                  (cond
+                   ((equal mode "day")
+                    (eabp-org-ui--agenda-day-view items))
+                   ((equal mode "week")
+                    (eabp-org-ui--agenda-week-view items))
+                   ((equal mode "month")
+                    (eabp-org-ui--agenda-month-view items anchor))
+                   (t
+                    (if items
+                        (apply #'eabp-lazy-column (mapcar #'eabp-org-ui--agenda-card items))
+                      (eabp-empty-state :icon "event_busy"
+                                        :title "No results"
+                                        :caption "This custom agenda found no items.")))))))))
 
 (defun eabp-org-ui--tasks-body ()
   (let* ((items (condition-case nil
@@ -1128,6 +1278,28 @@ Returns non-nil on success; messages and returns nil on failure."
     (let ((mode (alist-get 'mode args)))
       (eabp-ui-state-put "agenda-mode" mode)
       (eabp-org-ui-push-dashboard))))
+
+(eabp-defaction "agenda.nav"
+  ;; Shift the agenda anchor by DIR (±1) in units of the active span.
+  (lambda (args _)
+    (let* ((dir (alist-get 'dir args))
+           (dir (if (numberp dir) dir 1))
+           (mode (or (eabp-ui-state "agenda-mode") "day"))
+           (unit (pcase mode ("week" 'week) ("month" 'month) (_ 'day)))
+           (anchor (eabp-org-ui--agenda-anchor)))
+      ;; Month steps walk 1st → 1st so ±1 never skips a short month.
+      (when (eq unit 'month)
+        (setq anchor (concat (substring anchor 0 7) "-01")))
+      (eabp-ui-state-put "agenda-anchor"
+                         (eabp-org-ui--shift-date anchor dir unit))
+      (eabp-org-ui-push-dashboard))))
+
+(eabp-defaction "agenda.today"
+  ;; Reset the anchor (and any month-grid selection) back to today.
+  (lambda (_ _)
+    (eabp-ui-state-put "agenda-anchor" nil)
+    (eabp-ui-state-put "agenda-selected-date" nil)
+    (eabp-org-ui-push-dashboard)))
 
 (eabp-defaction "agenda.select-date"
   (lambda (args _)

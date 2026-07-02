@@ -29,6 +29,8 @@ object IconMap {
             "keyboard_arrow_down" -> Icons.Outlined.KeyboardArrowDown
             "keyboard_arrow_right" -> Icons.Outlined.KeyboardArrowRight
             "keyboard_arrow_up" -> Icons.Outlined.KeyboardArrowUp
+            "chevron_left" -> Icons.Outlined.ChevronLeft
+            "chevron_right" -> Icons.Outlined.ChevronRight
             "terminal" -> Icons.Outlined.Terminal
             "code" -> Icons.Outlined.Code
             "send" -> Icons.Outlined.Send

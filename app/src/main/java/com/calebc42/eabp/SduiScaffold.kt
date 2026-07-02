@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,6 +79,17 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(topBar.optString("title", ""))
+                                // Offline actions waiting in the Room queue:
+                                // visible so queued taps aren't a mystery.
+                                val queued by EabpRuntime.queuedCount.collectAsState()
+                                if (queued > 0) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        "· $queued queued",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         },
                         navigationIcon = {
@@ -157,11 +170,35 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
                 }
             }
         ) { innerPadding ->
-            SduiNode(
-                node = body,
-                modifier = Modifier.padding(innerPadding),
-                onAction = onAction
-            )
+            val onRefresh = spec.optJSONObject("on_refresh")
+            if (onRefresh != null) {
+                // Pull-to-refresh on tab views. There's no completion signal
+                // from Emacs, so the spinner self-clears after a beat — the
+                // refreshed surface push lands in roughly the same window.
+                var refreshing by remember { mutableStateOf(false) }
+                LaunchedEffect(refreshing) {
+                    if (refreshing) {
+                        delay(1200)
+                        refreshing = false
+                    }
+                }
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = {
+                        refreshing = true
+                        onAction(onRefresh)
+                    },
+                    modifier = Modifier.padding(innerPadding)
+                ) {
+                    SduiNode(node = body, onAction = onAction)
+                }
+            } else {
+                SduiNode(
+                    node = body,
+                    modifier = Modifier.padding(innerPadding),
+                    onAction = onAction
+                )
+            }
         }
     }
 

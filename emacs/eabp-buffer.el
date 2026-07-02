@@ -48,6 +48,19 @@ Only colors that differ from the default face are emitted, so semantic color
 text still uses the device theme's on-surface color."
   :type 'boolean :group 'eabp)
 
+(defcustom eabp-line-numbers nil
+  "Line numbers in the generic buffer view and the phone editor.
+nil shows none; `absolute' shows buffer line numbers; `relative' shows
+distances from point (the current line shows its absolute number,
+vim's hybrid style).  Configurable from the phone's Settings view."
+  :type '(choice (const :tag "Off" nil)
+                 (const :tag "Absolute" absolute)
+                 (const :tag "Relative" relative))
+  :group 'eabp)
+
+(defconst eabp-buffer--line-number-color "#8A8A8A"
+  "Dim gray for line-number spans; legible on light and dark themes.")
+
 (defvar eabp-buffer-refresh-function nil
   "Function called with no args after an `eabp.buffer.act' mutates a buffer.
 The host shell sets this to re-push whatever surface is showing the buffer.
@@ -228,14 +241,34 @@ property run."
         'unfolded))
      (t nil))))
 
+(defun eabp-buffer--line-number-span (ln pt-line fmt)
+  "A dim gutter span for line LN. PT-LINE is point's line, FMT the width format.
+With `eabp-line-numbers' `relative', shows the distance from point —
+except on point's own line, which shows its absolute number undimmed
+\(vim's hybrid style)."
+  (let ((current (and pt-line (= ln pt-line))))
+    (eabp-span (format fmt (if (and (eq eabp-line-numbers 'relative)
+                                    (not current))
+                               (abs (- ln pt-line))
+                             ln))
+               :mono t
+               :color (unless current eabp-buffer--line-number-color))))
+
 (defun eabp-buffer--render-region (beg end buffer-name)
   "Return a list of `rich_text' nodes for [BEG, END) of the current buffer.
 One node per line; blank lines keep their vertical space.  Capped at
-`eabp-buffer-max-lines'."
-  (let ((eabp-buffer--default-fg-hex
-         (eabp-buffer--color-hex (face-attribute 'default :foreground nil t)))
-        (count 0)
-        nodes)
+`eabp-buffer-max-lines'.  When `eabp-line-numbers' is enabled each line
+is prefixed with a dim gutter span carrying its (absolute or relative)
+number — real buffer lines, so folded regions skip numbers faithfully."
+  (let* ((eabp-buffer--default-fg-hex
+          (eabp-buffer--color-hex (face-attribute 'default :foreground nil t)))
+         (pt-line (and eabp-line-numbers (line-number-at-pos (point))))
+         (num-fmt (and eabp-line-numbers
+                       (format "%%%dd " (length (number-to-string
+                                                 (line-number-at-pos end))))))
+         (ln (and eabp-line-numbers (line-number-at-pos beg)))
+         (count 0)
+         nodes)
     (ignore-errors (font-lock-ensure beg end))
     (save-excursion
       (goto-char beg)
@@ -255,8 +288,13 @@ One node per line; blank lines keep their vertical space.  Capped at
               ('unfolded
                (setq spans (append (or spans (list (eabp-span " ")))
                                    (list (eabp-buffer--fold-span bol buffer-name "  ▾"))))))
-            (push (eabp-rich-text (or spans (list (eabp-span " ")))) nodes)
+            (setq spans (or spans (list (eabp-span " "))))
+            (when ln
+              (setq spans (cons (eabp-buffer--line-number-span ln pt-line num-fmt)
+                                spans)))
+            (push (eabp-rich-text spans) nodes)
             (setq count (1+ count))))
+        (when ln (setq ln (1+ ln)))
         (forward-line 1)))
     (nreverse nodes)))
 

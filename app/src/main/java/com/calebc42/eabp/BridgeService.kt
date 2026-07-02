@@ -41,6 +41,9 @@ class BridgeService : Service() {
         // Render anything we already hold BEFORE Emacs connects — principle #1.
         surfaces.renderAllCached()
 
+        // Seed the queued-events badge (off-main: Room forbids main thread).
+        Thread { EabpRuntime.refreshQueuedCount() }.start()
+
         server.start()
     }
 

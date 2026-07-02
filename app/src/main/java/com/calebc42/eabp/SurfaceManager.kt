@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
  * render straight from cache (e.g. at service start), so surfaces appear whether
  * or not Emacs is connected — design principle #1.
  */
-class SurfaceManager(context: Context) {
+class SurfaceManager(private val context: Context) {
     private val store = SurfaceStore(context)
     private val notifications = NotificationRenderer(context)
 
@@ -87,7 +87,8 @@ class SurfaceManager(context: Context) {
         when (record.type) {
             "notification" -> notifications.render(record)
             "app", "dialog" -> { /* Polled/Observed by MainActivity */ }
-            // "widget", "tile" land in their own phases.
+            "widget" -> EabpWidgetProvider.renderAll(context, record)
+            // "tile" lands in its own phase.
             else -> Log.w(TAG, "No renderer for surface type '${record.type}'")
         }
     }

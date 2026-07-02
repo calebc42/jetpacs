@@ -2,25 +2,54 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:background="@android:color/system_neutral1_800"
-    android:padding="8dp"
-    android:gravity="center">
+    android:padding="10dp">
 
-    <Button
-        android:id="@+id/btn_clock_in_last"
-        android:layout_width="0dp"
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:text="Clock In (Last)"
-        android:layout_marginEnd="4dp" />
+        android:text="Agenda"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:textColor="@android:color/white" />
 
-    <Button
-        android:id="@+id/btn_clock_out"
-        android:layout_width="0dp"
+    <TextView
+        android:id="@+id/widget_lines"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:text="Clock Out"
-        android:layout_marginStart="4dp" />
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="6dp"
+        android:text="Nothing scheduled"
+        android:textSize="12sp"
+        android:lineSpacingExtra="3dp"
+        android:maxLines="6"
+        android:ellipsize="end"
+        android:textColor="#C8FFFFFF" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btn_clock_in_last"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Clock In (Last)"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/btn_clock_out"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Clock Out"
+            android:layout_marginStart="4dp" />
+
+    </LinearLayout>
 
 </LinearLayout>

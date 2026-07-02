@@ -33,6 +33,9 @@ object IconMap {
             "chevron_right" -> Icons.Outlined.ChevronRight
             "call_split" -> Icons.Outlined.CallSplit
             "view_list" -> Icons.Outlined.ViewList
+            "archive" -> Icons.Outlined.Archive
+            "drive_file_move" -> Icons.Outlined.DriveFileMove
+            "note_add" -> Icons.Outlined.NoteAdd
             "terminal" -> Icons.Outlined.Terminal
             "code" -> Icons.Outlined.Code
             "send" -> Icons.Outlined.Send

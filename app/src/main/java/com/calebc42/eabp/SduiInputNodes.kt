@@ -1,16 +1,23 @@
 package com.calebc42.eabp
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -32,23 +39,36 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -241,6 +261,37 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
     } else VisualTransformation.None
 
+    // ── Emacs-backed completion (see eabp-complete.el) ───────────
+    // Strictly event-driven and battery-shaped: fires only on a text
+    // change (never a bare cursor move), debounced, only with a
+    // completable token at a collapsed cursor, and straight down the
+    // live socket — never through the broadcast/queue/wake path, so
+    // offline typing sends nothing and persists nothing.
+    val completeEnabled = node.optBoolean("complete", false) && !readOnly
+    var completionReq by remember(id) { mutableStateOf(0) }
+    if (completeEnabled) {
+        var lastCompletedFor by remember(id) { mutableStateOf(specValue) }
+        LaunchedEffect(tfv.text) {
+            if (tfv.text == lastCompletedFor) return@LaunchedEffect
+            delay(COMPLETION_DEBOUNCE_MS)
+            lastCompletedFor = tfv.text
+            val sel = tfv.selection
+            if (sel.start != sel.end) return@LaunchedEffect
+            val prefix = wordPrefixAt(tfv.text, sel.start)
+            if (prefix.length < COMPLETION_MIN_PREFIX) return@LaunchedEffect
+            val req = ++completionReq
+            val text = tfv.text
+            withContext(Dispatchers.IO) {
+                sendCompletionRequest(id, text, sel.start, req)
+            }
+        }
+        // A reply arriving after the editor is gone must not linger for
+        // the next editor composition.
+        DisposableEffect(id) {
+            onDispose { EabpRuntime.completionState.clear() }
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize().imePadding()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -314,24 +365,213 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                 enabled = modified && !readOnly && onSave != null
             ) { Text("Save") }
         }
-        OutlinedTextField(
-            value = tfv,
-            onValueChange = { if (!readOnly) tfv = it },
-            readOnly = readOnly,
-            visualTransformation = highlight,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontFamily = FontFamily.Monospace,
-                lineHeight = 1.4.em
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(8.dp)
-        )
+        val lineNumbers = node.optString("line_numbers")
+        if (lineNumbers.isEmpty()) {
+            OutlinedTextField(
+                value = tfv,
+                onValueChange = { if (!readOnly) tfv = it },
+                readOnly = readOnly,
+                visualTransformation = highlight,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 1.4.em
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(8.dp)
+            )
+        } else {
+            // Gutter mode. BasicTextField exposes onTextLayout, which gives
+            // accurate per-logical-line Y positions even when long lines
+            // soft-wrap; gutter and field share ONE scroll container so they
+            // can never desynchronize.
+            var textLayout by remember(id) { mutableStateOf<TextLayoutResult?>(null) }
+            val scrollState = rememberScrollState()
+            val lineStarts = remember(tfv.text) {
+                buildList {
+                    add(0)
+                    tfv.text.forEachIndexed { i, c -> if (c == '\n') add(i + 1) }
+                }
+            }
+            val cursorLine = lineStarts.indexOfLast { it <= tfv.selection.start }
+                .coerceAtLeast(0)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(scrollState)
+                    .padding(8.dp)
+            ) {
+                EditorGutter(
+                    lineStarts = lineStarts,
+                    cursorLine = cursorLine,
+                    relative = lineNumbers == "relative",
+                    layout = textLayout
+                )
+                BasicTextField(
+                    value = tfv,
+                    onValueChange = { if (!readOnly) tfv = it },
+                    readOnly = readOnly,
+                    visualTransformation = highlight,
+                    onTextLayout = { textLayout = it },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 1.4.em,
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        // Completion suggestion strip — the mobile-native "posframe":
+        // keyboard-adjacent chips, tap to accept (the phone's TAB).
+        // Insertion is applied locally via the toolbar path so each
+        // acceptance is one undo point; no round trip to Emacs.
+        if (completeEnabled) {
+            CompletionStrip(
+                editorId = id,
+                requestId = completionReq,
+                tfv = tfv,
+                onAccept = onToolbarChange
+            )
+        }
         // Org formatting toolbar — sits at the bottom of the editor,
         // just above the soft keyboard (keyboard-adjacent, à la Orgro).
         if (isOrg && !readOnly) {
             OrgEditToolbar(value = tfv, onValueChange = onToolbarChange)
+        }
+    }
+}
+
+// ─── Completion strip ────────────────────────────────────────────────────────
+
+private const val COMPLETION_DEBOUNCE_MS = 300L
+private const val COMPLETION_MIN_PREFIX = 2
+/** Text window shipped with a request: enough context for capf/dabbrev
+ *  without paying full-file serialization on every pause in typing. */
+private const val COMPLETION_WINDOW_BEFORE = 8_000
+private const val COMPLETION_WINDOW_AFTER = 1_000
+
+/** Token characters for the completion prefix; mirrors the Emacs-side
+ *  word/symbol syntax closely enough for lisp-case and snake_case. */
+private fun isTokenChar(c: Char) = c.isLetterOrDigit() || c == '-' || c == '_'
+
+/** The word/symbol token ending at CURSOR, or "" when none. */
+internal fun wordPrefixAt(text: String, cursor: Int): String {
+    val end = cursor.coerceIn(0, text.length)
+    var i = end
+    while (i > 0 && isTokenChar(text[i - 1])) i--
+    return text.substring(i, end)
+}
+
+/**
+ * Fire one `edit.complete` action straight down the live socket.
+ *
+ * Deliberately NOT routed through [ActionReceiver]: completion is ephemeral
+ * and latency-bound, so it must never enter the offline Room queue, never
+ * wake Emacs, and never cost a broadcast round-trip. No handshaked
+ * connection → no request. Call from a background dispatcher (socket write).
+ */
+private fun sendCompletionRequest(file: String, text: String, cursor: Int, requestId: Int) {
+    val conn = EabpRuntime.server?.connection() ?: return
+    if (!conn.helloComplete) return
+    val wStart = (cursor - COMPLETION_WINDOW_BEFORE).coerceAtLeast(0)
+    val wEnd = (cursor + COMPLETION_WINDOW_AFTER).coerceAtMost(text.length)
+    val payload = JSONObject().apply {
+        put("surface", "editor")
+        put("revision_seen", -1)
+        put("action", "edit.complete")
+        put("args", JSONObject().apply {
+            put("file", file)
+            put("request_id", requestId)
+            put("text", text.substring(wStart, wEnd))
+            put("cursor", cursor - wStart)
+        })
+        put("fields", JSONObject.NULL)
+        put("queued_at", JSONObject.NULL)
+    }
+    conn.send(Frame(kind = "event.action", payload = payload))
+}
+
+/**
+ * Horizontal chip row of completion candidates from the latest
+ * `completions.show` payload. Self-validating: renders nothing unless the
+ * payload matches this editor and request AND the completed prefix still
+ * sits immediately before the cursor. Characters typed after the request
+ * narrow the list client-side instead of waiting on another round trip.
+ */
+@Composable
+private fun CompletionStrip(
+    editorId: String,
+    requestId: Int,
+    tfv: TextFieldValue,
+    onAccept: (TextFieldValue) -> Unit,
+) {
+    val payload by EabpRuntime.completionState.current.collectAsState()
+    val p = payload ?: return
+    if (p.optString("id") != editorId || p.optInt("request_id") != requestId) return
+    val candidates = p.optJSONArray("candidates") ?: return
+    if (candidates.length() == 0) return
+    if (tfv.selection.start != tfv.selection.end) return
+    val cursor = tfv.selection.start
+    val base = p.optString("prefix")
+    if (base.isEmpty()) return
+    val word = wordPrefixAt(tfv.text, cursor)
+    // The effective prefix to replace: the current token when the user kept
+    // typing it, the original when capf chose wider boundaries (e.g. paths),
+    // nothing when the token changed — then the reply is stale, show nothing.
+    val effective = when {
+        word.startsWith(base) -> word
+        cursor >= base.length &&
+            tfv.text.regionMatches(cursor - base.length, base, 0, base.length) -> base
+        else -> return
+    }
+    val visible = buildList {
+        for (i in 0 until candidates.length()) {
+            val c = candidates.optJSONObject(i) ?: continue
+            val label = c.optString("label")
+            if (label.startsWith(effective) && label != effective) add(c)
+        }
+    }
+    if (visible.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        visible.forEach { c ->
+            val label = c.optString("label")
+            val annotation = c.optString("annotation")
+            AssistChip(
+                onClick = {
+                    val start = cursor - effective.length
+                    val newText = tfv.text.substring(0, start) + label +
+                        tfv.text.substring(cursor)
+                    onAccept(TextFieldValue(newText, TextRange(start + label.length)))
+                    EabpRuntime.completionState.clear()
+                },
+                label = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            label,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (annotation.isNotEmpty()) {
+                            Text(
+                                " $annotation",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            )
         }
     }
 }
@@ -548,6 +788,46 @@ internal fun SduiTimeButton(node: JSONObject, modifier: Modifier, dispatch: (JSO
             },
             text = { TimePicker(state = pickerState) }
         )
+    }
+}
+
+/**
+ * The editor's line-number gutter: one Canvas whose height matches the text
+ * layout, drawing each logical line's number at that line's real Y position
+ * (so soft-wrapped lines simply leave a numberless gap, like Emacs).
+ * Relative mode counts distance from the cursor line, which shows its
+ * absolute number highlighted — vim's hybrid style.
+ */
+@Composable
+private fun EditorGutter(
+    lineStarts: List<Int>,
+    cursorLine: Int,
+    relative: Boolean,
+    layout: TextLayoutResult?,
+) {
+    val measurer = rememberTextMeasurer()
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    val current = MaterialTheme.colorScheme.primary
+    val style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+    val density = LocalDensity.current
+    val digits = lineStarts.size.toString().length.coerceAtLeast(2)
+    val gutterWidth = ((digits * 8) + 10).dp
+    val heightDp = with(density) { (layout?.size?.height ?: 0).toDp() }
+
+    Canvas(modifier = Modifier.width(gutterWidth).height(heightDp)) {
+        val lr = layout ?: return@Canvas
+        val maxOffset = lr.layoutInput.text.length
+        for (i in lineStarts.indices) {
+            val off = lineStarts[i].coerceAtMost(maxOffset)
+            val top = lr.getLineTop(lr.getLineForOffset(off))
+            val num = if (relative && i != cursorLine) kotlin.math.abs(i - cursorLine) else i + 1
+            val measured = measurer.measure(num.toString(), style)
+            drawText(
+                measured,
+                color = if (i == cursorLine) current else dim,
+                topLeft = Offset(size.width - measured.size.width - 6.dp.toPx(), top)
+            )
+        }
     }
 }
 

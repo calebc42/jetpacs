@@ -205,6 +205,14 @@ and forwarded to the companion as dialogs."
                 ;; Placeholder: jump to the running task. Swap for a real
                 ;; task-picker (e.g. org-clock-in to a recent task) when ready.
                 (lambda (&rest _) (org-clock-goto)))
+(eabp-defaction "org.clock.in-last"
+                ;; The home-screen widget's "Clock In (Last)" button — it was
+                ;; emitting this action with no handler registered.
+                (lambda (&rest _)
+                  (condition-case err
+                      (org-clock-in-last)
+                    (error (message "EABP clock-in-last failed: %s"
+                                    (error-message-string err))))))
 
 (add-hook 'org-clock-in-hook  #'eabp-clock-in-notification)
 (add-hook 'org-clock-out-hook #'eabp-clock-out-notification)

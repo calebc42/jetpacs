@@ -27,6 +27,7 @@
                 "eabp-keymap.el"
                 "eabp-magit.el"
                 "eabp-emacs-ui.el"
+                "eabp-complete.el"
                 "eabp-files.el"
                 "eabp-org-ui.el")))
   (with-temp-file out

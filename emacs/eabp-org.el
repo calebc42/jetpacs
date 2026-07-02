@@ -359,14 +359,21 @@ on the phone would hang behind the bridge."
     ;; ones like %U %t %i %a for org to expand non-interactively.
     (replace-regexp-in-string "%\\^.?" "" tmpl t t)))
 
-(defun eabp-org--do-capture (template-key values)
-  "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input)."
+(defun eabp-org--do-capture (template-key values &optional extra-body)
+  "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input).
+EXTRA-BODY, when non-empty, is appended below the filled template —
+the carrier for text shared from another app via the share sheet."
   (let ((entry (assoc template-key org-capture-templates)))
     (when entry
       (let* ((tmpl (nth 4 entry))
              (filled (if (stringp tmpl)
                          (eabp-org--fill-template tmpl values)
                        tmpl))
+             (filled (if (and (stringp filled)
+                              (stringp extra-body)
+                              (not (string-empty-p (string-trim extra-body))))
+                         (concat filled "\n" (string-trim extra-body))
+                       filled))
              ;; Shallow-copy the entry, swap in the filled template, and force
              ;; :immediate-finish so the capture buffer never waits for the
              ;; C-c C-c a phone user can't press.
@@ -386,6 +393,47 @@ on the phone would hang behind the bridge."
           ;; fires even while a synchronous read is waiting.
           (with-timeout (30 (message "eabp: capture timed out (a prompt was left unanswered)"))
             (org-capture)))))))
+
+(defun eabp-org--item-hm (time)
+  "Normalize an agenda item's raw `time' property to \"HH:MM\", or nil.
+The property comes straight from the agenda's time grid and looks like
+\" 9:15......\" or \"14:00-15:00\" — leading space, no zero padding,
+grid filler dots."
+  (when (stringp time)
+    (let ((s (string-trim time)))
+      (when (string-match "\\`\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)" s)
+        (format "%02d:%s"
+                (string-to-number (match-string 1 s))
+                (match-string 2 s))))))
+
+(defun eabp-org--upcoming-reminders (&optional horizon-hours)
+  "Timed agenda items within HORIZON-HOURS (default 24) as reminder specs.
+Only items with a clock time qualify (a date alone isn't an alarm).
+Each spec is ((id . STR) (at_ms . MS) (title . STR) (body . STR)),
+ready for the companion's `reminders.set' frame."
+  (let* ((horizon (* (or horizon-hours 24) 3600))
+         (now (float-time))
+         (items (append (eabp-org--agenda-items 'day nil)
+                        (eabp-org--agenda-items
+                         'day (format-time-string "%Y-%m-%d"
+                                                  (time-add nil 86400)))))
+         reminders)
+    (dolist (it items)
+      (let ((date (alist-get 'date it))
+            (hm (eabp-org--item-hm (alist-get 'time it)))
+            (headline (alist-get 'headline it))
+            (type (alist-get 'type it)))
+        (when (and (stringp date) hm)
+          (let ((at (float-time (org-time-string-to-time
+                                 (concat date " " hm)))))
+            (when (and (> at now) (< (- at now) horizon))
+              (push `((id . ,(format "%s/%s" date (or headline "?")))
+                      (at_ms . ,(truncate (* at 1000)))
+                      (title . ,(or headline "Org reminder"))
+                      (body . ,(concat hm (when (stringp type)
+                                            (concat " · " type)))))
+                    reminders))))))
+    (nreverse reminders)))
 
 (defun eabp-org--clock-status ()
   "Current clock status."

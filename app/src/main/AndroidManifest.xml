@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Exact-alarm reminders for timed org items (user-grantable on 12+;
+         the handshake already reports canScheduleExactAlarms to Emacs). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -26,6 +30,12 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Share sheet → org capture. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 
@@ -46,6 +56,11 @@
         <!-- Internal only: notification action PendingIntents target it directly. -->
         <receiver
             android:name=".ActionReceiver"
+            android:exported="false" />
+
+        <!-- Fires reminder alarms scheduled by ReminderScheduler. -->
+        <receiver
+            android:name=".ReminderReceiver"
             android:exported="false" />
 
         <receiver

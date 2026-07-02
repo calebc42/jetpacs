@@ -273,6 +273,38 @@ internal fun SduiMenu(node: JSONObject, modifier: Modifier, dispatch: (JSONObjec
     }
 }
 
+/**
+ * Resolve a spec color attribute: a Material theme token name (adapts to
+ * light/dark) or a "#RRGGBB"/"#AARRGGBB" hex literal. Color.Unspecified
+ * when empty or unresolvable — callers supply their own default.
+ */
+@Composable
+internal fun resolveColor(attr: String): Color {
+    if (attr.isEmpty()) return Color.Unspecified
+    val cs = MaterialTheme.colorScheme
+    return when (attr) {
+        "primary" -> cs.primary
+        "on_primary" -> cs.onPrimary
+        "primary_container" -> cs.primaryContainer
+        "on_primary_container" -> cs.onPrimaryContainer
+        "secondary" -> cs.secondary
+        "secondary_container" -> cs.secondaryContainer
+        "tertiary" -> cs.tertiary
+        "tertiary_container" -> cs.tertiaryContainer
+        "error" -> cs.error
+        "error_container" -> cs.errorContainer
+        "surface" -> cs.surface
+        "surface_variant" -> cs.surfaceVariant
+        "surface_container" -> cs.surfaceContainer
+        "surface_container_low" -> cs.surfaceContainerLow
+        "surface_container_high" -> cs.surfaceContainerHigh
+        "on_surface" -> cs.onSurface
+        "on_surface_variant" -> cs.onSurfaceVariant
+        "outline" -> cs.outline
+        else -> parseHexColor(attr)
+    }
+}
+
 /** Parse "#RRGGBB" or "#AARRGGBB" to a Color; Color.Unspecified on failure. */
 internal fun parseHexColor(hex: String): Color {
     val h = hex.removePrefix("#")

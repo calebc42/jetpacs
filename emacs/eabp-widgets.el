@@ -103,14 +103,19 @@ The right container for chip/tag rows, which overflow a plain `eabp-row'."
               'weight weight
               'on_tap on-tap))
 
-(cl-defun eabp-surface (children &key color shape elevation padding)
-  "A Surface wrapping CHILDREN."
+(cl-defun eabp-surface (children &key color shape elevation padding fill)
+  "A Surface wrapping CHILDREN.
+COLOR is a hex string or a theme token (\"primary\", \"surface_container\",
+\"primary_container\", …) that adapts to the device's light/dark theme.
+SHAPE is \"rounded\", \"rounded_small\", or \"circle\".  FILL stretches the
+surface to full width (e.g. zebra rows in a list)."
   (eabp--node "surface"
               'children (vconcat children)
               'color color
               'shape shape
               'elevation elevation
-              'padding padding))
+              'padding padding
+              'fill (and fill t)))
 
 (defun eabp-lazy-column (&rest children)
   "A scrollable column of CHILDREN."
@@ -353,31 +358,39 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
 
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
-(cl-defun eabp-editor (id value &key on-save read-only syntax)
+(cl-defun eabp-editor (id value &key on-save read-only syntax line-numbers complete)
   "A full-height plain-text editor node.
 ID identifies the editor (its unsaved state lives companion-side under
 this key). VALUE seeds the buffer. ON-SAVE is dispatched with the full
 text injected into args as `value'. READ-ONLY disables editing/saving.
 SYNTAX (\"elisp\", \"org\") forces highlighting; when omitted the client
-infers it from the file extension in ID."
+infers it from the file extension in ID.  LINE-NUMBERS is \"absolute\"
+or \"relative\" (relative to the cursor) for a gutter, nil for none.
+COMPLETE enables Emacs-backed completion: the client sends debounced
+`edit.complete' actions while typing and renders the returned candidates
+as a suggestion strip (see eabp-complete.el)."
   (eabp--node "editor"
               'id id
               'value value
               'on_save on-save
               'read_only (and read-only t)
-              'syntax syntax))
+              'syntax syntax
+              'line_numbers line-numbers
+              'complete (and complete t)))
 
-(cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer)
+(cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer on-refresh)
   "A full-screen scaffold wrapper.
 DRAWER (see `eabp-drawer') adds a hamburger navigation drawer whose
-open/close state is handled entirely companion-side."
+open/close state is handled entirely companion-side.  ON-REFRESH, when
+given, enables pull-to-refresh on the body, dispatching that action."
   (eabp--node "scaffold"
               'top_bar top-bar
               'fab fab
               'body body
               'bottom_bar bottom-bar
               'snackbar snackbar
-              'drawer drawer))
+              'drawer drawer
+              'on_refresh on-refresh))
 
 (cl-defun eabp-drawer (items &key header)
   "A navigation drawer spec. ITEMS is a list from `eabp-drawer-item'."

@@ -28,6 +28,7 @@
 (require 'eabp-minibuffer)
 (require 'eabp-org-ui)
 (require 'eabp-emacs-ui)
+(require 'eabp-complete)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,59 @@
             (should (string-search "2% fat" content))
             (should-not (string-search "%^{" content))))
       (delete-file file))))
+
+(ert-deftest eabp-capture-shared-body ()
+  "Text shared from another app is appended below the filled template."
+  (let* ((file (make-temp-file "eabp-share-test" nil ".org"))
+         (org-capture-templates
+          `(("t" "Task" entry (file ,file) "* TODO %^{Headline}\n%?"))))
+    (unwind-protect
+        (progn
+          (eabp-org--do-capture "t" '(("Headline" . "Read article"))
+                                "https://example.com/post\nInteresting bit.")
+          (let ((content (with-current-buffer (find-file-noselect file)
+                           (buffer-string))))
+            (should (string-search "* TODO Read article" content))
+            (should (string-search "https://example.com/post" content))
+            (should (string-search "Interesting bit." content))))
+      (delete-file file))))
+
+;; ─── Reminders ──────────────────────────────────────────────────────────────
+
+(ert-deftest eabp-upcoming-reminders ()
+  "Timed items within the horizon become reminder specs; untimed don't."
+  (let* ((file (make-temp-file "eabp-remind" nil ".org"))
+         (tomorrow (eabp-org-ui--shift-date (format-time-string "%Y-%m-%d")
+                                            1 'day)))
+    (with-temp-file file
+      (insert (format "* TODO Standup\nSCHEDULED: <%s 09:15>\n" tomorrow)
+              (format "* TODO Untimed thing\nSCHEDULED: <%s>\n" tomorrow)))
+    (unwind-protect
+        (let ((org-agenda-files (list file)))
+          (eabp-org-cache-invalidate)
+          (let ((rems (eabp-org--upcoming-reminders 48)))
+            (should (= (length rems) 1))
+            (let ((r (car rems)))
+              (should (equal (alist-get 'title r) "Standup"))
+              (should (> (alist-get 'at_ms r)
+                         (truncate (* 1000 (float-time)))))
+              (should (string-prefix-p "09:15" (alist-get 'body r))))))
+      (delete-file file))))
+
+;; ─── Widget lines ───────────────────────────────────────────────────────────
+
+(ert-deftest eabp-widget-lines ()
+  "Widget lines are compact \"HH:MM  Headline\" strings, capped at 6."
+  (cl-letf (((symbol-function 'eabp-org--agenda-items)
+             (lambda (&rest _)
+               (append
+                (list '((headline . "Standup") (time . "09:15"))
+                      '((headline . "No time")))
+                (make-list 8 '((headline . "Filler") (time . "10:00")))))))
+    (let ((lines (eabp-org-ui--widget-lines)))
+      (should (= (length lines) 6))
+      (should (equal (nth 0 lines) "09:15  Standup"))
+      (should (equal (nth 1 lines) "No time")))))
 
 ;; ─── Extraction cache ───────────────────────────────────────────────────────
 
@@ -210,6 +264,82 @@
   (with-temp-buffer
     (should-not (eabp-keymap--tier1-builder (current-buffer)))))
 
+;; ─── Buffer-view line numbers ───────────────────────────────────────────────
+
+(require 'eabp-buffer)
+
+(defun eabp-tests--first-span-text (node)
+  (alist-get 'text (aref (alist-get 'spans node) 0)))
+
+(ert-deftest eabp-buffer-line-numbers ()
+  "Absolute and relative (hybrid) gutter spans on the Tier 0 renderer."
+  (with-temp-buffer
+    (insert "alpha\nbeta\ngamma\n")
+    (goto-char (point-min))
+    (forward-line 1)                    ; point on line 2 ("beta")
+    (let ((eabp-line-numbers 'absolute))
+      (let ((nodes (eabp-buffer-render (current-buffer))))
+        (should (equal (eabp-tests--first-span-text (nth 0 nodes)) "1 "))
+        (should (equal (eabp-tests--first-span-text (nth 2 nodes)) "3 "))))
+    (let ((eabp-line-numbers 'relative))
+      (let ((nodes (eabp-buffer-render (current-buffer))))
+        ;; distance 1 above point; point's line shows its absolute number
+        (should (equal (eabp-tests--first-span-text (nth 0 nodes)) "1 "))
+        (should (equal (eabp-tests--first-span-text (nth 1 nodes)) "2 "))
+        (should (equal (eabp-tests--first-span-text (nth 2 nodes)) "1 "))))
+    (let ((eabp-line-numbers nil))
+      (let ((nodes (eabp-buffer-render (current-buffer))))
+        (should (equal (eabp-tests--first-span-text (nth 0 nodes)) "alpha"))))))
+
+;; ─── Messages view ──────────────────────────────────────────────────────────
+
+(ert-deftest eabp-messages-zebra ()
+  "Messages rows alternate plain/striped and stay selectable."
+  (let ((plain (eabp-emacs-ui--messages-line "one" nil))
+        (striped (eabp-emacs-ui--messages-line "two" t)))
+    (should (equal (alist-get 't plain) "text"))
+    (should (alist-get 'selectable plain))
+    (should (equal (alist-get 't striped) "surface"))
+    (should (equal (alist-get 'color striped) "surface_container"))
+    (should (alist-get 'fill striped))
+    (should (stringp (json-serialize (eabp-emacs-ui--messages-body)
+                                     :null-object :null
+                                     :false-object :false)))))
+
+;; ─── Detail-view properties editor ──────────────────────────────────────────
+
+(ert-deftest eabp-detail-properties ()
+  "Property rows: colon-free editable keys, read-only ID, empty-value adds.
+Also pins the org behavior the + Add flow depends on: a property set to
+the empty string must still be returned by `org-entry-properties'."
+  ;; Row shapes.
+  (let* ((ref '((file . "/tmp/x.org") (pos . 1) (headline . "T")))
+         (row (eabp-org-ui--property-row "EFFORT" "2h" ref 1))
+         (id-row (eabp-org-ui--property-row "ID" "abc-123" ref 1)))
+    (should (equal (alist-get 't row) "row"))
+    ;; Key column: plain label, no colons.
+    (let* ((key-box (aref (alist-get 'children row) 0))
+           (key-text (aref (alist-get 'children key-box) 0)))
+      (should (equal (alist-get 'text key-text) "EFFORT")))
+    ;; Value column: an input for normal keys, read-only text for ID.
+    (let* ((val-box (aref (alist-get 'children row) 1))
+           (input (aref (alist-get 'children val-box) 0)))
+      (should (equal (alist-get 't input) "text_input"))
+      (should (equal (alist-get 'value input) "2h")))
+    (let* ((val-box (aref (alist-get 'children id-row) 1))
+           (node (aref (alist-get 'children val-box) 0)))
+      (should (equal (alist-get 't node) "text"))))
+  ;; Empty-valued properties survive extraction (the + Add contract).
+  (let ((file (make-temp-file "eabp-props" nil ".org")))
+    (unwind-protect
+        (with-current-buffer (find-file-noselect file)
+          (insert "* Task\n")
+          (goto-char (point-min))
+          (org-mode)
+          (org-set-property "NEWKEY" "")
+          (should (assoc "NEWKEY" (org-entry-properties nil 'standard))))
+      (delete-file file))))
+
 ;; ─── Transport ──────────────────────────────────────────────────────────────
 
 (ert-deftest eabp-request-no-leak ()
@@ -245,6 +375,54 @@
       (eabp-emacs-ui--message-advice "EABP: internal chatter")
       (should (= (length sent) 1)))))
 
+;; ─── Completion bridge ──────────────────────────────────────────────────────
+
+(ert-deftest eabp-complete-elisp-capf ()
+  "The elisp shadow buffer completes symbols from the live obarray."
+  (let* ((text "(defun f () (buffer-substring-no")
+         (result (eabp-complete-in-text "test.el" text (length text))))
+    (should result)
+    (should (equal (car result) "buffer-substring-no"))
+    (should (cl-find "buffer-substring-no-properties" (cdr result)
+                     :key (lambda (c) (alist-get 'label c))
+                     :test #'equal))))
+
+(ert-deftest eabp-complete-word-fallback ()
+  "Modes with no useful capf fall back to same-buffer word completion."
+  (let* ((text "alphabet soup is alphabetical\nalp")
+         (result (eabp-complete-in-text "notes.txt" text (length text))))
+    (should result)
+    (should (equal (car result) "alp"))
+    (let ((labels (mapcar (lambda (c) (alist-get 'label c)) (cdr result))))
+      (should (member "alphabet" labels))
+      (should (member "alphabetical" labels)))))
+
+(ert-deftest eabp-complete-nothing-without-token ()
+  "No token before the cursor → nil, so the phone strip stays hidden."
+  (should-not (eabp-complete-in-text "notes.txt" "hello world " 12)))
+
+(ert-deftest eabp-complete-candidates-capped ()
+  "Candidate lists respect `eabp-complete-max-candidates'."
+  (let* ((eabp-complete-max-candidates 3)
+         ;; "def" prefixes hundreds of elisp symbols (defun, defvar, ...).
+         (text "(def")
+         (result (eabp-complete-in-text "cap.el" text (length text))))
+    (should result)
+    (should (<= (length (cdr result)) 3))))
+
+(ert-deftest eabp-complete-shadow-buffer-reused ()
+  "One hidden shadow buffer per file, reused across requests."
+  (eabp-complete-in-text "reuse.el" "(car" 4)
+  (let ((count (cl-count-if
+                (lambda (b) (string-search "eabp-complete: reuse.el"
+                                           (buffer-name b)))
+                (buffer-list))))
+    (eabp-complete-in-text "reuse.el" "(cdr" 4)
+    (should (= count (cl-count-if
+                      (lambda (b) (string-search "eabp-complete: reuse.el"
+                                                 (buffer-name b)))
+                      (buffer-list))))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst eabp-tests--golden-file
@@ -277,6 +455,7 @@
      (eabp-column leaf)
      (eabp-box (list leaf) :alignment "center" :padding 2 :weight 1 :on-tap act)
      (eabp-surface (list leaf) :color "#111" :shape "rounded" :elevation 2 :padding 3)
+     (eabp-surface (list leaf) :color "surface_container" :shape "rounded_small" :fill t)
      (eabp-lazy-column leaf leaf)
      (eabp-spacer :height 4 :width 2 :weight 1)
      (eabp-divider)
@@ -309,14 +488,16 @@
                        :on-tap act :action-label "al" :padding 1)
      (eabp-date-stamp :date "2026-07-02" :time "10:00" :padding 1)
      (eabp-date-stamp :day 2 :month "Jul" :month-index 7 :year 2026)
-     (eabp-editor "f.org" "content" :on-save act :read-only t :syntax "org")
+     (eabp-editor "f.org" "content" :on-save act :read-only t :syntax "org"
+                  :line-numbers "absolute" :complete t)
      (eabp-drawer (list (eabp-drawer-item "i" "l" act :selected t)) :header "h")
      (eabp-top-bar "t" :nav-icon "menu" :nav-action act :actions (list leaf))
      (eabp-fab "add" :label "l" :on-tap act :extended t)
      (eabp-bottom-bar (list (eabp-nav-item "i" "l" act :selected t)))
      (eabp-scaffold :top-bar (eabp-top-bar "t") :fab (eabp-fab "add")
                     :body leaf :bottom-bar (eabp-bottom-bar nil)
-                    :snackbar "s" :drawer (eabp-drawer nil :header "h")))))
+                    :snackbar "s" :drawer (eabp-drawer nil :header "h")
+                    :on-refresh act))))
 
 (defun eabp-tests--widget-lines ()
   (let ((i -1))

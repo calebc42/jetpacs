@@ -16,6 +16,7 @@
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
 (require 'eabp-buffer) ; Tier 0 renderer + the major-mode→skin registry
+(require 'eabp-complete) ; capf bridge: the editor's `complete' flag
 (require 'eabp-org)   ; for eabp-org--inhibit-save-refresh / cache invalidation
 (require 'eabp-org-reader)
 (require 'dired)
@@ -214,6 +215,9 @@ plain-text editor."
                       'caption))
          (eabp-editor file content
                       :read-only read-only
+                      :line-numbers (and eabp-line-numbers
+                                         (symbol-name eabp-line-numbers))
+                      :complete (and eabp-complete-enabled (not read-only))
                       :on-save (eabp-action "files.save"
                                             :args `((file . ,file))
                                             :when-offline "queue"

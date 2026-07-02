@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,6 +31,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -40,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
@@ -115,7 +120,24 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             }
         }
         "surface" -> {
-            Surface(modifier = baseModifier) {
+            // color (theme token or hex), shape, elevation, and fill were
+            // silently ignored for a long time — the month grid's selected-day
+            // highlight never rendered because of it.
+            val color = resolveColor(node.optString("color"))
+                .takeIf { it != Color.Unspecified } ?: MaterialTheme.colorScheme.surface
+            val shape = when (node.optString("shape")) {
+                "rounded" -> RoundedCornerShape(8.dp)
+                "rounded_small" -> RoundedCornerShape(4.dp)
+                "circle" -> CircleShape
+                else -> RectangleShape
+            }
+            val fillMod = if (node.optBoolean("fill")) Modifier.fillMaxWidth() else Modifier
+            Surface(
+                modifier = baseModifier.then(fillMod),
+                color = color,
+                shape = shape,
+                tonalElevation = node.optInt("elevation", 0).dp
+            ) {
                 RenderChildren(node.optJSONArray("children"), surfaceId, revision, dispatch)
             }
         }
@@ -215,8 +237,21 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             }
         }
         "icon" -> {
+            // size and color were ignored too — every icon drew at 24dp in
+            // the ambient tint (agenda type icons, month-grid dots, reader
+            // checkboxes all specify sizes/colors).
             val iconName = node.optString("name", "help_outline")
-            Icon(IconMap.get(iconName), contentDescription = null, modifier = baseModifier)
+            val size = node.optInt("size", 0)
+            val tint = resolveColor(node.optString("color"))
+                .takeIf { it != Color.Unspecified } ?: LocalContentColor.current
+            Icon(
+                IconMap.get(iconName),
+                contentDescription = null,
+                tint = tint,
+                modifier = baseModifier.then(
+                    if (size > 0) Modifier.size(size.dp) else Modifier
+                )
+            )
         }
         "chip" -> {
             val label = node.optString("label")

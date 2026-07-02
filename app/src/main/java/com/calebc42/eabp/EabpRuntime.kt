@@ -27,6 +27,7 @@ object EabpRuntime {
     var database: EabpDatabase? = null
     val dialogState = EabpDialogState()
     val pieMenuState = EabpPieMenuState()
+    val completionState = EabpCompletionState()
 
     /**
      * Whether a handshaked Emacs connection is currently live. Driven by the
@@ -39,6 +40,17 @@ object EabpRuntime {
 
     fun setConnected(value: Boolean) {
         _connected.value = value
+    }
+
+    /**
+     * Number of offline events waiting in the Room queue, for the top-bar
+     * badge. Refresh from a background thread only (Room forbids main).
+     */
+    private val _queuedCount = MutableStateFlow(0)
+    val queuedCount: StateFlow<Int> = _queuedCount.asStateFlow()
+
+    fun refreshQueuedCount() {
+        _queuedCount.value = database?.eventDao()?.count() ?: 0
     }
 
     fun initialize(context: Context) {

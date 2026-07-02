@@ -120,6 +120,22 @@ class EabpConnection(
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 
+            // Completion candidates for the editor's suggestion strip.
+            // Ephemeral by design: not ACKed into the surface store, no
+            // revision, no persistence — a stale one is just ignored.
+            Kind.COMPLETIONS_SHOW -> {
+                EabpRuntime.completionState.show(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+
+            // Upcoming timed org items → exact alarms. Each set replaces the
+            // previous one, so stale reminders can't fire.
+            "reminders.set" -> {
+                ReminderScheduler.replaceAll(
+                    context, frame.payload.optJSONArray("reminders"))
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+
             // Echo-area messages mirrored from Emacs (throttled Emacs-side).
             // Toast genuinely needs the main looper — unlike the StateFlow
             // paths above, it constructs platform UI.
@@ -152,6 +168,7 @@ class EabpConnection(
 
         // Already on the "eabp-conn" background thread: safe to query Room.
         val dbCount = EabpRuntime.database?.eventDao()?.count() ?: 0
+        EabpRuntime.refreshQueuedCount()
 
         val welcome = Frame(
             kind = Kind.SESSION_WELCOME,
@@ -244,6 +261,7 @@ class EabpConnection(
 
         send(Frame(kind = "queue.drained", replyTo = requestFrame.id,
             payload = JSONObject().put("delivered", delivered).put("expired", expired)))
+        EabpRuntime.refreshQueuedCount()
     }
 
     /** Shape-preserving payload; reconstructs legacy v1 rows. */

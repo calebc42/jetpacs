@@ -94,11 +94,30 @@ bespoke translator."
           (mapconcat #'identity tail "\n")))
     "No *Messages* buffer."))
 
+(defun eabp-emacs-ui--messages-line (line stripe)
+  "One zebra row for the Messages view.
+LINE is selectable (long-press to copy); STRIPE non-nil tints the row
+with a theme-adaptive container color so lines read as distinct entries."
+  (let ((text (eabp-text (if (string-empty-p line) " " line)
+                         'mono nil nil t nil 4)))
+    (if stripe
+        (eabp-surface (list text)
+                      :color "surface_container"
+                      :shape "rounded_small"
+                      :fill t)
+      text)))
+
 (defun eabp-emacs-ui--messages-body ()
-  "Build the Messages view: selectable monospace tail plus a copy-all button.
-The text node is selectable (long-press to select/copy on the device);
-Copy all uses the companion-local clipboard builtin."
-  (let ((content (eabp-emacs-ui--messages-tail)))
+  "Build the Messages view: zebra-striped, selectable lines + copy all.
+Each *Messages* line is its own row (alternate rows tinted) so entries
+are visually delineated; every row is long-press selectable, and Copy
+all uses the companion-local clipboard builtin."
+  (let* ((content (eabp-emacs-ui--messages-tail))
+         (i 0)
+         (rows (mapcar (lambda (line)
+                         (prog1 (eabp-emacs-ui--messages-line line (cl-oddp i))
+                           (setq i (1+ i))))
+                       (split-string content "\n"))))
     (eabp-column
      (eabp-row
       (eabp-text (format "Last %d lines" eabp-emacs-ui--messages-line-count)
@@ -106,8 +125,7 @@ Copy all uses the companion-local clipboard builtin."
       (eabp-spacer :weight 1)
       (eabp-button "Copy all" (eabp-clipboard-action content) :variant "text"))
      (eabp-box
-      (list (eabp-lazy-column
-             (eabp-card (list (eabp-text content 'mono nil nil t)))))
+      (list (apply #'eabp-lazy-column rows))
       :weight 1))))
 
 ;; ─── *Messages* → device toasts ──────────────────────────────────────────────

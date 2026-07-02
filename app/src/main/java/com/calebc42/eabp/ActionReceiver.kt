@@ -67,6 +67,7 @@ class ActionReceiver : BroadcastReceiver() {
                     dedupeKey = "state/$id",
                 )
             )
+            EabpRuntime.refreshQueuedCount()
             Log.d(TAG, "Queued state.changed for '$id'")
         }
     }
@@ -108,6 +109,7 @@ class ActionReceiver : BroadcastReceiver() {
                         ttlS = if (action.has("ttl_s")) action.optLong("ttl_s") else null,
                     )
                 )
+                EabpRuntime.refreshQueuedCount()
                 Log.d(TAG, "Queued offline action '$actionName' (policy=$policy)")
                 if (policy == "wake") EmacsWaker.requestWake(context)
             }

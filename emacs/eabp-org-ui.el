@@ -90,9 +90,48 @@ building. SWITCH-TO additionally forces the companion onto that view
          ;; Force the companion onto a view only when this push *is* a
          ;; navigation (tab arg or detail open) — background refreshes must
          ;; not yank the user off whatever they're looking at.
-         target))
+         target)
+        ;; Piggyback the cheap companions of a dashboard push: upcoming
+        ;; reminder alarms and the home-screen widget. Both are memo-guarded
+        ;; so unchanged data sends nothing.
+        (eabp-org-ui--sync-reminders)
+        (eabp-org-ui--push-widget))
     (error
      (message "EABP dashboard push failed: %s" (error-message-string err)))))
+
+(defvar eabp-org-ui--last-reminders 'unset
+  "Reminder list from the previous sync, to suppress identical sends.")
+
+(defun eabp-org-ui--sync-reminders ()
+  "Send upcoming timed items to the companion as exact-alarm reminders."
+  (let ((rems (condition-case nil (eabp-org--upcoming-reminders) (error nil))))
+    (unless (equal rems eabp-org-ui--last-reminders)
+      (setq eabp-org-ui--last-reminders rems)
+      (eabp-send "reminders.set" `((reminders . ,(vconcat rems)))))))
+
+(defvar eabp-org-ui--last-widget 'unset
+  "Widget lines from the previous push, to suppress identical pushes.")
+
+(defun eabp-org-ui--widget-lines ()
+  "Today's agenda as short \"HH:MM  Headline\" strings for the widget."
+  (mapcar (lambda (it)
+            (let ((hm (eabp-org--item-hm (alist-get 'time it))))
+              (concat (if hm (concat hm "  ") "")
+                      (or (alist-get 'headline it) ""))))
+          (seq-take (condition-case nil
+                        (eabp-org--agenda-items 'day nil)
+                      (error nil))
+                    6)))
+
+(defun eabp-org-ui--push-widget ()
+  "Push the `widget:agenda' surface backing the home-screen widget."
+  (let ((lines (eabp-org-ui--widget-lines)))
+    (unless (equal lines eabp-org-ui--last-widget)
+      (setq eabp-org-ui--last-widget lines)
+      (eabp-surface-push
+       "widget:agenda"
+       `((title . ,(format-time-string "Agenda · %a %b %d"))
+         (lines . ,(vconcat lines)))))))
 
 (defun eabp-org-ui--active-view ()
   "Name of the view that should be considered active for this push."
@@ -154,6 +193,24 @@ building. SWITCH-TO additionally forces the companion onto that view
                                   :nav-action (eabp-org-ui--switch-view
                                                eabp-org-ui--current-tab)
                                   :actions (list
+                                            (eabp-icon-button
+                                             "note_add"
+                                             (eabp-action "heading.add-note"
+                                                          :args eabp-org-ui--detail-ref
+                                                          :when-offline "drop")
+                                             :content-description "Add note")
+                                            (eabp-icon-button
+                                             "drive_file_move"
+                                             (eabp-action "heading.refile"
+                                                          :args eabp-org-ui--detail-ref
+                                                          :when-offline "drop")
+                                             :content-description "Refile")
+                                            (eabp-icon-button
+                                             "archive"
+                                             (eabp-action "heading.archive"
+                                                          :args eabp-org-ui--detail-ref
+                                                          :when-offline "drop")
+                                             :content-description "Archive")
                                             (eabp-icon-button
                                              (if eabp-org-ui--detail-read-mode "edit" "visibility")
                                              (eabp-action "detail.toggle-read")
@@ -266,7 +323,14 @@ building. SWITCH-TO additionally forces the companion onto that view
     `((children . ,(vector (eabp-scaffold :top-bar top-bar :body body
                                           :fab fab :bottom-bar bottom-bar
                                           :drawer drawer
-                                          :snackbar snackbar))))))
+                                          :snackbar snackbar
+                                          ;; Tab views support pull-to-refresh;
+                                          ;; navigation/detail views don't (a
+                                          ;; stray pull mustn't rebuild them).
+                                          :on-refresh
+                                          (when is-tab
+                                            (eabp-action "dashboard.refresh"
+                                                         :when-offline "drop"))))))))
 
 (defun eabp-org-ui--drawer ()
   "The navigation drawer shown on tab views."
@@ -383,7 +447,9 @@ through when done), a todo/type/file caption, tag chips when present,
 and a quick complete button for open todos."
   (let* ((headline (or (alist-get 'headline it) "Untitled"))
          (todo (alist-get 'todo it))
-         (time (alist-get 'time it))
+         ;; Normalized "HH:MM" — the raw property is a time-grid string
+         ;; like " 9:15......".
+         (time (eabp-org--item-hm (alist-get 'time it)))
          (type (alist-get 'type it))
          (file (alist-get 'file it))
          (priority (alist-get 'priority it))
@@ -730,8 +796,18 @@ and a quick complete button for open todos."
                                     :value available-tags
                                     :multi-select t
                                     :allow-add t
-                                    :on-change (eabp-action "settings.tags"))))
+                                    :on-change (eabp-action "settings.tags")))
+         (linenum-value (pcase eabp-line-numbers
+                          ('absolute "Absolute")
+                          ('relative "Relative")
+                          (_ "Off"))))
     (eabp-column
+     (eabp-section-header "Display")
+     (eabp-text "Line numbers in the buffer view and editor." 'caption)
+     (eabp-enum-list "settings-linenum" '("Off" "Absolute" "Relative")
+                     :value (list linenum-value)
+                     :on-change (eabp-action "settings.line-numbers"))
+     (eabp-divider)
      (eabp-section-header "Global Org Tags")
      (eabp-text "Manage the global tag list (org-tag-alist)." 'caption)
      enum-list)))
@@ -759,6 +835,13 @@ and a quick complete button for open todos."
              (string-match "\\([0-9]\\{1,2\\}:[0-9]\\{2\\}\\)" ts))
     (match-string 1 ts)))
 
+(defun eabp-org-ui--ts-repeater (ts)
+  "Return the repeater cookie (e.g. \"+1w\", \".+2d\") inside TS, or nil.
+The one part of a timestamp the date-stamp chip can't display."
+  (when (and (stringp ts)
+             (string-match "\\([.+]?\\+[0-9]+[hdwmy]\\)" ts))
+    (match-string 1 ts)))
+
 (defun eabp-org-ui--priority-chips (current ref)
   "A row of priority chips (A..C plus None) with CURRENT selected; taps carry REF."
   (let* ((hi (or (bound-and-true-p org-priority-highest) ?A))
@@ -778,6 +861,45 @@ and a quick complete button for open todos."
                              :on-tap (eabp-action
                                       "heading.priority"
                                       :args (cons '(value . "") ref))))))))
+
+(defun eabp-org-ui--property-row (key value ref pos)
+  "A two-column KEY → editable VALUE row for the detail Properties editor.
+KEY renders without org's colons.  ID is shown read-only (editing it
+breaks links); every other value is an inline input whose submit runs
+`heading.prop-set' — submitting an empty value removes the property."
+  (eabp-row
+   (eabp-box (list (eabp-text key 'label)) :weight 2)
+   (eabp-box
+    (list (if (equal key "ID")
+              (eabp-text value 'caption nil nil t)
+            (eabp-text-input (format "prop-%s/%s" pos key)
+                             :value value
+                             :single-line t
+                             :on-submit (eabp-action "heading.prop-set"
+                                                     :args (cons `(name . ,key) ref)))))
+    :weight 3)))
+
+(defun eabp-org-ui--properties-section (props ref pos)
+  "The Properties collapsible: KEY → VALUE rows plus an + Add button.
+Always present (even with no properties yet) so + Add is reachable."
+  (eabp-collapsible
+   (format "detail-props/%s" pos)
+   (eabp-text (if props (format "Properties (%d)" (length props)) "Properties")
+              'label)
+   (delq nil
+         (append
+          (mapcar (lambda (kv)
+                    (eabp-org-ui--property-row (car kv) (or (cdr kv) "") ref pos))
+                  props)
+          (list
+           (when props
+             (eabp-text "Submit an empty value to remove a property." 'caption))
+           (eabp-row
+            (eabp-spacer :weight 1)
+            (eabp-button "+ Add property"
+                         (eabp-action "heading.prop-add" :args ref)
+                         :variant "outlined")))))
+   :collapsed t))
 
 (defun eabp-org-ui--detail-body (ref)
   (condition-case err
@@ -825,6 +947,8 @@ and a quick complete button for open todos."
               (eabp-column
                (eabp-editor (format "detail-%s" pos) content
                             :syntax "org"
+                            :line-numbers (and eabp-line-numbers
+                                               (symbol-name eabp-line-numbers))
                             :on-save (eabp-action "detail.save"
                                                   :args `((ref . ,ref))
                                                   :when-offline "queue"
@@ -850,41 +974,69 @@ and a quick complete button for open todos."
                            (eabp-org-ui--priority-chips priority ref)
                            (eabp-divider)
                            ;; ▸ Scheduling (collapsible — expanded when any date is set)
+                           ;; The date-stamp chip IS the display (date + time);
+                           ;; the raw "<2026-07-02 Thu>" caption is gone. Only a
+                           ;; repeater cookie — which the chip can't show —
+                           ;; surfaces as a caption.
                            (eabp-collapsible
                             (format "detail-sched/%s" pos)
                             (eabp-text "Scheduling" 'label)
-                            (delq nil
-                                  (list
-                                   (eabp-row
-                                    (if sdate (eabp-date-stamp :date sdate) (eabp-spacer :width 0))
-                                    (eabp-box
-                                     (list
-                                      (eabp-column
-                                       (eabp-text (concat "Scheduled: " (or scheduled "—")) 'caption)
-                                       (eabp-flow-row
-                                        (eabp-date-button "Set date"
-                                                          (eabp-action "heading.schedule" :args ref)
-                                                          :value sdate)
-                                        (eabp-time-button "Set time"
-                                                          (eabp-action "heading.schedule-time" :args ref)
-                                                          :value (eabp-org-ui--ts-time scheduled))
-                                        (funcall sched-button "Today" "+0d")
-                                        (funcall sched-button "+1d" "+1d")
-                                        (funcall sched-button "+1w" "+1w")
-                                        (eabp-button "Clear"
-                                                     (eabp-action "heading.schedule"
-                                                                  :args (cons '(clear . t) ref))
-                                                     :variant "text"))))
-                                     :weight 1))
-                                   (eabp-text (concat "Deadline: " (or deadline "—")) 'caption)
-                                   (eabp-flow-row
-                                    (eabp-date-button "Set date"
-                                                      (eabp-action "heading.deadline" :args ref)
-                                                      :value ddate)
-                                    (eabp-button "Clear"
-                                                 (eabp-action "heading.deadline"
-                                                              :args (cons '(clear . t) ref))
-                                                 :variant "text"))))
+                            (list
+                             (eabp-row
+                              (if sdate
+                                  (eabp-date-stamp :date sdate
+                                                   :time (eabp-org-ui--ts-time scheduled))
+                                (eabp-spacer :width 0))
+                              (eabp-box
+                               (list
+                                (apply #'eabp-column
+                                       (delq nil
+                                             (list
+                                              (eabp-text "Scheduled" 'label)
+                                              (unless sdate
+                                                (eabp-text "Not scheduled" 'caption))
+                                              (when-let ((rep (eabp-org-ui--ts-repeater scheduled)))
+                                                (eabp-text (concat "Repeats " rep) 'caption))
+                                              (eabp-flow-row
+                                               (eabp-date-button "Set date"
+                                                                 (eabp-action "heading.schedule" :args ref)
+                                                                 :value sdate)
+                                               (eabp-time-button "Set time"
+                                                                 (eabp-action "heading.schedule-time" :args ref)
+                                                                 :value (eabp-org-ui--ts-time scheduled))
+                                               (funcall sched-button "Today" "+0d")
+                                               (funcall sched-button "+1d" "+1d")
+                                               (funcall sched-button "+1w" "+1w")
+                                               (eabp-button "Clear"
+                                                            (eabp-action "heading.schedule"
+                                                                         :args (cons '(clear . t) ref))
+                                                            :variant "text"))))))
+                               :weight 1))
+                             (eabp-divider)
+                             (eabp-row
+                              (if ddate
+                                  (eabp-date-stamp :date ddate
+                                                   :time (eabp-org-ui--ts-time deadline))
+                                (eabp-spacer :width 0))
+                              (eabp-box
+                               (list
+                                (apply #'eabp-column
+                                       (delq nil
+                                             (list
+                                              (eabp-text "Deadline" 'label)
+                                              (unless ddate
+                                                (eabp-text "No deadline" 'caption))
+                                              (when-let ((rep (eabp-org-ui--ts-repeater deadline)))
+                                                (eabp-text (concat "Repeats " rep) 'caption))
+                                              (eabp-flow-row
+                                               (eabp-date-button "Set date"
+                                                                 (eabp-action "heading.deadline" :args ref)
+                                                                 :value ddate)
+                                               (eabp-button "Clear"
+                                                            (eabp-action "heading.deadline"
+                                                                         :args (cons '(clear . t) ref))
+                                                            :variant "text"))))))
+                               :weight 1)))
                             :collapsed (not (or sdate ddate)))
                            ;; ▸ Tags (collapsible)
                            (let ((available (seq-uniq (append tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
@@ -907,14 +1059,7 @@ and a quick complete button for open todos."
                             :collapsed (not is-clocked-in))
                            ;; TODO: Add LOGBOOK collapsible section
                            ;; ▸ Properties (collapsible — collapsed by default)
-                           (when entry-props
-                             (let ((text (mapconcat (lambda (kv) (format ":%s: %s" (car kv) (cdr kv)))
-                                                   entry-props "\n")))
-                               (eabp-collapsible
-                                (format "detail-props/%s" pos)
-                                (eabp-text "Properties" 'label)
-                                (list (eabp-text text 'mono))
-                                :collapsed t)))
+                           (eabp-org-ui--properties-section entry-props ref pos)
                            (eabp-divider))
                           ;; Reader: body (highlighted) and child headings (foldable).
                           ;; Properties are shown above, so skip them here.
@@ -925,6 +1070,11 @@ and a quick complete button for open todos."
       (eabp-text (error-message-string err) 'body)))))
 
 ;; ─── Capture Dialog ──────────────────────────────────────────────────────────
+
+(defvar eabp-org-ui--shared-text nil
+  "Body text shared from another app, pending the next capture submit.")
+(defvar eabp-org-ui--shared-subject nil
+  "Subject shared from another app; seeds the capture Headline field.")
 
 (defun eabp-org-ui-show-capture-dialog ()
   (condition-case err
@@ -941,10 +1091,19 @@ and a quick complete button for open todos."
               (apply #'eabp-column
                      (eabp-text "Quick Capture" 'title)
                      (eabp-text "Select a template:" 'caption)
-                     (append template-buttons
-                             (list (eabp-button "Cancel"
-                                               (eabp-action "org.capture.cancel")
-                                               :variant "text"))))))
+                     (append
+                      ;; Shared-in content shows a preview so the user knows
+                      ;; what this capture will carry.
+                      (when eabp-org-ui--shared-text
+                        (list (eabp-card
+                               (list (eabp-text
+                                      (truncate-string-to-width
+                                       eabp-org-ui--shared-text 200 nil nil "…")
+                                      'caption)))))
+                      template-buttons
+                      (list (eabp-button "Cancel"
+                                         (eabp-action "org.capture.cancel")
+                                         :variant "text"))))))
         (eabp-send-dialog dialog-body))
     (error
      (message "EABP capture dialog error: %s" (error-message-string err)))))
@@ -953,6 +1112,10 @@ and a quick complete button for open todos."
   ;; Forget values from any previous capture so they can't leak into
   ;; this submit (`eabp--ui-state' is global and persistent).
   (eabp-ui-state-clear "cap-")
+  ;; A shared-in subject pre-fills the Headline field; it must also land
+  ;; in UI state, since state.changed only fires for edits the user makes.
+  (when eabp-org-ui--shared-subject
+    (eabp-ui-state-put "cap-Headline" eabp-org-ui--shared-subject))
   (condition-case err
       (let* ((templates (eabp-org--capture-templates))
              (tmpl (cl-find-if
@@ -960,7 +1123,10 @@ and a quick complete button for open todos."
                     templates))
              (prompts (append (alist-get 'prompts tmpl) nil)) ;; coerce vector to list
              (inputs (mapcar (lambda (p)
-                               (eabp-text-input (format "cap-%s" p) :label p))
+                               (eabp-text-input
+                                (format "cap-%s" p) :label p
+                                :value (and (equal p "Headline")
+                                            eabp-org-ui--shared-subject)))
                              prompts))
              (dialog-body
               (apply #'eabp-column
@@ -1090,7 +1256,27 @@ and a quick complete button for open todos."
 
 (eabp-defaction "org.capture.cancel"
   (lambda (_ _)
+    (setq eabp-org-ui--shared-text nil
+          eabp-org-ui--shared-subject nil)
     (eabp-dismiss-dialog)))
+
+(eabp-defaction "org.capture.share"
+  ;; Android share sheet → capture: stash the shared text/subject and open
+  ;; the template picker.  Queued offline, so sharing works with Emacs dead
+  ;; — the capture dialog appears on the next replay.
+  (lambda (args _)
+    (let ((text (alist-get 'text args))
+          (subject (alist-get 'subject args)))
+      (setq eabp-org-ui--shared-text
+            (and (stringp text) (not (string-empty-p (string-trim text)))
+                 (string-trim text))
+            eabp-org-ui--shared-subject
+            (and (stringp subject) (not (string-empty-p (string-trim subject)))
+                 (string-trim subject)))
+      ;; A share with only a subject still captures: use it as the text too.
+      (unless eabp-org-ui--shared-text
+        (setq eabp-org-ui--shared-text eabp-org-ui--shared-subject))
+      (eabp-org-ui-show-capture-dialog))))
 
 (eabp-defaction "org.capture.submit"
   (lambda (args _)
@@ -1108,7 +1294,9 @@ and a quick complete button for open todos."
                             (let ((v (eabp-ui-state (format "cap-%s" p))))
                               (cons p (if (stringp v) v ""))))
                           prompts)))
-            (eabp-org--do-capture key values)
+            (eabp-org--do-capture key values eabp-org-ui--shared-text)
+            (setq eabp-org-ui--shared-text nil
+                  eabp-org-ui--shared-subject nil)
             (eabp-org-cache-invalidate)
             (eabp-ui-state-clear "cap-")
             (eabp-org-ui-snackbar "Captured ✓")
@@ -1116,6 +1304,8 @@ and a quick complete button for open todos."
             (eabp-org-ui-push-dashboard))
         (error
          (message "EABP capture submit error: %s" (error-message-string err))
+         (setq eabp-org-ui--shared-text nil
+               eabp-org-ui--shared-subject nil)
          (eabp-ui-state-clear "cap-")
          (eabp-dismiss-dialog))))))
 
@@ -1221,6 +1411,112 @@ Returns non-nil on success; messages and returns nil on failure."
                                 (format "Priority %s" val)))
         (eabp-org-ui-push-dashboard)))))
 
+(eabp-defaction "heading.refile"
+  ;; Bridged picker over org-refile targets; refiles the whole subtree.
+  (lambda (args _)
+    (condition-case err
+        (let ((marker (eabp-org--resolve-ref args)))
+          (with-current-buffer (marker-buffer marker)
+            (org-with-wide-buffer
+             (goto-char marker)
+             (let* ((org-refile-targets (or org-refile-targets
+                                            '((org-agenda-files :maxlevel . 3))))
+                    (targets (org-refile-get-targets))
+                    (choice (condition-case nil
+                                (completing-read "Refile to: "
+                                                 (mapcar #'car targets) nil t)
+                              (quit nil)))
+                    (target (and choice (assoc choice targets))))
+               (if (not target)
+                   (eabp-org-ui-snackbar "Refile cancelled")
+                 (org-refile nil nil target)
+                 (let ((eabp-org--inhibit-save-refresh t)
+                       (save-silently t))
+                   (org-save-all-org-buffers))
+                 (eabp-org-cache-invalidate)
+                 (setq eabp-org-ui--detail-ref nil)
+                 (eabp-org-ui-snackbar (format "Refiled to %s" choice))))))
+          (eabp-org-ui-push-dashboard nil :switch-to eabp-org-ui--current-tab))
+      (error
+       (eabp-org-ui-snackbar (format "Refile failed: %s"
+                                     (error-message-string err)))
+       (eabp-org-ui-push-dashboard)))))
+
+(eabp-defaction "heading.archive"
+  ;; Bridged y/n confirm, then org-archive-subtree; saves source + archive.
+  (lambda (args _)
+    (let ((headline (or (alist-get 'headline args) "this heading")))
+      (if (not (yes-or-no-p (format "Archive \"%s\"? " headline)))
+          (eabp-org-ui-snackbar "Archive cancelled")
+        (when (eabp-org-ui--at-ref
+               args
+               (lambda ()
+                 (org-archive-subtree)
+                 (let ((eabp-org--inhibit-save-refresh t)
+                       (save-silently t))
+                   (org-save-all-org-buffers))))
+          (setq eabp-org-ui--detail-ref nil)
+          (eabp-org-ui-snackbar "Archived")))
+      (eabp-org-ui-push-dashboard nil :switch-to eabp-org-ui--current-tab))))
+
+(eabp-defaction "heading.add-note"
+  ;; Quick logbook note: bridged prompt, written where org-log-into-drawer
+  ;; says notes belong, in org's own note format.
+  (lambda (args _)
+    (let ((note (string-trim (condition-case nil
+                                 (read-string "Note: ")
+                               (quit "")))))
+      (if (string-empty-p note)
+          (eabp-org-ui-snackbar "Note cancelled")
+        (when (eabp-org-ui--at-ref
+               args
+               (lambda ()
+                 (goto-char (org-log-beginning t))
+                 (insert (format "- Note taken on %s \\\\\n  %s\n"
+                                 (format-time-string
+                                  (org-time-stamp-format t t))
+                                 note)))
+               t)
+          (eabp-org-ui-snackbar "Note added")))
+      (eabp-org-ui-push-dashboard))))
+
+(eabp-defaction "heading.prop-set"
+  ;; VALUE arrives injected by the row input's on-submit; NAME rides in
+  ;; args. An empty value deletes the property.
+  (lambda (args _)
+    (let* ((name (alist-get 'name args))
+           (value (string-trim (or (alist-get 'value args) "")))
+           (ok (and (stringp name) (not (string-empty-p name))
+                    (eabp-org-ui--at-ref
+                     args
+                     (lambda ()
+                       (if (string-empty-p value)
+                           (org-delete-property name)
+                         (org-set-property name value)))
+                     t))))
+      (when ok
+        (eabp-org-ui-snackbar (if (string-empty-p value)
+                                  (format "Removed %s" name)
+                                (format "%s → %s" name value)))
+        (eabp-org-ui-push-dashboard)))))
+
+(eabp-defaction "heading.prop-add"
+  ;; The bridged read-string asks for the key; the new (empty) property
+  ;; then appears as a row whose value column is ready to fill in.
+  (lambda (args _)
+    (let ((name (string-trim (condition-case nil
+                                 (read-string "New property name: ")
+                               (quit "")))))
+      (cond
+       ((string-empty-p name) nil)
+       ((string-match-p "[: \t]" name)
+        (eabp-org-ui-snackbar "Property names can't contain colons or spaces"))
+       ((eabp-org-ui--at-ref args
+                             (lambda () (org-set-property (upcase name) ""))
+                             t)
+        (eabp-org-ui-snackbar (format "Added %s — fill in its value" (upcase name)))))
+      (eabp-org-ui-push-dashboard))))
+
 (eabp-defaction "heading.tags"
   (lambda (args _)
     (let* ((val (alist-get 'value args))
@@ -1234,6 +1530,21 @@ Returns non-nil on success; messages and returns nil on failure."
         (eabp-org-ui-snackbar (if tags (format "Tags: %s" (string-join tags " "))
                                 "Tags cleared"))
         (eabp-org-ui-push-dashboard)))))
+
+(eabp-defaction "settings.line-numbers"
+  ;; Single-select enum: value arrives as a JSON array with (at most) one
+  ;; entry.  Deselecting everything counts as Off.
+  (lambda (args _)
+    (let* ((val (alist-get 'value args))
+           (choice (car (append val nil)))
+           (sym (pcase choice
+                  ("Absolute" 'absolute)
+                  ("Relative" 'relative)
+                  (_ nil))))
+      (setq eabp-line-numbers sym)
+      (ignore-errors (customize-save-variable 'eabp-line-numbers sym))
+      (eabp-org-ui-snackbar (format "Line numbers: %s" (or choice "Off")))
+      (eabp-org-ui-push-dashboard))))
 
 (eabp-defaction "settings.tags"
   (lambda (args _)

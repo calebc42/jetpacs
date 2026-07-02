@@ -45,7 +45,42 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         BridgeService.start(this)
+        // savedInstanceState guard: a rotation must not re-fire the share.
+        if (savedInstanceState == null) handleShareIntent(intent)
         setContent { EabpTheme { BridgeScreen() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    /**
+     * Android share sheet → org capture. The shared text rides the normal
+     * action pipeline with queue policy, so sharing works with Emacs dead:
+     * the capture dialog appears on the next replay.
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        if (intent.type?.startsWith("text/") != true) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+        val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+        if (text.isNullOrBlank() && subject.isNullOrBlank()) return
+        val action = JSONObject().apply {
+            put("action", "org.capture.share")
+            put("when_offline", "queue")
+            put("args", JSONObject().apply {
+                put("text", text ?: "")
+                put("subject", subject ?: "")
+            })
+        }
+        sendBroadcast(Intent(this, ActionReceiver::class.java).apply {
+            this.action = ActionReceiver.ACTION_TAP
+            putExtra(ActionReceiver.EXTRA_SURFACE, "share")
+            putExtra(ActionReceiver.EXTRA_REVISION, -1)
+            putExtra(ActionReceiver.EXTRA_ACTION, action.toString())
+        })
+        Toast.makeText(this, "Sent to Emacs capture", Toast.LENGTH_SHORT).show()
     }
 }
 

@@ -1,17 +1,25 @@
 ;;; eabp-keymap.el --- Keymap surfacing for the radial pie menu -*- lexical-binding: t; -*-
 
-;; The input complement to the Tier 0 generic buffer renderer.  Extracts
-;; keybindings from any buffer's active keymaps (including transient.el
-;; sessions), groups them into ≤8 categories, and sends the result to the
-;; companion as a pie-menu spec.  The companion renders a radial overlay;
-;; tapping a segment dispatches `eabp.keymap.run' which executes the key
-;; in-buffer (with minibuffer prompts auto-bridged as always).
+;; The input complement to the Tier 0 generic buffer renderer.  Two UIs,
+;; split by how good the available labels are:
 ;;
-;; Transient.el is first-class: prefix commands whose symbol carries a
-;; `transient--layout' property get their suffixes pre-extracted as
-;; sub-menu children (so drill-in is instant, no round-trip).  When a
-;; transient session is *active* (`transient--prefix' is non-nil), the
-;; menu shows the live transient's bindings instead of the buffer keymap.
+;;   * Tier 0 default — a searchable COMMAND PALETTE.  Raw keymap dumps
+;;     have dozens of bindings with machine-made labels; a live-filtering
+;;     list (the bridged `completing-read' picker) beats a pie menu for
+;;     that.  `eabp.keymap.show' extracts the buffer's bindings and runs
+;;     the picker; choosing an entry executes the key in-buffer (with
+;;     minibuffer prompts auto-bridged as always).
+;;
+;;   * Tier 1 — the RADIAL PIE MENU, reserved for curated, bounded menus.
+;;     Today that means a live transient.el session (`transient--prefix'
+;;     non-nil): human-written suffix descriptions, ≤~10 items — the pie's
+;;     sweet spot.  Executing a command that *activates* a transient
+;;     (e.g. picking `magit-dispatch' from the palette) opens the pie
+;;     automatically; when the transient ends the pie is dismissed.
+;;
+;; The grouping/category machinery below (`eabp-keymap--group-bindings')
+;; is retained for future Tier 1 skins that want to send curated pie
+;; specs for a whole mode; the default path no longer uses it.
 
 ;;; Code:
 
@@ -359,16 +367,24 @@ the companion's pie menu JSON."
      layout-bindings)))
 
 (defun eabp-keymap--command-label (cmd)
-  "Human-readable label for command CMD."
+  "Human-readable label for command CMD.
+Strips only the current buffer's major-mode stem (so `org-agenda-list'
+becomes \"agenda-list\" in an org buffer but keeps its full name
+elsewhere).  For a hyphenated mode like `magit-status-mode', the first
+segment (\"magit-\") is also tried.  Never strips blindly: the old
+greedy last-dash strip turned `forward-paragraph' into \"paragraph\"."
   (if (not (symbolp cmd))
       (format "%s" cmd)
-    (let ((name (symbol-name cmd)))
-      ;; Strip common prefixes for readability
+    (let* ((name (symbol-name cmd))
+           (stem (string-remove-suffix "-mode" (symbol-name major-mode)))
+           (head (car (split-string stem "-"))))
       (cond
-       ((string-match "\\`magit-\\(.+\\)" name) (match-string 1 name))
-       ((string-match "\\`dired-\\(.+\\)" name) (match-string 1 name))
-       ((string-match "\\`org-\\(.+\\)" name) (match-string 1 name))
-       ((string-match "\\`.*-\\(.+\\)" name) (match-string 1 name))
+       ((and (string-prefix-p (concat stem "-") name)
+             (> (length name) (1+ (length stem))))
+        (substring name (1+ (length stem))))
+       ((and (string-prefix-p (concat head "-") name)
+             (> (length name) (1+ (length head))))
+        (substring name (1+ (length head))))
        (t name)))))
 
 ;; ─── Pie menu spec builder ─────────────────────────────────────────────────
@@ -388,7 +404,6 @@ the companion's pie menu JSON."
                                (lambda (b)
                                  (let ((key (plist-get b :key))
                                        (label (plist-get b :label))
-                                       (cmd (plist-get b :command))
                                        (is-infix (plist-get b :is-infix)))
                                    (append
                                     `((key . ,key)
@@ -418,6 +433,60 @@ the companion's pie menu JSON."
                   (bindings . ,(vconcat (cddr cat)))))
               categories)))))))
 
+;; ─── Command palette (Tier 0 default) ──────────────────────────────────────
+
+(defun eabp-keymap--palette-candidates (buf)
+  "Return an alist of (DISPLAY . KEY-DESC) for BUF's extracted bindings."
+  (with-current-buffer buf
+    (mapcar (lambda (b)
+              (pcase-let ((`(,key ,cmd ,_source) b))
+                (cons (format "%s  ·  %s" key (eabp-keymap--command-label cmd))
+                      key)))
+            (eabp-keymap--extract-bindings buf))))
+
+(defun eabp-keymap--show-palette (buf)
+  "Show a searchable command palette for BUF's keybindings.
+Runs inside an action handler, so `completing-read' is bridged to the
+companion as a live-filtering picker dialog.  The chosen binding's key
+is executed in BUF; if that activates a transient, its Tier 1 pie menu
+opens automatically (see `eabp-keymap--sync-pie')."
+  (let* ((candidates (eabp-keymap--palette-candidates buf))
+         (choice (cond
+                  ((null candidates)
+                   (message "EABP keymap: no bindings extracted from %s"
+                            (buffer-name buf))
+                   nil)
+                  (t (condition-case nil
+                         (completing-read
+                          (format "%s commands" (buffer-name buf))
+                          (mapcar #'car candidates) nil t)
+                       (quit nil)))))
+         (key (cdr (assoc choice candidates))))
+    (when key
+      (eabp-keymap--execute-key buf key))))
+
+;; ─── Key execution & pie-menu sync ──────────────────────────────────────────
+
+(defun eabp-keymap--sync-pie (buf)
+  "Reconcile the companion's radial overlay with transient state.
+A live transient keeps (or opens) its Tier 1 pie menu; anything else
+dismisses the overlay — so the pie can never linger after the command
+it belonged to has finished."
+  (if (eabp-keymap--transient-active-p)
+      (eabp-send "pie_menu.show" (eabp-keymap--build-pie-spec buf))
+    (eabp-send "pie_menu.dismiss" nil)))
+
+(defun eabp-keymap--execute-key (buf key)
+  "Execute KEY in BUF, then sync the pie menu and refresh the surface."
+  (with-current-buffer buf
+    (condition-case err
+        (execute-kbd-macro (kbd key))
+      (error
+       (message "EABP keymap: %s failed: %s" key (error-message-string err)))))
+  (eabp-keymap--sync-pie buf)
+  (when (functionp eabp-buffer-refresh-function)
+    (funcall eabp-buffer-refresh-function)))
+
 ;; ─── Action handlers ───────────────────────────────────────────────────────
 
 (eabp-defaction "eabp.keymap.show"
@@ -427,10 +496,15 @@ the companion's pie menu JSON."
                                  eabp-emacs-ui--viewing-buffer)
                             (buffer-name (current-buffer))))
            (buf (get-buffer buffer-name)))
-      (if (not buf)
-          (message "EABP keymap: no such buffer %s" buffer-name)
-        (let ((spec (eabp-keymap--build-pie-spec buf)))
-          (eabp-send "pie_menu.show" spec))))))
+      (cond
+       ((not buf)
+        (message "EABP keymap: no such buffer %s" buffer-name))
+       ;; Tier 1: a live transient has curated labels and a small, bounded
+       ;; suffix set — exactly what the radial menu is good at.
+       ((eabp-keymap--transient-active-p)
+        (eabp-send "pie_menu.show" (eabp-keymap--build-pie-spec buf)))
+       ;; Tier 0 default: the searchable command palette.
+       (t (eabp-keymap--show-palette buf))))))
 
 (eabp-defaction "eabp.keymap.run"
   (lambda (args _)
@@ -461,10 +535,9 @@ the companion's pie menu JSON."
             (error
              (message "EABP keymap.run %s failed: %s" key
                       (error-message-string err)))))
-        ;; If a transient became active, send its menu
-        (when (eabp-keymap--transient-active-p)
-          (let ((spec (eabp-keymap--build-pie-spec buf)))
-            (eabp-send "pie_menu.show" spec)))
+        ;; Keep the overlay honest: still-active transient re-shows its pie
+        ;; (with fresh infix values); a finished one dismisses it.
+        (eabp-keymap--sync-pie buf)
         ;; Re-push the surface
         (when (functionp eabp-buffer-refresh-function)
           (funcall eabp-buffer-refresh-function))))))

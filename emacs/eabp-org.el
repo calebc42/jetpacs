@@ -19,14 +19,39 @@
 Bound around our own programmatic saves (heading edits, file saves) so an
 explicit dashboard push isn't doubled by the save-hook firing on top.")
 
+;; The dashboard pushes every view on every action (so navigation stays
+;; instant and offline-capable), which means the expensive extractions here
+;; — a full `org-agenda' run, an `org-map-entries' sweep — used to execute
+;; on every chip tap and snackbar.  They are memoised now; this table is
+;; dropped through `eabp-org-cache-invalidate', the single seam every
+;; mutation path (heading actions, saves, capture, queue replay) already
+;; calls.
+(defvar eabp-org--cache (make-hash-table :test 'equal)
+  "Memoised org extraction results.
+Keys are built by `eabp-org--cache-key' and include today's date, so
+day-relative readers (the agenda) roll over at midnight even without an
+explicit invalidation.")
+
+(defun eabp-org--cache-key (&rest parts)
+  "Build a cache key from PARTS, scoped to today's date."
+  (cons (format-time-string "%Y-%m-%d") parts))
+
+(defmacro eabp-org--with-cache (key &rest body)
+  "Memoise BODY's result in `eabp-org--cache' under KEY."
+  (declare (indent 1))
+  (let ((k (gensym "key")) (hit (gensym "hit")))
+    `(let* ((,k ,key)
+            (,hit (gethash ,k eabp-org--cache 'eabp-org--miss)))
+       (if (eq ,hit 'eabp-org--miss)
+           (puthash ,k (progn ,@body) eabp-org--cache)
+         ,hit))))
+
 (defun eabp-org-cache-invalidate ()
-  "Invalidate any memoised org extractions.
-The data readers below (`eabp-org--agenda-items', `eabp-org--todo-items',
-…) currently recompute straight from the org buffers on every call, so
-there is nothing to drop — this is a no-op kept as the single seam every
-mutation path already calls, so a future memoisation layer can hook in
-here without touching the call sites."
-  nil)
+  "Drop every memoised org extraction.
+Called by every mutation path (heading actions, phone/desktop saves,
+capture, offline-queue drain), so the readers recompute from fresh org
+state on the next dashboard push."
+  (clrhash eabp-org--cache))
 
 ;; ─── Heading references ────────────────────────────────────────────────────────
 ;;
@@ -93,18 +118,37 @@ headline still matches, then a headline search through the file."
             (or headline id file "?")))))
 
 (defun eabp-org--agenda-items (&optional span start-day)
-  "Extract agenda items for SPAN ('day, 'week, or 'month).
+  "Extract agenda items for SPAN (\\='day, \\='week, or \\='month).
 START-DAY is an optional string (e.g. \"2026-11-01\") to start the agenda on.
-Returns a list of alists representing agenda items."
+Returns a list of alists representing agenda items.  Memoised; see
+`eabp-org-cache-invalidate'."
+  (eabp-org--with-cache (eabp-org--cache-key 'agenda (or span 'day) start-day)
+    (eabp-org--agenda-items-1 span start-day)))
+
+(defconst eabp-org--agenda-buffer "*EABP Agenda*"
+  "Private buffer the agenda extraction builds into (and kills after).")
+
+(defun eabp-org--agenda-items-1 (span start-day)
+  "Uncached worker for `eabp-org--agenda-items'."
   (let ((org-agenda-span (or span 'day))
         (org-agenda-start-day start-day)
         (org-agenda-files (org-agenda-files))
+        ;; Build into a private buffer so a user's open *Org Agenda* on the
+        ;; desktop is never clobbered (and never killed) by an extraction.
+        ;; `org-agenda-buffer-tmp-name' is the supported redirect: `org-agenda'
+        ;; REBINDS `org-agenda-buffer-name' in its own let* and recomputes it,
+        ;; so binding that variable directly gets shadowed — the build then
+        ;; lands in *Org Agenda* while we look for (and fail to find, and fail
+        ;; to kill) our own name.
+        (org-agenda-buffer-tmp-name eabp-org--agenda-buffer)
+        (org-agenda-sticky nil)
         (inhibit-redisplay t)
         items)
-    (save-window-excursion
-      (let ((org-agenda-window-setup 'current-window))
-        (org-agenda nil "a")
-        (with-current-buffer org-agenda-buffer-name
+    (unwind-protect
+        (save-window-excursion
+          (let ((org-agenda-window-setup 'current-window))
+            (org-agenda nil "a")
+            (with-current-buffer eabp-org--agenda-buffer
           (goto-char (point-min))
           (while (not (eobp))
             (let* ((marker (get-text-property (point) 'org-marker))
@@ -112,7 +156,13 @@ Returns a list of alists representing agenda items."
                    (time (get-text-property (point) 'time))
                    (type (get-text-property (point) 'type))
                    (date-abs (get-text-property (point) 'date))
-                   (date-list (when date-abs (calendar-gregorian-from-absolute date-abs)))
+                   ;; org ≥9.6 stores the gregorian (MONTH DAY YEAR) list
+                   ;; directly; older code stored the absolute day number.
+                   ;; Feeding the list to calendar-gregorian-from-absolute
+                   ;; signals, which emptied the whole agenda.
+                   (date-list (cond ((consp date-abs) date-abs)
+                                    ((numberp date-abs)
+                                     (calendar-gregorian-from-absolute date-abs))))
                    (date-str (when date-list (format "%04d-%02d-%02d" (nth 2 date-list) (nth 0 date-list) (nth 1 date-list)))))
               (when marker
                 (with-current-buffer (marker-buffer marker)
@@ -133,12 +183,20 @@ Returns a list of alists representing agenda items."
                               (type . ,(when type (format "%s" type)))
                               (ref . ,(eabp-org--heading-ref)))
                             items))))))
-            (forward-line 1))))
-      (kill-buffer org-agenda-buffer-name))
+            (forward-line 1)))))
+      ;; Kill by buffer object, not name, and even when extraction errored.
+      (when-let ((buf (get-buffer eabp-org--agenda-buffer)))
+        (kill-buffer buf)))
     (nreverse items)))
 
 (defun eabp-org--todo-items (&optional files)
-  "Extract TODO items from FILES (or agenda files)."
+  "Extract TODO items from FILES (or agenda files).
+Memoised; see `eabp-org-cache-invalidate'."
+  (eabp-org--with-cache (eabp-org--cache-key 'todos files)
+    (eabp-org--todo-items-1 files)))
+
+(defun eabp-org--todo-items-1 (files)
+  "Uncached worker for `eabp-org--todo-items'."
   (let (items)
     (org-map-entries
      (lambda ()
@@ -193,18 +251,20 @@ Matches headline text or any tag. Returns a list of heading items."
 
 (defun eabp-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
-Uses `org-ql' when available, falling back to a substring match."
+Uses `org-ql' when available, falling back to a substring match.
+Memoised; see `eabp-org-cache-invalidate'."
   (if (string-empty-p (string-trim query))
       nil
-    (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
-                        (condition-case nil (read query) (error query))
-                      query)))
-      (if (fboundp 'org-ql-select)
-          (condition-case nil
-              (org-ql-select (org-agenda-files) ql-query
-                             :action #'eabp-org--heading-item-at)
-            (error (eabp-org--search-substring query)))
-        (eabp-org--search-substring query)))))
+    (eabp-org--with-cache (eabp-org--cache-key 'search query)
+      (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
+                          (condition-case nil (read query) (error query))
+                        query)))
+        (if (fboundp 'org-ql-select)
+            (condition-case nil
+                (org-ql-select (org-agenda-files) ql-query
+                               :action #'eabp-org--heading-item-at)
+              (error (eabp-org--search-substring query)))
+          (eabp-org--search-substring query))))))
 
 (defun eabp-org--file-list ()
   "List of agenda files and basic stats."
@@ -301,23 +361,31 @@ on the phone would hang behind the bridge."
 
 (defun eabp-org--do-capture (template-key values)
   "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input)."
-  (let ((org-capture-entry (assoc template-key org-capture-templates)))
-    (when org-capture-entry
-      (let* ((tmpl (nth 4 org-capture-entry))
-             (new-tmpl (if (stringp tmpl)
-                           (eabp-org--fill-template tmpl values)
-                         tmpl)))
-        (let* ((new-entry (copy-sequence org-capture-entry))
-               (org-capture-templates (list new-entry)))
-          (setcar (nthcdr 4 new-entry) new-tmpl)
+  (let ((entry (assoc template-key org-capture-templates)))
+    (when entry
+      (let* ((tmpl (nth 4 entry))
+             (filled (if (stringp tmpl)
+                         (eabp-org--fill-template tmpl values)
+                       tmpl))
+             ;; Shallow-copy the entry, swap in the filled template, and force
+             ;; :immediate-finish so the capture buffer never waits for the
+             ;; C-c C-c a phone user can't press.
+             (new-entry (copy-sequence entry)))
+        (setcar (nthcdr 4 new-entry) filled)
+        (setcdr (nthcdr 4 new-entry)
+                (append (nthcdr 5 new-entry) '(:immediate-finish t)))
+        ;; `org-capture-entry' short-circuits template selection inside
+        ;; `org-capture', so binding it to the FILLED copy is what makes the
+        ;; pre-filled template the one that actually runs.  (Binding it to
+        ;; the original — as this code once did — re-ran the raw %^{...}
+        ;; prompts and double-asked the user through the bridge.)
+        (let ((org-capture-entry new-entry))
           ;; Safety net: a fully pre-filled template shouldn't prompt at all,
           ;; but if any escape slips through, never let `org-capture' block
           ;; Emacs forever on a minibuffer the phone can't answer. `with-timeout'
           ;; fires even while a synchronous read is waiting.
           (with-timeout (30 (message "eabp: capture timed out (a prompt was left unanswered)"))
-            (org-capture nil template-key)
-            ;; Auto-finish capture for headless flow
-            (org-capture-finalize)))))))
+            (org-capture)))))))
 
 (defun eabp-org--clock-status ()
   "Current clock status."

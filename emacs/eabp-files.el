@@ -69,11 +69,14 @@ files must not round-trip through the editor."
 ;; screen) so it matches the full listing you get from the Buffers tab.
 
 (defun eabp-files--within-root-p (path)
-  "Non-nil when PATH is inside one of `eabp-files-roots'."
-  (let ((full (file-truename (expand-file-name path))))
+  "Non-nil when PATH is inside (or is) one of `eabp-files-roots'.
+Uses `file-in-directory-p', which compares path components — a bare
+string-prefix check would let root \"~/org\" authorize \"~/org-secrets\",
+and this predicate is the security boundary for every file operation
+the phone can trigger."
+  (let ((full (expand-file-name path)))
     (cl-some (lambda (root)
-               (string-prefix-p (file-truename (expand-file-name (cdr root)))
-                                full))
+               (file-in-directory-p full (expand-file-name (cdr root))))
              eabp-files-roots)))
 
 (defun eabp-files--entry-menu (path)

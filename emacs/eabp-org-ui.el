@@ -842,6 +842,8 @@ building. SWITCH-TO additionally forces the companion onto that view
 
 (eabp-defaction "dashboard.refresh"
   (lambda (_ _)
+    ;; Manual refresh is an explicit "give me fresh data": bypass the memo.
+    (eabp-org-cache-invalidate)
     (eabp-org-ui-push-dashboard)))
 
 (eabp-defaction "heading.tap"
@@ -1254,8 +1256,11 @@ which would otherwise refresh twice or loop."
 
 (defun eabp-org-ui--refresh-if-connected (&rest _)
   "Re-push the dashboard when there's a live session.
-Safe to put on any hook: a no-op while disconnected."
+Safe to put on any hook: a no-op while disconnected.  Invalidates the
+extraction cache first — this runs on clock in/out, which mutate the
+org buffer without necessarily saving it."
   (when (eabp-connected-p)
+    (eabp-org-cache-invalidate)
     (eabp-org-ui-push-dashboard)))
 
 ;; After (re)connect, push the dashboard so the app never shows a stale

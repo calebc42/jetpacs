@@ -100,12 +100,23 @@ checks this to decide whether to intercept.")
   "Generate a unique prompt id."
   (format "prompt-%d-%04x" (cl-incf eabp--prompt-counter) (random #x10000)))
 
-(defun eabp--send-prompt-dialog (prompt-id body)
-  "Send BODY as a dialog, tagging interactive elements with PROMPT-ID."
+(defun eabp--send-prompt-dialog (_prompt-id body)
+  "Send BODY as a dialog, prepending any recorded context-buffer cards.
+A BODY that is itself a `lazy_column' (the completing-read picker) gets
+the cards merged into it: nesting one vertical scroll container inside
+another crashes the companion's Compose renderer."
   (let ((context-cards (eabp-minibuffer--context-cards)))
-    (if context-cards
-        (eabp-send-dialog (apply #'eabp-lazy-column (append context-cards (list body))))
-      (eabp-send-dialog body))))
+    (cond
+     ((null context-cards)
+      (eabp-send-dialog body))
+     ((equal (alist-get 't body) "lazy_column")
+      (eabp-send-dialog
+       `((t . "lazy_column")
+         (children . ,(vconcat context-cards
+                               (append (alist-get 'children body) nil))))))
+     (t
+      (eabp-send-dialog
+       (apply #'eabp-lazy-column (append context-cards (list body))))))))
 
 (defun eabp--wait-for-prompt (prompt-id)
   "Block (pumping the event loop) until PROMPT-ID gets a reply or times out.
@@ -262,7 +273,7 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
            ;; hash table, completion function) honouring PREDICATE.
            (candidates (ignore-errors
                          (sort (all-completions "" collection predicate) #'string<)))
-           (max-display 12)
+           (max-display 50)
            (render
             (lambda (query)
               (let* ((matches (eabp-minibuffer--filter candidates query))
@@ -278,10 +289,19 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
                                                      :args `((prompt_id . ,id)
                                                              (value . ,c)))))
                              shown)))
-                (apply #'eabp-column
+                ;; A lazy (scrollable) column: long candidate lists scroll
+                ;; instead of pushing everything below off-screen.  Cancel
+                ;; sits in the header row so it is reachable regardless of
+                ;; list length or scroll position.
+                (apply #'eabp-lazy-column
                        (append
                         (list
-                         (eabp-text title 'title)
+                         (eabp-row
+                          (eabp-box (list (eabp-text title 'title)) :weight 1)
+                          (eabp-button "Cancel"
+                                       (eabp-action "prompt.dismiss"
+                                                    :args `((prompt_id . ,id)))
+                                       :variant "text"))
                          ;; No :value — the field is uncontrolled after seeding
                          ;; so re-renders never stomp the user's text/cursor.
                          (eabp-text-input input-id
@@ -292,14 +312,10 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
                                                       "prompt.reply"
                                                       :args `((prompt_id . ,id))))
                          (eabp-text (if (> total max-display)
-                                        (format "%d matches · top %d" total max-display)
+                                        (format "%d matches · top %d shown" total max-display)
                                       (format "%d matches" total))
                                     'caption))
-                        cards
-                        (list (eabp-button "Cancel"
-                                           (eabp-action "prompt.dismiss"
-                                                        :args `((prompt_id . ,id)))
-                                           :variant "text"))))))))
+                        cards))))))
       ;; Re-render on every keystroke (runs during `eabp--wait-for-prompt's
       ;; event pump). Cleared after the wait so it can't leak.
       (eabp-on-state-change input-id

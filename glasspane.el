@@ -881,6 +881,10 @@ and forwarded to the companion as dialogs."
         (let ((eabp--in-action-handler t))
           (condition-case err
               (funcall fn args payload)
+            ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
+            ;; which `error' does not catch — treat it as a clean abort
+            ;; rather than letting it unwind through the process filter.
+            (quit (message "EABP action %s cancelled" action))
             (error (message "EABP action %s failed: %s"
                             action (error-message-string err)))))
       (message "EABP: no handler for action %s" action))))
@@ -977,21 +981,10 @@ and forwarded to the companion as dialogs."
   '(add-hook 'eabp-connected-hook
              (lambda (_) (eabp-org-ui-push-dashboard)) 50))
 
-;; ─── Offline Queue Replay ────────────────────────────────────────────────────
-
-(defun eabp--trigger-queue-replay (welcome-payload)
-  "Check the handshake payload and request a queue replay if events are waiting."
-  (let ((queued (or (alist-get 'queued_events welcome-payload) 0)))
-    (when (> queued 0)
-      (message "EABP: %d offline events queued. Requesting replay..." queued)
-      (eabp-request "queue.replay" nil
-                    (lambda (_payload)
-                      (message "EABP: Queue replay complete."))))))
-
-;; Depth 90: ensure this runs after `eabp--absorb-revision-snapshot` (depth -50)
-;; and after `eabp-clock-in-notification` pushes so the queue replay applies to 
-;; the fully synced state.
-(add-hook 'eabp-connected-hook #'eabp--trigger-queue-replay 90)
+;; Queue replay is requested by the transport itself (`eabp--on-welcome' in
+;; eabp.el) after the connected hooks have run, so replayed events land on a
+;; coherent state.  A second request used to live here too; the companion's
+;; replay guard absorbed the duplicate, but one requester is enough.
 
 (provide 'eabp-surfaces)
 
@@ -1109,12 +1102,23 @@ checks this to decide whether to intercept.")
   "Generate a unique prompt id."
   (format "prompt-%d-%04x" (cl-incf eabp--prompt-counter) (random #x10000)))
 
-(defun eabp--send-prompt-dialog (prompt-id body)
-  "Send BODY as a dialog, tagging interactive elements with PROMPT-ID."
+(defun eabp--send-prompt-dialog (_prompt-id body)
+  "Send BODY as a dialog, prepending any recorded context-buffer cards.
+A BODY that is itself a `lazy_column' (the completing-read picker) gets
+the cards merged into it: nesting one vertical scroll container inside
+another crashes the companion's Compose renderer."
   (let ((context-cards (eabp-minibuffer--context-cards)))
-    (if context-cards
-        (eabp-send-dialog (apply #'eabp-lazy-column (append context-cards (list body))))
-      (eabp-send-dialog body))))
+    (cond
+     ((null context-cards)
+      (eabp-send-dialog body))
+     ((equal (alist-get 't body) "lazy_column")
+      (eabp-send-dialog
+       `((t . "lazy_column")
+         (children . ,(vconcat context-cards
+                               (append (alist-get 'children body) nil))))))
+     (t
+      (eabp-send-dialog
+       (apply #'eabp-lazy-column (append context-cards (list body))))))))
 
 (defun eabp--wait-for-prompt (prompt-id)
   "Block (pumping the event loop) until PROMPT-ID gets a reply or times out.
@@ -1271,7 +1275,7 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
            ;; hash table, completion function) honouring PREDICATE.
            (candidates (ignore-errors
                          (sort (all-completions "" collection predicate) #'string<)))
-           (max-display 12)
+           (max-display 50)
            (render
             (lambda (query)
               (let* ((matches (eabp-minibuffer--filter candidates query))
@@ -1287,10 +1291,19 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
                                                      :args `((prompt_id . ,id)
                                                              (value . ,c)))))
                              shown)))
-                (apply #'eabp-column
+                ;; A lazy (scrollable) column: long candidate lists scroll
+                ;; instead of pushing everything below off-screen.  Cancel
+                ;; sits in the header row so it is reachable regardless of
+                ;; list length or scroll position.
+                (apply #'eabp-lazy-column
                        (append
                         (list
-                         (eabp-text title 'title)
+                         (eabp-row
+                          (eabp-box (list (eabp-text title 'title)) :weight 1)
+                          (eabp-button "Cancel"
+                                       (eabp-action "prompt.dismiss"
+                                                    :args `((prompt_id . ,id)))
+                                       :variant "text"))
                          ;; No :value — the field is uncontrolled after seeding
                          ;; so re-renders never stomp the user's text/cursor.
                          (eabp-text-input input-id
@@ -1301,14 +1314,10 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
                                                       "prompt.reply"
                                                       :args `((prompt_id . ,id))))
                          (eabp-text (if (> total max-display)
-                                        (format "%d matches · top %d" total max-display)
+                                        (format "%d matches · top %d shown" total max-display)
                                       (format "%d matches" total))
                                     'caption))
-                        cards
-                        (list (eabp-button "Cancel"
-                                           (eabp-action "prompt.dismiss"
-                                                        :args `((prompt_id . ,id)))
-                                           :variant "text"))))))))
+                        cards))))))
       ;; Re-render on every keystroke (runs during `eabp--wait-for-prompt's
       ;; event pump). Cleared after the wait so it can't leak.
       (eabp-on-state-change input-id
@@ -2307,14 +2316,39 @@ Returns a single `eabp-reorderable-list' node for refile mode."
 Bound around our own programmatic saves (heading edits, file saves) so an
 explicit dashboard push isn't doubled by the save-hook firing on top.")
 
+;; The dashboard pushes every view on every action (so navigation stays
+;; instant and offline-capable), which means the expensive extractions here
+;; — a full `org-agenda' run, an `org-map-entries' sweep — used to execute
+;; on every chip tap and snackbar.  They are memoised now; this table is
+;; dropped through `eabp-org-cache-invalidate', the single seam every
+;; mutation path (heading actions, saves, capture, queue replay) already
+;; calls.
+(defvar eabp-org--cache (make-hash-table :test 'equal)
+  "Memoised org extraction results.
+Keys are built by `eabp-org--cache-key' and include today's date, so
+day-relative readers (the agenda) roll over at midnight even without an
+explicit invalidation.")
+
+(defun eabp-org--cache-key (&rest parts)
+  "Build a cache key from PARTS, scoped to today's date."
+  (cons (format-time-string "%Y-%m-%d") parts))
+
+(defmacro eabp-org--with-cache (key &rest body)
+  "Memoise BODY's result in `eabp-org--cache' under KEY."
+  (declare (indent 1))
+  (let ((k (gensym "key")) (hit (gensym "hit")))
+    `(let* ((,k ,key)
+            (,hit (gethash ,k eabp-org--cache 'eabp-org--miss)))
+       (if (eq ,hit 'eabp-org--miss)
+           (puthash ,k (progn ,@body) eabp-org--cache)
+         ,hit))))
+
 (defun eabp-org-cache-invalidate ()
-  "Invalidate any memoised org extractions.
-The data readers below (`eabp-org--agenda-items', `eabp-org--todo-items',
-…) currently recompute straight from the org buffers on every call, so
-there is nothing to drop — this is a no-op kept as the single seam every
-mutation path already calls, so a future memoisation layer can hook in
-here without touching the call sites."
-  nil)
+  "Drop every memoised org extraction.
+Called by every mutation path (heading actions, phone/desktop saves,
+capture, offline-queue drain), so the readers recompute from fresh org
+state on the next dashboard push."
+  (clrhash eabp-org--cache))
 
 ;; ─── Heading references ────────────────────────────────────────────────────────
 ;;
@@ -2381,18 +2415,37 @@ headline still matches, then a headline search through the file."
             (or headline id file "?")))))
 
 (defun eabp-org--agenda-items (&optional span start-day)
-  "Extract agenda items for SPAN ('day, 'week, or 'month).
+  "Extract agenda items for SPAN (\\='day, \\='week, or \\='month).
 START-DAY is an optional string (e.g. \"2026-11-01\") to start the agenda on.
-Returns a list of alists representing agenda items."
+Returns a list of alists representing agenda items.  Memoised; see
+`eabp-org-cache-invalidate'."
+  (eabp-org--with-cache (eabp-org--cache-key 'agenda (or span 'day) start-day)
+    (eabp-org--agenda-items-1 span start-day)))
+
+(defconst eabp-org--agenda-buffer "*EABP Agenda*"
+  "Private buffer the agenda extraction builds into (and kills after).")
+
+(defun eabp-org--agenda-items-1 (span start-day)
+  "Uncached worker for `eabp-org--agenda-items'."
   (let ((org-agenda-span (or span 'day))
         (org-agenda-start-day start-day)
         (org-agenda-files (org-agenda-files))
+        ;; Build into a private buffer so a user's open *Org Agenda* on the
+        ;; desktop is never clobbered (and never killed) by an extraction.
+        ;; `org-agenda-buffer-tmp-name' is the supported redirect: `org-agenda'
+        ;; REBINDS `org-agenda-buffer-name' in its own let* and recomputes it,
+        ;; so binding that variable directly gets shadowed — the build then
+        ;; lands in *Org Agenda* while we look for (and fail to find, and fail
+        ;; to kill) our own name.
+        (org-agenda-buffer-tmp-name eabp-org--agenda-buffer)
+        (org-agenda-sticky nil)
         (inhibit-redisplay t)
         items)
-    (save-window-excursion
-      (let ((org-agenda-window-setup 'current-window))
-        (org-agenda nil "a")
-        (with-current-buffer org-agenda-buffer-name
+    (unwind-protect
+        (save-window-excursion
+          (let ((org-agenda-window-setup 'current-window))
+            (org-agenda nil "a")
+            (with-current-buffer eabp-org--agenda-buffer
           (goto-char (point-min))
           (while (not (eobp))
             (let* ((marker (get-text-property (point) 'org-marker))
@@ -2400,7 +2453,13 @@ Returns a list of alists representing agenda items."
                    (time (get-text-property (point) 'time))
                    (type (get-text-property (point) 'type))
                    (date-abs (get-text-property (point) 'date))
-                   (date-list (when date-abs (calendar-gregorian-from-absolute date-abs)))
+                   ;; org ≥9.6 stores the gregorian (MONTH DAY YEAR) list
+                   ;; directly; older code stored the absolute day number.
+                   ;; Feeding the list to calendar-gregorian-from-absolute
+                   ;; signals, which emptied the whole agenda.
+                   (date-list (cond ((consp date-abs) date-abs)
+                                    ((numberp date-abs)
+                                     (calendar-gregorian-from-absolute date-abs))))
                    (date-str (when date-list (format "%04d-%02d-%02d" (nth 2 date-list) (nth 0 date-list) (nth 1 date-list)))))
               (when marker
                 (with-current-buffer (marker-buffer marker)
@@ -2421,12 +2480,20 @@ Returns a list of alists representing agenda items."
                               (type . ,(when type (format "%s" type)))
                               (ref . ,(eabp-org--heading-ref)))
                             items))))))
-            (forward-line 1))))
-      (kill-buffer org-agenda-buffer-name))
+            (forward-line 1)))))
+      ;; Kill by buffer object, not name, and even when extraction errored.
+      (when-let ((buf (get-buffer eabp-org--agenda-buffer)))
+        (kill-buffer buf)))
     (nreverse items)))
 
 (defun eabp-org--todo-items (&optional files)
-  "Extract TODO items from FILES (or agenda files)."
+  "Extract TODO items from FILES (or agenda files).
+Memoised; see `eabp-org-cache-invalidate'."
+  (eabp-org--with-cache (eabp-org--cache-key 'todos files)
+    (eabp-org--todo-items-1 files)))
+
+(defun eabp-org--todo-items-1 (files)
+  "Uncached worker for `eabp-org--todo-items'."
   (let (items)
     (org-map-entries
      (lambda ()
@@ -2481,18 +2548,20 @@ Matches headline text or any tag. Returns a list of heading items."
 
 (defun eabp-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
-Uses `org-ql' when available, falling back to a substring match."
+Uses `org-ql' when available, falling back to a substring match.
+Memoised; see `eabp-org-cache-invalidate'."
   (if (string-empty-p (string-trim query))
       nil
-    (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
-                        (condition-case nil (read query) (error query))
-                      query)))
-      (if (fboundp 'org-ql-select)
-          (condition-case nil
-              (org-ql-select (org-agenda-files) ql-query
-                             :action #'eabp-org--heading-item-at)
-            (error (eabp-org--search-substring query)))
-        (eabp-org--search-substring query)))))
+    (eabp-org--with-cache (eabp-org--cache-key 'search query)
+      (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
+                          (condition-case nil (read query) (error query))
+                        query)))
+        (if (fboundp 'org-ql-select)
+            (condition-case nil
+                (org-ql-select (org-agenda-files) ql-query
+                               :action #'eabp-org--heading-item-at)
+              (error (eabp-org--search-substring query)))
+          (eabp-org--search-substring query))))))
 
 (defun eabp-org--file-list ()
   "List of agenda files and basic stats."
@@ -2589,23 +2658,31 @@ on the phone would hang behind the bridge."
 
 (defun eabp-org--do-capture (template-key values)
   "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input)."
-  (let ((org-capture-entry (assoc template-key org-capture-templates)))
-    (when org-capture-entry
-      (let* ((tmpl (nth 4 org-capture-entry))
-             (new-tmpl (if (stringp tmpl)
-                           (eabp-org--fill-template tmpl values)
-                         tmpl)))
-        (let* ((new-entry (copy-sequence org-capture-entry))
-               (org-capture-templates (list new-entry)))
-          (setcar (nthcdr 4 new-entry) new-tmpl)
+  (let ((entry (assoc template-key org-capture-templates)))
+    (when entry
+      (let* ((tmpl (nth 4 entry))
+             (filled (if (stringp tmpl)
+                         (eabp-org--fill-template tmpl values)
+                       tmpl))
+             ;; Shallow-copy the entry, swap in the filled template, and force
+             ;; :immediate-finish so the capture buffer never waits for the
+             ;; C-c C-c a phone user can't press.
+             (new-entry (copy-sequence entry)))
+        (setcar (nthcdr 4 new-entry) filled)
+        (setcdr (nthcdr 4 new-entry)
+                (append (nthcdr 5 new-entry) '(:immediate-finish t)))
+        ;; `org-capture-entry' short-circuits template selection inside
+        ;; `org-capture', so binding it to the FILLED copy is what makes the
+        ;; pre-filled template the one that actually runs.  (Binding it to
+        ;; the original — as this code once did — re-ran the raw %^{...}
+        ;; prompts and double-asked the user through the bridge.)
+        (let ((org-capture-entry new-entry))
           ;; Safety net: a fully pre-filled template shouldn't prompt at all,
           ;; but if any escape slips through, never let `org-capture' block
           ;; Emacs forever on a minibuffer the phone can't answer. `with-timeout'
           ;; fires even while a synchronous read is waiting.
           (with-timeout (30 (message "eabp: capture timed out (a prompt was left unanswered)"))
-            (org-capture nil template-key)
-            ;; Auto-finish capture for headless flow
-            (org-capture-finalize)))))))
+            (org-capture)))))))
 
 (defun eabp-org--clock-status ()
   "Current clock status."
@@ -2641,18 +2718,26 @@ on the phone would hang behind the bridge."
 
 ;;; eabp-keymap.el --- Keymap surfacing for the radial pie menu -*- lexical-binding: t; -*-
 
-;; The input complement to the Tier 0 generic buffer renderer.  Extracts
-;; keybindings from any buffer's active keymaps (including transient.el
-;; sessions), groups them into ≤8 categories, and sends the result to the
-;; companion as a pie-menu spec.  The companion renders a radial overlay;
-;; tapping a segment dispatches `eabp.keymap.run' which executes the key
-;; in-buffer (with minibuffer prompts auto-bridged as always).
+;; The input complement to the Tier 0 generic buffer renderer.  Two UIs,
+;; split by how good the available labels are:
 ;;
-;; Transient.el is first-class: prefix commands whose symbol carries a
-;; `transient--layout' property get their suffixes pre-extracted as
-;; sub-menu children (so drill-in is instant, no round-trip).  When a
-;; transient session is *active* (`transient--prefix' is non-nil), the
-;; menu shows the live transient's bindings instead of the buffer keymap.
+;;   * Tier 0 default — a searchable COMMAND PALETTE.  Raw keymap dumps
+;;     have dozens of bindings with machine-made labels; a live-filtering
+;;     list (the bridged `completing-read' picker) beats a pie menu for
+;;     that.  `eabp.keymap.show' extracts the buffer's bindings and runs
+;;     the picker; choosing an entry executes the key in-buffer (with
+;;     minibuffer prompts auto-bridged as always).
+;;
+;;   * Tier 1 — the RADIAL PIE MENU, reserved for curated, bounded menus.
+;;     Today that means a live transient.el session (`transient--prefix'
+;;     non-nil): human-written suffix descriptions, ≤~10 items — the pie's
+;;     sweet spot.  Executing a command that *activates* a transient
+;;     (e.g. picking `magit-dispatch' from the palette) opens the pie
+;;     automatically; when the transient ends the pie is dismissed.
+;;
+;; The grouping/category machinery below (`eabp-keymap--group-bindings')
+;; is retained for future Tier 1 skins that want to send curated pie
+;; specs for a whole mode; the default path no longer uses it.
 
 ;;; Code:
 
@@ -3000,16 +3085,24 @@ the companion's pie menu JSON."
      layout-bindings)))
 
 (defun eabp-keymap--command-label (cmd)
-  "Human-readable label for command CMD."
+  "Human-readable label for command CMD.
+Strips only the current buffer's major-mode stem (so `org-agenda-list'
+becomes \"agenda-list\" in an org buffer but keeps its full name
+elsewhere).  For a hyphenated mode like `magit-status-mode', the first
+segment (\"magit-\") is also tried.  Never strips blindly: the old
+greedy last-dash strip turned `forward-paragraph' into \"paragraph\"."
   (if (not (symbolp cmd))
       (format "%s" cmd)
-    (let ((name (symbol-name cmd)))
-      ;; Strip common prefixes for readability
+    (let* ((name (symbol-name cmd))
+           (stem (string-remove-suffix "-mode" (symbol-name major-mode)))
+           (head (car (split-string stem "-"))))
       (cond
-       ((string-match "\\`magit-\\(.+\\)" name) (match-string 1 name))
-       ((string-match "\\`dired-\\(.+\\)" name) (match-string 1 name))
-       ((string-match "\\`org-\\(.+\\)" name) (match-string 1 name))
-       ((string-match "\\`.*-\\(.+\\)" name) (match-string 1 name))
+       ((and (string-prefix-p (concat stem "-") name)
+             (> (length name) (1+ (length stem))))
+        (substring name (1+ (length stem))))
+       ((and (string-prefix-p (concat head "-") name)
+             (> (length name) (1+ (length head))))
+        (substring name (1+ (length head))))
        (t name)))))
 
 ;; ─── Pie menu spec builder ─────────────────────────────────────────────────
@@ -3029,7 +3122,6 @@ the companion's pie menu JSON."
                                (lambda (b)
                                  (let ((key (plist-get b :key))
                                        (label (plist-get b :label))
-                                       (cmd (plist-get b :command))
                                        (is-infix (plist-get b :is-infix)))
                                    (append
                                     `((key . ,key)
@@ -3059,6 +3151,60 @@ the companion's pie menu JSON."
                   (bindings . ,(vconcat (cddr cat)))))
               categories)))))))
 
+;; ─── Command palette (Tier 0 default) ──────────────────────────────────────
+
+(defun eabp-keymap--palette-candidates (buf)
+  "Return an alist of (DISPLAY . KEY-DESC) for BUF's extracted bindings."
+  (with-current-buffer buf
+    (mapcar (lambda (b)
+              (pcase-let ((`(,key ,cmd ,_source) b))
+                (cons (format "%s  ·  %s" key (eabp-keymap--command-label cmd))
+                      key)))
+            (eabp-keymap--extract-bindings buf))))
+
+(defun eabp-keymap--show-palette (buf)
+  "Show a searchable command palette for BUF's keybindings.
+Runs inside an action handler, so `completing-read' is bridged to the
+companion as a live-filtering picker dialog.  The chosen binding's key
+is executed in BUF; if that activates a transient, its Tier 1 pie menu
+opens automatically (see `eabp-keymap--sync-pie')."
+  (let* ((candidates (eabp-keymap--palette-candidates buf))
+         (choice (cond
+                  ((null candidates)
+                   (message "EABP keymap: no bindings extracted from %s"
+                            (buffer-name buf))
+                   nil)
+                  (t (condition-case nil
+                         (completing-read
+                          (format "%s commands" (buffer-name buf))
+                          (mapcar #'car candidates) nil t)
+                       (quit nil)))))
+         (key (cdr (assoc choice candidates))))
+    (when key
+      (eabp-keymap--execute-key buf key))))
+
+;; ─── Key execution & pie-menu sync ──────────────────────────────────────────
+
+(defun eabp-keymap--sync-pie (buf)
+  "Reconcile the companion's radial overlay with transient state.
+A live transient keeps (or opens) its Tier 1 pie menu; anything else
+dismisses the overlay — so the pie can never linger after the command
+it belonged to has finished."
+  (if (eabp-keymap--transient-active-p)
+      (eabp-send "pie_menu.show" (eabp-keymap--build-pie-spec buf))
+    (eabp-send "pie_menu.dismiss" nil)))
+
+(defun eabp-keymap--execute-key (buf key)
+  "Execute KEY in BUF, then sync the pie menu and refresh the surface."
+  (with-current-buffer buf
+    (condition-case err
+        (execute-kbd-macro (kbd key))
+      (error
+       (message "EABP keymap: %s failed: %s" key (error-message-string err)))))
+  (eabp-keymap--sync-pie buf)
+  (when (functionp eabp-buffer-refresh-function)
+    (funcall eabp-buffer-refresh-function)))
+
 ;; ─── Action handlers ───────────────────────────────────────────────────────
 
 (eabp-defaction "eabp.keymap.show"
@@ -3068,10 +3214,15 @@ the companion's pie menu JSON."
                                  eabp-emacs-ui--viewing-buffer)
                             (buffer-name (current-buffer))))
            (buf (get-buffer buffer-name)))
-      (if (not buf)
-          (message "EABP keymap: no such buffer %s" buffer-name)
-        (let ((spec (eabp-keymap--build-pie-spec buf)))
-          (eabp-send "pie_menu.show" spec))))))
+      (cond
+       ((not buf)
+        (message "EABP keymap: no such buffer %s" buffer-name))
+       ;; Tier 1: a live transient has curated labels and a small, bounded
+       ;; suffix set — exactly what the radial menu is good at.
+       ((eabp-keymap--transient-active-p)
+        (eabp-send "pie_menu.show" (eabp-keymap--build-pie-spec buf)))
+       ;; Tier 0 default: the searchable command palette.
+       (t (eabp-keymap--show-palette buf))))))
 
 (eabp-defaction "eabp.keymap.run"
   (lambda (args _)
@@ -3102,10 +3253,9 @@ the companion's pie menu JSON."
             (error
              (message "EABP keymap.run %s failed: %s" key
                       (error-message-string err)))))
-        ;; If a transient became active, send its menu
-        (when (eabp-keymap--transient-active-p)
-          (let ((spec (eabp-keymap--build-pie-spec buf)))
-            (eabp-send "pie_menu.show" spec)))
+        ;; Keep the overlay honest: still-active transient re-shows its pie
+        ;; (with fresh infix values); a finished one dismisses it.
+        (eabp-keymap--sync-pie buf)
         ;; Re-push the surface
         (when (functionp eabp-buffer-refresh-function)
           (funcall eabp-buffer-refresh-function))))))
@@ -3412,11 +3562,14 @@ files must not round-trip through the editor."
 ;; screen) so it matches the full listing you get from the Buffers tab.
 
 (defun eabp-files--within-root-p (path)
-  "Non-nil when PATH is inside one of `eabp-files-roots'."
-  (let ((full (file-truename (expand-file-name path))))
+  "Non-nil when PATH is inside (or is) one of `eabp-files-roots'.
+Uses `file-in-directory-p', which compares path components — a bare
+string-prefix check would let root \"~/org\" authorize \"~/org-secrets\",
+and this predicate is the security boundary for every file operation
+the phone can trigger."
+  (let ((full (expand-file-name path)))
     (cl-some (lambda (root)
-               (string-prefix-p (file-truename (expand-file-name (cdr root)))
-                                full))
+               (file-in-directory-p full (expand-file-name (cdr root))))
              eabp-files-roots)))
 
 (defun eabp-files--entry-menu (path)
@@ -4618,6 +4771,8 @@ building. SWITCH-TO additionally forces the companion onto that view
 
 (eabp-defaction "dashboard.refresh"
   (lambda (_ _)
+    ;; Manual refresh is an explicit "give me fresh data": bypass the memo.
+    (eabp-org-cache-invalidate)
     (eabp-org-ui-push-dashboard)))
 
 (eabp-defaction "heading.tap"
@@ -5030,8 +5185,11 @@ which would otherwise refresh twice or loop."
 
 (defun eabp-org-ui--refresh-if-connected (&rest _)
   "Re-push the dashboard when there's a live session.
-Safe to put on any hook: a no-op while disconnected."
+Safe to put on any hook: a no-op while disconnected.  Invalidates the
+extraction cache first — this runs on clock in/out, which mutate the
+org buffer without necessarily saving it."
   (when (eabp-connected-p)
+    (eabp-org-cache-invalidate)
     (eabp-org-ui-push-dashboard)))
 
 ;; After (re)connect, push the dashboard so the app never shows a stale

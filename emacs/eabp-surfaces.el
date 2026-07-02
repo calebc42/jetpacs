@@ -122,6 +122,10 @@ and forwarded to the companion as dialogs."
         (let ((eabp--in-action-handler t))
           (condition-case err
               (funcall fn args payload)
+            ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
+            ;; which `error' does not catch — treat it as a clean abort
+            ;; rather than letting it unwind through the process filter.
+            (quit (message "EABP action %s cancelled" action))
             (error (message "EABP action %s failed: %s"
                             action (error-message-string err)))))
       (message "EABP: no handler for action %s" action))))
@@ -218,21 +222,10 @@ and forwarded to the companion as dialogs."
   '(add-hook 'eabp-connected-hook
              (lambda (_) (eabp-org-ui-push-dashboard)) 50))
 
-;; ─── Offline Queue Replay ────────────────────────────────────────────────────
-
-(defun eabp--trigger-queue-replay (welcome-payload)
-  "Check the handshake payload and request a queue replay if events are waiting."
-  (let ((queued (or (alist-get 'queued_events welcome-payload) 0)))
-    (when (> queued 0)
-      (message "EABP: %d offline events queued. Requesting replay..." queued)
-      (eabp-request "queue.replay" nil
-                    (lambda (_payload)
-                      (message "EABP: Queue replay complete."))))))
-
-;; Depth 90: ensure this runs after `eabp--absorb-revision-snapshot` (depth -50)
-;; and after `eabp-clock-in-notification` pushes so the queue replay applies to 
-;; the fully synced state.
-(add-hook 'eabp-connected-hook #'eabp--trigger-queue-replay 90)
+;; Queue replay is requested by the transport itself (`eabp--on-welcome' in
+;; eabp.el) after the connected hooks have run, so replayed events land on a
+;; coherent state.  A second request used to live here too; the companion's
+;; replay guard absorbed the duplicate, but one requester is enough.
 
 (provide 'eabp-surfaces)
 

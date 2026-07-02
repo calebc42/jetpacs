@@ -2,6 +2,7 @@ package com.calebc42.eabp
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
+import kotlin.concurrent.thread
 
 class EabpDialogState {
     val currentDialog = MutableStateFlow<JSONObject?>(null)
@@ -28,7 +29,12 @@ class EabpDialogState {
                     kind = "event.action",
                     payload = action,
                 )
-                EabpRuntime.server?.connection()?.send(frame)
+                // Invoked from the dialog's onDismissRequest, i.e. the main
+                // thread — a socket write there throws
+                // NetworkOnMainThreadException and kills the app.
+                thread(name = "EabpPromptDismiss") {
+                    EabpRuntime.server?.connection()?.send(frame)
+                }
             }
         } else null
         currentDialog.value = spec

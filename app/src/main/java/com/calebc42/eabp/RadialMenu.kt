@@ -1,5 +1,6 @@
 package com.calebc42.eabp
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -8,6 +9,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -35,9 +38,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
-
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -46,6 +51,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -54,13 +60,14 @@ import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 /** Max segments visible per radial level before auto-pagination kicks in. */
-private const val MAX_SEGMENTS_PER_LEVEL = 10
+private const val MAX_SEGMENTS_PER_LEVEL = 8
 
 /**
  * If [items] has more than [MAX_SEGMENTS_PER_LEVEL] entries, return the first
@@ -83,11 +90,16 @@ private fun paginate(items: List<JSONObject>): List<JSONObject> {
 }
 
 /**
- * Full-screen radial pie menu overlay.
+ * Full-screen radial pie menu overlay — the Tier 1 keymap UI (live
+ * transients and curated per-mode menus). The Tier 0 default is the
+ * command palette, rendered Emacs-side through the bridged completing-read.
  *
  * Two modes:
- * 1. **Speed Dial** — category circles arranged in a semicircle from the bottom-right.
- * 2. **Pie Menu** — radial segments for bindings within a selected category.
+ * 1. **Speed Dial** — category circles fanned from the bottom-right
+ *    (only when the spec carries more than one category).
+ * 2. **Pie Menu** — radial segments with press-drag-release selection.
+ *
+ * A single-category spec (the transient case) opens its pie directly.
  */
 @Composable
 fun RadialMenu(
@@ -97,17 +109,42 @@ fun RadialMenu(
 ) {
     val categories = remember(spec) { spec.optJSONArray("categories") ?: JSONArray() }
     val centerLabel = remember(spec) { spec.optString("center_label", "") }
+    val soleCategory = remember(spec) {
+        if (categories.length() == 1) categories.optJSONObject(0) else null
+    }
 
-    // Navigation state: null = speed dial, non-null = pie menu for that category
-    var activeCategory by remember { mutableStateOf<JSONObject?>(null) }
-    // Stack for drill-in (prefix keys with children)
-    val navStack = remember { mutableStateListOf<List<JSONObject>>() }
-    var currentBindings by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    var currentTitle by remember { mutableStateOf("") }
+    // Navigation state, all keyed on the spec so a re-push (e.g. a transient
+    // re-showing with fresh infix values) starts from a clean level.
+    var activeCategory by remember(spec) { mutableStateOf(soleCategory) }
+    // Drill-in stack of (bindings, title) so nested levels restore their own
+    // titles, not the category's.
+    val navStack = remember(spec) { mutableStateListOf<Pair<List<JSONObject>, String>>() }
+    var currentBindings by remember(spec) {
+        mutableStateOf(
+            soleCategory?.let { paginate(it.optJSONArray("bindings").toBindingList()) }
+                ?: emptyList()
+        )
+    }
+    var currentTitle by remember(spec) {
+        mutableStateOf(soleCategory?.optString("label", "") ?: "")
+    }
 
-    // --- Mode transitions ---
+    // One step out: pop a drill-in level, else fall back to the speed dial,
+    // else dismiss. Shared by the center button and the system back button.
+    val goBack: () -> Unit = {
+        when {
+            navStack.isNotEmpty() -> {
+                val (bindings, title) = navStack.removeLast()
+                currentBindings = bindings
+                currentTitle = title
+            }
+            activeCategory != null && soleCategory == null -> activeCategory = null
+            else -> onDismiss()
+        }
+    }
+    BackHandler(onBack = goBack)
+
     val showSpeedDial = activeCategory == null
-    val showPie = activeCategory != null
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Scrim (visual only — dismiss is handled by SpeedDial/PieMenu)
@@ -135,7 +172,7 @@ fun RadialMenu(
 
         // --- Pie Menu Mode ---
         AnimatedVisibility(
-            visible = showPie,
+            visible = !showSpeedDial,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(150)),
         ) {
@@ -150,7 +187,7 @@ fun RadialMenu(
                         val children = binding.optJSONArray("children")
                         if (isPrefix && children != null && children.length() > 0) {
                             // Drill in: push current level, swap to children
-                            navStack.add(currentBindings)
+                            navStack.add(currentBindings to currentTitle)
                             currentBindings = paginate(children.toBindingList())
                             currentTitle = binding.optString("label", currentTitle)
                         } else {
@@ -158,16 +195,7 @@ fun RadialMenu(
                             if (action != null) onAction(action)
                         }
                     },
-                    onCenterTap = {
-                        if (navStack.isNotEmpty()) {
-                            // Pop back
-                            currentBindings = navStack.removeLast()
-                            currentTitle = activeCategory!!.optString("label", "")
-                        } else {
-                            // Back to speed dial
-                            activeCategory = null
-                        }
-                    },
+                    onCenterTap = goBack,
                     onOutsideTap = onDismiss,
                 )
             }
@@ -186,14 +214,25 @@ private fun SpeedDial(
     onDismiss: () -> Unit,
 ) {
     val count = categories.length()
-    // Staggered appearance flags
-    val visible = remember { mutableStateListOf<Boolean>().apply { repeat(count) { add(false) } } }
+    // Staggered appearance flags, re-sized if a new spec changes the count.
+    val visible = remember(count) {
+        mutableStateListOf<Boolean>().apply { repeat(count) { add(false) } }
+    }
     LaunchedEffect(count) {
         for (i in 0 until count) {
             visible[i] = true
             delay(50)
         }
     }
+
+    // Quarter-circle arc from left (PI) to up (3*PI/2), anchored at the
+    // bottom-right. The radius grows with the item count so ~48dp of arc
+    // always separates neighbouring 40dp FABs (fixed 140dp overlapped at 6+).
+    val angleRange = PI / 2
+    val startAngle = PI
+    val step = if (count > 1) angleRange / (count - 1) else 0.0
+    val radius = max(140f, 31f * (count - 1)).dp
+    val radiusPx = with(LocalDensity.current) { radius.toPx() }
 
     Box(
         modifier = Modifier
@@ -205,17 +244,7 @@ private fun SpeedDial(
         for (i in 0 until count) {
             val cat = categories.getJSONObject(i)
             val label = cat.optString("label", "?")
-
-            // Quarter-circle arc from left (PI) to up (3*PI/2),
-            // anchored at bottom-right so items fan upward-left.
-            val angleRange = PI / 2  // 90° arc
-            val startAngle = PI      // start at left
-            val step = if (count > 1) angleRange / (count - 1) else 0.0
             val angle = startAngle + step * i
-
-            val radius = 140.dp
-            val density = LocalDensity.current
-            val radiusPx = with(density) { radius.toPx() }
 
             // Offset from anchor (bottom-right corner)
             val dx = (cos(angle) * radiusPx).toFloat()
@@ -278,6 +307,35 @@ private fun SpeedDial(
 // Pie Menu
 // ────────────────────────────────────────────────────────────────
 
+/** Where a pointer position falls within the pie's geometry. */
+private sealed interface PieRegion {
+    data object Center : PieRegion
+    data object Outside : PieRegion
+    data class Segment(val index: Int) : PieRegion
+}
+
+private fun pieRegionAt(position: Offset, size: IntSize, segmentCount: Int): PieRegion {
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val dx = position.x - cx
+    val dy = position.y - cy
+    val dist = sqrt(dx * dx + dy * dy)
+    val outerRadius = min(size.width, size.height) * 0.38f
+    val innerRadius = outerRadius * 0.25f
+    return when {
+        dist < innerRadius -> PieRegion.Center
+        dist > outerRadius -> PieRegion.Outside
+        else -> {
+            // Angle in degrees, clockwise, 0° at the top (segments start at -90°).
+            var angleDeg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+            angleDeg = (angleDeg + 90f + 360f) % 360f
+            PieRegion.Segment(
+                (angleDeg / (360f / segmentCount)).toInt().coerceIn(0, segmentCount - 1)
+            )
+        }
+    }
+}
+
 @Composable
 private fun PieMenu(
     bindings: List<JSONObject>,
@@ -290,7 +348,9 @@ private fun PieMenu(
 ) {
     val segmentCount = bindings.size
     if (segmentCount == 0) {
-        onCenterTap()
+        // An empty level has nothing to show; step back out. Must run as an
+        // effect — mutating parent state during composition is undefined.
+        LaunchedEffect(Unit) { onCenterTap() }
         return
     }
 
@@ -302,6 +362,7 @@ private fun PieMenu(
     val onSurface = MaterialTheme.colorScheme.onSurface
 
     val textMeasurer = rememberTextMeasurer()
+    val haptic = LocalHapticFeedback.current
 
     // Animate scale for open
     var targetScale by remember { mutableFloatStateOf(0f) }
@@ -312,8 +373,9 @@ private fun PieMenu(
         label = "pieScale",
     )
 
-    // Track tapped segment for highlight
-    var tappedSegment by remember { mutableIntStateOf(-1) }
+    // Segment under the finger, keyed on bindings so a drill-in never keeps
+    // the previous level's highlight.
+    var highlighted by remember(bindings) { mutableIntStateOf(-1) }
 
     Canvas(
         modifier = Modifier
@@ -322,39 +384,43 @@ private fun PieMenu(
                 scaleX = scale
                 scaleY = scale
             }
+            // Press-drag-release selection: the segment under the finger
+            // highlights while dragging (with a tick on each crossing) and
+            // fires on release. A plain tap is the degenerate drag, so both
+            // interaction styles work. Release in the center goes back;
+            // release outside dismisses.
             .pointerInput(bindings) {
-                detectTapGestures { offset ->
-                    val cx = size.width / 2f
-                    val cy = size.height / 2f
-                    val dx = offset.x - cx
-                    val dy = offset.y - cy
-                    val dist = sqrt(dx * dx + dy * dy)
-
-                    val outerRadius = min(size.width, size.height) * 0.38f
-                    val innerRadius = outerRadius * 0.25f
-
-                    if (dist < innerRadius) {
-                        onCenterTap()
-                        return@detectTapGestures
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    var region = pieRegionAt(down.position, size, segmentCount)
+                    highlighted = (region as? PieRegion.Segment)?.index ?: -1
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        val newRegion = pieRegionAt(change.position, size, segmentCount)
+                        if (newRegion != region) {
+                            region = newRegion
+                            val idx = (region as? PieRegion.Segment)?.index ?: -1
+                            if (idx != highlighted) {
+                                highlighted = idx
+                                if (idx >= 0) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                            }
+                        }
+                        if (change.changedToUp()) {
+                            change.consume()
+                            when (val r = region) {
+                                is PieRegion.Segment -> onSegmentTap(bindings[r.index])
+                                PieRegion.Center -> onCenterTap()
+                                PieRegion.Outside -> onOutsideTap()
+                            }
+                            break
+                        }
+                        if (!change.pressed) break
+                        change.consume()
                     }
-                    if (dist > outerRadius) {
-                        onOutsideTap()
-                        return@detectTapGestures
-                    }
-
-                    // Convert to angle (degrees), clockwise from top
-                    var angleDeg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble()))
-                        .toFloat()
-                    // Shift so 0° = top (our start is -90°)
-                    angleDeg = (angleDeg + 90f + 360f) % 360f
-
-                    val gapDeg = 2f
-                    val sweepDeg = 360f / segmentCount - gapDeg
-                    val segIdx = (angleDeg / (360f / segmentCount)).toInt()
-                        .coerceIn(0, segmentCount - 1)
-
-                    tappedSegment = segIdx
-                    onSegmentTap(bindings[segIdx])
                 }
             },
     ) {
@@ -370,7 +436,7 @@ private fun PieMenu(
         for (i in 0 until segmentCount) {
             // Start angle: -90 (top) + i * sweepPerSegment + gap/2
             val startAngle = -90f + i * sweepPerSegment + gapDeg / 2f
-            val color = if (i == tappedSegment) primary else primaryContainer
+            val color = if (i == highlighted) primary else primaryContainer
 
             drawArc(
                 color = color,
@@ -380,9 +446,6 @@ private fun PieMenu(
                 topLeft = Offset(cx - outerRadius, cy - outerRadius),
                 size = Size(outerRadius * 2, outerRadius * 2),
             )
-
-            // Cut out inner circle by drawing over with the scrim color
-            // (We'll draw the center circle on top anyway)
         }
 
         // Inner circle (center button)
@@ -404,7 +467,7 @@ private fun PieMenu(
             val lx = cx + (cos(midAngleRad) * labelRadius).toFloat()
             val ly = cy + (sin(midAngleRad) * labelRadius).toFloat()
 
-            val textColor = if (i == tappedSegment) onPrimary else onPrimaryContainer
+            val textColor = if (i == highlighted) onPrimary else onPrimaryContainer
 
             // Key in bold
             val keyText = if (isPrefix) "$key ▸" else key

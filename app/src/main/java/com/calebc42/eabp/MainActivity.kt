@@ -161,7 +161,10 @@ private fun BridgeScreen() {
             spec = pieMenuSpec!!,
             onAction = { action ->
                 dispatch(action)
-                // Don't auto-dismiss — Emacs may send a new menu (transient drill-in)
+                // Emacs answers every keymap action with pie_menu.show (a live
+                // transient re-showing) or pie_menu.dismiss — but only while
+                // connected. Offline, nothing will ever answer: close locally.
+                if (!EabpRuntime.connected.value) EabpRuntime.pieMenuState.dismiss()
             },
             onDismiss = { EabpRuntime.pieMenuState.dismiss() },
         )

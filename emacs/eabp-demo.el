@@ -171,8 +171,8 @@ Returns the directory the files were written to."
   ;; `eabp-demo-directory' — nothing on the wire chooses paths or content.
   (lambda (_ _)
     (eabp-demo-setup)
-    (when (fboundp 'eabp-org-ui-snackbar)
-      (eabp-org-ui-snackbar
+    (when (fboundp 'eabp-shell-notify)
+      (eabp-shell-notify
        (format "Demo files in %s"
                (abbreviate-file-name
                 (expand-file-name eabp-demo-directory)))))))

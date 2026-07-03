@@ -6,9 +6,15 @@
 ;; reloaded from the phone, so the desktop side never needs touching
 ;; once eabp is in the init file.
 ;;
-;; Views contributed to the dashboard (wired in eabp-org-ui):
-;;   "files" — root list / directory listing
+;; Registers two shell views:
+;;   "files" — root list / directory listing (a bottom-bar tab)
 ;;   "edit"  — editor for `eabp-files--file' (present while a file is open)
+;;
+;; App seams — this module knows nothing about org (or any file type):
+;;   `eabp-files-editor-body-functions'    replace the editor body per file
+;;   `eabp-files-editor-actions-functions' add top-bar buttons per file
+;;   `eabp-files-open-hook'                react to a file being opened
+;;   `eabp-files-after-save-hook'          react to a phone-side save
 
 ;;; Code:
 
@@ -17,8 +23,7 @@
 (require 'eabp-widgets)
 (require 'eabp-buffer) ; Tier 0 renderer + the major-mode→skin registry
 (require 'eabp-complete) ; capf bridge: the editor's `complete' flag
-(require 'eabp-org)   ; for eabp-org--inhibit-save-refresh / cache invalidation
-(require 'eabp-org-reader)
+(require 'eabp-shell)
 (require 'dired)
 (require 'cl-lib)
 
@@ -54,16 +59,31 @@ files must not round-trip through the editor."
 (defvar eabp-files--file nil
   "Absolute path of the file open in the editor, or nil.")
 
-(defvar eabp-files--read-mode nil
-  "When non-nil, org files open in the foldable reader instead of the editor.")
+;; ─── App seams ───────────────────────────────────────────────────────────────
 
-(defvar eabp-files--refile-mode nil
-  "When non-nil, org reader shows a flat drag-to-reorder heading list.")
+(defvar eabp-files-editor-body-functions nil
+  "Abnormal hook: functions of FILE returning the editor view's body, or nil.
+Tried in order before the plain-text editor; the first non-nil result
+wins.  Apps register alternate renderings here (e.g. a foldable outline
+reader for their file type).")
+
+(defvar eabp-files-editor-actions-functions nil
+  "Abnormal hook: functions of FILE returning top-bar action nodes.
+The returned lists are appended into the editor view's top bar; apps add
+their per-file-type buttons (mode toggles, metadata dialogs) here.")
+
+(defvar eabp-files-open-hook nil
+  "Hook run with FILE when the phone opens it in the editor.
+Apps set their per-file-type editor state here (e.g. reader-first).")
+
+(defvar eabp-files-after-save-hook nil
+  "Hook run with FILE after a phone-triggered save succeeds.
+Apps whose views memoise data derived from files drop caches here.")
 
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 
 ;; The directory listing is backed by a real dired buffer — the standard Emacs
-;; file engine — but presented through a Tier-1 card skin registered for
+;; file engine — but presented through a card skin registered for
 ;; `dired-mode'.  So the same buffer renders as touch cards here and as a raw,
 ;; faithful listing from the Buffers tab: Tier 0 and Tier 1 over one model.
 ;; The Files tab lands directly in `eabp-files-default-dir' (no separate roots
@@ -117,7 +137,7 @@ handler runs one specific, root-guarded operation — never arbitrary dispatch."
        :on-tap (eabp-action "files.open" :args `((file . ,path)))))))
 
 (defun eabp-files--dired-cards (buffer)
-  "Tier-1 dired skin: render dired BUFFER as a list of file/dir cards.
+  "Dired skin: render dired BUFFER as a list of file/dir cards.
 Directories sort first, then files.  A \"..\" card heads the list only when
 the parent is still within the allowed roots — at the ceiling there is no
 \"..\".  Returns a list of nodes, per the renderer contract."
@@ -178,62 +198,92 @@ There is no separate roots screen — the view always shows a directory
 
 ;; ─── Editor view ─────────────────────────────────────────────────────────────
 
-(defun eabp-files--org-p (file)
-  "Non-nil when FILE is an org file."
-  (and file (string-match-p "\\.org\\'" file)))
-
 (defun eabp-files-editor-body ()
   "Build the editor view for `eabp-files--file'.
-Org files in read mode render the foldable outline reader; otherwise the
-plain-text editor."
+An app-registered body (see `eabp-files-editor-body-functions') wins;
+otherwise the plain-text editor."
   (let ((file eabp-files--file))
     (if (not (and file (file-readable-p file)))
         (eabp-column (eabp-text "No file open." 'body))
-      (if (and eabp-files--read-mode (eabp-files--org-p file))
-          (if eabp-files--refile-mode
-              (or (eabp-org-reader-refile-list file)
-                  (eabp-text "No headings to show." 'caption))
-            (let ((items (eabp-org--file-heading-items file)))
-              (if items
-                  (apply #'eabp-lazy-column
-                         (mapcar #'eabp-org-ui--agenda-card items))
-                (eabp-empty-state :icon "description"
-                                  :title "Empty file"
-                                  :caption "No headings found."))))
-      (let* ((size (or (file-attribute-size (file-attributes file)) 0))
-             (read-only (> size eabp-files-max-bytes))
-             (content
-              ;; Prefer a live buffer's content (may have unsaved desktop
-              ;; edits); fall back to disk.
-              (if-let ((buf (get-file-buffer file)))
-                  (with-current-buffer buf
-                    (buffer-substring-no-properties
-                     (point-min)
-                     (min (point-max) (1+ eabp-files-max-bytes))))
-                (with-temp-buffer
-                  (insert-file-contents file nil 0 eabp-files-max-bytes)
-                  (buffer-string)))))
-        (eabp-column
-         (when read-only
-           (eabp-text (format "File exceeds %s — opened read-only."
-                              (file-size-human-readable eabp-files-max-bytes))
-                      'caption))
-         (eabp-editor file content
-                      :read-only read-only
-                      :line-numbers (and eabp-line-numbers
-                                         (symbol-name eabp-line-numbers))
-                      :complete (and eabp-complete-enabled (not read-only))
-                      :on-save (eabp-action "files.save"
-                                            :args `((file . ,file))
-                                            :when-offline "queue"
-                                            :dedupe (concat "save/" file)))))))))
+      (or (run-hook-with-args-until-success
+           'eabp-files-editor-body-functions file)
+          (let* ((size (or (file-attribute-size (file-attributes file)) 0))
+                 (read-only (> size eabp-files-max-bytes))
+                 (content
+                  ;; Prefer a live buffer's content (may have unsaved desktop
+                  ;; edits); fall back to disk.
+                  (if-let ((buf (get-file-buffer file)))
+                      (with-current-buffer buf
+                        (buffer-substring-no-properties
+                         (point-min)
+                         (min (point-max) (1+ eabp-files-max-bytes))))
+                    (with-temp-buffer
+                      (insert-file-contents file nil 0 eabp-files-max-bytes)
+                      (buffer-string)))))
+            (eabp-column
+             (when read-only
+               (eabp-text (format "File exceeds %s — opened read-only."
+                                  (file-size-human-readable eabp-files-max-bytes))
+                          'caption))
+             (eabp-editor file content
+                          :read-only read-only
+                          :line-numbers (and eabp-line-numbers
+                                             (symbol-name eabp-line-numbers))
+                          :complete (and eabp-complete-enabled (not read-only))
+                          :on-save (eabp-action "files.save"
+                                                :args `((file . ,file))
+                                                :when-offline "queue"
+                                                :dedupe (concat "save/" file)))))))))
+
+;; ─── Shell views ─────────────────────────────────────────────────────────────
+
+(defun eabp-files--files-view (snackbar)
+  "The Files tab: the current directory's cards, back arrow inside subdirs."
+  (eabp-shell-tab-view
+   "files" (eabp-files-browser-body)
+   :top-bar (when eabp-files--dir
+              (eabp-top-bar (abbreviate-file-name eabp-files--dir)
+                            :nav-icon "arrow_back"
+                            :nav-action (eabp-action "files.cd"
+                                                     :args '((dir . :null)))))
+   ;; A create FAB — the view always shows a directory (the landing dir or
+   ;; a subdirectory), so it's always offered.
+   :fab (eabp-fab "add" :label "New" :on-tap (eabp-action "files.new"))
+   :snackbar snackbar))
+
+(defun eabp-files--edit-view (snackbar)
+  "The editor view for the open file, with app-contributed top-bar actions."
+  (eabp-shell-nav-view
+   (if eabp-files--file
+       (file-name-nondirectory eabp-files--file)
+     "Editor")
+   (eabp-files-editor-body)
+   :back-to "files"
+   :actions (when eabp-files--file
+              (apply #'append
+                     (delq nil
+                           (mapcar (lambda (fn) (funcall fn eabp-files--file))
+                                   eabp-files-editor-actions-functions))))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "files"
+  :builder #'eabp-files--files-view
+  :tab '(:icon "folder_open" :label "Files")
+  :order 40)
+
+(eabp-shell-define-view "edit"
+  :builder #'eabp-files--edit-view
+  :when (lambda () (and eabp-files--file t))
+  :order 100)
+
+;; Leaving the editor for the files view closes the file (the next push
+;; drops the edit view). Unsaved companion-side text is discarded with it.
+(add-hook 'eabp-shell-view-switched-hook
+          (lambda (view)
+            (when (and (equal view "files") eabp-files--file)
+              (setq eabp-files--file nil))))
 
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
-
-(declare-function eabp-org-ui-push-dashboard "eabp-org-ui")
-(declare-function eabp-org-ui-snackbar "eabp-org-ui")
-(declare-function eabp-org-ui--agenda-card "eabp-org-ui")
-(declare-function eabp-org--file-heading-items "eabp-org")
 
 (eabp-defaction "files.cd"
   (lambda (args _)
@@ -243,7 +293,7 @@ plain-text editor."
                  (file-directory-p dir)
                  (eabp-files--within-root-p dir)
                  (file-name-as-directory dir)))
-      (eabp-org-ui-push-dashboard nil :switch-to "files"))))
+      (eabp-shell-push nil :switch-to "files"))))
 
 (eabp-defaction "files.open"
   (lambda (args _)
@@ -252,19 +302,8 @@ plain-text editor."
                  (file-readable-p file)
                  (eabp-files--within-root-p file))
         (setq eabp-files--file (expand-file-name file))
-        ;; Org files open reader-first; everything else in the editor.
-        (setq eabp-files--read-mode (eabp-files--org-p eabp-files--file))
-        (eabp-org-ui-push-dashboard nil :switch-to "edit")))))
-
-(eabp-defaction "files.toggle-read"
-  (lambda (_ _)
-    (setq eabp-files--read-mode (not eabp-files--read-mode))
-    (eabp-org-ui-push-dashboard nil :switch-to "edit")))
-
-(eabp-defaction "files.toggle-refile"
-  (lambda (_ _)
-    (setq eabp-files--refile-mode (not eabp-files--refile-mode))
-    (eabp-org-ui-push-dashboard nil :switch-to "edit")))
+        (run-hook-with-args 'eabp-files-open-hook eabp-files--file)
+        (eabp-shell-push nil :switch-to "edit")))))
 
 (eabp-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a
@@ -282,13 +321,13 @@ plain-text editor."
                   (if (file-directory-p file)
                       (delete-directory file t)
                     (delete-file file))
-                  (eabp-org-ui-snackbar
+                  (eabp-shell-notify
                    (format "Deleted %s" (file-name-nondirectory
                                          (directory-file-name file)))))
-              (error (eabp-org-ui-snackbar
+              (error (eabp-shell-notify
                       (format "Delete failed: %s" (error-message-string err)))))
-          (eabp-org-ui-snackbar "Delete cancelled")))
-      (eabp-org-ui-push-dashboard nil :switch-to "files"))))
+          (eabp-shell-notify "Delete cancelled")))
+      (eabp-shell-push nil :switch-to "files"))))
 
 (eabp-defaction "files.rename"
   ;; Allowlisted op: rename within the same directory; the new name is read
@@ -302,23 +341,23 @@ plain-text editor."
                (new (read-string (format "Rename %s to: " old) old)))
           (cond
            ((or (null new) (string-empty-p (string-trim new)))
-            (eabp-org-ui-snackbar "Rename cancelled"))
+            (eabp-shell-notify "Rename cancelled"))
            (t
             (let ((target (expand-file-name
                            new (file-name-directory (directory-file-name file)))))
               (cond
                ((not (eabp-files--within-root-p target))
-                (eabp-org-ui-snackbar "Rename rejected (outside roots)"))
+                (eabp-shell-notify "Rename rejected (outside roots)"))
                ((file-exists-p target)
-                (eabp-org-ui-snackbar "Target already exists"))
+                (eabp-shell-notify "Target already exists"))
                (t
                 (condition-case err
                     (progn (rename-file file target)
-                           (eabp-org-ui-snackbar (format "Renamed to %s" new)))
-                  (error (eabp-org-ui-snackbar
+                           (eabp-shell-notify (format "Renamed to %s" new)))
+                  (error (eabp-shell-notify
                           (format "Rename failed: %s"
                                   (error-message-string err)))))))))))
-        (eabp-org-ui-push-dashboard nil :switch-to "files")))))
+        (eabp-shell-push nil :switch-to "files")))))
 
 ;; ─── New file / folder ───────────────────────────────────────────────────────
 
@@ -370,19 +409,19 @@ state (the same pattern as the capture form)."
            (dir (eabp-files--current-dir)))
       (cond
        ((or (null dir) (not (eabp-files--within-root-p dir)))
-        (eabp-org-ui-snackbar "No directory"))
+        (eabp-shell-notify "No directory"))
        ((string-empty-p name)
-        (eabp-org-ui-snackbar "Name required"))
+        (eabp-shell-notify "Name required"))
        ;; Single segment only — no separators or parent traversal.
        ((string-match-p "/" name)
-        (eabp-org-ui-snackbar "Name can't contain '/'"))
+        (eabp-shell-notify "Name can't contain '/'"))
        (t
         (let ((target (expand-file-name name dir)))
           (cond
            ((not (eabp-files--within-root-p target))
-            (eabp-org-ui-snackbar "Rejected (outside roots)"))
+            (eabp-shell-notify "Rejected (outside roots)"))
            ((file-exists-p target)
-            (eabp-org-ui-snackbar "Already exists"))
+            (eabp-shell-notify "Already exists"))
            (t
             (condition-case err
                 (progn
@@ -390,21 +429,24 @@ state (the same pattern as the capture form)."
                       (make-directory target)
                     (write-region "" nil target nil 'silent))
                   (eabp-ui-state-clear "files-new-name")
-                  (eabp-org-ui-snackbar (format "Created %s" name)))
-              (error (eabp-org-ui-snackbar
+                  (eabp-shell-notify (format "Created %s" name)))
+              (error (eabp-shell-notify
                       (format "Create failed: %s"
                               (error-message-string err))))))))))
       (eabp-dismiss-dialog)
-      (eabp-org-ui-push-dashboard nil :switch-to "files"))))
+      (eabp-shell-push nil :switch-to "files"))))
 
 (eabp-defaction "files.save"
+  ;; Saves run inside the action handler, so `eabp--in-action-handler' is
+  ;; bound — app after-save-hook refreshers key off that to avoid doubling
+  ;; the explicit push below.
   (lambda (args _)
     (let ((file (alist-get 'file args))
           (value (alist-get 'value args)))
       (cond
        ((not (and (stringp file) (stringp value)
                   (eabp-files--within-root-p file)))
-        (eabp-org-ui-snackbar "Save rejected"))
+        (eabp-shell-notify "Save rejected"))
        (t
         (condition-case err
             (progn
@@ -414,99 +456,33 @@ state (the same pattern as the capture form)."
                   (with-current-buffer buf
                     (erase-buffer)
                     (insert value)
-                    (let ((eabp-org--inhibit-save-refresh t)
-                          (save-silently t))
+                    (let ((save-silently t))
                       (save-buffer)))
-                (let ((eabp-org--inhibit-save-refresh t))
-                  (write-region value nil file)))
-              (when (fboundp 'eabp-org-cache-invalidate)
-                (eabp-org-cache-invalidate))
-              (eabp-org-ui-snackbar
+                (write-region value nil file))
+              (run-hook-with-args 'eabp-files-after-save-hook file)
+              (eabp-shell-notify
                (format "Saved %s" (file-name-nondirectory file))))
           (error
-           (eabp-org-ui-snackbar
+           (eabp-shell-notify
             (format "Save failed: %s" (error-message-string err))))))))
-    (eabp-org-ui-push-dashboard)))
+    (eabp-shell-push)))
 
 (eabp-defaction "config.reload"
   (lambda (_ _)
     (condition-case err
         (progn
           (load user-init-file)
-          (eabp-org-ui-snackbar "Config reloaded ✓"))
+          (eabp-shell-notify "Config reloaded ✓"))
       (error
-       (eabp-org-ui-snackbar
+       (eabp-shell-notify
         (format "Reload error: %s" (error-message-string err)))))
-    (eabp-org-ui-push-dashboard)))
+    (eabp-shell-push)))
 
-(eabp-defaction "files.properties.show"
-  (lambda (args _)
-    (let ((file (alist-get 'file args)))
-      (if (not (and file (stringp file) (file-readable-p file)))
-          (eabp-org-ui-snackbar (format "Cannot open properties: %s" (or file "no file")))
-        (condition-case err
-            (let* ((buf (or (get-file-buffer file) (find-file-noselect file)))
-                   (kwds (with-current-buffer buf (org-collect-keywords '("TITLE" "CATEGORY" "FILETAGS"))))
-                   (title (car (alist-get "TITLE" kwds nil nil #'equal)))
-                   (category (car (alist-get "CATEGORY" kwds nil nil #'equal)))
-                   (filetags-str (car (alist-get "FILETAGS" kwds nil nil #'equal)))
-                   (filetags (when filetags-str (split-string filetags-str ":" t "[ \t\n\r]+")))
-                   (available-tags (seq-uniq (append filetags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
-              (eabp-send-dialog
-               (eabp-column
-                (eabp-text "File Properties" 'title)
-                (eabp-text (file-name-nondirectory file) 'caption)
-                (eabp-text-input "file-prop-title" :label "Title" :value title :single-line t)
-                (eabp-text-input "file-prop-category" :label "Category" :value category :single-line t)
-                (eabp-text "File Tags" 'caption nil nil nil nil 8)
-                (eabp-enum-list "file-prop-tags" available-tags
-                                :value filetags :multi-select t :allow-add t)
-                (eabp-row
-                 (eabp-spacer :weight 1)
-                 (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
-                 (eabp-spacer :width 8)
-                 (eabp-button "Save" (eabp-action "files.properties.save" :args `((file . ,file))))))))
-          (error
-           (eabp-org-ui-snackbar (format "Properties error: %s" (error-message-string err)))))))))
-
-(eabp-defaction "files.properties.save"
-  (lambda (args _)
-    (let* ((file (alist-get 'file args))
-           (buf (or (get-file-buffer file) (find-file-noselect file)))
-           (title (eabp-ui-state "file-prop-title"))
-           (category (eabp-ui-state "file-prop-category"))
-           (tags-val (eabp-ui-state "file-prop-tags"))
-           (tags (cond
-                  ((vectorp tags-val) (append tags-val nil))
-                  ((listp tags-val) tags-val)
-                  (t nil))))
-      (with-current-buffer buf
-        (save-excursion
-          (save-restriction
-            (widen)
-            (let ((update-kwd (lambda (kwd val)
-                                (goto-char (point-min))
-                                (if (re-search-forward (format "^[ \t]*#\\+%s:[ \t]*\\(.*\\)$" kwd) nil t)
-                                    (if (and val (not (string-empty-p val)))
-                                        (replace-match val t t nil 1)
-                                      (delete-region (line-beginning-position) (min (1+ (line-end-position)) (point-max))))
-                                  (when (and val (not (string-empty-p val)))
-                                    (goto-char (point-min))
-                                    ;; If inserting something else than TITLE and a TITLE exists, insert after it.
-                                    (when (not (equal kwd "TITLE"))
-                                      (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
-                                        (forward-line 1)))
-                                    (insert (format "#+%s: %s\n" kwd val)))))))
-              (funcall update-kwd "TITLE" title)
-              (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
-              (funcall update-kwd "CATEGORY" category))
-            (let ((eabp-org--inhibit-save-refresh t)
-                  (save-silently t))
-              (save-buffer)))))
-      (eabp-send "dialog.dismiss" nil)
-      (when (fboundp 'eabp-org-cache-invalidate)
-        (eabp-org-cache-invalidate))
-      (eabp-org-ui-push-dashboard))))
+;; Self-hosting entry in the drawer.
+(eabp-shell-add-drawer-item
+ 50 (lambda ()
+      (eabp-drawer-item "sync" "Reload config"
+                        (eabp-action "config.reload"))))
 
 (provide 'eabp-files)
 ;;; eabp-files.el ends here

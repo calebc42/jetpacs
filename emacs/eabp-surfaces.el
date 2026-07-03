@@ -1,12 +1,14 @@
-;;; eabp-surfaces.el --- Surfaces, UI tree & org-clock for EABP -*- lexical-binding: t; -*-
+;;; eabp-surfaces.el --- Surfaces, actions & UI state for EABP -*- lexical-binding: t; -*-
 
 ;; Builds on eabp.el (the transport). Provides:
-;;   * UI-tree constructors (text / row / column / button / action)
 ;;   * surface.update / surface.remove senders, with auto monotonic revisions
 ;;   * an inbound `event.action' handler + an action dispatch table
-;;   * an org-clock integration that pushes a chronometer notification surface
+;;   * the `state.changed' UI-state store and per-widget change handlers
 ;;
 ;; Load order: (require 'eabp) then (require 'eabp-surfaces).
+;; No application knowledge lives here: app surfaces (the shell dashboard,
+;; the org-clock notification, ...) are pushed by the layers above through
+;; the generic senders.
 
 ;;; Code:
 
@@ -175,60 +177,6 @@ and forwarded to the companion as dialogs."
                           id (error-message-string err))))))))
 
 (eabp-register-handler "state.changed" #'eabp--on-state-changed)
-
-;; ─── org-clock integration ───────────────────────────────────────────────────
-
-(defun eabp-clock-in-notification ()
-  "Push the org-clock chronometer notification surface."
-  (when (and (boundp 'org-clock-current-task) org-clock-current-task)
-    (eabp-surface-push
-     "notification:org-clock"
-     (eabp-notification-spec
-      :channel "clocking" :ongoing t :category "stopwatch"
-      :chronometer `((base_ms . ,(truncate (* (float-time org-clock-start-time) 1000))))
-      :body (list
-             (eabp-text (format "Clocked in: %s" org-clock-current-task) 'title)
-             (eabp-row
-              (eabp-button "Clock out"
-                           (eabp-action "org.clock.out" :when-offline "wake"))
-              (eabp-button "Switch task"
-                           (eabp-action "org.clock.switch" :when-offline "wake"))))))))
-
-(defun eabp-clock-out-notification ()
-  "Remove the org-clock notification surface."
-  (eabp-surface-remove "notification:org-clock"))
-
-;; Closing the loop: a tap on "Clock out" arrives here as an event.action.
-(eabp-defaction "org.clock.out"
-                (lambda (&rest _) (when (org-clock-is-active) (org-clock-out))))
-(eabp-defaction "org.clock.switch"
-                ;; Placeholder: jump to the running task. Swap for a real
-                ;; task-picker (e.g. org-clock-in to a recent task) when ready.
-                (lambda (&rest _) (org-clock-goto)))
-(eabp-defaction "org.clock.in-last"
-                ;; The home-screen widget's "Clock In (Last)" button — it was
-                ;; emitting this action with no handler registered.
-                (lambda (&rest _)
-                  (condition-case err
-                      (org-clock-in-last)
-                    (error (message "EABP clock-in-last failed: %s"
-                                    (error-message-string err))))))
-
-(add-hook 'org-clock-in-hook  #'eabp-clock-in-notification)
-(add-hook 'org-clock-out-hook #'eabp-clock-out-notification)
-
-;; On (re)connect, re-assert current clock state so the companion's cache
-;; matches reality after an Emacs restart. (Runs after the revision snapshot
-;; has been absorbed — see the -50 depth above.)
-(add-hook 'eabp-connected-hook
-          (lambda (_welcome)
-            (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
-              (eabp-clock-in-notification))))
-
-;; Initial Dashboard Push
-(eval-after-load 'eabp-org-ui
-  '(add-hook 'eabp-connected-hook
-             (lambda (_) (eabp-org-ui-push-dashboard)) 50))
 
 ;; Queue replay is requested by the transport itself (`eabp--on-welcome' in
 ;; eabp.el) after the connected hooks have run, so replayed events land on a

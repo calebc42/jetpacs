@@ -21,6 +21,7 @@
 (require 'cl-lib)
 (require 'eabp)
 (require 'eabp-widgets)
+(require 'eabp-shell)
 (require 'eabp-org)
 (require 'eabp-keymap)
 (require 'eabp-magit)

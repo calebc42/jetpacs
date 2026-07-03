@@ -1,11 +1,11 @@
-;;; eabp-tablist.el --- Generic tabulated-list renderer + package browser -*- lexical-binding: t; -*-
+;;; eabp-tablist.el --- Generic tabulated-list renderer (Tier 0.5) -*- lexical-binding: t; -*-
 
 ;; Tier 0.5: `tabulated-list-mode' is a declarative UI framework — columns
 ;; come from `tabulated-list-format', rows carry their id and entry as text
 ;; properties — so ONE renderer covers every derivative (package menu,
 ;; process list, bookmarks, timers, and any package built on it).
 ;;
-;; Registered as a Tier-1 skin for `tabulated-list-mode' in
+;; Registered as a skin for `tabulated-list-mode' in
 ;; `eabp-render-buffer-functions'; anything the buffer view shows in a
 ;; tabulated-list derivative renders as sortable cards instead of monospace
 ;; text.  Row taps reuse the existing `eabp.buffer.act' seam (push button /
@@ -14,7 +14,7 @@
 ;; against the buffer's own column format.
 ;;
 ;; Modes can specialize without replacing the walk via three hook alists
-;; (header, row, filter) — the package browser below is the first skin.
+;; (header, row, filter) — eabp-package-browser.el is the worked example.
 ;;
 ;; Host seams (this file depends on no UI layer): re-pushes go through
 ;; `eabp-buffer-refresh-function' (owned by eabp-buffer), and opening a
@@ -26,7 +26,6 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'tabulated-list)
-(require 'package)
 (require 'eabp-widgets)
 (require 'eabp-surfaces)
 (require 'eabp-buffer)
@@ -81,17 +80,19 @@ may be a function) respects the mode's current sort and filtering."
         (forward-line 1))
       (nreverse rows))))
 
-(defun eabp-tablist--col-string (col)
+(defun eabp-tablist-col-string (col)
   "The display string of entry column COL (a string or (LABEL . PROPS))."
   (cond ((stringp col) col)
         ((consp col) (format "%s" (car col)))
         (t (format "%s" col))))
 
-(defun eabp-tablist--entry-col (entry name)
-  "ENTRY's column named NAME per the current buffer's format, or nil."
+(defun eabp-tablist-entry-col (entry name)
+  "ENTRY's column named NAME per the current buffer's format, or nil.
+Part of the skin-author API: row/filter hooks use this to read a column
+by its header label instead of a fragile index."
   (let ((i (cl-position name tabulated-list-format :key #'car :test #'equal)))
     (and i (< i (length entry))
-         (eabp-tablist--col-string (aref entry i)))))
+         (eabp-tablist-col-string (aref entry i)))))
 
 ;; ─── Rendering ───────────────────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ may be a function) respects the mode's current sort and filtering."
 
 (defun eabp-tablist--default-row (buf-name pos entry)
   "Generic row card: first column as title, the rest as a caption."
-  (let* ((cols (mapcar #'eabp-tablist--col-string (append entry nil)))
+  (let* ((cols (mapcar #'eabp-tablist-col-string (append entry nil)))
          (rest (string-join (cl-remove-if #'string-empty-p (cdr cols)) "  ·  ")))
     (eabp-card
      (list (apply #'eabp-column
@@ -170,7 +171,7 @@ may be a function) respects the mode's current sort and filtering."
 
 ;; ─── Generic actions ─────────────────────────────────────────────────────────
 
-(defun eabp-tablist--refresh-view ()
+(defun eabp-tablist-refresh-view ()
   (when (functionp eabp-buffer-refresh-function)
     (funcall eabp-buffer-refresh-function)))
 
@@ -188,7 +189,7 @@ may be a function) respects the mode's current sort and filtering."
                   (cons col (and (equal (car tabulated-list-sort-key) col)
                                  (not (cdr tabulated-list-sort-key)))))
             (tabulated-list-print t)))
-        (eabp-tablist--refresh-view)))))
+        (eabp-tablist-refresh-view)))))
 
 (eabp-defaction "tablist.refresh"
   (lambda (args _)
@@ -197,221 +198,7 @@ may be a function) respects the mode's current sort and filtering."
         (with-current-buffer buf
           (when (derived-mode-p 'tabulated-list-mode)
             (ignore-errors (revert-buffer))))
-        (eabp-tablist--refresh-view)))))
-
-;; ─── Package browser skin ────────────────────────────────────────────────────
-;;
-;; package-menu-mode derives from tabulated-list-mode, so the walk above is
-;; reused; this section adds search + status chips, install/delete per row,
-;; and archive refresh / upgrade-all — the curated actions validate package
-;; names against the archive/installed lists, keeping the wire semantic.
-
-(defvar eabp-tablist--pkg-search ""
-  "Current package search string (matches name and summary).")
-
-(defvar eabp-tablist--pkg-status "all"
-  "Current package status filter chip.")
-
-(defconst eabp-tablist--pkg-statuses
-  '(("all")
-    ("installed" "installed" "dependency" "unsigned" "external" "held")
-    ("available" "available" "new")
-    ("built-in" "built-in")
-    ("upgradable" "obsolete"))
-  "Chip name -> package-menu status strings it admits.")
-
-(defun eabp-tablist--pkg-toast (text)
-  (eabp-send "toast.show" `((text . ,text))))
-
-(defun eabp-tablist--package-filter (id entry)
-  "Keep package row (ID ENTRY) when it matches the search and status chips."
-  (let ((statuses (cdr (assoc eabp-tablist--pkg-status
-                              eabp-tablist--pkg-statuses)))
-        (status (or (eabp-tablist--entry-col entry "Status") ""))
-        (hay (concat (eabp-tablist--col-string (aref entry 0)) " "
-                     (and (package-desc-p id)
-                          (or (package-desc-summary id) "")))))
-    (and (or (null statuses) (member status statuses))
-         (or (string-empty-p eabp-tablist--pkg-search)
-             (string-match-p (regexp-quote eabp-tablist--pkg-search)
-                             (downcase hay))))))
-
-(defun eabp-tablist--package-header (_buf)
-  (list
-   (eabp-text-input "pkg-search"
-                    :value eabp-tablist--pkg-search
-                    :label "Search packages" :single-line t
-                    :on-submit (eabp-action "packages.search"))
-   (apply #'eabp-flow-row
-          (mapcar (lambda (chip)
-                    (let ((s (car chip)))
-                      (eabp-chip (capitalize s)
-                                 :selected (equal eabp-tablist--pkg-status s)
-                                 :on-tap (eabp-action
-                                          "packages.status-filter"
-                                          :args `((status . ,s))
-                                          :when-offline "drop"))))
-                  eabp-tablist--pkg-statuses))
-   (eabp-row
-    (eabp-button "Refresh archives"
-                 (eabp-action "packages.refresh-archives" :when-offline "drop")
-                 :variant "text")
-    (eabp-spacer :weight 1)
-    (when (fboundp 'package-upgrade-all)
-      (eabp-button "Upgrade all"
-                   (eabp-action "packages.upgrade-all" :when-offline "drop")
-                   :variant "text")))))
-
-(defun eabp-tablist--package-row (id entry _pos)
-  (when (package-desc-p id)
-    (let* ((sym (package-desc-name id))
-           (name (symbol-name sym))
-           (version (or (eabp-tablist--entry-col entry "Version") ""))
-           (status (or (eabp-tablist--entry-col entry "Status") ""))
-           (summary (or (package-desc-summary id) ""))
-           (installed (assq sym package-alist)))
-      (eabp-card
-       (list
-        (eabp-row
-         (eabp-box
-          (list (eabp-column
-                 (eabp-row (eabp-text name 'label)
-                           (eabp-text version 'caption)
-                           (eabp-text status 'caption))
-                 (eabp-text summary 'caption)))
-          :weight 1)
-         (cond
-          (installed
-           (eabp-icon-button "delete"
-                             (eabp-action "packages.delete"
-                                          :args `((package . ,name))
-                                          :when-offline "drop")
-                             :content-description (format "Uninstall %s" name)))
-          ((not (equal status "built-in"))
-           (eabp-icon-button "arrow_downward"
-                             (eabp-action "packages.install"
-                                          :args `((package . ,name))
-                                          :when-offline "drop")
-                             :content-description (format "Install %s" name))))))
-       :on-tap (eabp-action "packages.describe"
-                            :args `((package . ,name))
-                            :when-offline "drop")))))
-
-(setf (alist-get 'package-menu-mode eabp-tablist-header-functions)
-      #'eabp-tablist--package-header)
-(setf (alist-get 'package-menu-mode eabp-tablist-row-functions)
-      #'eabp-tablist--package-row)
-(setf (alist-get 'package-menu-mode eabp-tablist-filter-functions)
-      #'eabp-tablist--package-filter)
-
-;; ─── Package actions ─────────────────────────────────────────────────────────
-
-(defun eabp-tablist--pkg-buffer ()
-  "The live *Packages* menu buffer, creating (without fetching) if needed."
-  (require 'package)
-  (unless package--initialized (package-initialize))
-  (or (get-buffer "*Packages*")
-      (save-window-excursion
-        (list-packages t)
-        (get-buffer "*Packages*"))))
-
-(defun eabp-tablist--pkg-revert ()
-  "Re-generate the package menu after an install/delete and re-push."
-  (let ((buf (get-buffer "*Packages*")))
-    (when buf
-      (with-current-buffer buf
-        (ignore-errors (revert-buffer)))))
-  (eabp-tablist--refresh-view))
-
-(eabp-defaction "packages.show"
-  (lambda (_ __)
-    (let ((buf (eabp-tablist--pkg-buffer)))
-      (when (and buf (null package-archive-contents))
-        (eabp-tablist--pkg-toast
-         "Archives not fetched yet - tap Refresh archives"))
-      (funcall eabp-tablist-view-buffer-function (buffer-name buf)))))
-
-(eabp-defaction "packages.search"
-  (lambda (args _)
-    (let ((q (alist-get 'value args)))
-      (setq eabp-tablist--pkg-search
-            (downcase (or (and (stringp q) q) "")))
-      (eabp-tablist--refresh-view))))
-
-(eabp-defaction "packages.status-filter"
-  (lambda (args _)
-    (let ((s (alist-get 'status args)))
-      (when (assoc s eabp-tablist--pkg-statuses)
-        (setq eabp-tablist--pkg-status s)
-        (eabp-tablist--refresh-view)))))
-
-(eabp-defaction "packages.install"
-  (lambda (args _)
-    (let* ((name (alist-get 'package args))
-           (sym (and (stringp name) (intern-soft name))))
-      (if (not (and sym (assq sym package-archive-contents)))
-          (eabp-tablist--pkg-toast (format "%s is not in the archives" name))
-        (eabp-tablist--pkg-toast (format "Installing %s…" name))
-        (condition-case err
-            (progn
-              (package-install sym)
-              (eabp-tablist--pkg-toast (format "Installed %s" name)))
-          (error (eabp-tablist--pkg-toast
-                  (format "Install failed: %s" (error-message-string err)))))
-        (eabp-tablist--pkg-revert)))))
-
-(eabp-defaction "packages.delete"
-  (lambda (args _)
-    (let* ((name (alist-get 'package args))
-           (sym (and (stringp name) (intern-soft name)))
-           (desc (and sym (cadr (assq sym package-alist)))))
-      (if (not desc)
-          (eabp-tablist--pkg-toast (format "%s is not installed" name))
-        (condition-case err
-            (progn
-              (package-delete desc)
-              (eabp-tablist--pkg-toast (format "Deleted %s" name)))
-          (error (eabp-tablist--pkg-toast
-                  ;; Typically: something still depends on it.
-                  (format "Delete failed: %s" (error-message-string err)))))
-        (eabp-tablist--pkg-revert)))))
-
-(eabp-defaction "packages.refresh-archives"
-  (lambda (_ __)
-    (eabp-tablist--pkg-toast "Refreshing package archives…")
-    (condition-case err
-        (progn
-          (require 'package)
-          (unless package--initialized (package-initialize))
-          (package-refresh-contents)
-          (eabp-tablist--pkg-toast "Archives refreshed"))
-      (error (eabp-tablist--pkg-toast
-              (format "Refresh failed: %s" (error-message-string err)))))
-    (eabp-tablist--pkg-revert)))
-
-(eabp-defaction "packages.upgrade-all"
-  (lambda (_ __)
-    (if (not (fboundp 'package-upgrade-all))
-        (eabp-tablist--pkg-toast "Upgrade-all needs Emacs 29+")
-      (eabp-tablist--pkg-toast "Upgrading all packages…")
-      (condition-case err
-          (progn
-            (package-upgrade-all nil)
-            (eabp-tablist--pkg-toast "Upgrades complete"))
-        (error (eabp-tablist--pkg-toast
-                (format "Upgrade failed: %s" (error-message-string err)))))
-      (eabp-tablist--pkg-revert))))
-
-(eabp-defaction "packages.describe"
-  (lambda (args _)
-    (let* ((name (alist-get 'package args))
-           (sym (and (stringp name) (intern-soft name))))
-      (when (and sym
-                 (or (assq sym package-archive-contents)
-                     (assq sym package-alist)
-                     (assq sym package--builtins)))
-        (save-window-excursion (describe-package sym))
-        (funcall eabp-tablist-view-buffer-function "*Help*")))))
+        (eabp-tablist-refresh-view)))))
 
 (provide 'eabp-tablist)
 ;;; eabp-tablist.el ends here

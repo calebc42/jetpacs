@@ -27,33 +27,39 @@
 
 (declare-function custom-file "cus-edit" (&optional no-error))
 
-;; The host UI (eabp-org-ui) points these at its snackbar and dashboard
-;; push; this module stays independent of any particular screen.
+;; The host shell points these at its snackbar and dashboard push; this
+;; module stays independent of any particular screen.
 (defvar eabp-settings-notify-function #'message
   "Function of one string, used to surface rejections and save failures.")
 
 (defvar eabp-settings-refresh-function #'ignore
   "Function called after a setting changes so the client re-renders.")
 
-(defvar eabp-settings-registry
-  '(("Org Workflow"
-     (org-directory :label "Org directory")
-     (org-log-done :label "Log task completion")
-     (org-log-into-drawer :label "Log into drawer")
-     (org-archive-location :label "Archive location"))
-    ("Org Agenda"
-     (org-agenda-span :label "Agenda span")
-     (org-deadline-warning-days :label "Deadline warning days"))
-    ("Org Editing & Display"
-     (org-startup-folded :label "Initial folding")
-     (org-startup-indented :label "Indent to outline level")
-     (org-hide-emphasis-markers :label "Hide emphasis markers")
-     (org-return-follows-link :label "Enter follows links")))
+(defvar eabp-settings-after-set-hook nil
+  "Hook run with (SYMBOL VALUE) after a setting is applied from the wire.
+For propagation the defcustom's `:set' doesn't cover — e.g. an app whose
+views memoise derived data registers its cache invalidation here.")
+
+(defvar eabp-settings-registry nil
   "Sections of settings exposed to the companion.
 Each element is (TITLE . ENTRIES); an entry is (SYMBOL . PLIST) where
 PLIST supports :label (display name) and :after-set (function of the
 new value, for propagation the defcustom's `:set' doesn't cover).
-Only symbols listed here can be modified from the wire.")
+Only symbols listed here can be modified from the wire.
+
+Empty by default: the machinery is app-agnostic, and each Tier 1 app
+exposes its own variables through `eabp-settings-register-section'.")
+
+(defun eabp-settings-register-section (title entries)
+  "Register (or replace) the settings section TITLE with ENTRIES.
+ENTRIES is a list of (SYMBOL . PLIST) — see `eabp-settings-registry'.
+Also registers the state.changed handlers the entries' switch widgets
+publish through, so a queued toggle can replay before the settings
+screen has ever rendered this session."
+  (setq eabp-settings-registry
+        (append (assoc-delete-all title eabp-settings-registry)
+                (list (cons title entries))))
+  (eabp-settings--register-state-handlers (list (cons title entries))))
 
 (defun eabp-settings--entry (sym)
   "Registry entry for SYM, or nil if SYM is not exposed."
@@ -136,11 +142,9 @@ the session because persisting failed)."
     (customize-set-variable sym value)
     (let ((fn (plist-get (cdr (eabp-settings--entry sym)) :after-set)))
       (when fn (funcall fn value)))
-    ;; Org-derived views are memoised; per the cache contract every
-    ;; mutation must drop it or the phone keeps rendering stale data.
-    (when (and (string-prefix-p "org-" (symbol-name sym))
-               (fboundp 'eabp-org-cache-invalidate))
-      (eabp-org-cache-invalidate))
+    ;; App views may memoise data derived from this variable; per the
+    ;; cache contract every mutation must reach the registered droppers.
+    (run-hook-with-args 'eabp-settings-after-set-hook sym value)
     (eabp-settings-save-variable sym value)
     t))
 
@@ -294,15 +298,15 @@ deselection), nil when undecodable."
                    (format "%s reset to default" name))))
       (funcall eabp-settings-refresh-function))))
 
-(defun eabp-settings--register-state-handlers ()
-  "Register state.changed handlers for every registry symbol.
+(defun eabp-settings--register-state-handlers (sections)
+  "Register state.changed handlers for every symbol in SECTIONS.
 The client's switch widget publishes state.changed instead of
 dispatching an action, and a queued toggle can replay before the
 settings screen has ever rendered this session — so handlers are
-registered at load, not at render.  Non-boolean payloads under these
-ids (e.g. a text input's published state) are ignored; text inputs
-save through settings.set on submit."
-  (dolist (section eabp-settings-registry)
+registered when the section is, not at render.  Non-boolean payloads
+under these ids (e.g. a text input's published state) are ignored;
+text inputs save through settings.set on submit."
+  (dolist (section sections)
     (dolist (entry (cdr section))
       (let ((sym (car entry)))
         (eabp-on-state-change
@@ -311,8 +315,6 @@ save through settings.set on submit."
            (when (memq val '(t :false))
              (eabp-settings--apply sym (eq val t))
              (funcall eabp-settings-refresh-function))))))))
-
-(eabp-settings--register-state-handlers)
 
 (provide 'eabp-settings)
 ;;; eabp-settings.el ends here

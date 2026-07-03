@@ -1,22 +1,30 @@
-;;; eabp-org-ui.el --- EABP Org-Mode UI Screens -*- lexical-binding: t; -*-
+;;; eabp-org-ui.el --- The Glasspane org app for EABP -*- lexical-binding: t; -*-
 
-;; Builds EABP surface specs for the org-client and handles inbound actions.
+;; The reference Tier 1 app: registers the org views (agenda, tasks, clock,
+;; search, detail, settings) into the generic shell (eabp-shell.el) and
+;; handles their semantic actions.  Everything here is one opinionated take
+;; built on the core seams — shell views, the files module's editor hooks,
+;; the settings registry, the render-buffer skin registry.  Nothing below
+;; is required for the core bridge to function.
 
 ;;; Code:
 
 (require 'eabp)
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
+(require 'eabp-shell)
 (require 'eabp-org)
+(require 'eabp-org-clock)
 (require 'eabp-org-reader)
 (require 'eabp-files)
 (require 'eabp-keymap)
 (require 'eabp-magit)
 (require 'eabp-settings)
+;; Not used directly — pulled in so (require 'eabp-org-ui) still assembles
+;; the complete reference app for init-file users.
+(require 'eabp-emacs-ui)
+(require 'eabp-package-browser)
 (require 'cl-lib)
-
-(defvar eabp-org-ui--current-tab "agenda"
-  "Currently active tab in the dashboard.")
 
 (defvar eabp-org-ui--detail-ref nil
   "Reference alist (id/file/pos/headline) of the heading being viewed, or nil.")
@@ -38,67 +46,7 @@
 (defvar eabp-org-ui--search-results nil
   "Cached heading items from the last search.")
 
-(defvar eabp-org-ui--snackbar nil
-  "Transient snackbar text, consumed (and cleared) by the next dashboard push.")
-
-(defun eabp-org-ui-snackbar (text)
-  "Queue TEXT to show as a snackbar on the next dashboard push.
-Note: the companion re-shows a snackbar only when the text *changes*,
-so two identical messages back-to-back display once."
-  (setq eabp-org-ui--snackbar text))
-
-;; Forward-declare so the dashboard can reference it before eabp-emacs-ui loads
-(defvar eabp-emacs-ui--viewing-buffer nil)
-
-;; ─── Main Dashboard ──────────────────────────────────────────────────────────
-
-(cl-defun eabp-org-ui-push-dashboard (&optional tab &key switch-to)
-  "Push the dashboard as a multi-view surface.
-Every tab is rendered as a named view in one push; the companion
-switches between them locally (the `view.switch' builtin), so tab
-navigation never waits on Emacs. TAB switches the logical tab before
-building. SWITCH-TO additionally forces the companion onto that view
-\(used when a push *is* the navigation, e.g. opening a detail)."
-  (when tab
-    (unless (equal tab eabp-org-ui--current-tab)
-      (setq eabp-emacs-ui--viewing-buffer nil))
-    (setq eabp-org-ui--current-tab tab))
-
-  ;; Require the emacs-ui lazily (avoids load-order issues)
-  (require 'eabp-emacs-ui)
-
-  (condition-case err
-      (let* ((active (eabp-org-ui--active-view))
-             (target (or switch-to tab))
-             ;; A navigation push lands the user on TARGET, so feedback
-             ;; (e.g. "Saved init.el") must attach there, not to the view
-             ;; they're leaving.
-             (snack-view (or target active))
-             (snackbar (prog1 eabp-org-ui--snackbar
-                         (setq eabp-org-ui--snackbar nil)))
-             (views (mapcar
-                     (lambda (name)
-                       (cons (intern name)
-                             (eabp-org-ui--view name
-                                                (when (equal name snack-view)
-                                                  snackbar))))
-                     (eabp-org-ui--view-names))))
-        (eabp-surface-push
-         "app:dashboard"
-         `((views . ,views)
-           (initial_view . ,active))
-         nil nil
-         ;; Force the companion onto a view only when this push *is* a
-         ;; navigation (tab arg or detail open) — background refreshes must
-         ;; not yank the user off whatever they're looking at.
-         target)
-        ;; Piggyback the cheap companions of a dashboard push: upcoming
-        ;; reminder alarms and the home-screen widget. Both are memo-guarded
-        ;; so unchanged data sends nothing.
-        (eabp-org-ui--sync-reminders)
-        (eabp-org-ui--push-widget))
-    (error
-     (message "EABP dashboard push failed: %s" (error-message-string err)))))
+;; ─── Reminders & home-screen widget (piggybacked on each shell push) ────────
 
 (defvar eabp-org-ui--last-reminders 'unset
   "Reminder list from the previous sync, to suppress identical sends.")
@@ -134,235 +82,111 @@ building. SWITCH-TO additionally forces the companion onto that view
        `((title . ,(format-time-string "Agenda · %a %b %d"))
          (lines . ,(vconcat lines)))))))
 
-(defun eabp-org-ui--active-view ()
-  "Name of the view that should be considered active for this push."
-  (cond (eabp-org-ui--detail-ref "detail")
-        (t eabp-org-ui--current-tab)))
+;; Both are memo-guarded, so unchanged data sends nothing.
+(add-hook 'eabp-shell-after-push-hook #'eabp-org-ui--sync-reminders)
+(add-hook 'eabp-shell-after-push-hook #'eabp-org-ui--push-widget)
 
-(defun eabp-org-ui--view-names ()
-  "All view names included in a dashboard push."
-  (append '("agenda" "tasks" "clock" "buffers" "eval" "files" "search"
-            "settings" "messages")
-          (when eabp-files--file '("edit"))
-          (when eabp-org-ui--detail-ref '("detail"))))
+;; ─── Shell views ─────────────────────────────────────────────────────────────
 
-(defun eabp-org-ui--view (name snackbar)
-  "Build the full scaffold view NAME. SNACKBAR is attached when non-nil."
-  (let* ((is-detail (equal name "detail"))
-         (is-edit (equal name "edit"))
-         (is-files (equal name "files"))
-         (is-search (equal name "search"))
-         (is-buffer-view (and (equal name "buffers")
-                              eabp-emacs-ui--viewing-buffer))
-         (is-settings (equal name "settings"))
-         (is-messages (equal name "messages"))
-         (is-tab (and (not is-buffer-view)
-                      (member name '("agenda" "tasks" "clock" "buffers" "eval" "files"))))
-         (body (condition-case body-err
-                   (cond
-                    (is-detail
-                     (eabp-org-ui--detail-body eabp-org-ui--detail-ref))
-                    (is-edit
-                     (eabp-files-editor-body))
-                    (is-files
-                     (eabp-files-browser-body))
-                    (is-search
-                     (eabp-org-ui--search-body))
-                    (is-buffer-view
-                     (eabp-emacs-ui--buffer-view-body eabp-emacs-ui--viewing-buffer))
-                    (t
-                     (pcase name
-                       ("agenda"   (eabp-org-ui--agenda-body))
-                       ("tasks"    (eabp-org-ui--tasks-body))
-                       ("clock"    (eabp-org-ui--clock-body))
-                       ("buffers"  (eabp-emacs-ui--buffer-list-body))
-                       ("eval"     (eabp-emacs-ui--eval-body))
-                       ("settings" (eabp-org-ui--settings-body))
-                       ("messages" (eabp-emacs-ui--messages-body))
-                       (_          (eabp-text "Unknown tab")))))
-                 (error
-                  (eabp-column
-                   (eabp-text "Error building tab" 'title)
-                   (eabp-text (format "%s" (error-message-string body-err)) 'body)))))
-         (top-bar (cond
-                   (is-detail
-                    ;; Back is pure navigation: builtin = instant, local,
-                    ;; works offline. heading.back stays registered for
-                    ;; compatibility but nothing emits it anymore.
-                    (eabp-top-bar "Detail"
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-org-ui--switch-view
-                                               eabp-org-ui--current-tab)
-                                  :actions (delq nil
-                                                 (list
-                                                  (eabp-icon-button
-                                                   "note_add"
-                                                   (eabp-action "heading.add-note"
-                                                                :args eabp-org-ui--detail-ref
-                                                                :when-offline "drop")
-                                                   :content-description "Add note")
-                                                  (eabp-icon-button
-                                                   "drive_file_move"
-                                                   (eabp-action "heading.refile"
-                                                                :args eabp-org-ui--detail-ref
-                                                                :when-offline "drop")
-                                                   :content-description "Refile")
-                                                  (eabp-icon-button
-                                                   "archive"
-                                                   (eabp-action "heading.archive"
-                                                                :args eabp-org-ui--detail-ref
-                                                                :when-offline "drop")
-                                                   :content-description "Archive")
-                                                  (eabp-icon-button
-                                                   (if eabp-org-ui--detail-read-mode "edit" "visibility")
-                                                   (eabp-action "detail.toggle-read")
-                                                   :content-description
-                                                   (if eabp-org-ui--detail-read-mode "Edit" "Read"))
-                                                  (when (and eabp-org-ui--detail-ref
-                                                             (eabp-files--org-p (alist-get 'file eabp-org-ui--detail-ref)))
-                                                    (eabp-icon-button
-                                                     "tune"
-                                                     (eabp-action "files.properties.show" :args `((file . ,(alist-get 'file eabp-org-ui--detail-ref))))
-                                                     :content-description "Properties"))))))
-                   (is-edit
-                    (eabp-top-bar (if eabp-files--file
-                                      (file-name-nondirectory eabp-files--file)
-                                    "Editor")
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-org-ui--switch-view "files")
-                                  :actions (when (eabp-files--org-p eabp-files--file)
-                                             (delq nil
-                                                   (list
-                                                    (when eabp-files--read-mode
-                                                      (eabp-icon-button
-                                                       (if eabp-files--refile-mode "visibility" "swap_vert")
-                                                       (eabp-action "files.toggle-refile")
-                                                       :content-description
-                                                       (if eabp-files--refile-mode "Reader" "Refile")))
-                                                    (eabp-icon-button
-                                                     (if eabp-files--read-mode "edit" "visibility")
-                                                     (eabp-action "files.toggle-read")
-                                                     :content-description
-                                                     (if eabp-files--read-mode "Edit" "Read"))
-                                                    (eabp-icon-button
-                                                     "tune"
-                                                     (eabp-action "files.properties.show" :args `((file . ,eabp-files--file)))
-                                                     :content-description "Properties"))))))
-                   ((and is-files eabp-files--dir)
-                    (eabp-top-bar (abbreviate-file-name eabp-files--dir)
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-action "files.cd" :args '((dir . :null)))))
-                   (is-search
-                    (eabp-top-bar "Search"
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-org-ui--switch-view
-                                               eabp-org-ui--current-tab)))
-                   (is-settings
-                    (eabp-top-bar "Settings"
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-org-ui--switch-view
-                                               eabp-org-ui--current-tab)))
-                   (is-messages
-                    (eabp-top-bar "Messages"
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-org-ui--switch-view
-                                               eabp-org-ui--current-tab)
-                                  :actions (list
-                                            (eabp-icon-button
-                                             "refresh"
-                                             (eabp-action "emacs.messages.refresh"
-                                                          :when-offline "drop")
-                                             :content-description "Refresh"))))
-                   (is-buffer-view
-                    ;; Content swap within the buffers view: stays an
-                    ;; Emacs round-trip (the list must be rebuilt).
-                    (eabp-top-bar (or eabp-emacs-ui--viewing-buffer "Buffer")
-                                  :nav-icon "arrow_back"
-                                  :nav-action (eabp-action "emacs.buffer.back")))
-                   (t
-                    (eabp-top-bar (capitalize name)
-                                  :actions (append
-                                            (when (equal name "eval")
-                                              (list (eabp-icon-button
-                                                     "delete"
-                                                     (eabp-action "emacs.eval.clear")
-                                                     :content-description "Clear history")))
-                                            (list
-                                             (eabp-icon-button
-                                              "search"
-                                              (eabp-org-ui--switch-view "search")
-                                              :content-description "Search")
-                                             (eabp-icon-button "terminal"
-                                                               (eabp-action "emacs.mx.show"))
-                                             (eabp-icon-button "refresh"
-                                                               (eabp-action "dashboard.refresh"
-                                                                            :when-offline "drop"))))))))
-         (fab (cond
-               ((or is-detail is-edit is-search is-settings is-messages) nil)
-               ;; Buffer view: keyboard FAB opens the radial keymap menu
-               (is-buffer-view
-                (eabp-fab "keyboard"
-                          :on-tap (eabp-action "eabp.keymap.show"
-                                   :args `((buffer . ,eabp-emacs-ui--viewing-buffer))
-                                   :when-offline "drop")))
-               ;; Files: a create FAB — the view always shows a directory now
-               ;; (the landing dir or a subdirectory), so it's always offered.
-               (is-files
-                (eabp-fab "add" :label "New"
-                          :on-tap (eabp-action "files.new")))
-               ((equal name "eval") nil)
-               (t
-                (eabp-fab "add" :label "Capture"
-                          :on-tap (eabp-action "org.capture.show")))))
-         (drawer (when is-tab (eabp-org-ui--drawer)))
-         (bottom-bar
-          (when is-tab
-            (eabp-bottom-bar
-             (mapcar (lambda (spec)
-                       (pcase-let ((`(,icon ,label ,view) spec))
-                         (eabp-nav-item icon label
-                                        (eabp-org-ui--switch-view view)
-                                        :selected (equal name view))))
-                     '(("event" "Agenda" "agenda")
-                       ("checklist" "Tasks" "tasks")
-                       ("schedule" "Clock" "clock")
-                       ("folder_open" "Files" "files")
-                       ("code" "Eval" "eval")))))))
-    `((children . ,(vector (eabp-scaffold :top-bar top-bar :body body
-                                          :fab fab :bottom-bar bottom-bar
-                                          :drawer drawer
-                                          :snackbar snackbar
-                                          ;; Tab views support pull-to-refresh;
-                                          ;; navigation/detail views don't (a
-                                          ;; stray pull mustn't rebuild them).
-                                          :on-refresh
-                                          (when is-tab
-                                            (eabp-action "dashboard.refresh"
-                                                         :when-offline "drop"))))))))
+(defun eabp-org-ui--agenda-view (snackbar)
+  (eabp-shell-tab-view "agenda" (eabp-org-ui--agenda-body)
+                       :snackbar snackbar))
 
-(defun eabp-org-ui--drawer ()
-  "The navigation drawer shown on tab views."
-  (eabp-drawer
-   (list
-    (eabp-drawer-item "view_list" "Buffers"
-                      (eabp-org-ui--switch-view "buffers"))
-    (eabp-drawer-item "history" "Messages"
-                      (eabp-org-ui--switch-view "messages"))
-    (eabp-drawer-item "terminal" "M-x"
-                      (eabp-action "emacs.mx.show"))
-    (eabp-drawer-item "archive" "Packages"
-                      (eabp-action "packages.show" :when-offline "drop"))
-    (eabp-drawer-item "sync" "Reload config"
-                      (eabp-action "config.reload"))
-    (eabp-drawer-item "settings" "Settings"
-                      (eabp-org-ui--switch-view "settings"))
-    (eabp-drawer-item "refresh" "Refresh data"
-                      (eabp-action "dashboard.refresh" :when-offline "drop")))
-   :header "EABP"))
+(defun eabp-org-ui--tasks-view (snackbar)
+  (eabp-shell-tab-view "tasks" (eabp-org-ui--tasks-body)
+                       :snackbar snackbar))
 
-(defun eabp-org-ui--switch-view (view)
-  "Action descriptor for the companion-local `view.switch' builtin."
-  `((builtin . "view.switch") (view . ,view)))
+(defun eabp-org-ui--clock-view (snackbar)
+  (eabp-shell-tab-view "clock" (eabp-org-ui--clock-body)
+                       :snackbar snackbar))
+
+(defun eabp-org-ui--search-view (snackbar)
+  (eabp-shell-nav-view "Search" (eabp-org-ui--search-body)
+                       :snackbar snackbar))
+
+(defun eabp-org-ui--settings-view (snackbar)
+  (eabp-shell-nav-view "Settings" (eabp-org-ui--settings-body)
+                       :snackbar snackbar))
+
+(defun eabp-org-ui--detail-view (snackbar)
+  "The heading drill-in: reader/editor body under curated heading actions."
+  (eabp-shell-nav-view
+   "Detail" (eabp-org-ui--detail-body eabp-org-ui--detail-ref)
+   ;; Back is pure navigation: builtin = instant, local, works offline.
+   ;; heading.back stays registered for compatibility but nothing emits
+   ;; it anymore.
+   :actions (delq nil
+                  (list
+                   (eabp-icon-button
+                    "note_add"
+                    (eabp-action "heading.add-note"
+                                 :args eabp-org-ui--detail-ref
+                                 :when-offline "drop")
+                    :content-description "Add note")
+                   (eabp-icon-button
+                    "drive_file_move"
+                    (eabp-action "heading.refile"
+                                 :args eabp-org-ui--detail-ref
+                                 :when-offline "drop")
+                    :content-description "Refile")
+                   (eabp-icon-button
+                    "archive"
+                    (eabp-action "heading.archive"
+                                 :args eabp-org-ui--detail-ref
+                                 :when-offline "drop")
+                    :content-description "Archive")
+                   (eabp-icon-button
+                    (if eabp-org-ui--detail-read-mode "edit" "visibility")
+                    (eabp-action "detail.toggle-read")
+                    :content-description
+                    (if eabp-org-ui--detail-read-mode "Edit" "Read"))
+                   (when (and eabp-org-ui--detail-ref
+                              (eabp-org-ui--org-file-p
+                               (alist-get 'file eabp-org-ui--detail-ref)))
+                     (eabp-icon-button
+                      "tune"
+                      (eabp-action "files.properties.show"
+                                   :args `((file . ,(alist-get 'file eabp-org-ui--detail-ref))))
+                      :content-description "Properties"))))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "agenda" :builder #'eabp-org-ui--agenda-view
+                        :tab '(:icon "event" :label "Agenda") :order 10)
+(eabp-shell-define-view "tasks" :builder #'eabp-org-ui--tasks-view
+                        :tab '(:icon "checklist" :label "Tasks") :order 20)
+(eabp-shell-define-view "clock" :builder #'eabp-org-ui--clock-view
+                        :tab '(:icon "schedule" :label "Clock") :order 30)
+(eabp-shell-define-view "search" :builder #'eabp-org-ui--search-view
+                        :order 70)
+(eabp-shell-define-view "settings" :builder #'eabp-org-ui--settings-view
+                        :order 80)
+(eabp-shell-define-view "detail" :builder #'eabp-org-ui--detail-view
+                        :when (lambda () (and eabp-org-ui--detail-ref t))
+                        :overlay (lambda () (and eabp-org-ui--detail-ref t))
+                        :order 110)
+
+;; Landing on any non-overlay view closes the detail drill-in.
+(add-hook 'eabp-shell-view-switched-hook
+          (lambda (_view) (setq eabp-org-ui--detail-ref nil)))
+
+;; Capture is this app's global affordance: the default FAB on every tab
+;; view that doesn't define its own.
+(setq eabp-shell-default-fab-function
+      (lambda (_name)
+        (eabp-fab "add" :label "Capture"
+                  :on-tap (eabp-action "org.capture.show"))))
+
+;; Search from every tab's top bar; Settings from the drawer.
+(eabp-shell-add-top-action
+ 10 (lambda () (eabp-icon-button "search" (eabp-shell-switch-view "search")
+                                 :content-description "Search")))
+(eabp-shell-add-drawer-item
+ 60 (lambda () (eabp-drawer-item "settings" "Settings"
+                                 (eabp-shell-switch-view "settings"))))
+
+;; The org extractions are memoised; an explicit refresh (pull-to-refresh,
+;; the drawer item, a queue drain) must drop them.
+(add-hook 'eabp-shell-refresh-hook #'eabp-org-cache-invalidate)
 
 ;; ─── Tab Bodies ──────────────────────────────────────────────────────────────
 
@@ -1271,51 +1095,18 @@ Always present (even with no properties yet) so + Add is reachable."
 
 ;; ─── Action Handlers ─────────────────────────────────────────────────────────
 
-(eabp-defaction "view.switched"
-  (lambda (args _)
-    ;; The companion already flipped the view locally — this event only
-    ;; synchronizes Emacs's notion of "where the user is" and refreshes
-    ;; the (possibly stale) cached views in the background.
-    (let ((view (alist-get 'view args)))
-      (when view
-        (unless (equal view "detail")
-          (setq eabp-org-ui--detail-ref nil)
-          (unless (equal view eabp-org-ui--current-tab)
-            (setq eabp-emacs-ui--viewing-buffer nil))
-          (when (member view '("agenda" "tasks" "clock" "files" "eval"))
-            (setq eabp-org-ui--current-tab view)))
-        ;; Back from the editor closes the file (the next push drops the
-        ;; edit view). Unsaved companion-side text is discarded with it.
-        (when (and (equal view "files") eabp-files--file)
-          (setq eabp-files--file nil))
-        ;; No :switch-to — never yank the user during a background refresh.
-        (eabp-org-ui-push-dashboard)))))
-
-(eabp-defaction "nav.tab"
-  ;; Legacy round-trip navigation; superseded by the view.switch builtin
-  ;; but kept so stale cached UIs from older pushes still work.
-  (lambda (args _)
-    (let ((tab (alist-get 'tab args)))
-      (eabp-org-ui-push-dashboard tab))))
-
-(eabp-defaction "dashboard.refresh"
-  (lambda (_ _)
-    ;; Manual refresh is an explicit "give me fresh data": bypass the memo.
-    (eabp-org-cache-invalidate)
-    (eabp-org-ui-push-dashboard)))
-
 (eabp-defaction "heading.tap"
   (lambda (args _)
     ;; ARGS is the ref alist (id/file/pos/headline) the card embedded.
     ;; This push IS the navigation, so it forces the detail view.
     (setq eabp-org-ui--detail-ref args)
     (setq eabp-org-ui--detail-read-mode t)
-    (eabp-org-ui-push-dashboard nil :switch-to "detail")))
+    (eabp-shell-push nil :switch-to "detail")))
 
 (eabp-defaction "detail.toggle-read"
   (lambda (_ _)
     (setq eabp-org-ui--detail-read-mode (not eabp-org-ui--detail-read-mode))
-    (eabp-org-ui-push-dashboard nil :switch-to "detail")))
+    (eabp-shell-push nil :switch-to "detail")))
 
 (eabp-defaction "detail.save"
   (lambda (args _)
@@ -1340,22 +1131,22 @@ Always present (even with no properties yet) so + Add is reachable."
               (when (fboundp 'eabp-org-cache-invalidate)
                 (eabp-org-cache-invalidate))
               (setq eabp-org-ui--detail-read-mode t)
-              (eabp-org-ui-snackbar "Saved heading"))
+              (eabp-shell-notify "Saved heading"))
           (error
-           (eabp-org-ui-snackbar (format "Save failed: %s" (error-message-string err))))))
-      (eabp-org-ui-push-dashboard))))
+           (eabp-shell-notify (format "Save failed: %s" (error-message-string err))))))
+      (eabp-shell-push))))
 
 (eabp-defaction "heading.back"
   ;; Legacy: detail's back button is now a companion-local view.switch.
   ;; Kept for stale cached UIs.
   (lambda (_ _)
     (setq eabp-org-ui--detail-ref nil)
-    (eabp-org-ui-push-dashboard nil :switch-to eabp-org-ui--current-tab)))
+    (eabp-shell-push nil :switch-to (eabp-shell-current-tab))))
 
 (eabp-defaction "tasks.filter"
   (lambda (args _)
     (setq eabp-org-ui--tasks-filter (alist-get 'filter args))
-    (eabp-org-ui-push-dashboard)))
+    (eabp-shell-push)))
 
 (eabp-defaction "org.search.run"
   ;; The query arrives as the search field's submitted `value'. Run it,
@@ -1369,7 +1160,7 @@ Always present (even with no properties yet) so + Add is reachable."
               (error
                (message "EABP search error: %s" (error-message-string err))
                nil)))
-      (eabp-org-ui-push-dashboard nil :switch-to "search"))))
+      (eabp-shell-push nil :switch-to "search"))))
 
 (eabp-defaction "org.capture.show"
   (lambda (_ _)
@@ -1424,9 +1215,9 @@ Always present (even with no properties yet) so + Add is reachable."
                   eabp-org-ui--shared-subject nil)
             (eabp-org-cache-invalidate)
             (eabp-ui-state-clear "cap-")
-            (eabp-org-ui-snackbar "Captured ✓")
+            (eabp-shell-notify "Captured ✓")
             (eabp-dismiss-dialog)
-            (eabp-org-ui-push-dashboard))
+            (eabp-shell-push))
         (error
          (message "EABP capture submit error: %s" (error-message-string err))
          (setq eabp-org-ui--shared-text nil
@@ -1453,8 +1244,8 @@ Returns non-nil on success; messages and returns nil on failure."
         t)
     (error
      (message "EABP: heading action failed: %s" (error-message-string err))
-     (eabp-org-ui-snackbar "Couldn't find that heading — refreshing")
-     (eabp-org-ui-push-dashboard)
+     (eabp-shell-notify "Couldn't find that heading — refreshing")
+     (eabp-shell-push)
      nil)))
 
 (eabp-defaction "heading.todo-set"
@@ -1462,8 +1253,8 @@ Returns non-nil on success; messages and returns nil on failure."
     (let ((state (alist-get 'state args)))
       (when (and state
                  (eabp-org-ui--at-ref args (lambda () (org-todo state)) t))
-        (eabp-org-ui-snackbar (format "State → %s" state))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-notify (format "State → %s" state))
+        (eabp-shell-push)))))
 
 (eabp-defaction "heading.schedule"
   (lambda (args _)
@@ -1476,8 +1267,8 @@ Returns non-nil on success; messages and returns nil on failure."
                 ((and (stringp date) (not (string-empty-p date)))
                  (eabp-org-ui--at-ref args (lambda () (org-schedule nil date)) t)))))
       (when ok
-        (eabp-org-ui-snackbar (if clear "Schedule cleared" (format "Scheduled %s" date)))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-notify (if clear "Schedule cleared" (format "Scheduled %s" date)))
+        (eabp-shell-push)))))
 
 (eabp-defaction "heading.schedule-time"
   ;; Adds/updates the clock time on the existing SCHEDULED date (today if
@@ -1493,8 +1284,8 @@ Returns non-nil on success; messages and returns nil on failure."
                                      (format-time-string "%Y-%m-%d"))))
                       (org-schedule nil (format "%s %s" date time))))
                   t))
-        (eabp-org-ui-snackbar (format "Scheduled %s" time))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-notify (format "Scheduled %s" time))
+        (eabp-shell-push)))))
 
 (eabp-defaction "org.footnote.show"
   ;; A tapped footnote marker in rich text: surface its inline definition
@@ -1502,11 +1293,11 @@ Returns non-nil on success; messages and returns nil on failure."
   (lambda (args _)
     (let ((def (alist-get 'def args))
           (label (alist-get 'label args)))
-      (eabp-org-ui-snackbar
+      (eabp-shell-notify
        (if (and (stringp def) (not (string-empty-p def)))
            (format "Footnote: %s" def)
          (format "Footnote %s" (or label ""))))
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-push))))
 
 (eabp-defaction "heading.deadline"
   (lambda (args _)
@@ -1517,8 +1308,8 @@ Returns non-nil on success; messages and returns nil on failure."
                 ((and (stringp date) (not (string-empty-p date)))
                  (eabp-org-ui--at-ref args (lambda () (org-deadline nil date)) t)))))
       (when ok
-        (eabp-org-ui-snackbar (if clear "Deadline cleared" (format "Deadline %s" date)))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-notify (if clear "Deadline cleared" (format "Deadline %s" date)))
+        (eabp-shell-push)))))
 
 (eabp-defaction "heading.priority"
   (lambda (args _)
@@ -1532,9 +1323,9 @@ Returns non-nil on success; messages and returns nil on failure."
                     (org-priority (string-to-char val))))
                 t)))
       (when ok
-        (eabp-org-ui-snackbar (if remove "Priority cleared"
+        (eabp-shell-notify (if remove "Priority cleared"
                                 (format "Priority %s" val)))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-push)))))
 
 (eabp-defaction "heading.refile"
   ;; Bridged picker over org-refile targets; refiles the whole subtree.
@@ -1553,26 +1344,26 @@ Returns non-nil on success; messages and returns nil on failure."
                               (quit nil)))
                     (target (and choice (assoc choice targets))))
                (if (not target)
-                   (eabp-org-ui-snackbar "Refile cancelled")
+                   (eabp-shell-notify "Refile cancelled")
                  (org-refile nil nil target)
                  (let ((eabp-org--inhibit-save-refresh t)
                        (save-silently t))
                    (org-save-all-org-buffers))
                  (eabp-org-cache-invalidate)
                  (setq eabp-org-ui--detail-ref nil)
-                 (eabp-org-ui-snackbar (format "Refiled to %s" choice))))))
-          (eabp-org-ui-push-dashboard nil :switch-to eabp-org-ui--current-tab))
+                 (eabp-shell-notify (format "Refiled to %s" choice))))))
+          (eabp-shell-push nil :switch-to (eabp-shell-current-tab)))
       (error
-       (eabp-org-ui-snackbar (format "Refile failed: %s"
+       (eabp-shell-notify (format "Refile failed: %s"
                                      (error-message-string err)))
-       (eabp-org-ui-push-dashboard)))))
+       (eabp-shell-push)))))
 
 (eabp-defaction "heading.archive"
   ;; Bridged y/n confirm, then org-archive-subtree; saves source + archive.
   (lambda (args _)
     (let ((headline (or (alist-get 'headline args) "this heading")))
       (if (not (yes-or-no-p (format "Archive \"%s\"? " headline)))
-          (eabp-org-ui-snackbar "Archive cancelled")
+          (eabp-shell-notify "Archive cancelled")
         (when (eabp-org-ui--at-ref
                args
                (lambda ()
@@ -1581,8 +1372,8 @@ Returns non-nil on success; messages and returns nil on failure."
                        (save-silently t))
                    (org-save-all-org-buffers))))
           (setq eabp-org-ui--detail-ref nil)
-          (eabp-org-ui-snackbar "Archived")))
-      (eabp-org-ui-push-dashboard nil :switch-to eabp-org-ui--current-tab))))
+          (eabp-shell-notify "Archived")))
+      (eabp-shell-push nil :switch-to (eabp-shell-current-tab)))))
 
 (eabp-defaction "heading.add-note"
   ;; Quick logbook note: bridged prompt, written where org-log-into-drawer
@@ -1592,7 +1383,7 @@ Returns non-nil on success; messages and returns nil on failure."
                                  (read-string "Note: ")
                                (quit "")))))
       (if (string-empty-p note)
-          (eabp-org-ui-snackbar "Note cancelled")
+          (eabp-shell-notify "Note cancelled")
         (when (eabp-org-ui--at-ref
                args
                (lambda ()
@@ -1602,8 +1393,8 @@ Returns non-nil on success; messages and returns nil on failure."
                                   (org-time-stamp-format t t))
                                  note)))
                t)
-          (eabp-org-ui-snackbar "Note added")))
-      (eabp-org-ui-push-dashboard))))
+          (eabp-shell-notify "Note added")))
+      (eabp-shell-push))))
 
 (eabp-defaction "heading.prop-set"
   ;; VALUE arrives injected by the row input's on-submit; NAME rides in
@@ -1620,10 +1411,10 @@ Returns non-nil on success; messages and returns nil on failure."
                          (org-set-property name value)))
                      t))))
       (when ok
-        (eabp-org-ui-snackbar (if (string-empty-p value)
+        (eabp-shell-notify (if (string-empty-p value)
                                   (format "Removed %s" name)
                                 (format "%s → %s" name value)))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-push)))))
 
 (eabp-defaction "heading.prop-add"
   ;; The bridged read-string asks for the key; the new (empty) property
@@ -1635,12 +1426,12 @@ Returns non-nil on success; messages and returns nil on failure."
       (cond
        ((string-empty-p name) nil)
        ((string-match-p "[: \t]" name)
-        (eabp-org-ui-snackbar "Property names can't contain colons or spaces"))
+        (eabp-shell-notify "Property names can't contain colons or spaces"))
        ((eabp-org-ui--at-ref args
                              (lambda () (org-set-property (upcase name) ""))
                              t)
-        (eabp-org-ui-snackbar (format "Added %s — fill in its value" (upcase name)))))
-      (eabp-org-ui-push-dashboard))))
+        (eabp-shell-notify (format "Added %s — fill in its value" (upcase name)))))
+      (eabp-shell-push))))
 
 (eabp-defaction "heading.tags"
   (lambda (args _)
@@ -1652,9 +1443,9 @@ Returns non-nil on success; messages and returns nil on failure."
                   (t nil)))
            (ok (eabp-org-ui--at-ref args (lambda () (org-set-tags tags)) t)))
       (when ok
-        (eabp-org-ui-snackbar (if tags (format "Tags: %s" (string-join tags " "))
+        (eabp-shell-notify (if tags (format "Tags: %s" (string-join tags " "))
                                 "Tags cleared"))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-push)))))
 
 (eabp-defaction "settings.line-numbers"
   ;; Single-select enum: value arrives as a JSON array with (at most) one
@@ -1668,8 +1459,8 @@ Returns non-nil on success; messages and returns nil on failure."
                   (_ nil))))
       (setq eabp-line-numbers sym)
       (ignore-errors (customize-save-variable 'eabp-line-numbers sym))
-      (eabp-org-ui-snackbar (format "Line numbers: %s" (or choice "Off")))
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-notify (format "Line numbers: %s" (or choice "Off")))
+      (eabp-shell-push))))
 
 (eabp-defaction "settings.tags"
   (lambda (args _)
@@ -1686,13 +1477,35 @@ Returns non-nil on success; messages and returns nil on failure."
                                  tags-list)))
           (setq org-tag-alist new-alist)
           (eabp-org-ui--customize-save 'org-tag-alist org-tag-alist)))
-      (eabp-org-ui-snackbar "Settings saved")
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-notify "Settings saved")
+      (eabp-shell-push))))
 
-;; Route the generic settings module's toasts and refreshes through this
-;; screen's snackbar and dashboard push.
-(setq eabp-settings-notify-function #'eabp-org-ui-snackbar
-      eabp-settings-refresh-function #'eabp-org-ui-push-dashboard)
+;; The org settings exposed to the companion, through the generic
+;; schema-driven machinery (the registry is the security boundary:
+;; only symbols listed here can be modified from the wire).
+(eabp-settings-register-section
+ "Org Workflow"
+ '((org-directory :label "Org directory")
+   (org-log-done :label "Log task completion")
+   (org-log-into-drawer :label "Log into drawer")
+   (org-archive-location :label "Archive location")))
+(eabp-settings-register-section
+ "Org Agenda"
+ '((org-agenda-span :label "Agenda span")
+   (org-deadline-warning-days :label "Deadline warning days")))
+(eabp-settings-register-section
+ "Org Editing & Display"
+ '((org-startup-folded :label "Initial folding")
+   (org-startup-indented :label "Indent to outline level")
+   (org-hide-emphasis-markers :label "Hide emphasis markers")
+   (org-return-follows-link :label "Enter follows links")))
+
+;; Org-derived views are memoised; per the cache contract every mutation
+;; must drop the memo or the phone keeps rendering stale data.
+(add-hook 'eabp-settings-after-set-hook
+          (lambda (sym _value)
+            (when (string-prefix-p "org-" (symbol-name sym))
+              (eabp-org-cache-invalidate))))
 
 (defalias 'eabp-org-ui--customize-save #'eabp-settings-save-variable
   "Persist a variable through Customize, surfacing failures.
@@ -1713,10 +1526,6 @@ with the new states.  Returns non-nil when persisting succeeded."
   (eabp-org-cache-invalidate)
   (eabp-org-ui--customize-save 'org-todo-keywords seqs))
 
-(eabp-defaction "dialog.dismiss"
-  (lambda (_ __)
-    (eabp-dismiss-dialog)))
-
 (eabp-defaction "settings.todo.edit"
   (lambda (args _)
     (condition-case err
@@ -1725,8 +1534,8 @@ with the new states.  Returns non-nil when persisting succeeded."
                (seq (if (>= idx 0) (nth idx seqs) '(sequence "TODO" "|" "DONE"))))
           (if (null seq)
               ;; Stale index: the list changed since the card was rendered.
-              (progn (eabp-org-ui-snackbar "That sequence no longer exists")
-                     (eabp-org-ui-push-dashboard))
+              (progn (eabp-shell-notify "That sequence no longer exists")
+                     (eabp-shell-push))
             (let* ((type (car seq))
                    ;; Keep the raw keyword strings, fast-access keys and all
                    ;; ("TODO(t!)"), so an untouched save round-trips losslessly.
@@ -1753,7 +1562,7 @@ with the new states.  Returns non-nil when persisting succeeded."
                  (eabp-spacer :width 8)
                  (eabp-button "Save" (eabp-action "settings.todo.save" :args `((index . ,idx) (type . ,(symbol-name type)))))))))))
       (error
-       (eabp-org-ui-snackbar (format "Edit failed: %s" (error-message-string err)))))))
+       (eabp-shell-notify (format "Edit failed: %s" (error-message-string err)))))))
 
 (eabp-defaction "settings.todo.save"
   (lambda (args _)
@@ -1771,20 +1580,20 @@ with the new states.  Returns non-nil when persisting succeeded."
            (new-seq (append (list type) active (when finished (cons "|" finished)))))
       (cond
        ((and (null active) (null finished))
-        (eabp-org-ui-snackbar "A sequence needs at least one state"))
+        (eabp-shell-notify "A sequence needs at least one state"))
        ((>= idx (length seqs))
         ;; Stale index: the list changed since the dialog was built.
-        (eabp-org-ui-snackbar "Sequences changed underneath; reopen the editor")
+        (eabp-shell-notify "Sequences changed underneath; reopen the editor")
         (eabp-dismiss-dialog)
-        (eabp-org-ui-push-dashboard))
+        (eabp-shell-push))
        (t
         (if (>= idx 0)
             (setcar (nthcdr idx seqs) new-seq)
           (setq seqs (append seqs (list new-seq))))
         (when (eabp-org-ui--todo-keywords-apply seqs)
-          (eabp-org-ui-snackbar "TODO sequence saved"))
+          (eabp-shell-notify "TODO sequence saved"))
         (eabp-dismiss-dialog)
-        (eabp-org-ui-push-dashboard))))))
+        (eabp-shell-push))))))
 
 (eabp-defaction "settings.todo.delete"
   (lambda (args _)
@@ -1796,9 +1605,9 @@ with the new states.  Returns non-nil when persisting succeeded."
                        ;; the last sequence falls back to the stock one.
                        '((sequence "TODO" "|" "DONE"))))
         (when (eabp-org-ui--todo-keywords-apply seqs)
-          (eabp-org-ui-snackbar "TODO sequence deleted"))
+          (eabp-shell-notify "TODO sequence deleted"))
         (eabp-dismiss-dialog)
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-push)))))
 
 (eabp-defaction "search.update-filter"
   (lambda (args _)
@@ -1823,7 +1632,7 @@ with the new states.  Returns non-nil when persisting succeeded."
                    "")))
           (setq eabp-org-ui--search-query q)
           (eabp-ui-state-put "search-query" q)))
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-push))))
 
 (eabp-defaction "agenda.save-custom"
   (lambda (args _)
@@ -1834,14 +1643,14 @@ with the new states.  Returns non-nil when persisting succeeded."
         (setq eabp-org-custom-agendas (assoc-delete-all name eabp-org-custom-agendas))
         (add-to-list 'eabp-org-custom-agendas (cons name query) t)
         (customize-save-variable 'eabp-org-custom-agendas eabp-org-custom-agendas)
-        (eabp-org-ui-snackbar (format "Saved custom agenda: %s" name))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-notify (format "Saved custom agenda: %s" name))
+        (eabp-shell-push)))))
 
 (eabp-defaction "agenda.set-mode"
   (lambda (args _)
     (let ((mode (alist-get 'mode args)))
       (eabp-ui-state-put "agenda-mode" mode)
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-push))))
 
 (eabp-defaction "agenda.nav"
   ;; Shift the agenda anchor by DIR (±1) in units of the active span.
@@ -1856,26 +1665,26 @@ with the new states.  Returns non-nil when persisting succeeded."
         (setq anchor (concat (substring anchor 0 7) "-01")))
       (eabp-ui-state-put "agenda-anchor"
                          (eabp-org-ui--shift-date anchor dir unit))
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-push))))
 
 (eabp-defaction "agenda.today"
   ;; Reset the anchor (and any month-grid selection) back to today.
   (lambda (_ _)
     (eabp-ui-state-put "agenda-anchor" nil)
     (eabp-ui-state-put "agenda-selected-date" nil)
-    (eabp-org-ui-push-dashboard)))
+    (eabp-shell-push)))
 
 (eabp-defaction "agenda.select-date"
   (lambda (args _)
     (let ((date (alist-get 'date args)))
       (eabp-ui-state-put "agenda-selected-date" date)
-      (eabp-org-ui-push-dashboard))))
+      (eabp-shell-push))))
 
 (eabp-defaction "heading.clock-in"
   (lambda (args _)
     (when (eabp-org-ui--at-ref args #'org-clock-in)
-      (eabp-org-ui-snackbar "Clocked in")
-      (eabp-org-ui-push-dashboard "clock"))))
+      (eabp-shell-notify "Clocked in")
+      (eabp-shell-push "clock"))))
 
 (eabp-defaction "org.link.open"
   ;; A tappable link inside rich org text. Emacs resolves it (id:, file:,
@@ -1887,11 +1696,11 @@ with the new states.  Returns non-nil when persisting succeeded."
         (condition-case err
             (progn
               (org-link-open-from-string link)
-              (eabp-org-ui-snackbar (format "Opened %s" link)))
+              (eabp-shell-notify (format "Opened %s" link)))
           (error
-           (eabp-org-ui-snackbar
+           (eabp-shell-notify
             (format "Couldn't open %s: %s" link (error-message-string err)))))
-        (eabp-org-ui-push-dashboard)))))
+        (eabp-shell-push)))))
 
 (eabp-defaction "checkbox.toggle"
   ;; Toggle a checkbox in an org file from the reader view.  The companion
@@ -1910,9 +1719,9 @@ with the new states.  Returns non-nil when persisting succeeded."
                       (save-silently t))
                   (save-buffer)))
               (eabp-org-cache-invalidate)
-              (eabp-org-ui-push-dashboard))
+              (eabp-shell-push))
           (error
-           (eabp-org-ui-snackbar
+           (eabp-shell-notify
             (format "Toggle failed: %s" (error-message-string err)))))))))
 
 (eabp-defaction "heading.reorder"
@@ -1951,7 +1760,7 @@ with the new states.  Returns non-nil when persisting succeeded."
           (with-current-buffer (find-file-noselect file)
             (save-buffer)))
         (eabp-org-cache-invalidate)
-        (eabp-org-ui-push-dashboard nil :switch-to "edit")))))
+        (eabp-shell-push nil :switch-to "edit")))))
 
 (eabp-defaction "file.view"
   ;; Legacy (old cached UIs): now routes into the eabp-files editor.
@@ -1959,7 +1768,146 @@ with the new states.  Returns non-nil when persisting succeeded."
     (let ((file (alist-get 'file args)))
       (when (and (stringp file) (file-readable-p file))
         (setq eabp-files--file (expand-file-name file))
-        (eabp-org-ui-push-dashboard nil :switch-to "edit")))))
+        (eabp-shell-push nil :switch-to "edit")))))
+
+;; ─── Files integration: org files open reader-first ─────────────────────────
+;; Registered on the core files module's app seams; the editor itself stays
+;; org-agnostic.
+
+(defvar eabp-org-ui--files-read-mode nil
+  "When non-nil, org files open in the foldable reader instead of the editor.")
+
+(defvar eabp-org-ui--files-refile-mode nil
+  "When non-nil, org reader shows a flat drag-to-reorder heading list.")
+
+(defun eabp-org-ui--org-file-p (file)
+  "Non-nil when FILE is an org file."
+  (and file (string-match-p "\\.org\\'" file)))
+
+(defun eabp-org-ui--org-editor-body (file)
+  "Reader body for org FILE while read mode is on; nil = plain editor."
+  (when (and eabp-org-ui--files-read-mode (eabp-org-ui--org-file-p file))
+    (if eabp-org-ui--files-refile-mode
+        (or (eabp-org-reader-refile-list file)
+            (eabp-text "No headings to show." 'caption))
+      (let ((items (eabp-org--file-heading-items file)))
+        (if items
+            (apply #'eabp-lazy-column
+                   (mapcar #'eabp-org-ui--agenda-card items))
+          (eabp-empty-state :icon "description"
+                            :title "Empty file"
+                            :caption "No headings found."))))))
+
+(defun eabp-org-ui--org-editor-actions (file)
+  "Reader/refile toggles and the properties dialog for org FILE."
+  (when (eabp-org-ui--org-file-p file)
+    (delq nil
+          (list
+           (when eabp-org-ui--files-read-mode
+             (eabp-icon-button
+              (if eabp-org-ui--files-refile-mode "visibility" "swap_vert")
+              (eabp-action "files.toggle-refile")
+              :content-description
+              (if eabp-org-ui--files-refile-mode "Reader" "Refile")))
+           (eabp-icon-button
+            (if eabp-org-ui--files-read-mode "edit" "visibility")
+            (eabp-action "files.toggle-read")
+            :content-description
+            (if eabp-org-ui--files-read-mode "Edit" "Read"))
+           (eabp-icon-button
+            "tune"
+            (eabp-action "files.properties.show" :args `((file . ,file)))
+            :content-description "Properties")))))
+
+(add-hook 'eabp-files-editor-body-functions #'eabp-org-ui--org-editor-body)
+(add-hook 'eabp-files-editor-actions-functions #'eabp-org-ui--org-editor-actions)
+
+;; Org files open reader-first; everything else lands in the editor.
+(add-hook 'eabp-files-open-hook
+          (lambda (file)
+            (setq eabp-org-ui--files-read-mode (eabp-org-ui--org-file-p file))))
+
+;; A phone-side save may have changed org data the views memoise.
+(add-hook 'eabp-files-after-save-hook
+          (lambda (_file) (eabp-org-cache-invalidate)))
+
+(eabp-defaction "files.toggle-read"
+  (lambda (_ _)
+    (setq eabp-org-ui--files-read-mode (not eabp-org-ui--files-read-mode))
+    (eabp-shell-push nil :switch-to "edit")))
+
+(eabp-defaction "files.toggle-refile"
+  (lambda (_ _)
+    (setq eabp-org-ui--files-refile-mode (not eabp-org-ui--files-refile-mode))
+    (eabp-shell-push nil :switch-to "edit")))
+
+(eabp-defaction "files.properties.show"
+  (lambda (args _)
+    (let ((file (alist-get 'file args)))
+      (if (not (and file (stringp file) (file-readable-p file)))
+          (eabp-shell-notify (format "Cannot open properties: %s" (or file "no file")))
+        (condition-case err
+            (let* ((buf (or (get-file-buffer file) (find-file-noselect file)))
+                   (kwds (with-current-buffer buf (org-collect-keywords '("TITLE" "CATEGORY" "FILETAGS"))))
+                   (title (car (alist-get "TITLE" kwds nil nil #'equal)))
+                   (category (car (alist-get "CATEGORY" kwds nil nil #'equal)))
+                   (filetags-str (car (alist-get "FILETAGS" kwds nil nil #'equal)))
+                   (filetags (when filetags-str (split-string filetags-str ":" t "[ \t\n\r]+")))
+                   (available-tags (seq-uniq (append filetags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
+              (eabp-send-dialog
+               (eabp-column
+                (eabp-text "File Properties" 'title)
+                (eabp-text (file-name-nondirectory file) 'caption)
+                (eabp-text-input "file-prop-title" :label "Title" :value title :single-line t)
+                (eabp-text-input "file-prop-category" :label "Category" :value category :single-line t)
+                (eabp-text "File Tags" 'caption nil nil nil nil 8)
+                (eabp-enum-list "file-prop-tags" available-tags
+                                :value filetags :multi-select t :allow-add t)
+                (eabp-row
+                 (eabp-spacer :weight 1)
+                 (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
+                 (eabp-spacer :width 8)
+                 (eabp-button "Save" (eabp-action "files.properties.save" :args `((file . ,file))))))))
+          (error
+           (eabp-shell-notify (format "Properties error: %s" (error-message-string err)))))))))
+
+(eabp-defaction "files.properties.save"
+  (lambda (args _)
+    (let* ((file (alist-get 'file args))
+           (buf (or (get-file-buffer file) (find-file-noselect file)))
+           (title (eabp-ui-state "file-prop-title"))
+           (category (eabp-ui-state "file-prop-category"))
+           (tags-val (eabp-ui-state "file-prop-tags"))
+           (tags (cond
+                  ((vectorp tags-val) (append tags-val nil))
+                  ((listp tags-val) tags-val)
+                  (t nil))))
+      (with-current-buffer buf
+        (save-excursion
+          (save-restriction
+            (widen)
+            (let ((update-kwd (lambda (kwd val)
+                                (goto-char (point-min))
+                                (if (re-search-forward (format "^[ \t]*#\\+%s:[ \t]*\\(.*\\)$" kwd) nil t)
+                                    (if (and val (not (string-empty-p val)))
+                                        (replace-match val t t nil 1)
+                                      (delete-region (line-beginning-position) (min (1+ (line-end-position)) (point-max))))
+                                  (when (and val (not (string-empty-p val)))
+                                    (goto-char (point-min))
+                                    ;; If inserting something else than TITLE and a TITLE exists, insert after it.
+                                    (when (not (equal kwd "TITLE"))
+                                      (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
+                                        (forward-line 1)))
+                                    (insert (format "#+%s: %s\n" kwd val)))))))
+              (funcall update-kwd "TITLE" title)
+              (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
+              (funcall update-kwd "CATEGORY" category))
+            (let ((eabp-org--inhibit-save-refresh t)
+                  (save-silently t))
+              (save-buffer)))))
+      (eabp-dismiss-dialog)
+      (eabp-org-cache-invalidate)
+      (eabp-shell-push))))
 
 ;; ─── Auto-refresh ────────────────────────────────────────────────────────────
 
@@ -1972,10 +1920,13 @@ Debounces bursts of saves (e.g. `org-save-all-org-buffers') into one push."
 
 (defun eabp-org-ui--after-save-refresh ()
   "Schedule a dashboard refresh if an org agenda file was just saved.
-No-op for saves EABP itself performs (ID creation, action handlers),
-which would otherwise refresh twice or loop."
+No-op for saves EABP itself performs — anything inside an action
+handler (`eabp--in-action-handler') pushes explicitly, and other
+programmatic saves bind `eabp-org--inhibit-save-refresh' — which would
+otherwise refresh twice or loop."
   (when (and (eabp-connected-p)
              (not (bound-and-true-p eabp-org--inhibit-save-refresh))
+             (not (bound-and-true-p eabp--in-action-handler))
              buffer-file-name
              (derived-mode-p 'org-mode)
              (ignore-errors
@@ -1986,7 +1937,7 @@ which would otherwise refresh twice or loop."
       (cancel-timer eabp-org-ui--save-refresh-timer))
     (setq eabp-org-ui--save-refresh-timer
           (run-with-idle-timer eabp-org-ui-save-refresh-delay nil
-                               #'eabp-org-ui-push-dashboard))))
+                               #'eabp-shell-push))))
 
 (add-hook 'after-save-hook #'eabp-org-ui--after-save-refresh)
 
@@ -1997,22 +1948,10 @@ extraction cache first — this runs on clock in/out, which mutate the
 org buffer without necessarily saving it."
   (when (eabp-connected-p)
     (eabp-org-cache-invalidate)
-    (eabp-org-ui-push-dashboard)))
+    (eabp-shell-push)))
 
-;; After (re)connect, push the dashboard so the app never shows a stale
-;; screen from a previous Emacs session. Depth 10: after the revision
-;; snapshot has been absorbed (-50 in eabp-surfaces) and after the
-;; org-clock notification re-assert (0).
-(add-hook 'eabp-connected-hook
-          (lambda (_welcome) (eabp-org-ui-push-dashboard))
-          10)
-
-;; After a replay, queued taps have just mutated org state — the cached
-;; views on the phone are now behind reality.
-(add-hook 'eabp-queue-drained-hook
-          (lambda (_payload)
-            (eabp-org-cache-invalidate)
-            (eabp-org-ui-push-dashboard)))
+;; The connect and queue-drained pushes are owned by the shell; this app
+;; only contributes its cache invalidation via `eabp-shell-refresh-hook'.
 
 ;; Clock state shows on the Clock tab and the dashboard generally —
 ;; keep it live. Depth 90: after eabp-surfaces' notification hooks.

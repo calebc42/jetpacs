@@ -439,5 +439,74 @@ state (the same pattern as the capture form)."
         (format "Reload error: %s" (error-message-string err)))))
     (eabp-org-ui-push-dashboard)))
 
+(eabp-defaction "files.properties.show"
+  (lambda (args _)
+    (let ((file (alist-get 'file args)))
+      (if (not (and file (stringp file) (file-readable-p file)))
+          (eabp-org-ui-snackbar (format "Cannot open properties: %s" (or file "no file")))
+        (condition-case err
+            (let* ((buf (or (get-file-buffer file) (find-file-noselect file)))
+                   (kwds (with-current-buffer buf (org-collect-keywords '("TITLE" "CATEGORY" "FILETAGS"))))
+                   (title (car (alist-get "TITLE" kwds nil nil #'equal)))
+                   (category (car (alist-get "CATEGORY" kwds nil nil #'equal)))
+                   (filetags-str (car (alist-get "FILETAGS" kwds nil nil #'equal)))
+                   (filetags (when filetags-str (split-string filetags-str ":" t "[ \t\n\r]+")))
+                   (available-tags (seq-uniq (append filetags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
+              (eabp-send-dialog
+               (eabp-column
+                (eabp-text "File Properties" 'title)
+                (eabp-text (file-name-nondirectory file) 'caption)
+                (eabp-text-input "file-prop-title" :label "Title" :value title :single-line t)
+                (eabp-text-input "file-prop-category" :label "Category" :value category :single-line t)
+                (eabp-text "File Tags" 'caption nil nil nil nil 8)
+                (eabp-enum-list "file-prop-tags" available-tags
+                                :value filetags :multi-select t :allow-add t)
+                (eabp-row
+                 (eabp-spacer :weight 1)
+                 (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
+                 (eabp-spacer :width 8)
+                 (eabp-button "Save" (eabp-action "files.properties.save" :args `((file . ,file))))))))
+          (error
+           (eabp-org-ui-snackbar (format "Properties error: %s" (error-message-string err)))))))))
+
+(eabp-defaction "files.properties.save"
+  (lambda (args _)
+    (let* ((file (alist-get 'file args))
+           (buf (or (get-file-buffer file) (find-file-noselect file)))
+           (title (eabp-ui-state "file-prop-title"))
+           (category (eabp-ui-state "file-prop-category"))
+           (tags-val (eabp-ui-state "file-prop-tags"))
+           (tags (cond
+                  ((vectorp tags-val) (append tags-val nil))
+                  ((listp tags-val) tags-val)
+                  (t nil))))
+      (with-current-buffer buf
+        (save-excursion
+          (save-restriction
+            (widen)
+            (let ((update-kwd (lambda (kwd val)
+                                (goto-char (point-min))
+                                (if (re-search-forward (format "^[ \t]*#\\+%s:[ \t]*\\(.*\\)$" kwd) nil t)
+                                    (if (and val (not (string-empty-p val)))
+                                        (replace-match val t t nil 1)
+                                      (delete-region (line-beginning-position) (min (1+ (line-end-position)) (point-max))))
+                                  (when (and val (not (string-empty-p val)))
+                                    (goto-char (point-min))
+                                    ;; If inserting something else than TITLE and a TITLE exists, insert after it.
+                                    (when (not (equal kwd "TITLE"))
+                                      (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
+                                        (forward-line 1)))
+                                    (insert (format "#+%s: %s\n" kwd val)))))))
+              (funcall update-kwd "TITLE" title)
+              (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
+              (funcall update-kwd "CATEGORY" category))
+            (let ((eabp-org--inhibit-save-refresh t)
+                  (save-silently t))
+              (save-buffer)))))
+      (eabp-send "dialog.dismiss" nil)
+      (when (fboundp 'eabp-org-cache-invalidate)
+        (eabp-org-cache-invalidate))
+      (eabp-org-ui-push-dashboard))))
+
 (provide 'eabp-files)
 ;;; eabp-files.el ends here

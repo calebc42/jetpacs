@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -183,7 +184,7 @@ private fun BridgeScreen() {
             // Paired but Emacs is away: a discreet key to re-view the token
             // (e.g. to pair a new machine) without wiping app data.
             if (!connected) {
-                TokenReveal(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                TokenReveal(modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp))
             }
         }
     }

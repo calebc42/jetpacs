@@ -231,10 +231,15 @@ by a long history — the layout bug the old plain-column version had."
                                 :title "Elisp REPL"
                                 :caption "Results appear here, newest first.")))
       :weight 1)
-     input-field
-     (eabp-row
-      (eabp-spacer :weight 1)
-      (eabp-button "Eval" (eabp-action "emacs.eval.submit"))))))
+     (eabp-divider)
+     (eabp-box
+      (list
+       (eabp-row
+        (eabp-box (list input-field) :weight 1)
+        (eabp-spacer :width 8)
+        (eabp-icon-button "send" (eabp-action "emacs.eval.submit")
+                          :content-description "Eval")))
+      :padding 8))))
 
 ;; ─── Action Handlers ─────────────────────────────────────────────────────────
 

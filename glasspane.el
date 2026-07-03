@@ -3904,10 +3904,15 @@ by a long history — the layout bug the old plain-column version had."
                                 :title "Elisp REPL"
                                 :caption "Results appear here, newest first.")))
       :weight 1)
-     input-field
-     (eabp-row
-      (eabp-spacer :weight 1)
-      (eabp-button "Eval" (eabp-action "emacs.eval.submit"))))))
+     (eabp-divider)
+     (eabp-box
+      (list
+       (eabp-row
+        (eabp-box (list input-field) :weight 1)
+        (eabp-spacer :width 8)
+        (eabp-icon-button "send" (eabp-action "emacs.eval.submit")
+                          :content-description "Eval")))
+      :padding 8))))
 
 ;; ─── Action Handlers ─────────────────────────────────────────────────────────
 
@@ -5364,6 +5369,75 @@ state (the same pattern as the capture form)."
         (format "Reload error: %s" (error-message-string err)))))
     (eabp-org-ui-push-dashboard)))
 
+(eabp-defaction "files.properties.show"
+  (lambda (args _)
+    (let ((file (alist-get 'file args)))
+      (if (not (and file (stringp file) (file-readable-p file)))
+          (eabp-org-ui-snackbar (format "Cannot open properties: %s" (or file "no file")))
+        (condition-case err
+            (let* ((buf (or (get-file-buffer file) (find-file-noselect file)))
+                   (kwds (with-current-buffer buf (org-collect-keywords '("TITLE" "CATEGORY" "FILETAGS"))))
+                   (title (car (alist-get "TITLE" kwds nil nil #'equal)))
+                   (category (car (alist-get "CATEGORY" kwds nil nil #'equal)))
+                   (filetags-str (car (alist-get "FILETAGS" kwds nil nil #'equal)))
+                   (filetags (when filetags-str (split-string filetags-str ":" t "[ \t\n\r]+")))
+                   (available-tags (seq-uniq (append filetags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
+              (eabp-send-dialog
+               (eabp-column
+                (eabp-text "File Properties" 'title)
+                (eabp-text (file-name-nondirectory file) 'caption)
+                (eabp-text-input "file-prop-title" :label "Title" :value title :single-line t)
+                (eabp-text-input "file-prop-category" :label "Category" :value category :single-line t)
+                (eabp-text "File Tags" 'caption nil nil nil nil 8)
+                (eabp-enum-list "file-prop-tags" available-tags
+                                :value filetags :multi-select t :allow-add t)
+                (eabp-row
+                 (eabp-spacer :weight 1)
+                 (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
+                 (eabp-spacer :width 8)
+                 (eabp-button "Save" (eabp-action "files.properties.save" :args `((file . ,file))))))))
+          (error
+           (eabp-org-ui-snackbar (format "Properties error: %s" (error-message-string err)))))))))
+
+(eabp-defaction "files.properties.save"
+  (lambda (args _)
+    (let* ((file (alist-get 'file args))
+           (buf (or (get-file-buffer file) (find-file-noselect file)))
+           (title (eabp-ui-state "file-prop-title"))
+           (category (eabp-ui-state "file-prop-category"))
+           (tags-val (eabp-ui-state "file-prop-tags"))
+           (tags (cond
+                  ((vectorp tags-val) (append tags-val nil))
+                  ((listp tags-val) tags-val)
+                  (t nil))))
+      (with-current-buffer buf
+        (save-excursion
+          (save-restriction
+            (widen)
+            (let ((update-kwd (lambda (kwd val)
+                                (goto-char (point-min))
+                                (if (re-search-forward (format "^[ \t]*#\\+%s:[ \t]*\\(.*\\)$" kwd) nil t)
+                                    (if (and val (not (string-empty-p val)))
+                                        (replace-match val t t nil 1)
+                                      (delete-region (line-beginning-position) (min (1+ (line-end-position)) (point-max))))
+                                  (when (and val (not (string-empty-p val)))
+                                    (goto-char (point-min))
+                                    ;; If inserting something else than TITLE and a TITLE exists, insert after it.
+                                    (when (not (equal kwd "TITLE"))
+                                      (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
+                                        (forward-line 1)))
+                                    (insert (format "#+%s: %s\n" kwd val)))))))
+              (funcall update-kwd "TITLE" title)
+              (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
+              (funcall update-kwd "CATEGORY" category))
+            (let ((eabp-org--inhibit-save-refresh t)
+                  (save-silently t))
+              (save-buffer)))))
+      (eabp-send "dialog.dismiss" nil)
+      (when (fboundp 'eabp-org-cache-invalidate)
+        (eabp-org-cache-invalidate))
+      (eabp-org-ui-push-dashboard))))
+
 (provide 'eabp-files)
 ;;; eabp-files.el ends here
 ;;; ==================================================================
@@ -5385,6 +5459,8 @@ state (the same pattern as the capture form)."
 (require 'eabp-keymap)
 (require 'eabp-magit)
 (require 'cl-lib)
+
+(declare-function custom-file "cus-edit" (&optional no-error))
 
 (defvar eabp-org-ui--current-tab "agenda"
   "Currently active tab in the dashboard.")
@@ -5564,30 +5640,37 @@ building. SWITCH-TO additionally forces the companion onto that view
                                   :nav-icon "arrow_back"
                                   :nav-action (eabp-org-ui--switch-view
                                                eabp-org-ui--current-tab)
-                                  :actions (list
-                                            (eabp-icon-button
-                                             "note_add"
-                                             (eabp-action "heading.add-note"
-                                                          :args eabp-org-ui--detail-ref
-                                                          :when-offline "drop")
-                                             :content-description "Add note")
-                                            (eabp-icon-button
-                                             "drive_file_move"
-                                             (eabp-action "heading.refile"
-                                                          :args eabp-org-ui--detail-ref
-                                                          :when-offline "drop")
-                                             :content-description "Refile")
-                                            (eabp-icon-button
-                                             "archive"
-                                             (eabp-action "heading.archive"
-                                                          :args eabp-org-ui--detail-ref
-                                                          :when-offline "drop")
-                                             :content-description "Archive")
-                                            (eabp-icon-button
-                                             (if eabp-org-ui--detail-read-mode "edit" "visibility")
-                                             (eabp-action "detail.toggle-read")
-                                             :content-description
-                                             (if eabp-org-ui--detail-read-mode "Edit" "Read")))))
+                                  :actions (delq nil
+                                                 (list
+                                                  (eabp-icon-button
+                                                   "note_add"
+                                                   (eabp-action "heading.add-note"
+                                                                :args eabp-org-ui--detail-ref
+                                                                :when-offline "drop")
+                                                   :content-description "Add note")
+                                                  (eabp-icon-button
+                                                   "drive_file_move"
+                                                   (eabp-action "heading.refile"
+                                                                :args eabp-org-ui--detail-ref
+                                                                :when-offline "drop")
+                                                   :content-description "Refile")
+                                                  (eabp-icon-button
+                                                   "archive"
+                                                   (eabp-action "heading.archive"
+                                                                :args eabp-org-ui--detail-ref
+                                                                :when-offline "drop")
+                                                   :content-description "Archive")
+                                                  (eabp-icon-button
+                                                   (if eabp-org-ui--detail-read-mode "edit" "visibility")
+                                                   (eabp-action "detail.toggle-read")
+                                                   :content-description
+                                                   (if eabp-org-ui--detail-read-mode "Edit" "Read"))
+                                                  (when (and eabp-org-ui--detail-ref
+                                                             (eabp-files--org-p (alist-get 'file eabp-org-ui--detail-ref)))
+                                                    (eabp-icon-button
+                                                     "tune"
+                                                     (eabp-action "files.properties.show" :args `((file . ,(alist-get 'file eabp-org-ui--detail-ref))))
+                                                     :content-description "Properties"))))))
                    (is-edit
                     (eabp-top-bar (if eabp-files--file
                                       (file-name-nondirectory eabp-files--file)
@@ -5607,7 +5690,11 @@ building. SWITCH-TO additionally forces the companion onto that view
                                                      (if eabp-files--read-mode "edit" "visibility")
                                                      (eabp-action "files.toggle-read")
                                                      :content-description
-                                                     (if eabp-files--read-mode "Edit" "Read")))))))
+                                                     (if eabp-files--read-mode "Edit" "Read"))
+                                                    (eabp-icon-button
+                                                     "tune"
+                                                     (eabp-action "files.properties.show" :args `((file . ,eabp-files--file)))
+                                                     :content-description "Properties"))))))
                    ((and is-files eabp-files--dir)
                     (eabp-top-bar (abbreviate-file-name eabp-files--dir)
                                   :nav-icon "arrow_back"
@@ -5642,13 +5729,11 @@ building. SWITCH-TO additionally forces the companion onto that view
                    (t
                     (eabp-top-bar (capitalize name)
                                   :actions (append
-                                            ;; A top-bar Eval button: always
-                                            ;; reachable even if the input grows.
                                             (when (equal name "eval")
                                               (list (eabp-icon-button
-                                                     "play_arrow"
-                                                     (eabp-action "emacs.eval.submit")
-                                                     :content-description "Eval")))
+                                                     "delete"
+                                                     (eabp-action "emacs.eval.clear")
+                                                     :content-description "Clear history")))
                                             (list
                                              (eabp-icon-button
                                               "search"
@@ -5672,9 +5757,7 @@ building. SWITCH-TO additionally forces the companion onto that view
                (is-files
                 (eabp-fab "add" :label "New"
                           :on-tap (eabp-action "files.new")))
-               ((equal name "eval")
-                (eabp-fab "delete" :label "Clear"
-                          :on-tap (eabp-action "emacs.eval.clear")))
+               ((equal name "eval") nil)
                (t
                 (eabp-fab "add" :label "Capture"
                           :on-tap (eabp-action "org.capture.show")))))
@@ -5812,28 +5895,35 @@ month is Feb 28, not an invalid date."
     ("scheduled" "scheduled")
     (_ nil)))
 
+(defun eabp-org-ui--card-date-label (ts)
+  "Format org timestamp TS as a compact \"Mon D\" (or \"Mon D HH:MM\") string."
+  (when (and (stringp ts)
+             (string-match "\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)" ts))
+    (let* ((month (string-to-number (match-string 2 ts)))
+           (day   (string-to-number (match-string 3 ts)))
+           (mon   (aref eabp--month-abbrevs (1- month)))
+           (time  (eabp-org-ui--ts-time ts)))
+      (if time (format "%s %d %s" mon day time)
+        (format "%s %d" mon day)))))
+
 (defun eabp-org-ui--card-date-row (it)
   "An inline scheduling indicator for card item IT.
-Shows compact date-stamp chips for SCHEDULED and/or DEADLINE when present.
+Shows compact icon + text labels for SCHEDULED and/or DEADLINE when present.
 Returns nil when neither is set."
   (let* ((scheduled (alist-get 'scheduled it))
          (deadline  (alist-get 'deadline it))
-         (sdate (eabp-org-ui--ts-date scheduled))
-         (ddate (eabp-org-ui--ts-date deadline))
+         (slabel (eabp-org-ui--card-date-label scheduled))
+         (dlabel (eabp-org-ui--card-date-label deadline))
          (chips (delq nil
                       (list
-                       (when sdate
+                       (when slabel
                          (eabp-row
-                          (eabp-icon "schedule" :size 14)
-                          (eabp-date-stamp :date sdate
-                                           :time (eabp-org-ui--ts-time scheduled)
-                                           :padding 2)))
-                       (when ddate
+                          (eabp-icon "schedule" :size 14 :color "#9E9E9E")
+                          (eabp-text slabel 'caption)))
+                       (when dlabel
                          (eabp-row
-                          (eabp-icon "flag" :size 14)
-                          (eabp-date-stamp :date ddate
-                                           :time (eabp-org-ui--ts-time deadline)
-                                           :padding 2)))))))
+                          (eabp-icon "flag" :size 14 :color "#EF5350")
+                          (eabp-text dlabel 'caption)))))))
     (when chips
       (apply #'eabp-flow-row chips))))
 
@@ -6050,7 +6140,7 @@ and a quick complete button for open todos."
                                  :selected (equal eabp-org-ui--tasks-filter kw)
                                  :on-tap (eabp-action "tasks.filter"
                                                       :args `((filter . ,kw)))))
-                    (cons "ALL" (or (default-value 'org-todo-keywords-1)
+                    (cons "ALL" (or (eabp-org-ui--global-todo-keywords)
                                     '("TODO" "DONE")))))
      (if cards
          (apply #'eabp-lazy-column cards)
@@ -6168,6 +6258,41 @@ and a quick complete button for open todos."
                          :title "Search your notes"
                          :caption "Type a query and press search."))))))
 
+(defun eabp-org-ui--global-todo-keywords ()
+  "Extract a flat list of all global TODO keywords from `org-todo-keywords'."
+  (let ((kws nil))
+    (dolist (seq (default-value 'org-todo-keywords))
+      (dolist (w (cdr seq))
+        (unless (string-equal w "|")
+          ;; Strip fast-access keys, e.g. "TODO(t)" -> "TODO"
+          (push (if (string-match "^\\([a-zA-Z0-9_-]+\\)" w)
+                    (match-string 1 w)
+                  w)
+                kws))))
+    (nreverse kws)))
+
+(defun eabp-org-ui--split-todo-sequence (seq)
+  "Split `org-todo-keywords' entry SEQ into (ACTIVE . FINISHED) keyword lists.
+Keywords keep their fast-access annotations (\"TODO(t!)\").  Mirrors
+org's rule for sequences without an explicit \"|\": the last keyword
+is the finished state."
+  (let ((words (cdr seq))
+        (active nil)
+        (finished nil)
+        (target 'active))
+    (dolist (w words)
+      (if (equal w "|")
+          (setq target 'finished)
+        (if (eq target 'active)
+            (push w active)
+          (push w finished))))
+    (setq active (nreverse active)
+          finished (nreverse finished))
+    (when (and (null finished) (not (member "|" words)))
+      (setq finished (last active)
+            active (butlast active)))
+    (cons active finished)))
+
 (defun eabp-org-ui--settings-body ()
   (let* ((available-tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))
          (enum-list (eabp-enum-list "settings-tags" available-tags
@@ -6178,17 +6303,63 @@ and a quick complete button for open todos."
          (linenum-value (pcase eabp-line-numbers
                           ('absolute "Absolute")
                           ('relative "Relative")
-                          (_ "Off"))))
-    (eabp-column
-     (eabp-section-header "Display")
-     (eabp-text "Line numbers in the buffer view and editor." 'caption)
-     (eabp-enum-list "settings-linenum" '("Off" "Absolute" "Relative")
-                     :value (list linenum-value)
-                     :on-change (eabp-action "settings.line-numbers"))
-     (eabp-divider)
-     (eabp-section-header "Global Org Tags")
-     (eabp-text "Manage the global tag list (org-tag-alist)." 'caption)
-     enum-list)))
+                          (_ "Off")))
+         (seq-cards
+          (condition-case err
+              (cl-loop for seq in (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE")))
+                       for i from 0
+                       collect
+                       (let* ((split (eabp-org-ui--split-todo-sequence seq))
+                              (bare (lambda (w)
+                                      (if (string-match "^\\([a-zA-Z0-9_-]+\\)" w)
+                                          (match-string 1 w)
+                                        w)))
+                              (active (mapcar bare (car split)))
+                              (finished (mapcar bare (cdr split))))
+                         (eabp-card
+                          (list
+                           (eabp-row
+                            ;; The text column must carry the flex weight
+                            ;; itself: the client renders columns fillMaxWidth,
+                            ;; so an unweighted one swallows the whole row and
+                            ;; pushes the buttons off-screen.
+                            (eabp-box
+                             (list
+                              (eabp-column
+                               (eabp-text (format "Sequence %d" (1+ i)) 'label)
+                               (eabp-text (concat (mapconcat #'identity active ", ") " | " (mapconcat #'identity finished ", ")) 'body)))
+                             :weight 1)
+                            (eabp-icon-button "edit"
+                                              (eabp-action "settings.todo.edit"
+                                                           :args `((index . ,i))
+                                                           :when-offline "drop")
+                                              :content-description "Edit sequence")
+                            (eabp-icon-button "delete"
+                                              (eabp-action "settings.todo.delete"
+                                                           :args `((index . ,i))
+                                                           :when-offline "drop")
+                                              :content-description "Delete sequence"))))))
+            (error (list (eabp-text (format "Error loading sequences: %s" (error-message-string err)) 'caption))))))
+    (apply #'eabp-column
+           (append
+            (list (eabp-section-header "Display")
+                  (eabp-text "Line numbers in the buffer view and editor." 'caption)
+                  (eabp-enum-list "settings-linenum" '("Off" "Absolute" "Relative")
+                                  :value (list linenum-value)
+                                  :on-change (eabp-action "settings.line-numbers"))
+                  (eabp-divider)
+                  (eabp-section-header "Global TODO Sequences")
+                  (eabp-text "Manage your global TODO states and workflows." 'caption))
+            seq-cards
+            (list (eabp-button "Add Sequence"
+                               (eabp-action "settings.todo.edit"
+                                            :args '((index . -1))
+                                            :when-offline "drop")
+                               :variant "outlined")
+                  (eabp-divider)
+                  (eabp-section-header "Global Org Tags")
+                  (eabp-text "Manage the global tag list (org-tag-alist)." 'caption)
+                  enum-list)))))
 
 (defun eabp-org-ui--todo-chips (current keywords ref)
   "A row of chips for KEYWORDS with CURRENT selected; taps carry REF."
@@ -6293,7 +6464,8 @@ Always present (even with no properties yet) so + Add is reachable."
                               :todo (nth 2 comps)
                               :priority (and (nth 3 comps)
                                              (char-to-string (nth 3 comps)))
-                              :tags (org-get-tags pos t)
+                              :tags (org-get-tags)
+                              :local-tags (ignore-errors (org-get-tags pos t))
                               :scheduled (org-entry-get pos "SCHEDULED")
                               :deadline (org-entry-get pos "DEADLINE")
                               :keywords (or org-todo-keywords-1 '("TODO" "DONE")))))))
@@ -6301,6 +6473,7 @@ Always present (even with no properties yet) so + Add is reachable."
              (todo (plist-get meta :todo))
              (priority (plist-get meta :priority))
              (tags (plist-get meta :tags))
+             (local-tags (plist-get meta :local-tags))
              (scheduled (plist-get meta :scheduled))
              (deadline (plist-get meta :deadline))
              (keywords (plist-get meta :keywords))
@@ -6417,14 +6590,27 @@ Always present (even with no properties yet) so + Add is reachable."
                                :weight 1)))
                             :collapsed (not (or sdate ddate)))
                            ;; ▸ Tags (collapsible)
-                           (let ((available (seq-uniq (append tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
+                           (let* ((local-tags (or local-tags tags))
+                                  (inherited-tags (seq-difference tags local-tags))
+                                  (available (seq-uniq (append local-tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))))
+                                  (tags-content
+                                   (apply #'eabp-column
+                                          (delq nil
+                                                (list
+                                                 (eabp-enum-list (format "detail-tags/%s" pos) available
+                                                                 :value local-tags :multi-select t :allow-add t
+                                                                 :on-change (eabp-action "heading.tags" :args ref))
+                                                 (when inherited-tags
+                                                   (eabp-column
+                                                    (eabp-text "Inherited" 'caption nil nil nil nil 8)
+                                                    (apply #'eabp-flow-row
+                                                           (mapcar (lambda (tg)
+                                                                     (eabp-assist-chip (concat "#" tg)))
+                                                                   inherited-tags)))))))))
                              (eabp-collapsible
                               (format "detail-tags-fold/%s" pos)
                               (eabp-text (if tags (format "Tags (%d)" (length tags)) "Tags") 'label)
-                              (list
-                               (eabp-enum-list (format "detail-tags/%s" pos) available
-                                               :value tags :multi-select t :allow-add t
-                                               :on-change (eabp-action "heading.tags" :args ref)))
+                              (list tags-content)
                               :collapsed (null tags)))
                            ;; ▸ Clock (collapsible)
                            (eabp-collapsible
@@ -6938,9 +7124,131 @@ Returns non-nil on success; messages and returns nil on failure."
                                      (if existing existing tg)))
                                  tags-list)))
           (setq org-tag-alist new-alist)
-          (customize-save-variable 'org-tag-alist org-tag-alist)))
+          (eabp-org-ui--customize-save 'org-tag-alist org-tag-alist)))
       (eabp-org-ui-snackbar "Settings saved")
       (eabp-org-ui-push-dashboard))))
+
+(defun eabp-org-ui--customize-save (symbol value)
+  "Persist SYMBOL as VALUE through Customize, surfacing failures.
+Returns non-nil on success.  Failures land in a snackbar instead of
+being silently dropped; notably, `customize-save-variable' quietly
+skips saving when there is no file to save into (started with -q, or
+no init file on the Android port), which would otherwise look like a
+save and then vanish on restart."
+  (require 'cus-edit)
+  (condition-case err
+      (if (custom-file t)
+          (progn (customize-save-variable symbol value) t)
+        (set-default symbol value)
+        (eabp-org-ui-snackbar
+         "Applied for this session only: no init file to save settings into")
+        nil)
+    (error
+     (eabp-org-ui-snackbar
+      (format "Applied for this session, but saving failed: %s"
+              (error-message-string err)))
+     nil)))
+
+(defun eabp-org-ui--todo-keywords-apply (seqs)
+  "Make SEQS the effective and persisted `org-todo-keywords'.
+Live org buffers cache the keywords buffer-locally at mode init
+(`org-todo-keywords-1', `org-todo-regexp', ...), so each one is
+restarted, and the org memo cache is dropped so task views re-render
+with the new states.  Returns non-nil when persisting succeeded."
+  (customize-set-variable 'org-todo-keywords seqs)
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (derived-mode-p 'org-mode)
+        (ignore-errors (org-mode-restart)))))
+  (eabp-org-cache-invalidate)
+  (eabp-org-ui--customize-save 'org-todo-keywords seqs))
+
+(eabp-defaction "dialog.dismiss"
+  (lambda (_ __)
+    (eabp-dismiss-dialog)))
+
+(eabp-defaction "settings.todo.edit"
+  (lambda (args _)
+    (condition-case err
+        (let* ((idx (alist-get 'index args))
+               (seqs (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE"))))
+               (seq (if (>= idx 0) (nth idx seqs) '(sequence "TODO" "|" "DONE"))))
+          (if (null seq)
+              ;; Stale index: the list changed since the card was rendered.
+              (progn (eabp-org-ui-snackbar "That sequence no longer exists")
+                     (eabp-org-ui-push-dashboard))
+            (let* ((type (car seq))
+                   ;; Keep the raw keyword strings, fast-access keys and all
+                   ;; ("TODO(t!)"), so an untouched save round-trips losslessly.
+                   (split (eabp-org-ui--split-todo-sequence seq))
+                   (active (mapconcat #'identity (car split) ", "))
+                   (finished (mapconcat #'identity (cdr split) ", ")))
+              ;; Pre-filled `:value's must be seeded by hand: state.changed
+              ;; only fires for edits the user makes, and these ids may still
+              ;; hold text from the previously edited sequence.
+              (eabp-ui-state-clear "todo-")
+              (eabp-ui-state-put "todo-active" active)
+              (eabp-ui-state-put "todo-finished" finished)
+              (eabp-send-dialog
+               (eabp-column
+                (eabp-text (if (>= idx 0) "Edit Sequence" "New Sequence") 'title)
+                (eabp-text "Comma-separated states; fast keys like TODO(t) are kept." 'caption)
+                (eabp-text-input "todo-active" :label "Active States" :value active :single-line t)
+                (eabp-text-input "todo-finished" :label "Finished States" :value finished :single-line t)
+                (eabp-row
+                 (eabp-spacer :weight 1)
+                 (when (>= idx 0)
+                   (eabp-button "Delete" (eabp-action "settings.todo.delete" :args `((index . ,idx))) :variant "text"))
+                 (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
+                 (eabp-spacer :width 8)
+                 (eabp-button "Save" (eabp-action "settings.todo.save" :args `((index . ,idx) (type . ,(symbol-name type)))))))))))
+      (error
+       (eabp-org-ui-snackbar (format "Edit failed: %s" (error-message-string err)))))))
+
+(eabp-defaction "settings.todo.save"
+  (lambda (args _)
+    (let* ((idx (alist-get 'index args))
+           (type (intern (alist-get 'type args)))
+           (parse (lambda (id)
+                    (delq nil
+                          (mapcar (lambda (x)
+                                    (let ((x (replace-regexp-in-string "^[ \t\n\r]+\\|[ \t\n\r]+$" "" x)))
+                                      (if (equal x "") nil x)))
+                                  (split-string (or (eabp-ui-state id) "") ",")))))
+           (active (funcall parse "todo-active"))
+           (finished (funcall parse "todo-finished"))
+           (seqs (copy-sequence (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE")))))
+           (new-seq (append (list type) active (when finished (cons "|" finished)))))
+      (cond
+       ((and (null active) (null finished))
+        (eabp-org-ui-snackbar "A sequence needs at least one state"))
+       ((>= idx (length seqs))
+        ;; Stale index: the list changed since the dialog was built.
+        (eabp-org-ui-snackbar "Sequences changed underneath; reopen the editor")
+        (eabp-dismiss-dialog)
+        (eabp-org-ui-push-dashboard))
+       (t
+        (if (>= idx 0)
+            (setcar (nthcdr idx seqs) new-seq)
+          (setq seqs (append seqs (list new-seq))))
+        (when (eabp-org-ui--todo-keywords-apply seqs)
+          (eabp-org-ui-snackbar "TODO sequence saved"))
+        (eabp-dismiss-dialog)
+        (eabp-org-ui-push-dashboard))))))
+
+(eabp-defaction "settings.todo.delete"
+  (lambda (args _)
+    (let* ((idx (alist-get 'index args))
+           (seqs (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE")))))
+      (when (and (>= idx 0) (< idx (length seqs)))
+        (setq seqs (or (append (cl-subseq seqs 0 idx) (cl-subseq seqs (1+ idx)))
+                       ;; Org misbehaves with no keywords at all; deleting
+                       ;; the last sequence falls back to the stock one.
+                       '((sequence "TODO" "|" "DONE"))))
+        (when (eabp-org-ui--todo-keywords-apply seqs)
+          (eabp-org-ui-snackbar "TODO sequence deleted"))
+        (eabp-dismiss-dialog)
+        (eabp-org-ui-push-dashboard)))))
 
 (eabp-defaction "search.update-filter"
   (lambda (args _)

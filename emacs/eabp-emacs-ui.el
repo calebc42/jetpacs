@@ -14,12 +14,20 @@
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
 (require 'eabp-buffer)
+(require 'eabp-tablist)
 (require 'cl-lib)
 
 ;; The generic (Tier 0) buffer renderer re-pushes the showing surface after a
 ;; tap mutates a buffer.  Point it at the dashboard host (resolved lazily at
 ;; call time, so the org-ui load order doesn't matter here).
 (setq eabp-buffer-refresh-function #'eabp-org-ui-push-dashboard)
+
+;; Navigating to a buffer (the tablist skins open package descriptions and
+;; list buffers this way) is this module's buffer view.
+(setq eabp-tablist-view-buffer-function
+      (lambda (name)
+        (setq eabp-emacs-ui--viewing-buffer name)
+        (eabp-org-ui-push-dashboard nil :switch-to "buffers")))
 
 ;; ─── State ───────────────────────────────────────────────────────────────────
 

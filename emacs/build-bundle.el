@@ -21,6 +21,7 @@
                 "eabp-surfaces.el"
                 "eabp-minibuffer.el"
                 "eabp-buffer.el"
+                "eabp-tablist.el"
                 "eabp-org-rich.el"
                 "eabp-org-reader.el"
                 "eabp-org.el"

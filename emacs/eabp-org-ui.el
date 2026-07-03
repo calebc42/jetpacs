@@ -350,6 +350,8 @@ building. SWITCH-TO additionally forces the companion onto that view
                       (eabp-org-ui--switch-view "messages"))
     (eabp-drawer-item "terminal" "M-x"
                       (eabp-action "emacs.mx.show"))
+    (eabp-drawer-item "archive" "Packages"
+                      (eabp-action "packages.show" :when-offline "drop"))
     (eabp-drawer-item "sync" "Reload config"
                       (eabp-action "config.reload"))
     (eabp-drawer-item "settings" "Settings"

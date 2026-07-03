@@ -29,6 +29,8 @@
 (require 'eabp-org-ui)
 (require 'eabp-emacs-ui)
 (require 'eabp-complete)
+(require 'eabp-sync)
+(require 'eabp-demo)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -423,6 +425,366 @@ the empty string must still be returned by `org-entry-properties'."
                                                  (buffer-name b)))
                       (buffer-list))))))
 
+;; ─── Editor sync (v2) ───────────────────────────────────────────────────────
+
+(ert-deftest eabp-sync-open-and-delta ()
+  "edit.open seeds the shadow; a seq-1 delta splices it correctly."
+  (let ((eabp-sync-diagnostics nil)
+        (file "sync-test.el"))
+    (unwind-protect
+        (progn
+          (eabp-sync-open file 7 "(defun foo ())")
+          (should (eabp-sync-session-buffer file 7 0))
+          ;; Replace "foo" (3 code points at offset 7) with "bar-baz".
+          (should (eabp-sync-apply-delta file 7 1 7 3 "bar-baz" 18))
+          (with-current-buffer (eabp-sync-session-buffer file 7 1)
+            (should (equal (buffer-string) "(defun bar-baz ())")))
+          ;; The old seq no longer matches.
+          (should-not (eabp-sync-session-buffer file 7 0)))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-code-point-offsets ()
+  "Delta offsets are code points, so astral chars can't skew positions.
+The phone sends offset 2 for the char after an emoji even though its
+UTF-16 index there is 3."
+  (let ((eabp-sync-diagnostics nil)
+        (file "sync-emoji.txt")
+        (text (string ?a #x1F600 ?b ?c)))
+    (unwind-protect
+        (progn
+          (eabp-sync-open file 9 text)
+          (should (eabp-sync-apply-delta file 9 1 2 1 "XY" 5))
+          (with-current-buffer (eabp-sync-session-buffer file 9 1)
+            (should (equal (buffer-string) (string ?a #x1F600 ?X ?Y ?c)))))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-mismatch-goes-stale ()
+  "A wrong seq requests one resync; the stale session swallows the rest."
+  (let ((eabp-sync-diagnostics nil)
+        (file "sync-stale.el")
+        (sent nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-send)
+                   (lambda (kind payload &rest _)
+                     (push (cons kind payload) sent))))
+          (eabp-sync-open file 3 "abc")
+          ;; seq 2 arrives but 1 was expected.
+          (should-not (eabp-sync-apply-delta file 3 2 0 0 "x" 4))
+          (should (equal (caar sent) "edit.resync"))
+          (should-not (eabp-sync-session file))
+          ;; The rest of the in-flight burst is swallowed silently.
+          (setq sent nil)
+          (should-not (eabp-sync-apply-delta file 3 3 0 0 "y" 5))
+          (should-not sent)
+          ;; A fresh open recovers the session.
+          (eabp-sync-open file 4 "xyz")
+          (should (eabp-sync-session-buffer file 4 0)))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-complete-in-session ()
+  "Slim completion completes in the synced shadow at a bare cursor offset."
+  (let ((eabp-sync-diagnostics nil)
+        (file "sync-complete.el"))
+    (unwind-protect
+        (progn
+          (eabp-sync-open file 11 "(buffer-subst")
+          (let ((result (eabp-complete-in-session file 11 0 13)))
+            (should result)
+            (should (equal (car result) "buffer-subst"))
+            (should (cl-find "buffer-substring-no-properties" (cdr result)
+                             :key (lambda (c) (alist-get 'label c))
+                             :test #'equal))))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-complete-in-session-rejects-stale ()
+  "Completion against a mismatched seq returns nil and asks for resync."
+  (let ((eabp-sync-diagnostics nil)
+        (file "sync-complete-stale.el")
+        (sent nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-send)
+                   (lambda (kind payload &rest _)
+                     (push (cons kind payload) sent))))
+          (eabp-sync-open file 5 "(car")
+          (should-not (eabp-complete-in-session file 5 99 4))
+          (should (cl-find "edit.resync" sent :key #'car :test #'equal)))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-eldoc-push ()
+  "Eldoc at a synced cursor pushes an elisp signature to the phone."
+  (let ((eabp-sync-diagnostics nil)
+        (file "eldoc-test.el")
+        (sent nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-send)
+                   (lambda (kind payload &rest _)
+                     (push (cons kind payload) sent))))
+          (eabp-sync-open file 21 "(buffer-substring ")
+          (with-current-buffer (eabp-sync-session-buffer file 21 0)
+            (save-excursion
+              (goto-char (point-max))
+              (eabp-sync--run-eldoc file 21)))
+          (let ((push (cdr (assoc "eldoc.show" sent))))
+            (should push)
+            (should (string-search "buffer-substring" (alist-get 'text push)))
+            (should (string-search "START" (alist-get 'text push)))))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-eglot-real-file-session ()
+  "LSP-able files sync into their REAL buffer — eglot's substrate.
+The session buffer visits the file, deltas splice it, and close leaves
+the buffer alive (it may be the user's, and it keeps the server warm)."
+  (let ((eabp-sync-diagnostics nil)
+        (eabp-sync-eglot t)
+        (file (make-temp-file "eabp-eglot" nil ".py")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "x = 1\n"))
+          (eabp-sync-open file 51 "x = 1\n")
+          (let ((buf (eabp-sync-session-buffer file 51 0)))
+            (should buf)
+            (should (equal (file-truename (buffer-file-name buf))
+                           (file-truename file)))
+            (should (with-current-buffer buf
+                      (derived-mode-p 'python-mode)))
+            ;; Replace "1" (offset 4) with "42" — splices the real buffer.
+            (should (eabp-sync-apply-delta file 51 1 4 1 "42" 7))
+            (should (equal (with-current-buffer buf (buffer-string))
+                           "x = 42\n"))
+            (eabp-sync-close file)
+            (should (buffer-live-p buf))
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+      (ignore-errors (delete-file file)))))
+
+(ert-deftest eabp-sync-shadow-setup-hook-runs ()
+  "The setup hook runs in fresh shadows, letting config opt capfs back in."
+  (let* ((eabp-sync-diagnostics nil)
+         (file "hook-test.el")
+         (ran nil)
+         (eabp-sync-shadow-setup-hook
+          (list (lambda () (setq ran (list major-mode (buffer-name)))))))
+    (unwind-protect
+        (progn
+          (eabp-sync-open file 13 "x")
+          (should ran)
+          (should (eq (car ran) 'emacs-lisp-mode)))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-flymake-elisp-backend ()
+  "The in-process backend flags wrong arity and unbalanced parens."
+  (let ((eabp-sync-diagnostics nil)
+        (file "flymake-test.el"))
+    (unwind-protect
+        (progn
+          ;; Wrong arity: `f' takes one argument, `g' passes two.
+          (eabp-sync-open file 31 "(defun f (x) x)\n(defun g () (f 1 2))\n")
+          (with-current-buffer (eabp-sync-session-buffer file 31 0)
+            (let (got)
+              (eabp-sync--flymake-elisp (lambda (diags &rest _) (setq got diags)))
+              (should got)
+              (should (cl-some (lambda (d)
+                                 (string-match-p "f" (flymake-diagnostic-text d)))
+                               got))))
+          ;; Unbalanced parens: reported as an error, without compiling.
+          (eabp-sync-open file 32 "(defun broken () ")
+          (with-current-buffer (eabp-sync-session-buffer file 32 0)
+            (let (got)
+              (eabp-sync--flymake-elisp (lambda (diags &rest _) (setq got diags)))
+              (should got)
+              (should (eq (flymake-diagnostic-type (car got)) :error)))))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-diagnostics-pipeline ()
+  "Broken elisp in a synced shadow produces a diagnostics.show push."
+  (let ((eabp-sync-diagnostics t)
+        (file "diag-pipe.el")
+        (sent nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-send)
+                   (lambda (kind payload &rest _)
+                     (push (cons kind payload) sent))))
+          (eabp-sync-open file 41 "(defun f (x) x)\n(defun g () (f 1 2))\n")
+          (with-current-buffer (eabp-sync-session-buffer file 41 0)
+            (should flymake-mode)
+            ;; The backend is synchronous, but flymake publishes through
+            ;; its own machinery — give the timers a moment.
+            (let ((deadline (+ (float-time) 5)))
+              (while (and (null (flymake-diagnostics))
+                          (< (float-time) deadline))
+                (sit-for 0.1)))
+            (should (flymake-diagnostics)))
+          (eabp-sync--collect-and-push file)
+          (let ((push (cdr (assoc "diagnostics.show" sent))))
+            (should push)
+            (should (> (length (alist-get 'diags push)) 0)))
+          ;; Content-identical diagnostics must STILL re-push after an edit:
+          ;; the phone's render gate is seq-keyed, so the break-then-undo
+          ;; scenario needs a fresh push even when nothing changed. This
+          ;; append-a-space delta leaves every diagnostic position intact.
+          (setq sent nil)
+          (should (eabp-sync-apply-delta file 41 1 37 0 " " 38))
+          (with-current-buffer (eabp-sync-session-buffer file 41 1)
+            (let ((deadline (+ (float-time) 5)))
+              (while (and (null (flymake-diagnostics))
+                          (< (float-time) deadline))
+                (sit-for 0.1))))
+          (eabp-sync--collect-and-push file)
+          (let ((push (cdr (assoc "diagnostics.show" sent))))
+            (should push)
+            (should (equal (alist-get 'seq push) 1))))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-complete-empty-prefix-policy ()
+  "Empty prefixes: small precise tables (LSP members) pass, obarray doesn't."
+  ;; A small table at point — the shape of member completion after ".".
+  (with-temp-buffer
+    (setq-local completion-at-point-functions
+                (list (lambda () (list (point) (point)
+                                       '("append" "clear" "copy")))))
+    (insert "xs.")
+    (goto-char (point-max))
+    (let ((r (eabp-complete--collect)))
+      (should r)
+      (should (equal (car r) ""))
+      (should (= (length (cdr r)) 3))))
+  ;; The unconstrained obarray right after "(" still yields nothing.
+  (should-not (eabp-complete-in-text "guard.el" "(" 1)))
+
+(ert-deftest eabp-complete-python-word-fallback ()
+  "Python files complete same-buffer identifiers via the word fallback."
+  (let* ((text "def fibonacci(n):\n    return n\n\nfib")
+         (result (eabp-complete-in-text "demo.py" text (length text))))
+    (should result)
+    (should (equal (car result) "fib"))
+    (should (cl-find "fibonacci" (cdr result)
+                     :key (lambda (c) (alist-get 'label c))
+                     :test #'equal))))
+
+(ert-deftest eabp-sync-fontify-push ()
+  "Fontification pushes on open and re-pushes per seq (stamp includes seq)."
+  (let ((eabp-sync-diagnostics nil)
+        (eabp-sync-fontify t)
+        (file "fontify-test.el")
+        (sent nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-send)
+                   (lambda (kind payload &rest _)
+                     (push (cons kind payload) sent)))
+                  ;; Batch Emacs resolves no face colors; stub the style so
+                  ;; the walk itself is what's under test.
+                  ((symbol-function 'eabp-buffer--span-style)
+                   (lambda (face) (and face '(:bold t)))))
+          (eabp-sync-open file 61 "(defun foo ())")
+          (let ((push (cdr (assoc "fontify.show" sent))))
+            (should push)
+            (should (> (length (alist-get 'runs push)) 0))
+            (let ((r (aref (alist-get 'runs push) 0)))
+              (should (numberp (alist-get 'b r)))
+              (should (> (alist-get 'e r) (alist-get 'b r)))))
+          ;; Content-identical runs still re-push after an edit — the
+          ;; phone's render gate is seq-keyed, exactly like diagnostics.
+          (setq sent nil)
+          (should (eabp-sync-apply-delta file 61 1 14 0 " " 15))
+          (should (assoc "fontify.show" sent)))
+      (eabp-sync-close file))))
+
+(ert-deftest eabp-sync-severity-mapping ()
+  "Flymake types normalize to the three wire severities."
+  (should (equal (eabp-sync--severity :error) "error"))
+  (should (equal (eabp-sync--severity :warning) "warning"))
+  (should (equal (eabp-sync--severity :note) "note"))
+  ;; Unknown types degrade to warning, never crash.
+  (should (equal (eabp-sync--severity 'no-such-type) "warning")))
+
+;; ─── Pairing auth ───────────────────────────────────────────────────────────
+
+(ert-deftest eabp-hmac-sha256-rfc-vectors ()
+  "The pure-elisp HMAC matches RFC 4231 / classic test vectors."
+  ;; RFC 4231 test case 2 (short key).
+  (should (equal (eabp--hmac-sha256-hex "Jefe" "what do ya want for nothing?")
+                 "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"))
+  ;; The classic quick-brown-fox vector.
+  (should (equal (eabp--hmac-sha256-hex
+                  "key" "The quick brown fox jumps over the lazy dog")
+                 "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"))
+  ;; RFC 4231 test case 6: key longer than the block size (hash-first path).
+  ;; The key must be RAW 0xAA bytes — a multibyte (make-string 131 ?\xaa)
+  ;; would UTF-8-encode to two bytes per char and break the vector.
+  (should (equal (eabp--hmac-sha256-hex
+                  (apply #'unibyte-string (make-list 131 #xaa))
+                  "Test Using Larger Than Block-Size Key - Hash Key First")
+                 "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")))
+
+(ert-deftest eabp-auth-handshake-round-trip ()
+  "Challenge → response → proof, both directions, plus the failure modes."
+  (let ((eabp-auth-token "ABCD-EFGH-JKMN-PQRS")
+        (eabp--auth-server-nonce nil)
+        (eabp--auth-client-nonce nil)
+        (sent nil))
+    (cl-letf (((symbol-function 'eabp-send)
+               (lambda (kind payload &rest _)
+                 (push (cons kind payload) sent))))
+      ;; The challenge produces a response with the right MAC.
+      (eabp--on-auth-challenge '((nonce . "deadbeef")))
+      (let* ((resp (cdr (assoc "auth.response" sent)))
+             (cnonce (alist-get 'nonce resp)))
+        (should resp)
+        (should (equal (alist-get 'mac resp)
+                       (eabp--hmac-sha256-hex
+                        eabp-auth-token
+                        (format "eabp1:client:deadbeef:%s" cnonce))))
+        ;; A welcome carrying the matching server proof verifies…
+        (should (eabp--auth-verify-welcome
+                 `((server_proof
+                    . ,(eabp--hmac-sha256-hex
+                        eabp-auth-token
+                        (format "eabp1:server:%s:deadbeef" cnonce))))))
+        ;; …a wrong or missing proof is refused (fail closed)…
+        (should-not (eabp--auth-verify-welcome '((server_proof . "bogus"))))
+        (should-not (eabp--auth-verify-welcome '((protocol . 1))))))
+    ;; …and with no token configured, the legacy path still passes.
+    (let ((eabp-auth-token nil))
+      (should (eabp--auth-verify-welcome '((protocol . 1)))))))
+
+(ert-deftest eabp-auth-challenge-without-token-stays-silent ()
+  "Unpaired Emacs answers a challenge with guidance, never a frame."
+  (let ((eabp-auth-token nil)
+        (sent nil))
+    (cl-letf (((symbol-function 'eabp-send)
+               (lambda (kind payload &rest _)
+                 (push (cons kind payload) sent))))
+      (eabp--on-auth-challenge '((nonce . "deadbeef")))
+      (should-not sent))))
+
+;; ─── Demo files ─────────────────────────────────────────────────────────────
+
+(ert-deftest eabp-demo-setup-writes-files ()
+  "Setup writes every tour file, non-trivially sized, and is idempotent."
+  (let ((dir (make-temp-file "eabp-demo" t)))
+    (unwind-protect
+        (progn
+          (eabp-demo-setup dir)
+          (eabp-demo-setup dir)          ; overwrite must not error
+          (dolist (f '("demo.el" "demo.py" "demo.sh" "demo.org"))
+            (let ((path (expand-file-name f dir)))
+              (should (file-exists-p path))
+              (should (> (file-attribute-size (file-attributes path)) 200)))))
+      (delete-directory dir t))))
+
+(ert-deftest eabp-demo-el-is-tour-ready ()
+  "The elisp tour file exercises the bridge features it claims to.
+Its wrong-arity call must reference a function defined in the same
+file (so the byte-compiler can flag it), and completion must fire on
+the text it tells the user to type."
+  (let ((content (cdr (assoc "demo.el" eabp-demo--files))))
+    (should (string-search "(demo-greet \"world\" 'oops)" content))
+    (should (string-search "(defun demo-greet (name)" content))
+    ;; The completion instruction actually completes.
+    (let ((result (eabp-complete-in-text "demo.el" "(buffer-sub" 11)))
+      (should result)
+      (should (equal (car result) "buffer-sub")))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst eabp-tests--golden-file
@@ -489,7 +851,8 @@ the empty string must still be returned by `org-entry-properties'."
      (eabp-date-stamp :date "2026-07-02" :time "10:00" :padding 1)
      (eabp-date-stamp :day 2 :month "Jul" :month-index 7 :year 2026)
      (eabp-editor "f.org" "content" :on-save act :read-only t :syntax "org"
-                  :line-numbers "absolute" :complete t)
+                  :line-numbers "absolute" :complete t
+                  :chromeless t :publish-state t)
      (eabp-drawer (list (eabp-drawer-item "i" "l" act :selected t)) :header "h")
      (eabp-top-bar "t" :nav-icon "menu" :nav-action act :actions (list leaf))
      (eabp-fab "add" :label "l" :on-tap act :extended t)

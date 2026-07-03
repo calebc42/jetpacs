@@ -26,6 +26,7 @@
 (require 'cl-lib)
 (require 'eabp)
 (require 'eabp-surfaces)
+(require 'eabp-sync)
 
 (defcustom eabp-complete-enabled t
   "When non-nil, the phone editor offers Emacs-backed completion.
@@ -39,13 +40,15 @@ The phone strip shows a handful; anything past this cap is wasted
 bytes on the wire."
   :type 'integer :group 'eabp)
 
-;; ─── Shadow buffers ──────────────────────────────────────────────────────────
+(defcustom eabp-complete-debug nil
+  "When non-nil, echo each completion request to *Messages*.
+Each `edit.complete' from the phone logs the file, the prefix it
+resolved, and how many candidates it returned — a live trace of the
+bridge working, without a device attached to logcat.  Development aid;
+leave nil in normal use."
+  :type 'boolean :group 'eabp)
 
-(defun eabp-complete--mode-for (file)
-  "The major mode FILE would get from `auto-mode-alist', or `fundamental-mode'.
-Never visits FILE — the mode is chosen from the name alone."
-  (let ((mode (assoc-default file auto-mode-alist #'string-match)))
-    (if (and (symbolp mode) mode (fboundp mode)) mode 'fundamental-mode)))
+;; ─── Shadow buffers ──────────────────────────────────────────────────────────
 
 (defun eabp-complete--shadow-buffer (file)
   "Get or create the hidden shadow buffer for FILE.
@@ -56,7 +59,10 @@ name keeps it out of buffer lists and disables undo."
   (let ((name (format " *eabp-complete: %s*" file)))
     (or (get-buffer name)
         (with-current-buffer (get-buffer-create name)
-          (delay-mode-hooks (funcall (eabp-complete--mode-for file)))
+          (condition-case nil
+              (delay-mode-hooks (funcall (eabp-sync--mode-for file)))
+            (error (delay-mode-hooks (fundamental-mode))))
+          (run-hooks 'eabp-sync-shadow-setup-hook)
           (current-buffer)))))
 
 ;; ─── Candidate harvesting ────────────────────────────────────────────────────
@@ -116,15 +122,21 @@ next keystroke saver), capped at `eabp-complete-max-candidates'."
          ;; The phone replaces text *before* the cursor, so the prefix is
          ;; [BEG, point) even when the capf's END extends past point.
          (prefix (and data (buffer-substring-no-properties beg (point))))
-         ;; An empty prefix would ask the table for *everything* (the whole
-         ;; obarray in elisp buffers) — cheap to refuse, useless to answer.
          ;; Lazy tables can signal when queried (ispell again), hence the
          ;; condition-case: a broken table degrades to the fallback.
-         (cands (and prefix (not (string-empty-p prefix))
+         (cands (and prefix
                      (condition-case nil
                          (all-completions prefix table
                                           (plist-get props :predicate))
-                       (error nil)))))
+                       (error nil))))
+         ;; An empty prefix is legitimate LSP member completion (right
+         ;; after "." the server returns a small, precise list) but on an
+         ;; unconstrained table (elisp's obarray) it means *everything* —
+         ;; keep the former, drop the latter by sheer size.
+         (cands (if (and cands (string-empty-p prefix)
+                         (> (length cands) 500))
+                    nil
+                  cands)))
     ;; Empty capf result → generic word fallback (org prose, unknown modes).
     (unless cands
       (when-let ((fb (eabp-complete--word-fallback)))
@@ -154,12 +166,30 @@ next keystroke saver), capped at `eabp-complete-max-candidates'."
   "Complete FILE's TEXT at CURSOR (a 0-based offset into TEXT).
 Replays TEXT into FILE's shadow buffer and harvests candidates there.
 Returns (PREFIX . CANDIDATE-NODES) or nil.  Separated from the action
-handler so tests can call it directly."
+handler so tests can call it directly.
+
+This is the v1 windowed path, kept as the fallback for clients that
+ship text with the request; the slim path is `eabp-complete-in-session'."
   (with-current-buffer (eabp-complete--shadow-buffer file)
     (erase-buffer)
     (insert text)
     (goto-char (min (1+ (max 0 (truncate cursor))) (point-max)))
     (eabp-complete--collect)))
+
+(defun eabp-complete-in-session (file session seq cursor)
+  "Complete in FILE's synced session shadow at CURSOR (0-based code points).
+The v2 slim path: no text crosses the wire because eabp-sync already
+holds the whole document.  SESSION and SEQ must match the live sync
+state exactly — a mismatch means the phone edited past us, so reply
+nothing and ask for a resync instead of completing against stale text.
+Returns (PREFIX . CANDIDATE-NODES) or nil."
+  (let ((buf (eabp-sync-session-buffer file session seq)))
+    (if (not buf)
+        (progn (eabp-sync-request-resync file session) nil)
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char (min (1+ (max 0 (truncate cursor))) (point-max)))
+          (eabp-complete--collect))))))
 
 ;; ─── Action handler ──────────────────────────────────────────────────────────
 
@@ -174,13 +204,27 @@ handler so tests can call it directly."
       (let ((file (alist-get 'file args))
             (req (alist-get 'request_id args))
             (text (alist-get 'text args))
+            (session (alist-get 'session args))
+            (seq (alist-get 'seq args))
             (cursor (alist-get 'cursor args)))
-        (when (and (stringp file) (stringp text) (numberp cursor))
+        (when (and (stringp file) (numberp cursor)
+                   (or (stringp text) (numberp session)))
           (let ((result (condition-case err
-                            (eabp-complete-in-text file text cursor)
+                            (if (stringp text)
+                                ;; v1: request carries its own text window.
+                                (eabp-complete-in-text file text cursor)
+                              ;; v2: complete in the eabp-sync shadow.
+                              (eabp-complete-in-session file session seq cursor))
                           (error (message "EABP complete failed: %s"
                                           (error-message-string err))
                                  nil))))
+            (when eabp-complete-debug
+              (if result
+                  (message "EABP complete: %s prefix=%S -> %d candidate(s)"
+                           (file-name-nondirectory file)
+                           (car result) (length (cdr result)))
+                (message "EABP complete: %s -> nothing to offer at cursor"
+                         (file-name-nondirectory file))))
             ;; Always reply, even empty, so the phone can clear its strip.
             (eabp-send "completions.show"
                        `((id . ,file)

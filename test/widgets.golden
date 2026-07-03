@@ -37,7 +37,7 @@
 36 {"action_label":"al","caption":"c","icon":"inbox","on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"padding":1,"t":"empty_state","title":"t"}
 37 {"day":"2","month":"Jul","month_index":7,"padding":1,"t":"date_stamp","time":"10:00","year":"2026"}
 38 {"day":"2","month":"Jul","month_index":7,"t":"date_stamp","year":"2026"}
-39 {"complete":true,"id":"f.org","line_numbers":"absolute","on_save":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"read_only":true,"syntax":"org","t":"editor","value":"content"}
+39 {"chromeless":true,"complete":true,"id":"f.org","line_numbers":"absolute","on_save":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"publish_state":true,"read_only":true,"syntax":"org","t":"editor","value":"content"}
 40 {"header":"h","items":[{"icon":"i","label":"l","on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"selected":true}]}
 41 {"actions":[{"t":"text","text":"leaf"}],"nav_action":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"nav_icon":"menu","title":"t"}
 42 {"extended":true,"icon":"add","label":"l","on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"}}

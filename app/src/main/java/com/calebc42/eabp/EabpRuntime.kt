@@ -28,6 +28,7 @@ object EabpRuntime {
     val dialogState = EabpDialogState()
     val pieMenuState = EabpPieMenuState()
     val completionState = EabpCompletionState()
+    val editSyncState = EabpEditSyncState()
 
     /**
      * Whether a handshaked Emacs connection is currently live. Driven by the
@@ -40,6 +41,20 @@ object EabpRuntime {
 
     fun setConnected(value: Boolean) {
         _connected.value = value
+    }
+
+    /**
+     * Whether any Emacs has ever paired on this device. Seeded from prefs in
+     * [initialize] and flipped true the moment a handshake completes, so the
+     * pairing screen can reactively give way to the dashboard. Until it's
+     * true, a not-yet-paired user sees the pairing token rather than a stale
+     * cached dashboard.
+     */
+    private val _pairedEver = MutableStateFlow(false)
+    val pairedEver: StateFlow<Boolean> = _pairedEver.asStateFlow()
+
+    fun setPaired() {
+        _pairedEver.value = true
     }
 
     /**
@@ -57,5 +72,6 @@ object EabpRuntime {
         if (database == null) {
             database = EabpDatabase.getDatabase(context)
         }
+        if (EabpAuth.hasPaired(context)) _pairedEver.value = true
     }
 }

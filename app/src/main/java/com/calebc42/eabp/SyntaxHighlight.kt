@@ -98,6 +98,15 @@ class SyntaxTransformation(
             when (language.lowercase()) {
                 "elisp", "emacs-lisp", "lisp" -> highlightElisp(text.text, colors, maxChars)
                 "org" -> highlightOrg(text.text, colors, maxChars)
+                "python", "py" -> highlightCode(
+                    text.text, colors, pythonKeywords,
+                    lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
+                "rust", "rs" -> highlightCode(
+                    text.text, colors, rustKeywords,
+                    lineComment = "//", singleQuoteStrings = false, maxChars = maxChars)
+                "shell", "sh", "bash" -> highlightCode(
+                    text.text, colors, shellKeywords,
+                    lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
                 else -> AnnotatedString(text.text)
             }
         }.getOrElse { AnnotatedString(text.text) }
@@ -110,6 +119,9 @@ fun syntaxForPath(path: String): String =
     when (path.substringAfterLast('.', "").lowercase()) {
         "el", "elc" -> "elisp"
         "org" -> "org"
+        "py" -> "python"
+        "rs" -> "rust"
+        "sh", "bash" -> "shell"
         else -> ""
     }
 
@@ -207,6 +219,95 @@ fun highlightElisp(src: String, c: SyntaxColors, maxChars: Int = 20_000): Annota
             }
         }
     }
+
+private val pythonKeywords = setOf(
+    "def", "class", "return", "if", "elif", "else", "for", "while",
+    "import", "from", "as", "with", "try", "except", "finally", "raise",
+    "pass", "break", "continue", "lambda", "yield", "global", "nonlocal",
+    "assert", "in", "is", "not", "and", "or", "None", "True", "False",
+    "async", "await", "match", "case", "del",
+)
+
+private val rustKeywords = setOf(
+    "fn", "let", "mut", "pub", "struct", "enum", "impl", "trait", "use",
+    "mod", "crate", "match", "if", "else", "for", "while", "loop",
+    "return", "break", "continue", "const", "static", "ref", "move",
+    "async", "await", "dyn", "where", "type", "unsafe", "as", "in",
+    "self", "Self", "super", "true", "false",
+)
+
+private val shellKeywords = setOf(
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+    "done", "case", "esac", "in", "function", "local", "return", "exit",
+    "export", "readonly", "shift", "break", "continue", "echo", "read",
+    "declare", "set", "unset", "source", "trap", "true", "false",
+)
+
+private fun isIdentChar(ch: Char): Boolean = ch.isLetterOrDigit() || ch == '_'
+
+/**
+ * Generic keyword/string/comment/number highlighter for C-family-ish
+ * languages, parameterized by keyword set and line-comment token. Not a
+ * parser — block comments and f-string interiors render approximately —
+ * but the same class of best-effort colouring as [highlightElisp].
+ * [singleQuoteStrings] is on for Python and off for Rust, where a bare
+ * apostrophe is a lifetime, not a string.
+ */
+fun highlightCode(
+    src: String,
+    c: SyntaxColors,
+    keywords: Set<String>,
+    lineComment: String,
+    singleQuoteStrings: Boolean,
+    maxChars: Int = 20_000,
+): AnnotatedString = buildAnnotatedString {
+    append(src)
+    val n = minOf(src.length, maxChars)
+    var i = 0
+    while (i < n) {
+        val ch = src[i]
+        when {
+            src.startsWith(lineComment, i) -> {
+                var j = i
+                while (j < src.length && src[j] != '\n') j++
+                addStyle(SpanStyle(color = c.comment, fontStyle = FontStyle.Italic), i, minOf(j, n))
+                i = j
+            }
+            ch == '"' || (singleQuoteStrings && ch == '\'') -> {
+                var j = i + 1
+                while (j < src.length) {
+                    when (src[j]) {
+                        '\\' -> j += 2
+                        ch -> { j++; break }
+                        '\n' -> break   // unterminated: stop at line end
+                        else -> j++
+                    }
+                }
+                addStyle(SpanStyle(color = c.string), i, minOf(j, n))
+                i = j
+            }
+            ch.isDigit() && (i == 0 || !isIdentChar(src[i - 1])) -> {
+                var j = i
+                while (j < src.length && (isIdentChar(src[j]) || src[j] == '.')) j++
+                addStyle(SpanStyle(color = c.number), i, minOf(j, n))
+                i = j
+            }
+            ch.isLetter() || ch == '_' -> {
+                var j = i
+                while (j < src.length && isIdentChar(src[j])) j++
+                val word = src.substring(i, j)
+                when {
+                    word in keywords ->
+                        addStyle(SpanStyle(color = c.keyword, fontWeight = FontWeight.Bold), i, minOf(j, n))
+                    j < src.length && src[j] == '(' ->
+                        addStyle(SpanStyle(color = c.function), i, minOf(j, n))
+                }
+                i = j
+            }
+            else -> i++
+        }
+    }
+}
 
 private val orgHeadingRe = Regex("""^(\*+)\s+(.*)$""")
 private val orgTodoRe = Regex("""^(TODO|NEXT|STARTED|WAIT|WAITING|HOLD|DOING)\b""")

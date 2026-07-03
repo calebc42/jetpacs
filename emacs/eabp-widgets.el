@@ -358,7 +358,8 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
 
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
-(cl-defun eabp-editor (id value &key on-save read-only syntax line-numbers complete)
+(cl-defun eabp-editor (id value &key on-save read-only syntax line-numbers
+                          complete chromeless publish-state)
   "A full-height plain-text editor node.
 ID identifies the editor (its unsaved state lives companion-side under
 this key). VALUE seeds the buffer. ON-SAVE is dispatched with the full
@@ -368,7 +369,12 @@ infers it from the file extension in ID.  LINE-NUMBERS is \"absolute\"
 or \"relative\" (relative to the cursor) for a gutter, nil for none.
 COMPLETE enables Emacs-backed completion: the client sends debounced
 `edit.complete' actions while typing and renders the returned candidates
-as a suggestion strip (see eabp-complete.el)."
+as a suggestion strip (see eabp-complete.el).
+CHROMELESS hides the filename/undo/save header and sizes the field
+compactly instead of full-height — an inline field with the full bridge
+\(completion, squiggles, doc line), e.g. the eval REPL input.
+PUBLISH-STATE emits debounced `state.changed' with the text under ID,
+so button-driven forms can read it back from `eabp-ui-state'."
   (eabp--node "editor"
               'id id
               'value value
@@ -376,7 +382,9 @@ as a suggestion strip (see eabp-complete.el)."
               'read_only (and read-only t)
               'syntax syntax
               'line_numbers line-numbers
-              'complete (and complete t)))
+              'complete (and complete t)
+              'chromeless (and chromeless t)
+              'publish_state (and publish-state t)))
 
 (cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer on-refresh)
   "A full-screen scaffold wrapper.

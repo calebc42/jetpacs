@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -50,8 +51,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
@@ -73,6 +76,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 import java.util.TimeZone
+import kotlin.concurrent.thread
 
 /**
  * Input-family SDUI nodes: text fields, the file editor, toggles, the
@@ -192,9 +196,13 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
  */
 @Composable
 internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Unit) {
+    val context = LocalContext.current
     val id = node.optString("id")
     val readOnly = node.optBoolean("read_only", false)
     val onSave = node.optJSONObject("on_save")
+    // Chromeless: no filename/undo/save header, compact height — an inline
+    // field with the full bridge (the eval REPL input).
+    val chrome = !node.optBoolean("chromeless", false)
     // Syntax defaults to the file's extension when Emacs doesn't say.
     val syntax = node.optString("syntax").ifEmpty { syntaxForPath(id) }
     val isOrg = syntax.lowercase() == "org"
@@ -261,39 +269,135 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
     } else VisualTransformation.None
 
-    // ── Emacs-backed completion (see eabp-complete.el) ───────────
-    // Strictly event-driven and battery-shaped: fires only on a text
-    // change (never a bare cursor move), debounced, only with a
-    // completable token at a collapsed cursor, and straight down the
-    // live socket — never through the broadcast/queue/wake path, so
-    // offline typing sends nothing and persists nothing.
+    // ── Emacs-backed sync + completion (eabp-sync.el / eabp-complete.el) ──
+    // One engine per editor keeps a shadow buffer on the Emacs side current
+    // via incremental deltas; completion requests then carry only a cursor.
+    // Strictly event-driven and battery-shaped: fires only on a text change
+    // (never a bare cursor move), debounced, and straight down the live
+    // socket — never through the broadcast/queue/wake path, so offline
+    // typing sends nothing and persists nothing.
     val completeEnabled = node.optBoolean("complete", false) && !readOnly
     var completionReq by remember(id) { mutableStateOf(0) }
+    val syncEngine = remember(id) { EditorSyncEngine(id) }
     if (completeEnabled) {
-        var lastCompletedFor by remember(id) { mutableStateOf(specValue) }
-        LaunchedEffect(tfv.text) {
-            if (tfv.text == lastCompletedFor) return@LaunchedEffect
-            delay(COMPLETION_DEBOUNCE_MS)
-            lastCompletedFor = tfv.text
-            val sel = tfv.selection
-            if (sel.start != sel.end) return@LaunchedEffect
-            val prefix = wordPrefixAt(tfv.text, sel.start)
-            if (prefix.length < COMPLETION_MIN_PREFIX) return@LaunchedEffect
-            val req = ++completionReq
-            val text = tfv.text
-            withContext(Dispatchers.IO) {
-                sendCompletionRequest(id, text, sel.start, req)
+        // Seed (or reseed) the session whenever a handshaked connection is
+        // available — covers first composition, reconnects, Emacs restarts.
+        val connected by EabpRuntime.connected.collectAsState()
+        LaunchedEffect(connected) {
+            if (connected) withContext(Dispatchers.IO) { syncEngine.open(tfv.text) }
+        }
+        // Emacs asks for a full-text reseed after any seq mismatch.
+        val resyncReq by EabpRuntime.editSyncState.resync.collectAsState()
+        LaunchedEffect(resyncReq) {
+            val r = resyncReq ?: return@LaunchedEffect
+            if (r.optString("id") == id && r.optInt("session") == syncEngine.session) {
+                withContext(Dispatchers.IO) { syncEngine.open(tfv.text) }
             }
         }
-        // A reply arriving after the editor is gone must not linger for
-        // the next editor composition.
+        // The debounced pipeline: delta first, then (token permitting) the
+        // slim completion request, then the caret report for eldoc. All
+        // ride one ordered socket, so Emacs always answers against the
+        // text the user is looking at. Bare cursor moves skip the delta
+        // and completion but still report the caret.
+        var lastHandled by remember(id) { mutableStateOf(specValue) }
+        LaunchedEffect(tfv.text, tfv.selection) {
+            val textChanged = tfv.text != lastHandled
+            delay(COMPLETION_DEBOUNCE_MS)
+            lastHandled = tfv.text
+            val text = tfv.text
+            val sel = tfv.selection
+            val collapsed = sel.start == sel.end
+            val prefix = if (collapsed) wordPrefixAt(text, sel.start) else ""
+            // LSP-style trigger characters: right after "." (member access)
+            // or ":" (keywords, paths) completion is wanted with no token.
+            val triggered = collapsed && prefix.isEmpty() && sel.start > 0 &&
+                text[sel.start - 1] in COMPLETION_TRIGGER_CHARS
+            val wantCompletion = textChanged &&
+                (prefix.length >= COMPLETION_MIN_PREFIX || triggered)
+            val req = if (wantCompletion) ++completionReq else completionReq
+            withContext(Dispatchers.IO) {
+                if (wantCompletion) syncEngine.requestCompletions(text, sel.start, req)
+                else if (textChanged) syncEngine.update(text)
+                if (collapsed) syncEngine.caret(text, sel.start)
+            }
+        }
+        // Tear down the Emacs-side session on dispose. The shared push slots
+        // (diagnostics/fontify/eldoc) are deliberately NOT cleared: every
+        // consumer gates by editor id + session, so a stale payload is inert
+        // — whereas clearing here raced pushes meant for the editor being
+        // switched TO (two editors are live now: files + the eval REPL).
         DisposableEffect(id) {
-            onDispose { EabpRuntime.completionState.clear() }
+            onDispose {
+                EabpRuntime.completionState.clear()
+                thread(name = "EabpEditClose") { syncEngine.close() }
+            }
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().imePadding()) {
-        Row(
+    // Flymake diagnostics from the synced shadow. Rendered only while the
+    // payload's session/seq match the engine AND the text hasn't moved on —
+    // squiggles are hidden during the debounce gap rather than mis-drawn.
+    val diagPayload by EabpRuntime.editSyncState.diagnostics.collectAsState()
+    val diagRanges = if (completeEnabled)
+        remember(diagPayload, tfv.text) {
+            diagnosticRanges(diagPayload, id, syncEngine, tfv.text)
+        }
+    else emptyList()
+    val diagColors = mapOf(
+        "error" to MaterialTheme.colorScheme.error,
+        "warning" to Color(0xFFC08A00),
+        "note" to MaterialTheme.colorScheme.outline,
+    )
+
+    // Emacs-pushed fontification: when current, it REPLACES the client-side
+    // highlighter (the user's real theme, every mode Emacs knows); while a
+    // keystroke is in flight it goes stale and the client highlighter
+    // bridges the gap. Diagnostics compose on top of either.
+    val fontifyPayload by EabpRuntime.editSyncState.fontify.collectAsState()
+    val fontifyRuns = if (!completeEnabled) emptyList() else
+        remember(fontifyPayload, tfv.text) {
+            fontifyRuns(fontifyPayload, id, syncEngine, tfv.text)
+        }
+    val baseTransformation = if (fontifyRuns.isEmpty()) highlight
+        else remember(fontifyRuns) { FontifyTransformation(fontifyRuns) }
+    val fieldTransformation = if (diagRanges.isEmpty()) baseTransformation
+        else remember(baseTransformation, diagRanges, diagColors) {
+            DiagnosticsTransformation(baseTransformation, diagRanges, diagColors)
+        }
+
+    // publish_state: mirror the text into ui-state like a text_input, so
+    // button-driven forms (the Eval button) can read it back.
+    if (node.optBoolean("publish_state", false)) {
+        var lastPublished by remember(id) { mutableStateOf<String?>(null) }
+        LaunchedEffect(tfv.text) {
+            if (lastPublished == null) {
+                lastPublished = tfv.text
+                return@LaunchedEffect
+            }
+            if (tfv.text == lastPublished) return@LaunchedEffect
+            delay(250)
+            if (tfv.text != lastPublished) {
+                lastPublished = tfv.text
+                dispatchStateChanged(context, id, JSONObject.quote(tfv.text))
+            }
+        }
+    }
+
+    // Eldoc content for the caret position (e.g. an elisp signature).
+    // Session-gated; benign staleness (≤ one debounce) is acceptable here,
+    // unlike squiggles, since it's advisory text rather than a text overlay.
+    val eldocPayload by EabpRuntime.editSyncState.eldoc.collectAsState()
+    val eldocText = if (!completeEnabled) "" else
+        eldocPayload?.takeIf {
+            it.optString("id") == id && it.optInt("session") == syncEngine.session
+        }?.optString("text").orEmpty()
+
+    Column(
+        modifier = modifier.then(
+            if (chrome) Modifier.fillMaxSize().imePadding() else Modifier.fillMaxWidth()
+        )
+    ) {
+        if (chrome) Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
@@ -367,19 +471,23 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         }
         val lineNumbers = node.optString("line_numbers")
         if (lineNumbers.isEmpty()) {
+            // Full-chrome editors own the screen (weight); chromeless ones
+            // size like a large input field within their parent layout.
+            val sizing = if (chrome) Modifier.weight(1f)
+                else Modifier.heightIn(min = 96.dp, max = 200.dp)
             OutlinedTextField(
                 value = tfv,
                 onValueChange = { if (!readOnly) tfv = it },
                 readOnly = readOnly,
-                visualTransformation = highlight,
+                visualTransformation = fieldTransformation,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = FontFamily.Monospace,
                     lineHeight = 1.4.em
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .padding(8.dp)
+                    .then(sizing)
+                    .padding(if (chrome) 8.dp else 2.dp)
             )
         } else {
             // Gutter mode. BasicTextField exposes onTextLayout, which gives
@@ -396,10 +504,32 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
             }
             val cursorLine = lineStarts.indexOfLast { it <= tfv.selection.start }
                 .coerceAtLeast(0)
+            // Keep the caret visible. BasicTextField inside an EXTERNAL scroll
+            // container never scrolls its own cursor into view — so typing
+            // below the fold, or the IME opening (which shrinks the viewport
+            // via imePadding), left the caret hidden behind the keyboard.
+            var viewportHeight by remember(id) { mutableStateOf(0) }
+            LaunchedEffect(tfv.selection, textLayout, viewportHeight) {
+                val lr = textLayout ?: return@LaunchedEffect
+                if (viewportHeight <= 0) return@LaunchedEffect
+                val off = tfv.selection.start.coerceIn(0, lr.layoutInput.text.length)
+                val line = lr.getLineForOffset(off)
+                val top = lr.getLineTop(line).toInt()
+                val bottom = lr.getLineBottom(line).toInt()
+                val margin = (bottom - top).coerceAtLeast(1) * 2 // ≈ two lines
+                when {
+                    bottom + margin > scrollState.value + viewportHeight ->
+                        scrollState.animateScrollTo(
+                            (bottom + margin - viewportHeight).coerceAtLeast(0))
+                    top - margin < scrollState.value ->
+                        scrollState.animateScrollTo((top - margin).coerceAtLeast(0))
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .onSizeChanged { viewportHeight = it.height }
                     .verticalScroll(scrollState)
                     .padding(8.dp)
             ) {
@@ -413,7 +543,7 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     value = tfv,
                     onValueChange = { if (!readOnly) tfv = it },
                     readOnly = readOnly,
-                    visualTransformation = highlight,
+                    visualTransformation = fieldTransformation,
                     onTextLayout = { textLayout = it },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
@@ -422,6 +552,39 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        // The doc line — mobile eldoc: a diagnostic under the cursor takes
+        // precedence; otherwise the eldoc content for the caret (an elisp
+        // signature, a variable docstring) shows here, above the keyboard.
+        if (completeEnabled && tfv.selection.start == tfv.selection.end) {
+            val cursor = tfv.selection.start
+            val hit = diagRanges.firstOrNull { cursor >= it.start && cursor <= it.end }
+            when {
+                hit != null -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                ) {
+                    Text(
+                        "● ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = diagColors[hit.severity] ?: diagColors["warning"]!!
+                    )
+                    Text(
+                        hit.message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2
+                    )
+                }
+                eldocText.isNotEmpty() -> Text(
+                    eldocText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                 )
             }
         }
@@ -449,10 +612,7 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
 
 private const val COMPLETION_DEBOUNCE_MS = 300L
 private const val COMPLETION_MIN_PREFIX = 2
-/** Text window shipped with a request: enough context for capf/dabbrev
- *  without paying full-file serialization on every pause in typing. */
-private const val COMPLETION_WINDOW_BEFORE = 8_000
-private const val COMPLETION_WINDOW_AFTER = 1_000
+private const val COMPLETION_TRIGGER_CHARS = ".:"
 
 /** Token characters for the completion prefix; mirrors the Emacs-side
  *  word/symbol syntax closely enough for lisp-case and snake_case. */
@@ -467,32 +627,79 @@ internal fun wordPrefixAt(text: String, cursor: Int): String {
 }
 
 /**
- * Fire one `edit.complete` action straight down the live socket.
- *
- * Deliberately NOT routed through [ActionReceiver]: completion is ephemeral
- * and latency-bound, so it must never enter the offline Room queue, never
- * wake Emacs, and never cost a broadcast round-trip. No handshaked
- * connection → no request. Call from a background dispatcher (socket write).
+ * Convert a `diagnostics.show` payload into renderable ranges against the
+ * CURRENT editor text. Returns nothing unless the payload belongs to this
+ * editor's session AND the engine confirms the text is exactly what that
+ * seq was computed over — stale squiggles are dropped, never mis-drawn.
+ * Offsets arrive as code points (Emacs chars) and convert to UTF-16 here.
  */
-private fun sendCompletionRequest(file: String, text: String, cursor: Int, requestId: Int) {
-    val conn = EabpRuntime.server?.connection() ?: return
-    if (!conn.helloComplete) return
-    val wStart = (cursor - COMPLETION_WINDOW_BEFORE).coerceAtLeast(0)
-    val wEnd = (cursor + COMPLETION_WINDOW_AFTER).coerceAtMost(text.length)
-    val payload = JSONObject().apply {
-        put("surface", "editor")
-        put("revision_seen", -1)
-        put("action", "edit.complete")
-        put("args", JSONObject().apply {
-            put("file", file)
-            put("request_id", requestId)
-            put("text", text.substring(wStart, wEnd))
-            put("cursor", cursor - wStart)
-        })
-        put("fields", JSONObject.NULL)
-        put("queued_at", JSONObject.NULL)
+private fun diagnosticRanges(
+    payload: JSONObject?,
+    editorId: String,
+    engine: EditorSyncEngine,
+    text: String,
+): List<DiagRange> {
+    val p = payload ?: return emptyList()
+    if (p.optString("id") != editorId) return emptyList()
+    if (!engine.isCurrent(text, p.optInt("session"), p.optInt("seq"))) return emptyList()
+    val arr = p.optJSONArray("diags") ?: return emptyList()
+    val cpTotal = text.codePointCount(0, text.length)
+    return buildList {
+        for (i in 0 until arr.length()) {
+            val d = arr.optJSONObject(i) ?: continue
+            val begCp = d.optInt("beg").coerceIn(0, cpTotal)
+            val endCp = d.optInt("end").coerceIn(begCp, cpTotal)
+            var beg = text.offsetByCodePoints(0, begCp)
+            var end = text.offsetByCodePoints(0, endCp)
+            // Zero-width diagnostics still deserve a visible mark.
+            if (end == beg) {
+                if (end < text.length) end++ else if (beg > 0) beg--
+            }
+            if (end > beg) {
+                add(DiagRange(beg, end,
+                    d.optString("type", "warning"), d.optString("text")))
+            }
+        }
     }
-    conn.send(Frame(kind = "event.action", payload = payload))
+}
+
+/**
+ * Convert a `fontify.show` payload into renderable runs against the CURRENT
+ * editor text — same gating as diagnostics: session/seq/text must all match,
+ * so stale colors are dropped (the client highlighter bridges the gap),
+ * never smeared across moved text. Offsets arrive as code points.
+ */
+private fun fontifyRuns(
+    payload: JSONObject?,
+    editorId: String,
+    engine: EditorSyncEngine,
+    text: String,
+): List<FontifyRun> {
+    val p = payload ?: return emptyList()
+    if (p.optString("id") != editorId) return emptyList()
+    if (!engine.isCurrent(text, p.optInt("session"), p.optInt("seq"))) return emptyList()
+    val arr = p.optJSONArray("runs") ?: return emptyList()
+    val cpTotal = text.codePointCount(0, text.length)
+    return buildList {
+        for (i in 0 until arr.length()) {
+            val r = arr.optJSONObject(i) ?: continue
+            val begCp = r.optInt("b").coerceIn(0, cpTotal)
+            val endCp = r.optInt("e").coerceIn(begCp, cpTotal)
+            val beg = text.offsetByCodePoints(0, begCp)
+            val end = text.offsetByCodePoints(0, endCp)
+            if (end <= beg) continue
+            val color = r.optString("c").takeIf { it.isNotEmpty() }?.let { hex ->
+                runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+            }
+            add(FontifyRun(
+                start = beg, end = end, color = color,
+                bold = r.optBoolean("bold"),
+                italic = r.optBoolean("italic"),
+                underline = r.optBoolean("underline"),
+                strike = r.optBoolean("strike"),
+            ))
+        }
+    }
 }
 
 /**
@@ -516,8 +723,9 @@ private fun CompletionStrip(
     if (candidates.length() == 0) return
     if (tfv.selection.start != tfv.selection.end) return
     val cursor = tfv.selection.start
+    // base may legitimately be empty: trigger-character completion (right
+    // after ".") replaces nothing and inserts at the cursor.
     val base = p.optString("prefix")
-    if (base.isEmpty()) return
     val word = wordPrefixAt(tfv.text, cursor)
     // The effective prefix to replace: the current token when the user kept
     // typing it, the original when capf chose wider boundaries (e.g. paths),

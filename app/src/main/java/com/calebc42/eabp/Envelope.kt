@@ -9,6 +9,8 @@ const val EABP_PROTOCOL_VERSION = 1
 object Kind {
     const val SESSION_HELLO = "session.hello"
     const val SESSION_WELCOME = "session.welcome"
+    const val AUTH_CHALLENGE = "auth.challenge"
+    const val AUTH_RESPONSE = "auth.response"
     const val ACK = "ack"
     const val ERROR = "error"
     const val PING = "ping"
@@ -20,6 +22,10 @@ object Kind {
     const val PIE_MENU_DISMISS = "pie_menu.dismiss"
     const val TOAST_SHOW = "toast.show"
     const val COMPLETIONS_SHOW = "completions.show"
+    const val EDIT_RESYNC = "edit.resync"
+    const val DIAGNOSTICS_SHOW = "diagnostics.show"
+    const val ELDOC_SHOW = "eldoc.show"
+    const val FONTIFY_SHOW = "fontify.show"
     // surface.*, capability.*, trigger.*, event.*, queue.* arrive later.
 }
 

@@ -44,8 +44,25 @@ The companion grants the intersection with what it supports; anything it
 doesn't recognise is simply not granted (forward-compat)."
   :type '(repeat string) :group 'eabp)
 
+(defcustom eabp-auth-token nil
+  "Pairing token from the companion app's pairing screen.
+The companion challenges every connection; this token (never sent on
+the wire — only nonce-bound HMACs are) answers the challenge, and the
+companion proves it holds the same token back before the session is
+trusted.  Copy the ready-made setq line by tapping it on the app's
+\"Waiting for Emacs\" screen.  nil leaves the bridge unpaired: connects
+are refused with guidance in *Messages*."
+  :type '(choice (const :tag "Unpaired" nil) string)
+  :group 'eabp)
+
 (defvar eabp--process nil
   "The live network process, or nil when disconnected.")
+
+(defvar eabp--auth-server-nonce nil
+  "Server nonce of the in-flight auth round, or nil.")
+
+(defvar eabp--auth-client-nonce nil
+  "Our nonce for the in-flight auth round, or nil.")
 
 (defvar eabp--buffer ""
   "Accumulates partial inbound NDJSON bytes between filter calls.")
@@ -114,6 +131,73 @@ otherwise every dropped request would leak a pending-table entry."
   "Dismiss the current dialog on the companion."
   (eabp-send "dialog.dismiss" nil))
 
+;; ─── Pairing auth ────────────────────────────────────────────────────────────
+
+(defun eabp--hmac-sha256-hex (key message)
+  "RFC 2104 HMAC-SHA256 of MESSAGE keyed by KEY, as lowercase hex.
+Pure elisp over `secure-hash', so it works on any build (the native
+Android port has no guaranteed gnutls MAC support).  KEY and MESSAGE
+are encoded as UTF-8."
+  (let* ((block 64)
+         (raw (encode-coding-string key 'utf-8 t))
+         (raw (if (> (length raw) block)
+                  (secure-hash 'sha256 raw nil nil t)
+                raw))
+         (raw (concat raw (make-string (- block (length raw)) 0)))
+         (ipad (apply #'unibyte-string
+                      (mapcar (lambda (c) (logxor c #x36)) raw)))
+         (opad (apply #'unibyte-string
+                      (mapcar (lambda (c) (logxor c #x5c)) raw))))
+    (secure-hash 'sha256
+                 (concat opad
+                         (secure-hash 'sha256
+                                      (concat ipad (encode-coding-string
+                                                    message 'utf-8 t))
+                                      nil nil t)))))
+
+(defun eabp--auth-nonce ()
+  "A fresh nonce (64 hex chars).  Needs uniqueness, not secrecy."
+  (secure-hash 'sha256 (format "%s:%s:%s:%s"
+                               (random most-positive-fixnum)
+                               (float-time) (emacs-pid) (current-time-string))))
+
+(defun eabp--on-auth-challenge (payload)
+  "Answer the companion's pairing challenge from PAYLOAD."
+  (let ((snonce (alist-get 'nonce payload)))
+    (cond
+     ((not (stringp snonce))
+      (message "EABP: malformed auth challenge"))
+     ((not (and (stringp eabp-auth-token)
+                (not (string-empty-p eabp-auth-token))))
+      (message (concat "EABP: pairing required — open the companion app, tap "
+                       "the (setq eabp-auth-token ...) line on its pairing "
+                       "screen, add it to your init, and reconnect")))
+     (t
+      (setq eabp--auth-server-nonce snonce
+            eabp--auth-client-nonce (eabp--auth-nonce))
+      (eabp-send "auth.response"
+                 `((nonce . ,eabp--auth-client-nonce)
+                   (mac . ,(eabp--hmac-sha256-hex
+                            eabp-auth-token
+                            (format "eabp1:client:%s:%s"
+                                    snonce eabp--auth-client-nonce)))))))))
+
+(defun eabp--auth-verify-welcome (payload)
+  "Non-nil when PAYLOAD's server_proof matches our challenge state.
+Fails closed: once a token is configured, a welcome without a valid
+proof — a companion that skipped the challenge, or a rogue app squatting
+the port — is refused.  With no token configured, any welcome passes
+\(the unpaired legacy path; the companion won't send one anyway)."
+  (or (not (and (stringp eabp-auth-token)
+                (not (string-empty-p eabp-auth-token))))
+      (and eabp--auth-server-nonce eabp--auth-client-nonce
+           (equal (alist-get 'server_proof payload)
+                  (eabp--hmac-sha256-hex
+                   eabp-auth-token
+                   (format "eabp1:server:%s:%s"
+                           eabp--auth-client-nonce
+                           eabp--auth-server-nonce))))))
+
 ;; ─── Inbound framing & dispatch ──────────────────────────────────────────────
 
 (defun eabp--filter (_proc chunk)
@@ -161,6 +245,7 @@ by the transport itself and cannot be overridden here."
 (defun eabp--dispatch (kind payload frame)
   "Route a frame by KIND: built-ins first, then registered handlers."
   (pcase kind
+    ("auth.challenge" (eabp--on-auth-challenge payload))
     ("session.welcome" (eabp--on-welcome payload))
     ("ping" (eabp-send "pong" nil (alist-get 'id frame)))
     ("pong" nil)
@@ -188,17 +273,27 @@ by the transport itself and cannot be overridden here."
 Replayed events may have mutated org state; UI layers re-push here.")
 
 (defun eabp--on-welcome (payload)
-  "Record the negotiated session from a `session.welcome' PAYLOAD."
-  (setq eabp--session payload)
-  (let ((granted (alist-get 'granted payload))
-        (queued  (or (alist-get 'queued_events payload) 0)))
-    (message "EABP: handshake ok. granted=%s queued_events=%s" granted queued)
-    (run-hook-with-args 'eabp-connected-hook payload)
-    ;; Request replay AFTER the connected hooks: the revision snapshot has
-    ;; been absorbed and initial surfaces pushed, so replayed events land
-    ;; on a coherent state.
-    (when (> queued 0)
-      (eabp-send "queue.replay"))))
+  "Record the negotiated session from a `session.welcome' PAYLOAD.
+Refuses the session outright when the server's pairing proof is missing
+or wrong — nothing is trusted from an unproven peer."
+  (if (not (eabp--auth-verify-welcome payload))
+      (progn
+        (message (concat "EABP: server failed pairing proof — refusing the "
+                         "session. Is something impersonating the companion, "
+                         "or does the app predate pairing support?"))
+        (when eabp--process (delete-process eabp--process)))
+    (setq eabp--auth-server-nonce nil
+          eabp--auth-client-nonce nil)
+    (setq eabp--session payload)
+    (let ((granted (alist-get 'granted payload))
+          (queued  (or (alist-get 'queued_events payload) 0)))
+      (message "EABP: handshake ok. granted=%s queued_events=%s" granted queued)
+      (run-hook-with-args 'eabp-connected-hook payload)
+      ;; Request replay AFTER the connected hooks: the revision snapshot has
+      ;; been absorbed and initial surfaces pushed, so replayed events land
+      ;; on a coherent state.
+      (when (> queued 0)
+        (eabp-send "queue.replay")))))
 
 ;; ─── Connection lifecycle ────────────────────────────────────────────────────
 
@@ -259,7 +354,9 @@ reconnect (with backoff) is what makes the bridge feel always-on."
     (message "EABP: disconnected (%s)" (string-trim event))
     (setq eabp--process nil
           eabp--buffer ""
-          eabp--session nil)
+          eabp--session nil
+          eabp--auth-server-nonce nil
+          eabp--auth-client-nonce nil)
     (clrhash eabp--pending)
     (eabp--schedule-reconnect))))
 
@@ -295,7 +392,8 @@ and nothing else here changes."
   (eabp--cancel-reconnect)
   (when (and eabp--process (process-live-p eabp--process))
     (delete-process eabp--process))
-  (setq eabp--buffer "" eabp--session nil)
+  (setq eabp--buffer "" eabp--session nil
+        eabp--auth-server-nonce nil eabp--auth-client-nonce nil)
   (clrhash eabp--pending)
   (condition-case err
       (setq eabp--process (eabp--make-process))

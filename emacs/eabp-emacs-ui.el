@@ -212,15 +212,17 @@ Eval button stay pinned below it, so they can never be pushed off-screen
 by a long history — the layout bug the old plain-column version had."
   (let* ((history-cards (mapcar #'eabp-emacs-ui--eval-card
                                 eabp-emacs-ui--eval-history))
-         (input-field (eabp-text-input "eval-input"
-                                       :label "Elisp Expression"
-                                       :hint "(message \"hello\")"
-                                       :multi-line t
-                                       :min-lines 2
-                                       :max-lines 6
-                                       :monospace t
-                                       :syntax "elisp"
-                                       :on-submit (eabp-action "emacs.eval.submit"))))
+         ;; A chromeless editor instead of a plain text_input: the id names
+         ;; a virtual elisp file, so the full bridge lights up in the REPL —
+         ;; completion chips from the live obarray, paren/byte-compile
+         ;; squiggles as you type, eldoc signatures in the doc line, and
+         ;; Emacs-theme fontification. publish-state keeps the Eval button's
+         ;; ui-state read working exactly like the old field.
+         (input-field (eabp-editor "eval.el" ""
+                                   :chromeless t
+                                   :publish-state t
+                                   :complete t
+                                   :syntax "elisp")))
     (eabp-column
      (eabp-box
       (list (if history-cards
@@ -260,7 +262,9 @@ by a long history — the layout bug the old plain-column version had."
   (lambda (args _)
     ;; The Eval button carries no value, so fall back to the field's latest
     ;; value recorded by `state.changed' (same pattern as the capture form).
+    ;; "eval.el" is the editor-based field; "eval-input" the legacy one.
     (let* ((expr (or (alist-get 'value args)
+                     (eabp-ui-state "eval.el")
                      (eabp-ui-state "eval-input")
                      ""))
            (result (condition-case err

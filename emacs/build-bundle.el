@@ -27,9 +27,11 @@
                 "eabp-keymap.el"
                 "eabp-magit.el"
                 "eabp-emacs-ui.el"
+                "eabp-sync.el"
                 "eabp-complete.el"
                 "eabp-files.el"
-                "eabp-org-ui.el")))
+                "eabp-org-ui.el"
+                "eabp-demo.el")))
   (with-temp-file out
     (insert ";;; glasspane.el --- Glasspane Emacs client, single-file bundle -*- lexical-binding: t; -*-\n"
             ";;\n"

@@ -81,12 +81,15 @@ class EabpConnection(
     private fun dispatch(frame: Frame) {
         Log.d(TAG, "<= ${frame.kind} (${frame.id})")
         // Everything except the handshake itself requires a completed handshake.
-        if (!helloComplete && frame.kind != Kind.SESSION_HELLO) {
+        if (!helloComplete && frame.kind != Kind.SESSION_HELLO &&
+            frame.kind != Kind.AUTH_RESPONSE
+        ) {
             send(error(frame.id, "proto-version", "handshake required before '${frame.kind}'"))
             return
         }
         when (frame.kind) {
             Kind.SESSION_HELLO -> handleHello(frame)
+            Kind.AUTH_RESPONSE -> handleAuthResponse(frame)
             Kind.PING -> send(Frame(kind = Kind.PONG, replyTo = frame.id))
             "queue.replay" -> handleQueueReplay(frame)
 
@@ -128,6 +131,26 @@ class EabpConnection(
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 
+            // Editor-sync pushes (see eabp-sync.el): flymake diagnostics for
+            // a synced file, and Emacs asking for a fresh full-text open
+            // after a seq mismatch. Same ephemeral rules as completions.
+            Kind.DIAGNOSTICS_SHOW -> {
+                EabpRuntime.editSyncState.showDiagnostics(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+            Kind.EDIT_RESYNC -> {
+                EabpRuntime.editSyncState.requestResync(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+            Kind.ELDOC_SHOW -> {
+                EabpRuntime.editSyncState.showEldoc(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+            Kind.FONTIFY_SHOW -> {
+                EabpRuntime.editSyncState.showFontify(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+
             // Upcoming timed org items → exact alarms. Each set replaces the
             // previous one, so stale reminders can't fire.
             "reminders.set" -> {
@@ -154,6 +177,12 @@ class EabpConnection(
         }
     }
 
+    /** Server nonce for the in-flight auth round, nulled once it completes. */
+    @Volatile private var authNonce: String? = null
+
+    /** The hello frame id the eventual welcome must reply to. */
+    @Volatile private var pendingHelloId: String? = null
+
     private fun handleHello(hello: Frame) {
         val proto = hello.payload.optInt("protocol", 0)
         if (proto != EABP_PROTOCOL_VERSION) {
@@ -166,16 +195,53 @@ class EabpConnection(
         val wants = hello.payload.optJSONArray("wants").toStringList()
         granted = wants.filter { it in supported }
 
+        // Pairing gate: don't welcome yet — challenge. Emacs must prove it
+        // holds the token this device shows on its pairing screen.
+        val nonce = EabpAuth.newNonce()
+        authNonce = nonce
+        pendingHelloId = hello.id
+        send(Frame(
+            kind = Kind.AUTH_CHALLENGE,
+            replyTo = hello.id,
+            payload = JSONObject().put("nonce", nonce),
+        ))
+    }
+
+    private fun handleAuthResponse(frame: Frame) {
+        val serverNonce = authNonce
+        val clientNonce = frame.payload.optString("nonce")
+        val mac = frame.payload.optString("mac")
+        if (serverNonce == null || helloComplete) {
+            send(error(frame.id, "auth-failed", "no challenge outstanding"))
+            shutdown()
+            return
+        }
+        val token = EabpAuth.token(context)
+        val expected = EabpAuth.hmacHex(token, "eabp1:client:$serverNonce:$clientNonce")
+        if (clientNonce.isEmpty() || !EabpAuth.macEquals(mac, expected)) {
+            Log.w(TAG, "Pairing failed: bad client MAC")
+            send(error(frame.id, "auth-failed",
+                "pairing token mismatch — set eabp-auth-token to the token " +
+                    "shown on the companion's pairing screen"))
+            shutdown()
+            return
+        }
+        authNonce = null
+
         // Already on the "eabp-conn" background thread: safe to query Room.
         val dbCount = EabpRuntime.database?.eventDao()?.count() ?: 0
         EabpRuntime.refreshQueuedCount()
 
         val welcome = Frame(
             kind = Kind.SESSION_WELCOME,
-            replyTo = hello.id,
+            replyTo = pendingHelloId,
             payload = JSONObject().apply {
                 put("protocol", EABP_PROTOCOL_VERSION)
                 put("server", "eabp-companion/0.2 android/${Build.VERSION.SDK_INT}")
+                // The mutual half: prove WE hold the token too, so Emacs can
+                // refuse a rogue app that squatted the port before we bound it.
+                put("server_proof",
+                    EabpAuth.hmacHex(token, "eabp1:server:$clientNonce:$serverNonce"))
                 put("granted", JSONArray(granted))
                 put("permissions", JSONObject().apply {
                     put("post_notifications", hasNotificationPermission())
@@ -186,11 +252,13 @@ class EabpConnection(
             },
         )
         helloComplete = true
+        EabpAuth.markPaired(context)
+        EabpRuntime.setPaired()
         EabpRuntime.setConnected(true)
         send(welcome)
         // If a wake notification got the user here, its job is done.
         EmacsWaker.clear(context)
-        Log.i(TAG, "Handshake complete. granted=$granted queued=$dbCount")
+        Log.i(TAG, "Handshake complete (paired). granted=$granted queued=$dbCount")
     }
 
     /**

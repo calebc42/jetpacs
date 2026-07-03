@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,11 +30,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
@@ -160,9 +163,15 @@ private fun BridgeScreen() {
     // inner Scaffold had no bounded height and collapsed — top bar, bottom bar,
     // and body rendered broken or empty. Render the SDUI tree as the top-level
     // content inside a fill-size Box and let the scaffold node own the layout.
+    val connected by EabpRuntime.connected.collectAsState()
+    val pairedEver by EabpRuntime.pairedEver.collectAsState()
+
     Box(modifier = Modifier.fillMaxSize()) {
-        if (dashboardRecord == null) {
-            WaitingScreen()
+        // Until an Emacs has paired at least once, the pairing screen wins even
+        // over a cached dashboard — otherwise a stale surface from a pre-auth
+        // session would hide the token the user needs to pair.
+        if (dashboardRecord == null || !pairedEver) {
+            PairingScreen()
         } else {
             val spec = dashboardRecord.resolveSpec(currentView)
             RenderChildren(
@@ -171,6 +180,11 @@ private fun BridgeScreen() {
                 dashboardRecord.revision,
                 dispatch
             )
+            // Paired but Emacs is away: a discreet key to re-view the token
+            // (e.g. to pair a new machine) without wiping app data.
+            if (!connected) {
+                TokenReveal(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+            }
         }
     }
 
@@ -222,14 +236,15 @@ private fun actionIntent(context: Context, action: JSONObject, revision: Int): I
     }
 
 @Composable
-private fun WaitingScreen() {
+private fun PairingScreen() {
     Column(modifier = Modifier.padding(16.dp)) {
         Text("Waiting for Emacs…", style = MaterialTheme.typography.headlineMedium)
-        // PATCH: actionable guidance. The companion is the server and can only
-        // listen — Emacs is the client and must dial in. Until it does, taps
-        // here are queued and Emacs sees nothing.
+        // The companion is the server and can only listen — Emacs is the client
+        // and must dial in. Until it does, taps here are queued and Emacs sees
+        // nothing.
         Text(
-            "The bridge is listening. Now connect from Emacs (on this device):\n\n" +
+            "The bridge is listening. Pair Emacs (on this device) by adding the " +
+                    "line below to your init, then:\n\n" +
                     "    (require 'eabp-org-ui)\n" +
                     "    M-x eabp-connect\n\n" +
                     "Watch *Messages* for \"EABP: handshake ok\". This screen updates " +
@@ -237,8 +252,83 @@ private fun WaitingScreen() {
             style = MaterialTheme.typography.bodyMedium
         )
 
+        PairingTokenBlock(modifier = Modifier.padding(top = 16.dp))
+
         val isConnected by EabpRuntime.connected.collectAsState()
         StatusRow("Connection", if (isConnected) "Connected" else "Listening", isConnected)
+    }
+}
+
+/**
+ * The pairing token plus its ready-to-paste setq line (tap to copy). Shown on
+ * the pairing screen and inside [TokenReveal]. Displaying it is no more
+ * exposed than the token already is in app-private prefs or the user's init —
+ * its job is to keep OTHER APPS from completing the handshake, not to hide
+ * from someone holding an unlocked phone.
+ */
+@Composable
+private fun PairingTokenBlock(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val token = remember { EabpAuth.token(context) }
+    val setqLine = "(setq eabp-auth-token \"$token\")"
+    Column(modifier = modifier) {
+        Text("Pairing token", style = MaterialTheme.typography.labelLarge)
+        Text(token, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace)
+        Text(
+            setqLine,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .clickable {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("eabp-token", setqLine))
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    }
+                }
+        )
+        Text(
+            "Tap the line to copy it. Any app on this phone can reach the " +
+                    "bridge port; only a paired Emacs completes the handshake.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
+
+/**
+ * A compact "🔑 Pair" chip that opens the token in a dialog. Overlaid on the
+ * dashboard only while Emacs is disconnected, so an already-paired user can
+ * still retrieve the token (to pair another machine, or after editing init)
+ * without clearing app data to force the pairing screen back.
+ */
+@Composable
+private fun TokenReveal(modifier: Modifier = Modifier) {
+    var show by remember { mutableStateOf(false) }
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 3.dp,
+        modifier = modifier.clickable { show = true }
+    ) {
+        Text(
+            "🔑 Pair",
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+    }
+    if (show) {
+        Dialog(onDismissRequest = { show = false }) {
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Pair another Emacs", style = MaterialTheme.typography.titleMedium)
+                    PairingTokenBlock(modifier = Modifier.padding(top = 12.dp))
+                }
+            }
+        }
     }
 }
 

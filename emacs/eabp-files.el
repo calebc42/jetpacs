@@ -193,8 +193,13 @@ plain-text editor."
           (if eabp-files--refile-mode
               (or (eabp-org-reader-refile-list file)
                   (eabp-text "No headings to show." 'caption))
-            (apply #'eabp-lazy-column (or (eabp-org-reader-file file)
-                                          (list (eabp-text "No headings to show." 'caption)))))
+            (let ((items (eabp-org--file-heading-items file)))
+              (if items
+                  (apply #'eabp-lazy-column
+                         (mapcar #'eabp-org-ui--agenda-card items))
+                (eabp-empty-state :icon "description"
+                                  :title "Empty file"
+                                  :caption "No headings found."))))
       (let* ((size (or (file-attribute-size (file-attributes file)) 0))
              (read-only (> size eabp-files-max-bytes))
              (content
@@ -227,6 +232,8 @@ plain-text editor."
 
 (declare-function eabp-org-ui-push-dashboard "eabp-org-ui")
 (declare-function eabp-org-ui-snackbar "eabp-org-ui")
+(declare-function eabp-org-ui--agenda-card "eabp-org-ui")
+(declare-function eabp-org--file-heading-items "eabp-org")
 
 (eabp-defaction "files.cd"
   (lambda (args _)

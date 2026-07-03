@@ -440,6 +440,31 @@ month is Feb 28, not an invalid date."
     ("scheduled" "scheduled")
     (_ nil)))
 
+(defun eabp-org-ui--card-date-row (it)
+  "An inline scheduling indicator for card item IT.
+Shows compact date-stamp chips for SCHEDULED and/or DEADLINE when present.
+Returns nil when neither is set."
+  (let* ((scheduled (alist-get 'scheduled it))
+         (deadline  (alist-get 'deadline it))
+         (sdate (eabp-org-ui--ts-date scheduled))
+         (ddate (eabp-org-ui--ts-date deadline))
+         (chips (delq nil
+                      (list
+                       (when sdate
+                         (eabp-row
+                          (eabp-icon "schedule" :size 14)
+                          (eabp-date-stamp :date sdate
+                                           :time (eabp-org-ui--ts-time scheduled)
+                                           :padding 2)))
+                       (when ddate
+                         (eabp-row
+                          (eabp-icon "flag" :size 14)
+                          (eabp-date-stamp :date ddate
+                                           :time (eabp-org-ui--ts-time deadline)
+                                           :padding 2)))))))
+    (when chips
+      (apply #'eabp-flow-row chips))))
+
 (defun eabp-org-ui--agenda-card (it)
   "A detail-rich agenda card for item IT.
 Leading time (or a type icon), priority-prefixed headline (struck
@@ -483,6 +508,7 @@ and a quick complete button for open todos."
                         headline-node
                         (unless (string-empty-p caption)
                           (eabp-text caption 'caption))
+                        (eabp-org-ui--card-date-row it)
                         (when tags
                           (apply #'eabp-flow-row
                                  (mapcar (lambda (tg)
@@ -644,27 +670,7 @@ and a quick complete button for open todos."
                       (lambda (it)
                         (equal (alist-get 'todo it) eabp-org-ui--tasks-filter))
                       items)))
-         (cards (mapcar (lambda (it)
-                          (let ((headline (or (alist-get 'headline it) "?"))
-                                (todo (or (alist-get 'todo it) ""))
-                                (ref (alist-get 'ref it)))
-                            (eabp-card
-                             (list (eabp-row
-                                    (eabp-box
-                                     (list (eabp-column
-                                            (eabp-text headline 'body)
-                                            (eabp-text todo 'caption)))
-                                     :weight 1)
-                                    (eabp-icon-button
-                                     "check"
-                                     (eabp-action "heading.todo-set"
-                                                  :args (cons '(state . "DONE") ref)
-                                                  :dedupe (format "todo-set/%s"
-                                                                  (or (alist-get 'id ref)
-                                                                      (alist-get 'headline ref)
-                                                                      "?"))))))
-                             :on-tap (eabp-action "heading.tap" :args ref))))
-                        filtered)))
+         (cards (mapcar #'eabp-org-ui--agenda-card filtered)))
     (eabp-column
      (apply #'eabp-flow-row
             (mapcar (lambda (kw)

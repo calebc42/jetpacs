@@ -2684,12 +2684,16 @@ Memoised; see `eabp-org-cache-invalidate'."
               (todo (nth 2 components))
               (priority (nth 3 components))
               (headline (nth 4 components))
-              (tags (org-get-tags)))
+              (tags (org-get-tags))
+              (scheduled (org-entry-get (point) "SCHEDULED"))
+              (deadline  (org-entry-get (point) "DEADLINE")))
          (when todo
            (push `((headline . ,headline)
                    (todo . ,todo)
                    (priority . ,(if priority (char-to-string priority) nil))
                    (tags . ,(vconcat tags))
+                   (scheduled . ,scheduled)
+                   (deadline  . ,deadline)
                    (file . ,(buffer-file-name))
                    (pos . ,(point))
                    (ref . ,(eabp-org--heading-ref)))
@@ -2705,14 +2709,50 @@ tags/file/pos/ref); used by the search layer."
          (todo (nth 2 components))
          (priority (nth 3 components))
          (headline (nth 4 components))
-         (tags (org-get-tags)))
+         (tags (org-get-tags))
+         (scheduled (org-entry-get (point) "SCHEDULED"))
+         (deadline  (org-entry-get (point) "DEADLINE")))
     `((headline . ,headline)
       (todo . ,todo)
       (priority . ,(if priority (char-to-string priority) nil))
       (tags . ,(vconcat tags))
+      (scheduled . ,scheduled)
+      (deadline  . ,deadline)
       (file . ,(buffer-file-name))
       (pos . ,(point))
       (ref . ,(eabp-org--heading-ref)))))
+
+(defun eabp-org--file-heading-items (file)
+  "Extract level-1 headings from FILE as item alists.
+Same shape as `eabp-org--todo-items' entries (plus scheduled/deadline),
+suitable for `eabp-org-ui--agenda-card'."
+  (when (and file (file-readable-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (let (items)
+         (org-map-entries
+          (lambda ()
+            (let* ((components (org-heading-components))
+                   (level (nth 0 components))
+                   (todo (nth 2 components))
+                   (priority (nth 3 components))
+                   (headline (nth 4 components))
+                   (tags (org-get-tags))
+                   (scheduled (org-entry-get (point) "SCHEDULED"))
+                   (deadline  (org-entry-get (point) "DEADLINE")))
+              (when (= level 1)
+                (push `((headline . ,headline)
+                        (todo . ,todo)
+                        (priority . ,(if priority (char-to-string priority) nil))
+                        (tags . ,(vconcat tags))
+                        (scheduled . ,scheduled)
+                        (deadline  . ,deadline)
+                        (file . ,(buffer-file-name))
+                        (pos . ,(point))
+                        (ref . ,(eabp-org--heading-ref)))
+                      items))))
+          nil nil)
+         (nreverse items))))))
 
 (defun eabp-org--search-substring (query)
   "Case-insensitive substring search of agenda files for QUERY.
@@ -5078,8 +5118,13 @@ plain-text editor."
           (if eabp-files--refile-mode
               (or (eabp-org-reader-refile-list file)
                   (eabp-text "No headings to show." 'caption))
-            (apply #'eabp-lazy-column (or (eabp-org-reader-file file)
-                                          (list (eabp-text "No headings to show." 'caption)))))
+            (let ((items (eabp-org--file-heading-items file)))
+              (if items
+                  (apply #'eabp-lazy-column
+                         (mapcar #'eabp-org-ui--agenda-card items))
+                (eabp-empty-state :icon "description"
+                                  :title "Empty file"
+                                  :caption "No headings found."))))
       (let* ((size (or (file-attribute-size (file-attributes file)) 0))
              (read-only (> size eabp-files-max-bytes))
              (content
@@ -5112,6 +5157,8 @@ plain-text editor."
 
 (declare-function eabp-org-ui-push-dashboard "eabp-org-ui")
 (declare-function eabp-org-ui-snackbar "eabp-org-ui")
+(declare-function eabp-org-ui--agenda-card "eabp-org-ui")
+(declare-function eabp-org--file-heading-items "eabp-org")
 
 (eabp-defaction "files.cd"
   (lambda (args _)
@@ -5765,6 +5812,31 @@ month is Feb 28, not an invalid date."
     ("scheduled" "scheduled")
     (_ nil)))
 
+(defun eabp-org-ui--card-date-row (it)
+  "An inline scheduling indicator for card item IT.
+Shows compact date-stamp chips for SCHEDULED and/or DEADLINE when present.
+Returns nil when neither is set."
+  (let* ((scheduled (alist-get 'scheduled it))
+         (deadline  (alist-get 'deadline it))
+         (sdate (eabp-org-ui--ts-date scheduled))
+         (ddate (eabp-org-ui--ts-date deadline))
+         (chips (delq nil
+                      (list
+                       (when sdate
+                         (eabp-row
+                          (eabp-icon "schedule" :size 14)
+                          (eabp-date-stamp :date sdate
+                                           :time (eabp-org-ui--ts-time scheduled)
+                                           :padding 2)))
+                       (when ddate
+                         (eabp-row
+                          (eabp-icon "flag" :size 14)
+                          (eabp-date-stamp :date ddate
+                                           :time (eabp-org-ui--ts-time deadline)
+                                           :padding 2)))))))
+    (when chips
+      (apply #'eabp-flow-row chips))))
+
 (defun eabp-org-ui--agenda-card (it)
   "A detail-rich agenda card for item IT.
 Leading time (or a type icon), priority-prefixed headline (struck
@@ -5808,6 +5880,7 @@ and a quick complete button for open todos."
                         headline-node
                         (unless (string-empty-p caption)
                           (eabp-text caption 'caption))
+                        (eabp-org-ui--card-date-row it)
                         (when tags
                           (apply #'eabp-flow-row
                                  (mapcar (lambda (tg)
@@ -5969,27 +6042,7 @@ and a quick complete button for open todos."
                       (lambda (it)
                         (equal (alist-get 'todo it) eabp-org-ui--tasks-filter))
                       items)))
-         (cards (mapcar (lambda (it)
-                          (let ((headline (or (alist-get 'headline it) "?"))
-                                (todo (or (alist-get 'todo it) ""))
-                                (ref (alist-get 'ref it)))
-                            (eabp-card
-                             (list (eabp-row
-                                    (eabp-box
-                                     (list (eabp-column
-                                            (eabp-text headline 'body)
-                                            (eabp-text todo 'caption)))
-                                     :weight 1)
-                                    (eabp-icon-button
-                                     "check"
-                                     (eabp-action "heading.todo-set"
-                                                  :args (cons '(state . "DONE") ref)
-                                                  :dedupe (format "todo-set/%s"
-                                                                  (or (alist-get 'id ref)
-                                                                      (alist-get 'headline ref)
-                                                                      "?"))))))
-                             :on-tap (eabp-action "heading.tap" :args ref))))
-                        filtered)))
+         (cards (mapcar #'eabp-org-ui--agenda-card filtered)))
     (eabp-column
      (apply #'eabp-flow-row
             (mapcar (lambda (kw)

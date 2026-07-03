@@ -22,6 +22,7 @@
                 "eabp-minibuffer.el"
                 "eabp-buffer.el"
                 "eabp-tablist.el"
+                "eabp-transient.el"
                 "eabp-org-rich.el"
                 "eabp-org-reader.el"
                 "eabp-org.el"

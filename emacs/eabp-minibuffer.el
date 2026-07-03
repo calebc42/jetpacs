@@ -259,35 +259,82 @@ sorted first."
          (and (string-prefix-p query a t)
               (not (string-prefix-p query b t))))))))
 
+(defun eabp-minibuffer--annotator (collection predicate)
+  "An annotation function for COLLECTION's candidates, or nil.
+Honours completion metadata and `completion-extra-properties', so
+marginalia-style captions survive the bridge."
+  (let* ((md (ignore-errors (completion-metadata "" collection predicate)))
+         (annotf (or (and md (completion-metadata-get md 'annotation-function))
+                     (plist-get completion-extra-properties
+                                :annotation-function))))
+    (when annotf
+      (lambda (cand)
+        (let ((a (ignore-errors (funcall annotf cand))))
+          (when (stringp a)
+            (let ((s (string-trim (substring-no-properties a))))
+              (unless (string-empty-p s) s))))))))
+
 (defun eabp--completing-read-advice (orig-fn prompt collection &rest args)
   "Around advice for `completing-read': a live-filtering picker over the bridge.
 As the user types in the filter field, the candidate list re-filters and
-re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
+re-renders (vertico-style). Tapping a candidate, or pressing Done, replies.
+Function collections (files, buffers, dynamic tables) re-complete against
+the query each keystroke, so typing a path navigates directories."
   (if (not eabp--in-action-handler)
       (apply orig-fn prompt collection args)
     (let* ((predicate (nth 0 args))
+           (def (nth 4 args))   ; (predicate require-match initial hist DEF …)
            (id (eabp--prompt-id))
            (input-id (format "prompt-input-%s" id))
            (title (string-trim-right prompt "[ :]+"))
-           ;; `all-completions' handles every collection kind (list, obarray,
-           ;; hash table, completion function) honouring PREDICATE.
-           (candidates (ignore-errors
-                         (sort (all-completions "" collection predicate) #'string<)))
+           (dynamic (functionp collection))
+           ;; Static collections snapshot once and get token filtering;
+           ;; `all-completions' handles list/obarray/hash honouring PREDICATE.
+           (candidates (unless dynamic
+                         (ignore-errors
+                           (sort (all-completions "" collection predicate)
+                                 #'string<))))
+           (annotate (eabp-minibuffer--annotator collection predicate))
+           ;; (PREFIX . MATCHES) for QUERY.  PREFIX is the completion-
+           ;; boundaries head (e.g. the directory part of a file name) that
+           ;; rebuilds a full value from a returned candidate.
+           (matches-for
+            (lambda (query)
+              (if dynamic
+                  (let* ((q (or query ""))
+                         (bounds (ignore-errors
+                                   (completion-boundaries q collection
+                                                          predicate "")))
+                         (prefix (substring q 0 (or (car bounds) 0))))
+                    (cons prefix
+                          (ignore-errors
+                            (sort (all-completions q collection predicate)
+                                  #'string<))))
+                (cons "" (eabp-minibuffer--filter candidates query)))))
            (max-display 50)
            (render
             (lambda (query)
-              (let* ((matches (eabp-minibuffer--filter candidates query))
+              (let* ((pm (funcall matches-for query))
+                     (prefix (car pm))
+                     (matches (cdr pm))
                      (total (length matches))
                      (shown (if (> total max-display)
                                 (cl-subseq matches 0 max-display)
                               matches))
                      (cards (mapcar
                              (lambda (c)
-                               (eabp-card
-                                (list (eabp-text c 'body))
-                                :on-tap (eabp-action "prompt.reply"
-                                                     :args `((prompt_id . ,id)
-                                                             (value . ,c)))))
+                               (let ((a (and annotate (funcall annotate c))))
+                                 (eabp-card
+                                  (list (if a
+                                            (eabp-row
+                                             (eabp-box (list (eabp-text c 'body))
+                                                       :weight 1)
+                                             (eabp-text a 'caption))
+                                          (eabp-text c 'body)))
+                                  :on-tap (eabp-action
+                                           "prompt.reply"
+                                           :args `((prompt_id . ,id)
+                                                   (value . ,(concat prefix c)))))))
                              shown)))
                 ;; A lazy (scrollable) column: long candidate lists scroll
                 ;; instead of pushing everything below off-screen.  Cancel
@@ -330,12 +377,125 @@ re-renders (vertico-style). Tapping a candidate, or pressing Done, replies."
          ;; A tapped candidate is exact; a typed query falls back to its top
          ;; match (RET-picks-top, like vertico) so partial input still works.
          ((and (stringp reply) (not (string-empty-p reply)))
-          (if (member reply candidates)
-              reply
-            (or (car (eabp-minibuffer--filter candidates reply)) reply)))
-         (t ""))))))
+          (cond
+           (dynamic
+            (if (ignore-errors (test-completion reply collection predicate))
+                reply
+              (let* ((pm (funcall matches-for reply))
+                     (top (cadr pm)))
+                (if top (concat (car pm) top) reply))))
+           ((member reply candidates) reply)
+           (t (or (car (eabp-minibuffer--filter candidates reply)) reply))))
+         ;; Empty submit falls back to the caller's DEF, like RET at the
+         ;; keyboard would.
+         (t (or (and def (if (consp def) (car def) def)) "")))))))
 
 (advice-add 'completing-read :around #'eabp--completing-read-advice)
+
+;; ─── Advice: completing-read-multiple ────────────────────────────────────────
+;;
+;; CRM reads via `read-from-minibuffer' with a special keymap, so without
+;; this it degrades to a bare comma-separated text input.  Bridge it as a
+;; multi-select picker: tapping candidates toggles them, the filter's
+;; submit adds free text (org tags), Done replies with the selection.
+
+(defvar eabp--prompt-toggle-callbacks nil
+  "Alist of prompt-id → callback for `prompt.toggle' actions.")
+
+(eabp-defaction "prompt.toggle"
+  (lambda (args _)
+    (let* ((pid (alist-get 'prompt_id args))
+           (fn (alist-get pid eabp--prompt-toggle-callbacks nil nil #'equal)))
+      (when fn (funcall fn (alist-get 'value args))))))
+
+(defun eabp--completing-read-multiple-advice (orig-fn prompt collection &rest args)
+  "Around advice for `completing-read-multiple': a multi-select picker."
+  (if (not eabp--in-action-handler)
+      (apply orig-fn prompt collection args)
+    (let* ((predicate (nth 0 args))
+           (id (eabp--prompt-id))
+           (input-id (format "prompt-input-%s" id))
+           (title (string-trim-right prompt "[ :]+"))
+           (candidates (ignore-errors
+                         (sort (all-completions "" collection predicate)
+                               #'string<)))
+           (annotate (eabp-minibuffer--annotator collection predicate))
+           (selected nil)
+           (query "")
+           (max-display 50)
+           (render
+            (lambda ()
+              (let* ((matches (eabp-minibuffer--filter candidates query))
+                     (total (length matches))
+                     (shown (if (> total max-display)
+                                (cl-subseq matches 0 max-display)
+                              matches)))
+                (apply #'eabp-lazy-column
+                       (append
+                        (list
+                         (eabp-row
+                          (eabp-box (list (eabp-text title 'title)) :weight 1)
+                          (eabp-button "Cancel"
+                                       (eabp-action "prompt.dismiss"
+                                                    :args `((prompt_id . ,id)))
+                                       :variant "text")
+                          (eabp-button (format "Done (%d)" (length selected))
+                                       (eabp-action "prompt.reply"
+                                                    :args `((prompt_id . ,id)
+                                                            (value . ,(vconcat (reverse selected)))))))
+                         (eabp-text-input input-id
+                                          :label "Filter"
+                                          :hint "type to filter, submit to add"
+                                          :single-line t
+                                          :on-submit (eabp-action
+                                                      "prompt.toggle"
+                                                      :args `((prompt_id . ,id))))
+                         (when selected
+                           (apply #'eabp-flow-row
+                                  (mapcar (lambda (s)
+                                            (eabp-chip s :selected t
+                                                       :on-tap (eabp-action
+                                                                "prompt.toggle"
+                                                                :args `((prompt_id . ,id)
+                                                                        (value . ,s)))))
+                                          (reverse selected))))
+                         (eabp-text (format "%d matches" total) 'caption))
+                        (mapcar
+                         (lambda (c)
+                           (let ((a (and annotate (funcall annotate c))))
+                             (eabp-card
+                              (list (if a
+                                        (eabp-row
+                                         (eabp-box (list (eabp-text c 'body))
+                                                   :weight 1)
+                                         (eabp-text a 'caption))
+                                      (eabp-text c 'body)))
+                              :on-tap (eabp-action "prompt.toggle"
+                                                   :args `((prompt_id . ,id)
+                                                           (value . ,c))))))
+                         shown)))))))
+      (setf (alist-get id eabp--prompt-toggle-callbacks nil nil #'equal)
+            (lambda (val)
+              (when (and (stringp val) (not (string-empty-p val)))
+                (setq selected (if (member val selected)
+                                   (delete val selected)
+                                 (cons val selected)))
+                (eabp--send-prompt-dialog id (funcall render)))))
+      (eabp-on-state-change input-id
+                            (lambda (val)
+                              (setq query (or val ""))
+                              (eabp--send-prompt-dialog id (funcall render))))
+      (eabp--send-prompt-dialog id (funcall render))
+      (let ((reply (unwind-protect (eabp--wait-for-prompt id)
+                     (remhash input-id eabp--state-handlers)
+                     (setq eabp--prompt-toggle-callbacks
+                           (assoc-delete-all id eabp--prompt-toggle-callbacks))
+                     (eabp--cleanup-prompt))))
+        (cond
+         ((eq reply 'cancelled) (keyboard-quit))
+         (t (cl-remove-if-not #'stringp (append reply nil))))))))
+
+(advice-add 'completing-read-multiple :around #'eabp--completing-read-multiple-advice)
 
 ;; ─── Advice: read-char & read-char-exclusive ─────────────────────────────────
 
@@ -354,22 +514,70 @@ Uses a text input dialog and returns the first character."
 
 ;; ─── Advice: read-char-choice ────────────────────────────────────────────────
 
+(defun eabp--char-buttons-dialog (id prompt buttons)
+  "Show a dialog of PROMPT text plus BUTTONS, with a Cancel row."
+  (eabp--send-prompt-dialog
+   id
+   (eabp-column
+    (eabp-text prompt 'body)
+    (apply #'eabp-flow-row buttons)
+    (eabp-row
+     (eabp-spacer :weight 1)
+     (eabp-button "Cancel"
+                  (eabp-action "prompt.dismiss" :args `((prompt_id . ,id)))
+                  :variant "text")))))
+
 (defun eabp--read-char-choice-advice (orig-fn prompt chars &rest args)
-  "Around advice for `read-char-choice'.
-Forces the user to select a valid character from CHARS."
+  "Around advice for `read-char-choice': each valid char is a button.
+The prompt text usually explains the choices ([y]es [n]o …), so it is
+shown in full above the buttons; only valid chars can come back."
   (if (not eabp--in-action-handler)
       (apply orig-fn prompt chars args)
-    (catch 'done
-      (while t
-        (let* ((reply (eabp--read-from-minibuffer-advice #'ignore prompt))
-               (char (when (and (stringp reply) (> (length reply) 0))
-                       (aref reply 0))))
-          (if (and char (memq char chars))
-              (throw 'done char)
-            (when (fboundp 'eabp-org-ui-snackbar)
-              (eabp-org-ui-snackbar "Invalid choice. Please try again."))))))))
+    (let* ((id (eabp--prompt-id))
+           (chars (append chars nil)))
+      (eabp--char-buttons-dialog
+       id prompt
+       (mapcar (lambda (ch)
+                 (eabp-button (char-to-string ch)
+                              (eabp-action "prompt.reply"
+                                           :args `((prompt_id . ,id)
+                                                   (value . ,(char-to-string ch))))
+                              :variant "outlined"))
+               chars))
+      (let ((reply (unwind-protect (eabp--wait-for-prompt id)
+                     (eabp--cleanup-prompt))))
+        (if (and (stringp reply) (> (length reply) 0)
+                 (memq (aref reply 0) chars))
+            (aref reply 0)
+          (keyboard-quit))))))
 
 (advice-add 'read-char-choice :around #'eabp--read-char-choice-advice)
+
+;; ─── Advice: read-multiple-choice ────────────────────────────────────────────
+
+(defun eabp--read-multiple-choice-advice (orig-fn prompt choices &rest args)
+  "Around advice for `read-multiple-choice'.
+CHOICES are (CHAR NAME [DESC]); the names become buttons, and the full
+chosen entry is returned as the original would."
+  (if (not eabp--in-action-handler)
+      (apply orig-fn prompt choices args)
+    (let ((id (eabp--prompt-id)))
+      (eabp--char-buttons-dialog
+       id prompt
+       (mapcar (lambda (choice)
+                 (eabp-button (capitalize (cadr choice))
+                              (eabp-action "prompt.reply"
+                                           :args `((prompt_id . ,id)
+                                                   (value . ,(char-to-string (car choice)))))
+                              :variant "outlined"))
+               choices))
+      (let ((reply (unwind-protect (eabp--wait-for-prompt id)
+                     (eabp--cleanup-prompt))))
+        (or (and (stringp reply) (> (length reply) 0)
+                 (assq (aref reply 0) choices))
+            (keyboard-quit))))))
+
+(advice-add 'read-multiple-choice :around #'eabp--read-multiple-choice-advice)
 
 (provide 'eabp-minibuffer)
 ;;; eabp-minibuffer.el ends here

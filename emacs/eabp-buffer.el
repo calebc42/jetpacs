@@ -136,13 +136,31 @@ foreground.  Returns nil for an unstyled run."
 
 ;; ─── Interactivity ─────────────────────────────────────────────────────────
 
+(defun eabp-buffer--widget-p (obj)
+  "Non-nil if OBJ is a widget.el widget object.
+Own predicate (rather than `widgetp') so detection needs no wid-edit;
+when a buffer actually contains widgets, wid-edit is already loaded."
+  (and (consp obj) (symbolp (car obj)) (get (car obj) 'widget-type)))
+
+(defun eabp-buffer--widget-at (pos)
+  "The widget.el widget at POS as (button . W) or (field . W), else nil.
+The `button' property distinguishes pressables; `field' marks editable
+value boxes (Customize).  Non-widget `field' values (comint, minibuffer)
+don't count."
+  (let ((b (get-char-property pos 'button)))
+    (if (eabp-buffer--widget-p b)
+        (cons 'button b)
+      (let ((f (get-char-property pos 'field)))
+        (and (eabp-buffer--widget-p f) (cons 'field f))))))
+
 (defun eabp-buffer--actionable-p (pos)
   "Non-nil if the char at POS belongs to a tappable region.
-True for text/widget buttons, regions carrying a `mouse-face', and regions
-with their own `keymap'/`local-map' (magit sections, info refs, …).  The
-major-mode keymap is buffer-local, not a text property, so this never marks
-the whole buffer tappable."
+True for text/widget buttons, widget editable fields, regions carrying a
+`mouse-face', and regions with their own `keymap'/`local-map' (magit
+sections, info refs, …).  The major-mode keymap is buffer-local, not a
+text property, so this never marks the whole buffer tappable."
   (or (get-char-property pos 'button)
+      (eabp-buffer--widget-p (get-char-property pos 'field))
       (get-char-property pos 'mouse-face)
       (keymapp (get-char-property pos 'keymap))
       (keymapp (get-char-property pos 'local-map))))
@@ -342,18 +360,45 @@ purely additive on top of the Tier 0 substrate."
 
 ;; ─── Tap dispatch ─────────────────────────────────────────────────────────
 
+(declare-function widget-apply-action "wid-edit" (widget &optional event))
+(declare-function widget-field-value-get "wid-edit" (widget &optional no-truncate))
+(declare-function widget-field-value-set "wid-edit" (widget value))
+
+(defun eabp-buffer--widget-invoke (hit)
+  "Activate widget HIT, a (button . W) or (field . W) pair.
+Buttons run their :action (State menus, Toggle, checkboxes, links).
+A field tap edits the field's raw text through a bridged prompt.
+The wid-edit value primitives handle size padding and marker
+bookkeeping, and the rewrite runs the same after-change hooks typing
+would, so Customize notices the modification (state turns EDITED)."
+  (pcase hit
+    (`(button . ,w) (widget-apply-action w) t)
+    (`(field . ,w)
+     (let* ((old (widget-field-value-get w))
+            (tag (or (widget-get w :tag) "Edit field"))
+            (new (read-string (format "%s: " tag) old)))
+       (unless (equal new old)
+         (widget-field-value-set w new))
+       t))))
+
 (defun eabp-buffer-invoke-at (buffer-name pos)
   "Run the tap action at POS in BUFFER-NAME and return non-nil if one fired.
-Tries, in order: push a button, then the region keymap's binding for RET /
-mouse-2 / mouse-1.  Runs with the buffer current and point at POS; commands
-that only need point (buttons, magit/dired/info visit) work, those that
-require a live window may not.  Called inside an action handler, so any
-minibuffer prompts it raises are bridged to the companion automatically."
+Tries, in order: activate a widget.el widget, push a button, then the
+region keymap's binding for RET / mouse-2 / mouse-1.  Runs with the buffer
+current and point at POS; commands that only need point (buttons,
+magit/dired/info visit) work, those that require a live window may not.
+Called inside an action handler, so any minibuffer prompts it raises are
+bridged to the companion automatically."
   (let ((buf (get-buffer buffer-name)))
     (when (and buf (numberp pos))
       (with-current-buffer buf
         (goto-char (min (max (point-min) (truncate pos)) (point-max)))
         (cond
+         ;; widget.el first: widgets store the widget object in the `button'
+         ;; property, which fools button.el's `button-at' into returning a
+         ;; bogus marker whose `push-button' then has no :action.
+         ((eabp-buffer--widget-at (point))
+          (eabp-buffer--widget-invoke (eabp-buffer--widget-at (point))))
          ((button-at (point)) (push-button) t)
          (t
           (let* ((km (or (get-char-property (point) 'keymap)

@@ -29,6 +29,7 @@
                 "eabp-emacs-ui.el"
                 "eabp-sync.el"
                 "eabp-complete.el"
+                "eabp-settings.el"
                 "eabp-files.el"
                 "eabp-org-ui.el"
                 "eabp-demo.el")))

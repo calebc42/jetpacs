@@ -12,9 +12,8 @@
 (require 'eabp-files)
 (require 'eabp-keymap)
 (require 'eabp-magit)
+(require 'eabp-settings)
 (require 'cl-lib)
-
-(declare-function custom-file "cus-edit" (&optional no-error))
 
 (defvar eabp-org-ui--current-tab "agenda"
   "Currently active tab in the dashboard.")
@@ -894,7 +893,10 @@ is the finished state."
                                                            :when-offline "drop")
                                               :content-description "Delete sequence"))))))
             (error (list (eabp-text (format "Error loading sequences: %s" (error-message-string err)) 'caption))))))
-    (apply #'eabp-column
+    ;; lazy_column, not column: the scaffold body has no scroll container
+    ;; on the client, so a plain column taller than the screen is simply
+    ;; unreachable below the fold.
+    (apply #'eabp-lazy-column
            (append
             (list (eabp-section-header "Display")
                   (eabp-text "Line numbers in the buffer view and editor." 'caption)
@@ -913,7 +915,10 @@ is the finished state."
                   (eabp-divider)
                   (eabp-section-header "Global Org Tags")
                   (eabp-text "Manage the global tag list (org-tag-alist)." 'caption)
-                  enum-list)))))
+                  enum-list)
+            ;; Schema-driven sections: every allowlisted defcustom in
+            ;; `eabp-settings-registry', rendered from its custom-type.
+            (eabp-settings-sections)))))
 
 (defun eabp-org-ui--todo-chips (current keywords ref)
   "A row of chips for KEYWORDS with CURRENT selected; taps carry REF."
@@ -1682,26 +1687,15 @@ Returns non-nil on success; messages and returns nil on failure."
       (eabp-org-ui-snackbar "Settings saved")
       (eabp-org-ui-push-dashboard))))
 
-(defun eabp-org-ui--customize-save (symbol value)
-  "Persist SYMBOL as VALUE through Customize, surfacing failures.
-Returns non-nil on success.  Failures land in a snackbar instead of
-being silently dropped; notably, `customize-save-variable' quietly
-skips saving when there is no file to save into (started with -q, or
-no init file on the Android port), which would otherwise look like a
-save and then vanish on restart."
-  (require 'cus-edit)
-  (condition-case err
-      (if (custom-file t)
-          (progn (customize-save-variable symbol value) t)
-        (set-default symbol value)
-        (eabp-org-ui-snackbar
-         "Applied for this session only: no init file to save settings into")
-        nil)
-    (error
-     (eabp-org-ui-snackbar
-      (format "Applied for this session, but saving failed: %s"
-              (error-message-string err)))
-     nil)))
+;; Route the generic settings module's toasts and refreshes through this
+;; screen's snackbar and dashboard push.
+(setq eabp-settings-notify-function #'eabp-org-ui-snackbar
+      eabp-settings-refresh-function #'eabp-org-ui-push-dashboard)
+
+(defalias 'eabp-org-ui--customize-save #'eabp-settings-save-variable
+  "Persist a variable through Customize, surfacing failures.
+Kept as an alias for the todo/tag actions that predate the generic
+settings module (`eabp-settings-save-variable').")
 
 (defun eabp-org-ui--todo-keywords-apply (seqs)
   "Make SEQS the effective and persisted `org-todo-keywords'.

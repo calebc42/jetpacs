@@ -344,6 +344,26 @@ the empty string must still be returned by `org-entry-properties'."
           (should (assoc "NEWKEY" (org-entry-properties nil 'standard))))
       (delete-file file))))
 
+;; ─── Shell ──────────────────────────────────────────────────────────────────
+
+(ert-deftest eabp-shell-broken-view-isolated ()
+  "A view builder that signals renders an error view; the push survives.
+The live-coding contract: a broken Tier 1 view costs its own screen."
+  (let ((built (eabp-shell--build-view
+                "boom" (list :builder (lambda (_) (error "kaput"))) nil)))
+    ;; It is still a well-formed scaffold view carrying the error text.
+    (should (alist-get 'children built))
+    (should (string-match-p "kaput" (format "%S" built))))
+  ;; Broken :when / :overlay predicates count as nil, not as a crash.
+  (let ((eabp-shell-views
+         (list (cons "bad-pred"
+                     (list :builder (lambda (_) nil)
+                           :when (lambda () (error "pred boom"))
+                           :overlay (lambda () (error "pred boom"))
+                           :order 1)))))
+    (should-not (eabp-shell--visible-views))
+    (should-not (eabp-shell--active-view))))
+
 ;; ─── Transport ──────────────────────────────────────────────────────────────
 
 (ert-deftest eabp-request-no-leak ()

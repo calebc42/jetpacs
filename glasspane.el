@@ -2212,17 +2212,22 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
                     (assoc-delete-all name eabp-shell-views))
               (lambda (a b)
                 (< (plist-get (cdr a) :order) (plist-get (cdr b) :order)))))
+  (eabp-shell--schedule-repush)
   name)
 
 (defun eabp-shell-remove-view (name)
   "Unregister shell view NAME."
-  (setq eabp-shell-views (assoc-delete-all name eabp-shell-views)))
+  (setq eabp-shell-views (assoc-delete-all name eabp-shell-views))
+  (eabp-shell--schedule-repush))
 
 (defun eabp-shell--visible-views ()
-  "The registry entries included in this push (:when honoured)."
+  "The registry entries included in this push (:when honoured).
+A pred that signals counts as nil — a broken predicate must cost its
+view, not the push."
   (cl-remove-if-not (lambda (entry)
                       (let ((pred (plist-get (cdr entry) :when)))
-                        (or (null pred) (funcall pred))))
+                        (or (null pred)
+                            (condition-case nil (funcall pred) (error nil)))))
                     eabp-shell-views))
 
 (defun eabp-shell--tab-p (name)
@@ -2251,7 +2256,9 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
   "The view a push should land on: a firing overlay, else the current tab."
   (or (car (cl-find-if (lambda (e)
                          (let ((pred (plist-get (cdr e) :overlay)))
-                           (and pred (funcall pred))))
+                           (and pred
+                                (condition-case nil (funcall pred)
+                                  (error nil)))))
                        eabp-shell-views))
       (eabp-shell-current-tab)))
 
@@ -2292,7 +2299,8 @@ BUILDER is a function of no arguments returning an `eabp-drawer-item'.")
   "Add BUILDER (a nullary function returning a drawer item) at ORDER."
   (setq eabp-shell-drawer-items
         (sort (cons (cons order builder) eabp-shell-drawer-items)
-              (lambda (a b) (< (car a) (car b))))))
+              (lambda (a b) (< (car a) (car b)))))
+  (eabp-shell--schedule-repush))
 
 (defvar eabp-shell-top-actions nil
   "Ordered list of (ORDER . BUILDER) default top-bar trailing actions.
@@ -2302,7 +2310,8 @@ BUILDER is a function of no arguments returning an icon-button node.")
   "Add BUILDER (a nullary function returning an icon button) at ORDER."
   (setq eabp-shell-top-actions
         (sort (cons (cons order builder) eabp-shell-top-actions)
-              (lambda (a b) (< (car a) (car b))))))
+              (lambda (a b) (< (car a) (car b)))))
+  (eabp-shell--schedule-repush))
 
 (defvar eabp-shell-default-fab-function nil
   "Function of a view name returning that view's default FAB node, or nil.
@@ -2386,12 +2395,47 @@ action descriptor.  ACTIONS are trailing top-bar buttons."
   "Surface id the shell pushes to.  One multi-view surface: the companion
 switches views locally, so navigation never waits on Emacs.")
 
+(defun eabp-shell--build-view (name plist snackbar)
+  "Build view NAME from its :builder in PLIST, degrading errors in place.
+A broken builder must cost its own screen, not the whole push — with a
+Tier 1 being live-coded against a running session, the rest of the app
+keeps updating and the broken view *shows* its error."
+  (condition-case err
+      (funcall (plist-get plist :builder) snackbar)
+    (error
+     (eabp-shell-nav-view
+      (capitalize name)
+      (eabp-column
+       (eabp-text (format "Error building view \"%s\"" name) 'title)
+       (eabp-text (error-message-string err) 'body))
+      :snackbar snackbar))))
+
+(defvar eabp-shell--repush-timer nil)
+
+(defun eabp-shell--schedule-repush ()
+  "Debounced push after a registry mutation on a live session.
+Loading a Tier 1 file registers views/chrome in a burst; one idle push
+after the burst means `eval-buffer' (or `load') against a connected
+phone updates the app with no explicit `eabp-shell-push' — the
+live-coding loop.  A no-op while disconnected: the on-connect push will
+carry the registrations."
+  (when (and (eabp-connected-p) (not (timerp eabp-shell--repush-timer)))
+    (setq eabp-shell--repush-timer
+          (run-with-idle-timer 0.5 nil
+                               (lambda ()
+                                 (setq eabp-shell--repush-timer nil)
+                                 (eabp-shell-push))))))
+
 (cl-defun eabp-shell-push (&optional tab &key switch-to)
   "Push every registered view as one multi-view surface.
 TAB switches the logical tab before building.  SWITCH-TO additionally
 forces the companion onto that view (used when a push *is* the
 navigation, e.g. opening a detail); plain background refreshes never
 yank the user off whatever they're looking at."
+  ;; Any explicit push satisfies a pending registry repush.
+  (when (timerp eabp-shell--repush-timer)
+    (cancel-timer eabp-shell--repush-timer)
+    (setq eabp-shell--repush-timer nil))
   (when tab
     (unless (equal tab eabp-shell--current-tab)
       (run-hook-with-args 'eabp-shell-view-switched-hook tab))
@@ -2409,9 +2453,10 @@ yank the user off whatever they're looking at."
                      (lambda (entry)
                        (let ((name (car entry)))
                          (cons (intern name)
-                               (funcall (plist-get (cdr entry) :builder)
-                                        (when (equal name snack-view)
-                                          snackbar)))))
+                               (eabp-shell--build-view
+                                name (cdr entry)
+                                (when (equal name snack-view)
+                                  snackbar)))))
                      (eabp-shell--visible-views))))
         (eabp-surface-push
          eabp-shell-surface-id

@@ -58,7 +58,15 @@ plus key dispatch through the existing allowlisted action.
 The shell (`eabp-shell.el`) owns the phone's app scaffold: bottom-bar
 tabs, drawer, top bar, snackbar, pull-to-refresh, and the push that ships
 every view in one multi-view surface. An app is a set of registered
-views:
+views.
+
+Tier 1 development is **live**: registering or removing a view on a
+connected session schedules a push automatically, so `eval-buffer` (or
+`load`) against a running phone updates the app in place — and a builder
+that signals renders as an error view instead of breaking the push. The
+smallest runnable example is
+[`emacs/apps/eabp-hello.el`](../emacs/apps/eabp-hello.el) — load it into
+a core-only session and a Hello tab appears. A larger one:
 
 ```elisp
 (require 'eabp-shell)

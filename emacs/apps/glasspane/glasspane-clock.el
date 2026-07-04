@@ -1,4 +1,4 @@
-;;; eabp-org-clock.el --- org-clock chronometer notification -*- lexical-binding: t; -*-
+;;; glasspane-clock.el --- org-clock chronometer notification -*- lexical-binding: t; -*-
 
 ;; Tier 1 org integration: mirrors the running org clock to the companion
 ;; as an ongoing chronometer notification with Clock out / Switch task
@@ -16,7 +16,7 @@
 (require 'eabp-surfaces)
 (require 'org-clock)
 
-(defun eabp-clock-in-notification ()
+(defun glasspane-clock-in-notification ()
   "Push the org-clock chronometer notification surface."
   (when (and (boundp 'org-clock-current-task) org-clock-current-task)
     (eabp-surface-push
@@ -32,7 +32,7 @@
               (eabp-button "Switch task"
                            (eabp-action "org.clock.switch" :when-offline "wake"))))))))
 
-(defun eabp-clock-out-notification ()
+(defun glasspane-clock-out-notification ()
   "Remove the org-clock notification surface."
   (eabp-surface-remove "notification:org-clock"))
 
@@ -51,8 +51,8 @@
                     (error (message "EABP clock-in-last failed: %s"
                                     (error-message-string err))))))
 
-(add-hook 'org-clock-in-hook  #'eabp-clock-in-notification)
-(add-hook 'org-clock-out-hook #'eabp-clock-out-notification)
+(add-hook 'org-clock-in-hook  #'glasspane-clock-in-notification)
+(add-hook 'org-clock-out-hook #'glasspane-clock-out-notification)
 
 ;; On (re)connect, re-assert current clock state so the companion's cache
 ;; matches reality after an Emacs restart. (Runs after the revision snapshot
@@ -60,7 +60,7 @@
 (add-hook 'eabp-connected-hook
           (lambda (_welcome)
             (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
-              (eabp-clock-in-notification))))
+              (glasspane-clock-in-notification))))
 
-(provide 'eabp-org-clock)
-;;; eabp-org-clock.el ends here
+(provide 'glasspane-clock)
+;;; glasspane-clock.el ends here

@@ -15,23 +15,24 @@
   (file-name-directory (or load-file-name buffer-file-name))
   "Directory containing this test file.")
 
-(add-to-list 'load-path (expand-file-name "../emacs" eabp-tests--dir))
+(dolist (dir '("../emacs/core" "../emacs/apps" "../emacs/apps/glasspane"))
+  (add-to-list 'load-path (expand-file-name dir eabp-tests--dir)))
 
 (require 'ert)
 (require 'cl-lib)
 (require 'eabp)
 (require 'eabp-widgets)
 (require 'eabp-shell)
-(require 'eabp-org)
+(require 'glasspane-org)
 (require 'eabp-keymap)
 (require 'eabp-magit)
 (require 'eabp-files)
 (require 'eabp-minibuffer)
-(require 'eabp-org-ui)
+(require 'glasspane-ui)
 (require 'eabp-emacs-ui)
 (require 'eabp-complete)
 (require 'eabp-sync)
-(require 'eabp-demo)
+(require 'glasspane-demo)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@
              "* TODO %^{Headline}\n%^{Notes|no notes}\n%?"))))
     (unwind-protect
         (progn
-          (eabp-org--do-capture "t" '(("Headline" . "Buy milk")
+          (glasspane-org--do-capture "t" '(("Headline" . "Buy milk")
                                       ("Notes" . "2% fat")))
           (let ((content (with-current-buffer (find-file-noselect file)
                            (buffer-string))))
@@ -59,7 +60,7 @@
           `(("t" "Task" entry (file ,file) "* TODO %^{Headline}\n%?"))))
     (unwind-protect
         (progn
-          (eabp-org--do-capture "t" '(("Headline" . "Read article"))
+          (glasspane-org--do-capture "t" '(("Headline" . "Read article"))
                                 "https://example.com/post\nInteresting bit.")
           (let ((content (with-current-buffer (find-file-noselect file)
                            (buffer-string))))
@@ -73,15 +74,15 @@
 (ert-deftest eabp-upcoming-reminders ()
   "Timed items within the horizon become reminder specs; untimed don't."
   (let* ((file (make-temp-file "eabp-remind" nil ".org"))
-         (tomorrow (eabp-org-ui--shift-date (format-time-string "%Y-%m-%d")
+         (tomorrow (glasspane-ui--shift-date (format-time-string "%Y-%m-%d")
                                             1 'day)))
     (with-temp-file file
       (insert (format "* TODO Standup\nSCHEDULED: <%s 09:15>\n" tomorrow)
               (format "* TODO Untimed thing\nSCHEDULED: <%s>\n" tomorrow)))
     (unwind-protect
         (let ((org-agenda-files (list file)))
-          (eabp-org-cache-invalidate)
-          (let ((rems (eabp-org--upcoming-reminders 48)))
+          (glasspane-org-cache-invalidate)
+          (let ((rems (glasspane-org--upcoming-reminders 48)))
             (should (= (length rems) 1))
             (let ((r (car rems)))
               (should (equal (alist-get 'title r) "Standup"))
@@ -94,30 +95,30 @@
 
 (ert-deftest eabp-widget-lines ()
   "Widget lines are compact \"HH:MM  Headline\" strings, capped at 6."
-  (cl-letf (((symbol-function 'eabp-org--agenda-items)
+  (cl-letf (((symbol-function 'glasspane-org--agenda-items)
              (lambda (&rest _)
                (append
                 (list '((headline . "Standup") (time . "09:15"))
                       '((headline . "No time")))
                 (make-list 8 '((headline . "Filler") (time . "10:00")))))))
-    (let ((lines (eabp-org-ui--widget-lines)))
+    (let ((lines (glasspane-ui--widget-lines)))
       (should (= (length lines) 6))
       (should (equal (nth 0 lines) "09:15  Standup"))
       (should (equal (nth 1 lines) "No time")))))
 
 ;; ─── Extraction cache ───────────────────────────────────────────────────────
 
-(ert-deftest eabp-org-cache-memoises ()
-  "Readers memoise until `eabp-org-cache-invalidate' drops the table."
+(ert-deftest glasspane-org-cache-memoises ()
+  "Readers memoise until `glasspane-org-cache-invalidate' drops the table."
   (let ((n 0))
-    (cl-letf (((symbol-function 'eabp-org--todo-items-1)
+    (cl-letf (((symbol-function 'glasspane-org--todo-items-1)
                (lambda (_files) (setq n (1+ n)) '(fake))))
-      (eabp-org-cache-invalidate)
-      (eabp-org--todo-items)
-      (eabp-org--todo-items)
+      (glasspane-org-cache-invalidate)
+      (glasspane-org--todo-items)
+      (glasspane-org--todo-items)
       (should (= n 1))
-      (eabp-org-cache-invalidate)
-      (eabp-org--todo-items)
+      (glasspane-org-cache-invalidate)
+      (glasspane-org--todo-items)
       (should (= n 2)))))
 
 ;; ─── Files sandbox ──────────────────────────────────────────────────────────
@@ -160,10 +161,10 @@
           (with-current-buffer (get-buffer-create "*Org Agenda*")
             (erase-buffer)
             (insert "user content"))
-          (eabp-org-cache-invalidate)
+          (glasspane-org-cache-invalidate)
           (should (cl-some (lambda (it)
                              (equal (alist-get 'headline it) "Water plants"))
-                           (eabp-org--agenda-items 'day nil)))
+                           (glasspane-org--agenda-items 'day nil)))
           (should-not (get-buffer "*EABP Agenda*"))
           (should (equal (with-current-buffer "*Org Agenda*" (buffer-string))
                          "user content")))
@@ -172,31 +173,31 @@
 (ert-deftest eabp-agenda-anchored-extraction ()
   "Navigation anchors actually change the extracted range."
   (let* ((file (make-temp-file "eabp-agenda-nav" nil ".org"))
-         (tomorrow (eabp-org-ui--shift-date
+         (tomorrow (glasspane-ui--shift-date
                     (format-time-string "%Y-%m-%d") 1 'day)))
     (with-temp-file file
       (insert (format "* TODO Future thing\nSCHEDULED: <%s>\n" tomorrow)))
     (unwind-protect
         (let ((org-agenda-files (list file)))
-          (eabp-org-cache-invalidate)
+          (glasspane-org-cache-invalidate)
           (should-not (cl-some (lambda (it)
                                  (equal (alist-get 'headline it) "Future thing"))
-                               (eabp-org--agenda-items 'day nil)))
+                               (glasspane-org--agenda-items 'day nil)))
           (should (cl-some (lambda (it)
                              (equal (alist-get 'headline it) "Future thing"))
-                           (eabp-org--agenda-items 'day tomorrow))))
+                           (glasspane-org--agenda-items 'day tomorrow))))
       (delete-file file))))
 
 ;; ─── Agenda date arithmetic & widgets ───────────────────────────────────────
 
 (ert-deftest eabp-agenda-date-math ()
-  (should (equal (eabp-org-ui--shift-date "2026-07-01" 1 'day) "2026-07-02"))
-  (should (equal (eabp-org-ui--shift-date "2026-07-01" -1 'day) "2026-06-30"))
-  (should (equal (eabp-org-ui--shift-date "2026-07-01" -1 'week) "2026-06-24"))
-  (should (equal (eabp-org-ui--shift-date "2026-01-31" 1 'month) "2026-02-28"))
-  (should (equal (eabp-org-ui--shift-date "2024-01-31" 1 'month) "2024-02-29"))
-  (should (equal (eabp-org-ui--shift-date "2026-12-15" 1 'month) "2027-01-15"))
-  (should (equal (eabp-org-ui--shift-date "2026-01-15" -1 'month) "2025-12-15")))
+  (should (equal (glasspane-ui--shift-date "2026-07-01" 1 'day) "2026-07-02"))
+  (should (equal (glasspane-ui--shift-date "2026-07-01" -1 'day) "2026-06-30"))
+  (should (equal (glasspane-ui--shift-date "2026-07-01" -1 'week) "2026-06-24"))
+  (should (equal (glasspane-ui--shift-date "2026-01-31" 1 'month) "2026-02-28"))
+  (should (equal (glasspane-ui--shift-date "2024-01-31" 1 'month) "2024-02-29"))
+  (should (equal (glasspane-ui--shift-date "2026-12-15" 1 'month) "2027-01-15"))
+  (should (equal (glasspane-ui--shift-date "2026-01-15" -1 'month) "2025-12-15")))
 
 (ert-deftest eabp-agenda-widgets-serialize ()
   "Agenda cards, nav rows, and the month grid build and serialize."
@@ -209,13 +210,13 @@
                 (tags . ["work" "urgent"])
                 (ref . ((file . "/tmp/x.org") (pos . 1)
                         (headline . "Ship release"))))))
-    (dolist (node (list (eabp-org-ui--agenda-card item)
-                        (eabp-org-ui--agenda-card
+    (dolist (node (list (glasspane-ui--agenda-card item)
+                        (glasspane-ui--agenda-card
                          '((headline . "Done thing") (todo . "DONE")))
-                        (eabp-org-ui--agenda-nav-row "day" "2026-07-01")
-                        (eabp-org-ui--agenda-nav-row "week" "2026-07-01")
-                        (eabp-org-ui--agenda-nav-row "month" "2026-07-01")
-                        (eabp-org-ui--agenda-month-view nil "2026-02-14")))
+                        (glasspane-ui--agenda-nav-row "day" "2026-07-01")
+                        (glasspane-ui--agenda-nav-row "week" "2026-07-01")
+                        (glasspane-ui--agenda-nav-row "month" "2026-07-01")
+                        (glasspane-ui--agenda-month-view nil "2026-02-14")))
       (should (consp node))
       (should (stringp (json-serialize node :null-object :null
                                        :false-object :false))))))
@@ -317,8 +318,8 @@ Also pins the org behavior the + Add flow depends on: a property set to
 the empty string must still be returned by `org-entry-properties'."
   ;; Row shapes.
   (let* ((ref '((file . "/tmp/x.org") (pos . 1) (headline . "T")))
-         (row (eabp-org-ui--property-row "EFFORT" "2h" ref 1))
-         (id-row (eabp-org-ui--property-row "ID" "abc-123" ref 1)))
+         (row (glasspane-ui--property-row "EFFORT" "2h" ref 1))
+         (id-row (glasspane-ui--property-row "ID" "abc-123" ref 1)))
     (should (equal (alist-get 't row) "row"))
     ;; Key column: plain label, no colons.
     (let* ((key-box (aref (alist-get 'children row) 0))
@@ -760,25 +761,25 @@ the buffer alive (it may be the user's, and it keeps the server warm)."
 
 ;; ─── Demo files ─────────────────────────────────────────────────────────────
 
-(ert-deftest eabp-demo-setup-writes-files ()
+(ert-deftest glasspane-demo-setup-writes-files ()
   "Setup writes every tour file, non-trivially sized, and is idempotent."
-  (let ((dir (make-temp-file "eabp-demo" t)))
+  (let ((dir (make-temp-file "glasspane-demo" t)))
     (unwind-protect
         (progn
-          (eabp-demo-setup dir)
-          (eabp-demo-setup dir)          ; overwrite must not error
+          (glasspane-demo-setup dir)
+          (glasspane-demo-setup dir)          ; overwrite must not error
           (dolist (f '("demo.el" "demo.py" "demo.sh" "demo.org"))
             (let ((path (expand-file-name f dir)))
               (should (file-exists-p path))
               (should (> (file-attribute-size (file-attributes path)) 200)))))
       (delete-directory dir t))))
 
-(ert-deftest eabp-demo-el-is-tour-ready ()
+(ert-deftest glasspane-demo-el-is-tour-ready ()
   "The elisp tour file exercises the bridge features it claims to.
 Its wrong-arity call must reference a function defined in the same
 file (so the byte-compiler can flag it), and completion must fire on
 the text it tells the user to type."
-  (let ((content (cdr (assoc "demo.el" eabp-demo--files))))
+  (let ((content (cdr (assoc "demo.el" glasspane-demo--files))))
     (should (string-search "(demo-greet \"world\" 'oops)" content))
     (should (string-search "(defun demo-greet (name)" content))
     ;; The completion instruction actually completes.

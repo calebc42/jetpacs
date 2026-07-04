@@ -1,14 +1,14 @@
-;;; glasspane.el --- Glasspane Emacs client, single-file bundle -*- lexical-binding: t; -*-
+;;; glasspane.el --- Glasspane Emacs client (EABP core + reference apps), single-file bundle -*- lexical-binding: t; -*-
 ;;
 ;; GENERATED FILE -- do not edit by hand.
-;; Produced by emacs/build-bundle.el from the emacs/eabp-*.el sources.
+;; Produced by emacs/build-bundle.el from the emacs/ sources.
 ;; Concatenated in dependency order; each part keeps its own `provide',
 ;; so the inter-file `require' forms resolve within this file.
 ;;
 ;;; Code:
 
 ;;; ==================================================================
-;;; BEGIN eabp.el
+;;; BEGIN core/eabp.el
 ;;; ==================================================================
 
 ;;; eabp.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
@@ -442,7 +442,7 @@ and nothing else here changes."
 (provide 'eabp)
 ;;; eabp.el ends here
 ;;; ==================================================================
-;;; BEGIN eabp-widgets.el
+;;; BEGIN core/eabp-widgets.el
 ;;; ==================================================================
 
 ;;; eabp-widgets.el --- EABP SDUI widget constructors -*- lexical-binding: t; -*-
@@ -891,7 +891,7 @@ given, enables pull-to-refresh on the body, dispatching that action."
 ;;; eabp-widgets.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-surfaces.el
+;;; BEGIN core/eabp-surfaces.el
 ;;; ==================================================================
 
 ;;; eabp-surfaces.el --- Surfaces, actions & UI state for EABP -*- lexical-binding: t; -*-
@@ -1090,7 +1090,7 @@ and forwarded to the companion as dialogs."
 (require 'eabp-minibuffer nil t)
 ;;; eabp-surfaces.el ends here
 ;;; ==================================================================
-;;; BEGIN eabp-minibuffer.el
+;;; BEGIN core/eabp-minibuffer.el
 ;;; ==================================================================
 
 ;;; eabp-minibuffer.el --- Bridge minibuffer prompts to the companion -*- lexical-binding: t; -*-
@@ -1678,7 +1678,7 @@ chosen entry is returned as the original would."
 ;;; eabp-minibuffer.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-buffer.el
+;;; BEGIN core/eabp-buffer.el
 ;;; ==================================================================
 
 ;;; eabp-buffer.el --- Generic buffer renderer (Tier 0) -*- lexical-binding: t; -*-
@@ -2147,7 +2147,7 @@ section.  Runs inside an action handler, so any prompt is bridged."
 ;;; eabp-buffer.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-shell.el
+;;; BEGIN core/eabp-shell.el
 ;;; ==================================================================
 
 ;;; eabp-shell.el --- Multi-view app shell for EABP -*- lexical-binding: t; -*-
@@ -2492,7 +2492,7 @@ Safe on any hook: extra arguments are ignored."
 ;;; eabp-shell.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-tablist.el
+;;; BEGIN core/eabp-tablist.el
 ;;; ==================================================================
 
 ;;; eabp-tablist.el --- Generic tabulated-list renderer (Tier 0.5) -*- lexical-binding: t; -*-
@@ -2701,247 +2701,7 @@ by its header label instead of a fragile index."
 ;;; eabp-tablist.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-package-browser.el
-;;; ==================================================================
-
-;;; eabp-package-browser.el --- Package browser skin for the tablist renderer -*- lexical-binding: t; -*-
-
-;; The first Tier 1 tablist skin, and the worked example of the pattern:
-;; package-menu-mode derives from tabulated-list-mode, so the generic walk
-;; in eabp-tablist.el is reused; this file only registers the three skin
-;; hooks (header, row, filter) plus its curated actions.
-;;
-;; It adds search + status chips, install/delete per row, and archive
-;; refresh / upgrade-all — the actions validate package names against the
-;; archive/installed lists, keeping the wire semantic (see the
-;; command-dispatch boundary: nothing on the wire names arbitrary code).
-
-;;; Code:
-
-(require 'cl-lib)
-(require 'package)
-(require 'eabp-widgets)
-(require 'eabp-surfaces)
-(require 'eabp-tablist)
-(require 'eabp-shell)
-
-(defvar eabp-pkg--search ""
-  "Current package search string (matches name and summary).")
-
-(defvar eabp-pkg--status "all"
-  "Current package status filter chip.")
-
-(defconst eabp-pkg--statuses
-  '(("all")
-    ("installed" "installed" "dependency" "unsigned" "external" "held")
-    ("available" "available" "new")
-    ("built-in" "built-in")
-    ("upgradable" "obsolete"))
-  "Chip name -> package-menu status strings it admits.")
-
-(defun eabp-pkg--toast (text)
-  (eabp-send "toast.show" `((text . ,text))))
-
-(defun eabp-pkg--filter (id entry)
-  "Keep package row (ID ENTRY) when it matches the search and status chips."
-  (let ((statuses (cdr (assoc eabp-pkg--status eabp-pkg--statuses)))
-        (status (or (eabp-tablist-entry-col entry "Status") ""))
-        (hay (concat (eabp-tablist-col-string (aref entry 0)) " "
-                     (and (package-desc-p id)
-                          (or (package-desc-summary id) "")))))
-    (and (or (null statuses) (member status statuses))
-         (or (string-empty-p eabp-pkg--search)
-             (string-match-p (regexp-quote eabp-pkg--search)
-                             (downcase hay))))))
-
-(defun eabp-pkg--header (_buf)
-  (list
-   (eabp-text-input "pkg-search"
-                    :value eabp-pkg--search
-                    :label "Search packages" :single-line t
-                    :on-submit (eabp-action "packages.search"))
-   (apply #'eabp-flow-row
-          (mapcar (lambda (chip)
-                    (let ((s (car chip)))
-                      (eabp-chip (capitalize s)
-                                 :selected (equal eabp-pkg--status s)
-                                 :on-tap (eabp-action
-                                          "packages.status-filter"
-                                          :args `((status . ,s))
-                                          :when-offline "drop"))))
-                  eabp-pkg--statuses))
-   (eabp-row
-    (eabp-button "Refresh archives"
-                 (eabp-action "packages.refresh-archives" :when-offline "drop")
-                 :variant "text")
-    (eabp-spacer :weight 1)
-    (when (fboundp 'package-upgrade-all)
-      (eabp-button "Upgrade all"
-                   (eabp-action "packages.upgrade-all" :when-offline "drop")
-                   :variant "text")))))
-
-(defun eabp-pkg--row (id entry _pos)
-  (when (package-desc-p id)
-    (let* ((sym (package-desc-name id))
-           (name (symbol-name sym))
-           (version (or (eabp-tablist-entry-col entry "Version") ""))
-           (status (or (eabp-tablist-entry-col entry "Status") ""))
-           (summary (or (package-desc-summary id) ""))
-           (installed (assq sym package-alist)))
-      (eabp-card
-       (list
-        (eabp-row
-         (eabp-box
-          (list (eabp-column
-                 (eabp-row (eabp-text name 'label)
-                           (eabp-text version 'caption)
-                           (eabp-text status 'caption))
-                 (eabp-text summary 'caption)))
-          :weight 1)
-         (cond
-          (installed
-           (eabp-icon-button "delete"
-                             (eabp-action "packages.delete"
-                                          :args `((package . ,name))
-                                          :when-offline "drop")
-                             :content-description (format "Uninstall %s" name)))
-          ((not (equal status "built-in"))
-           (eabp-icon-button "arrow_downward"
-                             (eabp-action "packages.install"
-                                          :args `((package . ,name))
-                                          :when-offline "drop")
-                             :content-description (format "Install %s" name))))))
-       :on-tap (eabp-action "packages.describe"
-                            :args `((package . ,name))
-                            :when-offline "drop")))))
-
-(setf (alist-get 'package-menu-mode eabp-tablist-header-functions)
-      #'eabp-pkg--header)
-(setf (alist-get 'package-menu-mode eabp-tablist-row-functions)
-      #'eabp-pkg--row)
-(setf (alist-get 'package-menu-mode eabp-tablist-filter-functions)
-      #'eabp-pkg--filter)
-
-;; ─── Actions ─────────────────────────────────────────────────────────────────
-
-(defun eabp-pkg--buffer ()
-  "The live *Packages* menu buffer, creating (without fetching) if needed."
-  (require 'package)
-  (unless package--initialized (package-initialize))
-  (or (get-buffer "*Packages*")
-      (save-window-excursion
-        (list-packages t)
-        (get-buffer "*Packages*"))))
-
-(defun eabp-pkg--revert ()
-  "Re-generate the package menu after an install/delete and re-push."
-  (let ((buf (get-buffer "*Packages*")))
-    (when buf
-      (with-current-buffer buf
-        (ignore-errors (revert-buffer)))))
-  (eabp-tablist-refresh-view))
-
-(eabp-defaction "packages.show"
-  (lambda (_ __)
-    (let ((buf (eabp-pkg--buffer)))
-      (when (and buf (null package-archive-contents))
-        (eabp-pkg--toast
-         "Archives not fetched yet - tap Refresh archives"))
-      (funcall eabp-tablist-view-buffer-function (buffer-name buf)))))
-
-(eabp-defaction "packages.search"
-  (lambda (args _)
-    (let ((q (alist-get 'value args)))
-      (setq eabp-pkg--search
-            (downcase (or (and (stringp q) q) "")))
-      (eabp-tablist-refresh-view))))
-
-(eabp-defaction "packages.status-filter"
-  (lambda (args _)
-    (let ((s (alist-get 'status args)))
-      (when (assoc s eabp-pkg--statuses)
-        (setq eabp-pkg--status s)
-        (eabp-tablist-refresh-view)))))
-
-(eabp-defaction "packages.install"
-  (lambda (args _)
-    (let* ((name (alist-get 'package args))
-           (sym (and (stringp name) (intern-soft name))))
-      (if (not (and sym (assq sym package-archive-contents)))
-          (eabp-pkg--toast (format "%s is not in the archives" name))
-        (eabp-pkg--toast (format "Installing %s…" name))
-        (condition-case err
-            (progn
-              (package-install sym)
-              (eabp-pkg--toast (format "Installed %s" name)))
-          (error (eabp-pkg--toast
-                  (format "Install failed: %s" (error-message-string err)))))
-        (eabp-pkg--revert)))))
-
-(eabp-defaction "packages.delete"
-  (lambda (args _)
-    (let* ((name (alist-get 'package args))
-           (sym (and (stringp name) (intern-soft name)))
-           (desc (and sym (cadr (assq sym package-alist)))))
-      (if (not desc)
-          (eabp-pkg--toast (format "%s is not installed" name))
-        (condition-case err
-            (progn
-              (package-delete desc)
-              (eabp-pkg--toast (format "Deleted %s" name)))
-          (error (eabp-pkg--toast
-                  ;; Typically: something still depends on it.
-                  (format "Delete failed: %s" (error-message-string err)))))
-        (eabp-pkg--revert)))))
-
-(eabp-defaction "packages.refresh-archives"
-  (lambda (_ __)
-    (eabp-pkg--toast "Refreshing package archives…")
-    (condition-case err
-        (progn
-          (require 'package)
-          (unless package--initialized (package-initialize))
-          (package-refresh-contents)
-          (eabp-pkg--toast "Archives refreshed"))
-      (error (eabp-pkg--toast
-              (format "Refresh failed: %s" (error-message-string err)))))
-    (eabp-pkg--revert)))
-
-(eabp-defaction "packages.upgrade-all"
-  (lambda (_ __)
-    (if (not (fboundp 'package-upgrade-all))
-        (eabp-pkg--toast "Upgrade-all needs Emacs 29+")
-      (eabp-pkg--toast "Upgrading all packages…")
-      (condition-case err
-          (progn
-            (package-upgrade-all nil)
-            (eabp-pkg--toast "Upgrades complete"))
-        (error (eabp-pkg--toast
-                (format "Upgrade failed: %s" (error-message-string err)))))
-      (eabp-pkg--revert))))
-
-(eabp-defaction "packages.describe"
-  (lambda (args _)
-    (let* ((name (alist-get 'package args))
-           (sym (and (stringp name) (intern-soft name))))
-      (when (and sym
-                 (or (assq sym package-archive-contents)
-                     (assq sym package-alist)
-                     (assq sym package--builtins)))
-        (save-window-excursion (describe-package sym))
-        (funcall eabp-tablist-view-buffer-function "*Help*")))))
-
-;; The browser's drawer entry in the shell.
-(eabp-shell-add-drawer-item
- 40 (lambda ()
-      (eabp-drawer-item "archive" "Packages"
-                        (eabp-action "packages.show" :when-offline "drop"))))
-
-(provide 'eabp-package-browser)
-;;; eabp-package-browser.el ends here
-
-;;; ==================================================================
-;;; BEGIN eabp-transient.el
+;;; BEGIN core/eabp-transient.el
 ;;; ==================================================================
 
 ;;; eabp-transient.el --- Render transient prefixes as touch dialogs -*- lexical-binding: t; -*-
@@ -3205,1116 +2965,7 @@ can never arrive over the bridge."
 ;;; eabp-transient.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-org-rich.el
-;;; ==================================================================
-
-;;; eabp-org-rich.el --- Org → rich-text SDUI emitter -*- lexical-binding: t; -*-
-
-;; Turns org content into EABP `rich_text' nodes (styled span runs) instead of
-;; the syntax-highlighted monospace `eabp-markup' produces. Emacs does the
-;; parsing via `org-element', so the device never re-parses org — it only paints
-;; the spans. Inline emphasis (bold/italic/underline/strike/code/verbatim),
-;; links (tappable), timestamps, and #hashtags all map to native styling.
-;;
-;; Block-level content that doesn't fit a single styled paragraph — source
-;; blocks, tables, example blocks — falls back to `eabp-markup' so code keeps
-;; its highlighted, fixed-width look.
-;;
-;; Entry point: `eabp-org-rich-body' (an org body string -> a list of nodes).
-
-;;; Code:
-
-(require 'org)
-(require 'org-element)
-(require 'cl-lib)
-(require 'eabp-widgets)
-
-;; ─── Dynamic context for interactive elements ───────────────────────────────
-
-(defvar eabp-org-rich--file nil
-  "File path being rendered; enables interactive checkboxes when non-nil.")
-
-(defvar eabp-org-rich--body-offset nil
-  "Offset mapping temp-buffer positions to real-file positions.
-real-pos = offset + temp-pos.  Set by `eabp-org-rich-body' when
-FILE and OFFSET are supplied.")
-
-;; ─── Inline spans ────────────────────────────────────────────────────────────
-
-(defun eabp-org-rich--flag (style key)
-  "Return STYLE (a plist of emphasis flags) with KEY turned on.
-Prepended so `plist-get' sees the new value first; STYLE is never mutated."
-  (cons key (cons t style)))
-
-(defun eabp-org-rich--leaf (text style)
-  "Build a span for TEXT carrying the emphasis flags set in STYLE."
-  (apply #'eabp-span (or text "")
-         (append (when (plist-get style :bold)      '(:bold t))
-                 (when (plist-get style :italic)    '(:italic t))
-                 (when (plist-get style :underline) '(:underline t))
-                 (when (plist-get style :strike)    '(:strike t))
-                 (when (plist-get style :code)      '(:code t))
-                 (when (plist-get style :tag)       '(:tag t))
-                 (when (plist-get style :baseline)
-                   (list :baseline (plist-get style :baseline))))))
-
-(defconst eabp-org-rich--image-re
-  "\\.\\(png\\|jpe?g\\|gif\\|webp\\|bmp\\|svg\\)\\'"
-  "Matches link targets that should render as inline images.")
-
-(defun eabp-org-rich--image-url (type target)
-  "Return a renderable URL for a link of TYPE to TARGET if it's an image.
-http(s) image URLs pass through; local file/attachment paths become
-file:// URIs the companion can try to load. Returns nil for non-images."
-  (when (and (stringp target)
-             (string-match-p eabp-org-rich--image-re (downcase target)))
-    (let ((ty (and type (downcase type))))
-      (cond
-       ((member ty '("http" "https")) (concat ty ":" target))
-       ((or (null ty) (equal ty "file"))
-        (concat "file://" (expand-file-name target)))
-       ((equal ty "attachment")
-        (let ((dir (ignore-errors (org-attach-dir))))
-          (when dir (concat "file://" (expand-file-name target dir)))))))))
-
-(defun eabp-org-rich--text-spans (text style)
-  "Split TEXT into plain runs and #hashtag runs, all under STYLE.
-A hashtag must follow start-of-string or a non-word character, so `C#'
-and URL fragments aren't mistaken for tags."
-  (let ((spans nil) (start 0) (len (length text)))
-    (while (string-match "\\(?:^\\|[^[:alnum:]_]\\)\\(#[[:alnum:]_-]+\\)" text start)
-      (let ((mb (match-beginning 1)) (me (match-end 1)))
-        (when (> mb start)
-          (push (eabp-org-rich--leaf (substring text start mb) style) spans))
-        (push (eabp-org-rich--leaf (substring text mb me)
-                                   (eabp-org-rich--flag style :tag))
-              spans)
-        (setq start me)))
-    (when (< start len)
-      (push (eabp-org-rich--leaf (substring text start) style) spans))
-    (nreverse spans)))
-
-(defun eabp-org-rich--linkify (spans action)
-  "Attach ON-TAP ACTION to every span in SPANS that doesn't already have one."
-  (mapcar (lambda (sp)
-            (if (assq 'on_tap sp) sp (cons (cons 'on_tap action) sp)))
-          spans))
-
-(defun eabp-org-rich--inline (objects style)
-  "Convert a list of org inline OBJECTS (strings and elements) to spans.
-STYLE carries inherited emphasis flags as recursion descends into
-bold/italic/... containers."
-  (let (spans)
-    (dolist (obj objects)
-      (cond
-       ((stringp obj)
-        (setq spans (append spans (eabp-org-rich--text-spans obj style))))
-       ((null obj) nil)
-       (t
-        (pcase (org-element-type obj)
-          ('bold (setq spans (append spans
-                                     (eabp-org-rich--inline
-                                      (org-element-contents obj)
-                                      (eabp-org-rich--flag style :bold)))))
-          ('italic (setq spans (append spans
-                                       (eabp-org-rich--inline
-                                        (org-element-contents obj)
-                                        (eabp-org-rich--flag style :italic)))))
-          ('underline (setq spans (append spans
-                                          (eabp-org-rich--inline
-                                           (org-element-contents obj)
-                                           (eabp-org-rich--flag style :underline)))))
-          ('strike-through (setq spans (append spans
-                                               (eabp-org-rich--inline
-                                                (org-element-contents obj)
-                                                (eabp-org-rich--flag style :strike)))))
-          ('code (setq spans (append spans
-                                     (list (eabp-org-rich--leaf
-                                            (org-element-property :value obj)
-                                            (eabp-org-rich--flag style :code))))))
-          ('verbatim (setq spans (append spans
-                                         (list (eabp-org-rich--leaf
-                                                (org-element-property :value obj)
-                                                (eabp-org-rich--flag style :code))))))
-          ('link
-           (let* ((raw (org-element-property :raw-link obj))
-                  (contents (org-element-contents obj))
-                  (child (if contents
-                             (eabp-org-rich--inline contents style)
-                           (list (eabp-org-rich--leaf (or raw "link") style))))
-                  (action (eabp-action "org.link.open"
-                                       :args (list (cons 'link raw)))))
-             (setq spans (append spans (eabp-org-rich--linkify child action)))))
-          ('timestamp
-           (setq spans (append spans
-                               (list (eabp-org-rich--leaf
-                                      (org-element-property :raw-value obj)
-                                      (eabp-org-rich--flag style :code))))))
-          ('entity
-           ;; Render org entities (\alpha, \rightarrow, …) as their Unicode form.
-           (let ((utf8 (or (org-element-property :utf-8 obj)
-                           (org-element-property :name obj))))
-             (when utf8
-               (setq spans (append spans (list (eabp-org-rich--leaf utf8 style)))))))
-          ('subscript
-           (setq spans (append spans
-                               (eabp-org-rich--inline
-                                (org-element-contents obj)
-                                (cons :baseline (cons "sub" style))))))
-          ('superscript
-           (setq spans (append spans
-                               (eabp-org-rich--inline
-                                (org-element-contents obj)
-                                (cons :baseline (cons "super" style))))))
-          ('footnote-reference
-           ;; A superscript, link-colored marker; tapping reports the inline
-           ;; definition (when the reference carries one) via snackbar.
-           (let* ((label (org-element-property :label obj))
-                  (marker (format "[%s]" (if (and (stringp label)
-                                                  (string-prefix-p "fn:" label))
-                                             (substring label 3)
-                                           (or label "*"))))
-                  (def (string-trim
-                        (or (ignore-errors
-                              (org-element-interpret-data
-                               (org-element-contents obj)))
-                            "")))
-                  (action (eabp-action "org.footnote.show"
-                                       :args (list (cons 'label (or label ""))
-                                                   (cons 'def def)))))
-             (setq spans
-                   (append spans
-                           (list (eabp-span marker
-                                            :baseline "super"
-                                            :tag t
-                                            :on-tap action))))))
-          ('line-break
-           (setq spans (append spans (list (eabp-span "\n")))))
-          (_
-           ;; Anything else (latex fragment, export snippet, …): fall back to
-           ;; its interpreted source text.
-           (let ((txt (ignore-errors (org-element-interpret-data obj))))
-             (when (stringp txt)
-               (setq spans (append spans
-                                   (eabp-org-rich--text-spans
-                                    (string-trim-right txt) style))))))))))
-    spans))
-
-;; ─── Block elements ──────────────────────────────────────────────────────────
-
-(defun eabp-org-rich--item (item)
-  "Render a plain-list ITEM to a node (bullet/number + content, plus sub-elements).
-
-When `eabp-org-rich--file' and `eabp-org-rich--body-offset' are set
-(the reader passes them), checkbox items get a tappable icon that
-toggles the checkbox via Emacs without entering edit mode."
-  (let* ((bullet (or (org-element-property :bullet item) "- "))
-         (checkbox (org-element-property :checkbox item))
-         (contents (org-element-contents item))
-         (para (cl-find-if (lambda (c) (eq (org-element-type c) 'paragraph)) contents))
-         (inline (when para (eabp-org-rich--inline (org-element-contents para) nil)))
-         (lead-text (concat (string-trim-right bullet) " "))
-         (head
-          (if (and checkbox eabp-org-rich--file eabp-org-rich--body-offset)
-              ;; Interactive checkbox — a tappable icon beside the item text.
-              (let* ((checked (eq checkbox 'on))
-                     (item-pos (+ eabp-org-rich--body-offset
-                                  (org-element-property :begin item)))
-                     (cb-icon (pcase checkbox
-                                ('on  "check_box")
-                                ('off "check_box_outline_blank")
-                                (_    "indeterminate_check_box")))
-                     (cb (eabp-box
-                          (list (eabp-icon cb-icon :size 20))
-                          :on-tap (eabp-action
-                                   "checkbox.toggle"
-                                   :args `((file . ,eabp-org-rich--file)
-                                           (pos  . ,item-pos))))))
-                (eabp-row cb
-                          (eabp-box
-                           (list (eabp-rich-text
-                                  (cons (eabp-span lead-text)
-                                        (or inline (list (eabp-span ""))))))
-                           :weight 1)))
-            ;; No checkbox, or no file context — plain text as before.
-            (let* ((mark (pcase checkbox
-                           ('on "☑ ") ('off "☐ ") ('trans "◪ ") (_ "")))
-                   (lead (eabp-span (concat lead-text mark))))
-              (eabp-rich-text (cons lead (or inline (list (eabp-span ""))))))))
-         (rest-contents (delq para (copy-sequence contents)))
-         (sub-nodes (delq nil (mapcar #'eabp-org-rich--element rest-contents))))
-    (if sub-nodes
-        (eabp-column head
-                     (eabp-row (eabp-spacer :width 16)
-                               (eabp-box (list (apply #'eabp-column sub-nodes)) :weight 1)))
-      head)))
-
-(defun eabp-org-rich--list (el)
-  "Render a plain-list EL to a column of item nodes."
-  (let ((items (delq nil
-                     (mapcar (lambda (item)
-                               (when (eq (org-element-type item) 'item)
-                                 (eabp-org-rich--item item)))
-                             (org-element-contents el)))))
-    (when items (apply #'eabp-column items))))
-
-(defun eabp-org-rich--paragraph-image (el)
-  "If paragraph EL is just a single image link, return an `eabp-image' node."
-  (let* ((contents (org-element-contents el))
-         (non-blank (cl-remove-if (lambda (c) (and (stringp c) (string-blank-p c)))
-                                  contents)))
-    (when (and (= (length non-blank) 1)
-               (consp (car non-blank))
-               (eq (org-element-type (car non-blank)) 'link))
-      (let* ((lnk (car non-blank))
-             (url (eabp-org-rich--image-url (org-element-property :type lnk)
-                                            (org-element-property :path lnk))))
-        (when url (eabp-image url))))))
-
-(defun eabp-org-rich--element (el)
-  "Render one top-level org element EL to a node, or nil to skip it."
-  (pcase (org-element-type el)
-    ('paragraph
-     (or (eabp-org-rich--paragraph-image el)
-         (let ((spans (eabp-org-rich--inline (org-element-contents el) nil)))
-           (when spans (eabp-rich-text spans)))))
-    ('plain-list (eabp-org-rich--list el))
-    ('src-block
-     (eabp-markup (or (org-element-property :value el) "")
-                  :syntax (or (org-element-property :language el) "text")))
-    ((or 'example-block 'fixed-width)
-     (eabp-markup (or (org-element-property :value el) "")))
-    ('quote-block
-     (let ((inner (delq nil (mapcar #'eabp-org-rich--element
-                                    (org-element-contents el)))))
-       (when inner (apply #'eabp-column inner))))
-    ('table
-     (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org"))
-    ('horizontal-rule (eabp-divider))
-    ;; Structural noise the reader handles elsewhere (properties drawer) or
-    ;; that carries no display value on its own.
-    ((or 'keyword 'comment 'comment-block 'planning
-         'property-drawer 'drawer 'node-property)
-     nil)
-    (_
-     (let ((txt (ignore-errors (string-trim (org-element-interpret-data el)))))
-       (when (and (stringp txt) (not (string-empty-p txt)))
-         (eabp-markup txt :syntax "org"))))))
-
-(defun eabp-org-rich--top-elements (tree)
-  "Return the top-level elements of parsed TREE, descending through a section."
-  (let (out)
-    (dolist (el (org-element-contents tree))
-      (if (eq (org-element-type el) 'section)
-          (setq out (append out (org-element-contents el)))
-        (setq out (append out (list el)))))
-    out))
-
-;;;###autoload
-(defun eabp-org-rich-body (body &optional base-dir file offset)
-  "Parse org BODY string into a list of EABP rich/markup nodes.
-Paragraphs and lists become native `rich_text'; code/tables/examples
-fall back to highlighted `eabp-markup'. BASE-DIR resolves relative image
-paths (pass the org file's directory).
-
-FILE and OFFSET enable interactive elements (checkboxes): OFFSET maps
-temp-buffer positions to real file positions (real = offset + temp).
-Returns nil for empty input."
-  (if (or (null body) (string-empty-p (string-trim body)))
-      nil
-    (let ((eabp-org-rich--file file)
-          (eabp-org-rich--body-offset offset))
-      (with-temp-buffer
-        (insert body)
-        (when (and base-dir (file-directory-p base-dir))
-          (setq default-directory base-dir))
-        (let ((org-inhibit-startup t)
-              (org-element-use-cache nil))
-          (delay-mode-hooks (org-mode))
-          (let ((tree (org-element-parse-buffer)))
-            (delq nil (mapcar #'eabp-org-rich--element
-                              (eabp-org-rich--top-elements tree)))))))))
-
-(provide 'eabp-org-rich)
-;;; eabp-org-rich.el ends here
-
-;;; ==================================================================
-;;; BEGIN eabp-org-reader.el
-;;; ==================================================================
-
-;;; eabp-org-reader.el --- Foldable org outline renderer for EABP -*- lexical-binding: t; -*-
-
-;; Renders an org buffer (or a single subtree) into a tree of EABP widgets:
-;; each heading becomes an `eabp-collapsible' whose header is the org-highlighted
-;; heading line and whose children are an optional (collapsed) PROPERTIES drawer,
-;; the heading's own body as highlighted org text, and its child headings —
-;; recursively. Folding is resolved entirely on the device (see the `collapsible'
-;; widget), so the whole subtree is shipped once and folds without a round-trip.
-;;
-;; Two entry points feed the UI layer (eabp-org-ui):
-;;   `eabp-org-reader-file'    — whole file, every top-level heading foldable
-;;   `eabp-org-reader-subtree' — one heading's content inline + children foldable
-
-;;; Code:
-
-(require 'org)
-(require 'cl-lib)
-(require 'eabp-widgets)
-(require 'eabp-org-rich)
-
-(defcustom eabp-org-reader-max-headings 400
-  "Cap on headings rendered in one reader pass, to bound very large files."
-  :type 'integer :group 'eabp)
-
-;; ─── Parsing ───────────────────────────────────────────────────────────────────
-
-(defun eabp-org-reader--record (pos next)
-  "Build a record for the heading at POS, whose body ends at NEXT.
-Returns a plist with :level :pos :line :props :body :body-start.
-:body-start is the real-buffer position of the first non-blank char
-in the body, used to map temp-buffer positions back for interactive
-elements (checkboxes)."
-  (save-excursion
-    (goto-char pos)
-    (let* ((comps (org-heading-components))
-           (level (or (nth 0 comps) 1))
-           (line (buffer-substring-no-properties
-                  (line-beginning-position) (line-end-position)))
-           (props (ignore-errors (org-entry-properties pos 'standard)))
-           (body-info
-            (progn
-              (goto-char pos)
-              (ignore-errors (org-end-of-meta-data t))
-              (let* ((b (min (point) next))
-                     (raw (buffer-substring-no-properties b next))
-                     (trimmed (string-trim-left raw "\\(?:[ \t]*[\n\r]\\)+"))
-                     (trim-count (- (length raw) (length trimmed))))
-                (list (string-trim-right trimmed) (+ b trim-count)))))
-           (body (car body-info))
-           (body-start (cadr body-info)))
-      (list :level level :pos pos :line line :props props
-            :body body :body-start body-start))))
-
-(defun eabp-org-reader--collect (beg end include-first)
-  "Collect heading records between BEG and END.
-INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
-  (let (positions records)
-    (save-excursion
-      (goto-char beg)
-      (when (and include-first (org-at-heading-p))
-        (push (line-beginning-position) positions)
-        (end-of-line))                  ; don't re-match this heading below
-      (while (re-search-forward org-heading-regexp end t)
-        (push (line-beginning-position) positions)))
-    (setq positions (nreverse positions))
-    (cl-loop for cell on positions
-             for pos = (car cell)
-             for next = (or (cadr cell) end)
-             do (push (eabp-org-reader--record pos next) records))
-    (nreverse records)))
-
-(defun eabp-org-reader--build-tree (records)
-  "Nest flat RECORDS into a tree by :level. Each node gains a :children list."
-  (let* ((root (list :level 0 :children nil))
-         (stack (list root)))
-    (dolist (rec records)
-      (let ((node (append rec (list :children nil)))
-            (level (plist-get rec :level)))
-        (while (>= (plist-get (car stack) :level) level)
-          (pop stack))
-        (let ((parent (car stack)))
-          (plist-put parent :children
-                     (append (plist-get parent :children) (list node))))
-        (push node stack)))
-    (plist-get root :children)))
-
-;; ─── Rendering ──────────────────────────────────────────────────────────────────
-
-(defun eabp-org-reader--props-node (props file pos)
-  "A collapsed PROPERTIES drawer node for PROPS (an alist of KEY . VALUE)."
-  (let ((text (mapconcat (lambda (kv) (format ":%s: %s" (car kv) (cdr kv)))
-                         props "\n")))
-    (eabp-collapsible (format "fold-props/%s/%s" file pos)
-                      (eabp-text "PROPERTIES" 'label)
-                      (list (eabp-text text 'mono))
-                      :collapsed t)))
-
-(defun eabp-org-reader--content-nodes (n file &optional skip-props)
-  "Inline content nodes for tree node N: PROPERTIES drawer, body, child headings.
-When SKIP-PROPS is non-nil, omit the PROPERTIES drawer (used when the
-detail view already shows properties in its own section)."
-  (let ((pos (plist-get n :pos))
-        (props (plist-get n :props))
-        (body (plist-get n :body))
-        (body-start (plist-get n :body-start))
-        (children (plist-get n :children)))
-    (delq nil
-          (append
-           (when (and props (not skip-props))
-             (list (eabp-org-reader--props-node props file pos)))
-           (when (and body (not (string-empty-p body)))
-             ;; Native rich text (emphasis, links, #tags) instead of the
-             ;; monospace org highlighter; code/tables still fall back to it.
-             ;; file + offset enable interactive checkboxes.
-             (eabp-org-rich-body body (and file (file-name-directory file))
-                                file (when body-start (1- body-start))))
-           (mapcar (lambda (c) (eabp-org-reader--heading-node c file)) children)))))
-
-(defun eabp-org-reader--heading-node (n file)
-  "Render tree node N (and its subtree) to a foldable `eabp-collapsible'.
-Long-pressing the header opens the heading detail view when FILE is available."
-  (let* ((pos (plist-get n :pos))
-         (ref (when file
-                `((file . ,file) (pos . ,pos) (headline . "")))))
-    (eabp-collapsible (format "fold/%s/%s" file pos)
-                      (eabp-markup (plist-get n :line) :syntax "org")
-                      (eabp-org-reader--content-nodes n file)
-                      :on-long-tap (when ref
-                                     (eabp-action "heading.tap" :args ref)))))
-
-;; ─── Entry points ───────────────────────────────────────────────────────────────
-
-(defun eabp-org-reader--cap (records)
-  "Truncate RECORDS to `eabp-org-reader-max-headings'."
-  (if (> (length records) eabp-org-reader-max-headings)
-      (cl-subseq records 0 eabp-org-reader-max-headings)
-    records))
-
-(defun eabp-org-reader-file (file)
-  "Render the whole org FILE to a list of foldable widget nodes.
-Content before the first heading is not shown."
-  (when (and file (file-readable-p file))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (let* ((records (eabp-org-reader--cap
-                        (eabp-org-reader--collect (point-min) (point-max) nil)))
-              (tree (eabp-org-reader--build-tree records)))
-         (mapcar (lambda (n) (eabp-org-reader--heading-node n file)) tree))))))
-
-(defun eabp-org-reader-subtree (file pos &optional skip-props)
-  "Render the org subtree at POS in FILE.
-The drilled-into heading's own PROPERTIES/body render inline (its title is
-already in the top bar); its child headings render as foldable sections.
-Returns a list of widget nodes (possibly empty).
-When SKIP-PROPS is non-nil, the top-level PROPERTIES drawer is omitted."
-  (when (and file (file-readable-p file))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (goto-char (min pos (point-max)))
-       (unless (org-at-heading-p) (ignore-errors (org-back-to-heading t)))
-       (let* ((beg (point))
-              (end (save-excursion (org-end-of-subtree t t)))
-              (records (eabp-org-reader--cap
-                        (eabp-org-reader--collect beg end t)))
-              (tree (eabp-org-reader--build-tree records))
-              (root (car tree)))
-         (when root
-           (eabp-org-reader--content-nodes root file skip-props)))))))
-
-(defun eabp-org-reader-refile-list (file)
-  "Render all headings in FILE as a flat reorderable item list.
-Returns a single `eabp-reorderable-list' node for refile mode."
-  (when (and file (file-readable-p file))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (let* ((records (eabp-org-reader--cap
-                        (eabp-org-reader--collect (point-min) (point-max) nil)))
-              (items (mapcar (lambda (r)
-                               `((label . ,(plist-get r :line))
-                                 (level . ,(plist-get r :level))
-                                 (pos   . ,(plist-get r :pos))
-                                 (file  . ,file)))
-                             records)))
-         (eabp-reorderable-list
-          items
-          :on-reorder (eabp-action "heading.reorder"
-                                   :args `((file . ,file)))))))))
-
-(provide 'eabp-org-reader)
-;;; eabp-org-reader.el ends here
-
-;;; ==================================================================
-;;; BEGIN eabp-org.el
-;;; ==================================================================
-
-;;; eabp-org.el --- EABP Org-Mode Data Extraction -*- lexical-binding: t; -*-
-
-;; Provides functions to extract structured data from org-mode buffers.
-;; This layer is pure Elisp and has no bridge dependencies.
-
-;;; Code:
-
-(require 'org)
-(require 'org-agenda)
-(require 'org-clock)
-(require 'org-capture)
-(require 'org-id)
-(require 'cl-lib)
-
-;; ─── Refresh coordination ──────────────────────────────────────────────────────
-
-(defvar eabp-org--inhibit-save-refresh nil
-  "When non-nil, the `after-save-hook' dashboard refresh is suppressed.
-Bound around our own programmatic saves (heading edits, file saves) so an
-explicit dashboard push isn't doubled by the save-hook firing on top.")
-
-;; The dashboard pushes every view on every action (so navigation stays
-;; instant and offline-capable), which means the expensive extractions here
-;; — a full `org-agenda' run, an `org-map-entries' sweep — used to execute
-;; on every chip tap and snackbar.  They are memoised now; this table is
-;; dropped through `eabp-org-cache-invalidate', the single seam every
-;; mutation path (heading actions, saves, capture, queue replay) already
-;; calls.
-(defvar eabp-org--cache (make-hash-table :test 'equal)
-  "Memoised org extraction results.
-Keys are built by `eabp-org--cache-key' and include today's date, so
-day-relative readers (the agenda) roll over at midnight even without an
-explicit invalidation.")
-
-(defun eabp-org--cache-key (&rest parts)
-  "Build a cache key from PARTS, scoped to today's date."
-  (cons (format-time-string "%Y-%m-%d") parts))
-
-(defmacro eabp-org--with-cache (key &rest body)
-  "Memoise BODY's result in `eabp-org--cache' under KEY."
-  (declare (indent 1))
-  (let ((k (gensym "key")) (hit (gensym "hit")))
-    `(let* ((,k ,key)
-            (,hit (gethash ,k eabp-org--cache 'eabp-org--miss)))
-       (if (eq ,hit 'eabp-org--miss)
-           (puthash ,k (progn ,@body) eabp-org--cache)
-         ,hit))))
-
-(defun eabp-org-cache-invalidate ()
-  "Drop every memoised org extraction.
-Called by every mutation path (heading actions, phone/desktop saves,
-capture, offline-queue drain), so the readers recompute from fresh org
-state on the next dashboard push."
-  (clrhash eabp-org--cache))
-
-;; ─── Heading references ────────────────────────────────────────────────────────
-;;
-;; Every heading the UI lists carries a `ref' — a small, JSON-safe alist that
-;; lets a later action (drill-in, todo-set, schedule, clock-in) find the same
-;; heading again. The round-trip is: build with `eabp-org--heading-ref' while
-;; point is on the heading, ship it to the device inside an action's `:args',
-;; and resolve it back to a live marker with `eabp-org--resolve-ref'.
-
-(defun eabp-org--heading-ref ()
-  "Build a location ref for the org heading at point.
-Returns an alist with `file'/`pos'/`headline', plus `id' when the entry
-already has an ID property (never created here — we don't mutate files).
-nil-valued keys are omitted so the alist serialises cleanly to JSON."
-  (save-excursion
-    (unless (org-at-heading-p)
-      (ignore-errors (org-back-to-heading t)))
-    (let ((id (org-entry-get nil "ID"))
-          (ref `((file . ,(or (buffer-file-name) ""))
-                 (pos . ,(point))
-                 (headline . ,(or (nth 4 (org-heading-components)) "")))))
-      (if (and (stringp id) (not (string-empty-p id)))
-          (cons `(id . ,id) ref)
-        ref))))
-
-(defun eabp-org--resolve-ref (ref)
-  "Resolve REF to a live marker at its org heading, or signal an error.
-REF is an alist as built by `eabp-org--heading-ref' (extra keys such as a
-consed-on `state' are ignored). Resolution tries, in order: the stable
-`id' (survives edits anywhere), the recorded `pos' accepted only if its
-headline still matches, then a headline search through the file."
-  (let ((id (alist-get 'id ref))
-        (file (alist-get 'file ref))
-        (pos (alist-get 'pos ref))
-        (headline (alist-get 'headline ref)))
-    (or
-     ;; 1. Stable org ID — robust against edits elsewhere in the file.
-     (and (stringp id) (not (string-empty-p id))
-          (ignore-errors (org-id-find id 'marker)))
-     ;; 2. Recorded position, trusted only if the headline still matches.
-     (and (stringp file) (file-readable-p file)
-          (let ((buf (find-file-noselect file)))
-            (with-current-buffer buf
-              (org-with-wide-buffer
-               (when (and (integerp pos) (<= (point-min) pos (point-max)))
-                 (goto-char pos)
-                 (when (ignore-errors (org-back-to-heading t) t)
-                   (when (or (not (stringp headline)) (string-empty-p headline)
-                             (equal (nth 4 (org-heading-components)) headline))
-                     (copy-marker (point)))))))))
-     ;; 3. Headline search — the heading moved but still exists in the file.
-     (and (stringp file) (file-readable-p file)
-          (stringp headline) (not (string-empty-p headline))
-          (let ((buf (find-file-noselect file)))
-            (with-current-buffer buf
-              (org-with-wide-buffer
-               (goto-char (point-min))
-               (catch 'found
-                 (while (re-search-forward org-heading-regexp nil t)
-                   (when (equal (nth 4 (org-heading-components)) headline)
-                     (throw 'found (copy-marker (line-beginning-position)))))
-                 nil)))))
-     (error "Heading not found: %s"
-            (or headline id file "?")))))
-
-(defun eabp-org--agenda-items (&optional span start-day)
-  "Extract agenda items for SPAN (\\='day, \\='week, or \\='month).
-START-DAY is an optional string (e.g. \"2026-11-01\") to start the agenda on.
-Returns a list of alists representing agenda items.  Memoised; see
-`eabp-org-cache-invalidate'."
-  (eabp-org--with-cache (eabp-org--cache-key 'agenda (or span 'day) start-day)
-    (eabp-org--agenda-items-1 span start-day)))
-
-(defconst eabp-org--agenda-buffer "*EABP Agenda*"
-  "Private buffer the agenda extraction builds into (and kills after).")
-
-(defun eabp-org--agenda-items-1 (span start-day)
-  "Uncached worker for `eabp-org--agenda-items'."
-  (let ((org-agenda-span (or span 'day))
-        (org-agenda-start-day start-day)
-        (org-agenda-files (org-agenda-files))
-        ;; Build into a private buffer so a user's open *Org Agenda* on the
-        ;; desktop is never clobbered (and never killed) by an extraction.
-        ;; `org-agenda-buffer-tmp-name' is the supported redirect: `org-agenda'
-        ;; REBINDS `org-agenda-buffer-name' in its own let* and recomputes it,
-        ;; so binding that variable directly gets shadowed — the build then
-        ;; lands in *Org Agenda* while we look for (and fail to find, and fail
-        ;; to kill) our own name.
-        (org-agenda-buffer-tmp-name eabp-org--agenda-buffer)
-        (org-agenda-sticky nil)
-        (inhibit-redisplay t)
-        items)
-    (unwind-protect
-        (save-window-excursion
-          (let ((org-agenda-window-setup 'current-window))
-            (org-agenda nil "a")
-            (with-current-buffer eabp-org--agenda-buffer
-          (goto-char (point-min))
-          (while (not (eobp))
-            (let* ((marker (get-text-property (point) 'org-marker))
-                   (tags (get-text-property (point) 'tags))
-                   (time (get-text-property (point) 'time))
-                   (type (get-text-property (point) 'type))
-                   (date-abs (get-text-property (point) 'date))
-                   ;; org ≥9.6 stores the gregorian (MONTH DAY YEAR) list
-                   ;; directly; older code stored the absolute day number.
-                   ;; Feeding the list to calendar-gregorian-from-absolute
-                   ;; signals, which emptied the whole agenda.
-                   (date-list (cond ((consp date-abs) date-abs)
-                                    ((numberp date-abs)
-                                     (calendar-gregorian-from-absolute date-abs))))
-                   (date-str (when date-list (format "%04d-%02d-%02d" (nth 2 date-list) (nth 0 date-list) (nth 1 date-list)))))
-              (when marker
-                (with-current-buffer (marker-buffer marker)
-                  (save-excursion
-                    (goto-char marker)
-                    (let* ((components (org-heading-components))
-                           (todo (nth 2 components))
-                           (priority (nth 3 components))
-                           (headline (nth 4 components)))
-                      (push `((headline . ,headline)
-                              (todo . ,todo)
-                              (priority . ,(if priority (char-to-string priority) nil))
-                              (tags . ,(vconcat tags))
-                              (file . ,(buffer-file-name))
-                              (pos . ,(marker-position marker))
-                              (time . ,time)
-                              (date . ,date-str)
-                              (type . ,(when type (format "%s" type)))
-                              (ref . ,(eabp-org--heading-ref)))
-                            items))))))
-            (forward-line 1)))))
-      ;; Kill by buffer object, not name, and even when extraction errored.
-      (when-let ((buf (get-buffer eabp-org--agenda-buffer)))
-        (kill-buffer buf)))
-    (nreverse items)))
-
-(defun eabp-org--todo-items (&optional files)
-  "Extract TODO items from FILES (or agenda files).
-Memoised; see `eabp-org-cache-invalidate'."
-  (eabp-org--with-cache (eabp-org--cache-key 'todos files)
-    (eabp-org--todo-items-1 files)))
-
-(defun eabp-org--todo-items-1 (files)
-  "Uncached worker for `eabp-org--todo-items'."
-  (let (items)
-    (org-map-entries
-     (lambda ()
-       (let* ((components (org-heading-components))
-              (todo (nth 2 components))
-              (priority (nth 3 components))
-              (headline (nth 4 components))
-              (tags (org-get-tags))
-              (scheduled (org-entry-get (point) "SCHEDULED"))
-              (deadline  (org-entry-get (point) "DEADLINE")))
-         (when todo
-           (push `((headline . ,headline)
-                   (todo . ,todo)
-                   (priority . ,(if priority (char-to-string priority) nil))
-                   (tags . ,(vconcat tags))
-                   (scheduled . ,scheduled)
-                   (deadline  . ,deadline)
-                   (file . ,(buffer-file-name))
-                   (pos . ,(point))
-                   (ref . ,(eabp-org--heading-ref)))
-                 items))))
-     "TODO<>\"\"" (or files 'agenda))
-    (nreverse items)))
-
-(defun eabp-org--heading-item-at ()
-  "Build a heading item alist for the org entry at point.
-Same shape as `eabp-org--todo-items' entries (headline/todo/priority/
-tags/file/pos/ref); used by the search layer."
-  (let* ((components (org-heading-components))
-         (todo (nth 2 components))
-         (priority (nth 3 components))
-         (headline (nth 4 components))
-         (tags (org-get-tags))
-         (scheduled (org-entry-get (point) "SCHEDULED"))
-         (deadline  (org-entry-get (point) "DEADLINE")))
-    `((headline . ,headline)
-      (todo . ,todo)
-      (priority . ,(if priority (char-to-string priority) nil))
-      (tags . ,(vconcat tags))
-      (scheduled . ,scheduled)
-      (deadline  . ,deadline)
-      (file . ,(buffer-file-name))
-      (pos . ,(point))
-      (ref . ,(eabp-org--heading-ref)))))
-
-(defun eabp-org--file-heading-items (file)
-  "Extract level-1 headings from FILE as item alists.
-Same shape as `eabp-org--todo-items' entries (plus scheduled/deadline),
-suitable for `eabp-org-ui--agenda-card'."
-  (when (and file (file-readable-p file))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (let (items)
-         (org-map-entries
-          (lambda ()
-            (let* ((components (org-heading-components))
-                   (level (nth 0 components))
-                   (todo (nth 2 components))
-                   (priority (nth 3 components))
-                   (headline (nth 4 components))
-                   (tags (org-get-tags))
-                   (scheduled (org-entry-get (point) "SCHEDULED"))
-                   (deadline  (org-entry-get (point) "DEADLINE")))
-              (when (= level 1)
-                (push `((headline . ,headline)
-                        (todo . ,todo)
-                        (priority . ,(if priority (char-to-string priority) nil))
-                        (tags . ,(vconcat tags))
-                        (scheduled . ,scheduled)
-                        (deadline  . ,deadline)
-                        (file . ,(buffer-file-name))
-                        (pos . ,(point))
-                        (ref . ,(eabp-org--heading-ref)))
-                      items))))
-          nil nil)
-         (nreverse items))))))
-
-(defun eabp-org--search-substring (query)
-  "Case-insensitive substring search of agenda files for QUERY.
-Matches headline text or any tag. Returns a list of heading items."
-  (let ((q (downcase (string-trim query))) items)
-    (org-map-entries
-     (lambda ()
-       (let* ((comps (org-heading-components))
-              (headline (downcase (or (nth 4 comps) "")))
-              (tags (org-get-tags)))
-         (when (or (string-search q headline)
-                   (cl-some (lambda (tg) (string-search q (downcase tg))) tags))
-           (push (eabp-org--heading-item-at) items))))
-     nil 'agenda)
-    (nreverse items)))
-
-(defun eabp-org--search (query)
-  "Search agenda files for QUERY; return a list of heading items.
-Uses `org-ql' when available, falling back to a substring match.
-Memoised; see `eabp-org-cache-invalidate'."
-  (if (string-empty-p (string-trim query))
-      nil
-    (eabp-org--with-cache (eabp-org--cache-key 'search query)
-      (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
-                          (condition-case nil (read query) (error query))
-                        query)))
-        (if (fboundp 'org-ql-select)
-            (condition-case nil
-                (org-ql-select (org-agenda-files) ql-query
-                               :action #'eabp-org--heading-item-at)
-              (error (eabp-org--search-substring query)))
-          (eabp-org--search-substring query))))))
-
-(defun eabp-org--file-list ()
-  "List of agenda files and basic stats."
-  (mapcar (lambda (f) 
-            `((file . ,f)
-              (name . ,(file-name-nondirectory f))))
-          (org-agenda-files)))
-
-(defun eabp-org--heading-at (pos file)
-  "Get full heading detail at POS in FILE."
-  (with-current-buffer (find-file-noselect file)
-    (save-excursion
-      (goto-char pos)
-      (let* ((components (org-heading-components))
-             (todo (nth 2 components))
-             (priority (nth 3 components))
-             (headline (nth 4 components))
-             (tags (org-get-tags))
-             (props (org-entry-properties))
-             ;; Basic body extraction:
-             (end (save-excursion (org-end-of-subtree t t)))
-             (body-start (save-excursion (forward-line 1) (point)))
-             (body (if (< body-start end)
-                       (buffer-substring-no-properties body-start end)
-                     "")))
-        `((headline . ,headline)
-          (todo . ,todo)
-          (priority . ,(if priority (char-to-string priority) nil))
-          (tags . ,(vconcat tags))
-          (properties . ,props)
-          (body . ,body))))))
-
-(defun eabp-org--parse-template-prompts (template-string)
-  "Return the ordered field names to collect for TEMPLATE-STRING.
-Each `%^{NAME}' or `%^{NAME|default}' contributes NAME (the default is
-dropped from the label but honoured at fill time). A `%?' body position
-adds a leading \"Headline\" field. Duplicates are removed."
-  (let (prompts (start 0))
-    (while (string-match "%\\^{\\([^}]+\\)}" template-string start)
-      ;; Capture the match BEFORE `split-string' runs — it calls `string-match'
-      ;; internally and would clobber the match data, leaving `match-end' wrong
-      ;; and the loop spinning forever.
-      (let ((spec (match-string 1 template-string))
-            (end (match-end 0)))
-        (push (string-trim (car (split-string spec "|"))) prompts)
-        (setq start end)))
-    (setq prompts (nreverse prompts))
-    (delete-dups
-     (if (string-match-p "%\\?" template-string)
-         (cons "Headline" prompts)
-       prompts))))
-
-(defun eabp-org--capture-templates ()
-  "Return list of capture templates."
-  (mapcar (lambda (tmpl)
-            (let ((key (nth 0 tmpl))
-                  (desc (nth 1 tmpl))
-                  (template-string (nth 4 tmpl)))
-              `((key . ,key)
-                (description . ,desc)
-                (prompts . ,(vconcat (eabp-org--parse-template-prompts 
-                                      (if (stringp template-string) template-string "")))))))
-          org-capture-templates))
-
-(defun eabp-org--fill-template (tmpl values)
-  "Fill org capture TMPL string from VALUES (NAME -> user input alist).
-`%?' becomes the Headline value; each `%^{NAME|default}' becomes the user
-value for NAME, else its default, else empty. Any *other* interactive
-escape that survives (`%^{…}' with no value, `%^t', `%^g', …) is then
-stripped, so `org-capture' can never block on a minibuffer prompt — which
-on the phone would hang behind the bridge."
-  (let ((headline (or (cdr (assoc "Headline" values)) "")))
-    ;; %? — free-form body position.
-    (setq tmpl (replace-regexp-in-string "%\\?" headline tmpl t t))
-    ;; %^{NAME|default} — scan the template's own tokens so NAME always
-    ;; matches what `eabp-org--parse-template-prompts' produced.
-    (setq tmpl (replace-regexp-in-string
-                "%\\^{\\([^}]*\\)}"
-                (lambda (m)
-                  ;; M is the whole "%^{ … }" match; parse it directly rather
-                  ;; than via match-data (unreliable inside this callback).
-                  (let* ((spec (substring m 3 -1))
-                         (bar (string-search "|" spec))
-                         (name (string-trim (if bar (substring spec 0 bar) spec)))
-                         (default (and bar (substring spec (1+ bar))))
-                         (val (cdr (assoc name values))))
-                    (cond ((and (stringp val) (not (string-empty-p val))) val)
-                          ((stringp default) default)
-                          (t ""))))
-                tmpl t t))
-    ;; Neutralise any remaining caret (interactive) escapes; leave plain
-    ;; ones like %U %t %i %a for org to expand non-interactively.
-    (replace-regexp-in-string "%\\^.?" "" tmpl t t)))
-
-(defun eabp-org--do-capture (template-key values &optional extra-body)
-  "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input).
-EXTRA-BODY, when non-empty, is appended below the filled template —
-the carrier for text shared from another app via the share sheet."
-  (let ((entry (assoc template-key org-capture-templates)))
-    (when entry
-      (let* ((tmpl (nth 4 entry))
-             (filled (if (stringp tmpl)
-                         (eabp-org--fill-template tmpl values)
-                       tmpl))
-             (filled (if (and (stringp filled)
-                              (stringp extra-body)
-                              (not (string-empty-p (string-trim extra-body))))
-                         (concat filled "\n" (string-trim extra-body))
-                       filled))
-             ;; Shallow-copy the entry, swap in the filled template, and force
-             ;; :immediate-finish so the capture buffer never waits for the
-             ;; C-c C-c a phone user can't press.
-             (new-entry (copy-sequence entry)))
-        (setcar (nthcdr 4 new-entry) filled)
-        (setcdr (nthcdr 4 new-entry)
-                (append (nthcdr 5 new-entry) '(:immediate-finish t)))
-        ;; `org-capture-entry' short-circuits template selection inside
-        ;; `org-capture', so binding it to the FILLED copy is what makes the
-        ;; pre-filled template the one that actually runs.  (Binding it to
-        ;; the original — as this code once did — re-ran the raw %^{...}
-        ;; prompts and double-asked the user through the bridge.)
-        (let ((org-capture-entry new-entry))
-          ;; Safety net: a fully pre-filled template shouldn't prompt at all,
-          ;; but if any escape slips through, never let `org-capture' block
-          ;; Emacs forever on a minibuffer the phone can't answer. `with-timeout'
-          ;; fires even while a synchronous read is waiting.
-          (with-timeout (30 (message "eabp: capture timed out (a prompt was left unanswered)"))
-            (org-capture)))))))
-
-(defun eabp-org--item-hm (time)
-  "Normalize an agenda item's raw `time' property to \"HH:MM\", or nil.
-The property comes straight from the agenda's time grid and looks like
-\" 9:15......\" or \"14:00-15:00\" — leading space, no zero padding,
-grid filler dots."
-  (when (stringp time)
-    (let ((s (string-trim time)))
-      (when (string-match "\\`\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)" s)
-        (format "%02d:%s"
-                (string-to-number (match-string 1 s))
-                (match-string 2 s))))))
-
-(defun eabp-org--upcoming-reminders (&optional horizon-hours)
-  "Timed agenda items within HORIZON-HOURS (default 24) as reminder specs.
-Only items with a clock time qualify (a date alone isn't an alarm).
-Each spec is ((id . STR) (at_ms . MS) (title . STR) (body . STR)),
-ready for the companion's `reminders.set' frame."
-  (let* ((horizon (* (or horizon-hours 24) 3600))
-         (now (float-time))
-         (items (append (eabp-org--agenda-items 'day nil)
-                        (eabp-org--agenda-items
-                         'day (format-time-string "%Y-%m-%d"
-                                                  (time-add nil 86400)))))
-         reminders)
-    (dolist (it items)
-      (let ((date (alist-get 'date it))
-            (hm (eabp-org--item-hm (alist-get 'time it)))
-            (headline (alist-get 'headline it))
-            (type (alist-get 'type it)))
-        (when (and (stringp date) hm)
-          (let ((at (float-time (org-time-string-to-time
-                                 (concat date " " hm)))))
-            (when (and (> at now) (< (- at now) horizon))
-              (push `((id . ,(format "%s/%s" date (or headline "?")))
-                      (at_ms . ,(truncate (* at 1000)))
-                      (title . ,(or headline "Org reminder"))
-                      (body . ,(concat hm (when (stringp type)
-                                            (concat " · " type)))))
-                    reminders))))))
-    (nreverse reminders)))
-
-(defun eabp-org--clock-status ()
-  "Current clock status."
-  (when (org-clock-is-active)
-    `((task . ,org-clock-current-task)
-      (start . ,(float-time org-clock-start-time))
-      (file . ,(buffer-file-name (marker-buffer org-clock-marker)))
-      (pos . ,(marker-position org-clock-marker)))))
-
-(defun eabp-org--recent-clocks (n)
-  "Last N clocked tasks."
-  (let (items)
-    (dolist (m org-clock-history)
-      (when (and m (marker-buffer m))
-        (with-current-buffer (marker-buffer m)
-          (save-excursion
-            (goto-char m)
-            (let* ((components (org-heading-components))
-                   (headline (nth 4 components)))
-              (push `((headline . ,headline)
-                      (file . ,(buffer-file-name))
-                      (pos . ,(marker-position m))
-                      (ref . ,(eabp-org--heading-ref)))
-                    items))))))
-    (cl-subseq (nreverse items) 0 (min n (length items)))))
-
-(provide 'eabp-org)
-;;; eabp-org.el ends here
-
-;;; ==================================================================
-;;; BEGIN eabp-org-clock.el
-;;; ==================================================================
-
-;;; eabp-org-clock.el --- org-clock chronometer notification -*- lexical-binding: t; -*-
-
-;; Tier 1 org integration: mirrors the running org clock to the companion
-;; as an ongoing chronometer notification with Clock out / Switch task
-;; buttons, and re-asserts it on reconnect so the phone's cache matches
-;; reality after an Emacs restart.
-;;
-;; This is app-layer code — the core (eabp-surfaces) knows nothing about
-;; org; it only carries the `notification:org-clock' surface this module
-;; pushes through the generic senders.
-
-;;; Code:
-
-(require 'eabp)
-(require 'eabp-widgets)
-(require 'eabp-surfaces)
-(require 'org-clock)
-
-(defun eabp-clock-in-notification ()
-  "Push the org-clock chronometer notification surface."
-  (when (and (boundp 'org-clock-current-task) org-clock-current-task)
-    (eabp-surface-push
-     "notification:org-clock"
-     (eabp-notification-spec
-      :channel "clocking" :ongoing t :category "stopwatch"
-      :chronometer `((base_ms . ,(truncate (* (float-time org-clock-start-time) 1000))))
-      :body (list
-             (eabp-text (format "Clocked in: %s" org-clock-current-task) 'title)
-             (eabp-row
-              (eabp-button "Clock out"
-                           (eabp-action "org.clock.out" :when-offline "wake"))
-              (eabp-button "Switch task"
-                           (eabp-action "org.clock.switch" :when-offline "wake"))))))))
-
-(defun eabp-clock-out-notification ()
-  "Remove the org-clock notification surface."
-  (eabp-surface-remove "notification:org-clock"))
-
-;; Closing the loop: a tap on "Clock out" arrives here as an event.action.
-(eabp-defaction "org.clock.out"
-                (lambda (&rest _) (when (org-clock-is-active) (org-clock-out))))
-(eabp-defaction "org.clock.switch"
-                ;; Placeholder: jump to the running task. Swap for a real
-                ;; task-picker (e.g. org-clock-in to a recent task) when ready.
-                (lambda (&rest _) (org-clock-goto)))
-(eabp-defaction "org.clock.in-last"
-                ;; The home-screen widget's "Clock In (Last)" button.
-                (lambda (&rest _)
-                  (condition-case err
-                      (org-clock-in-last)
-                    (error (message "EABP clock-in-last failed: %s"
-                                    (error-message-string err))))))
-
-(add-hook 'org-clock-in-hook  #'eabp-clock-in-notification)
-(add-hook 'org-clock-out-hook #'eabp-clock-out-notification)
-
-;; On (re)connect, re-assert current clock state so the companion's cache
-;; matches reality after an Emacs restart. (Runs after the revision snapshot
-;; has been absorbed — see the -50 depth in eabp-surfaces.)
-(add-hook 'eabp-connected-hook
-          (lambda (_welcome)
-            (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
-              (eabp-clock-in-notification))))
-
-(provide 'eabp-org-clock)
-;;; eabp-org-clock.el ends here
-
-;;; ==================================================================
-;;; BEGIN eabp-keymap.el
+;;; BEGIN core/eabp-keymap.el
 ;;; ==================================================================
 
 ;;; eabp-keymap.el --- Keymap surfacing for the radial pie menu -*- lexical-binding: t; -*-
@@ -4913,92 +3564,7 @@ which is more reliable than simulating keystrokes through the transient's
 ;;; eabp-keymap.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-magit.el
-;;; ==================================================================
-
-;;; eabp-magit.el --- Curated Tier 1 magit pie menu -*- lexical-binding: t; -*-
-
-;; The first curated Tier 1 radial menu: magit-status.  Four categories
-;; fan out as a speed dial; each opens a pie of hand-labelled bindings.
-;; Entries marked as prefixes (Commit, Push, Branch, …) are magit's
-;; transient commands — running one activates the transient, and
-;; `eabp-keymap--sync-pie' then pushes the live transient's own pie, so
-;; the drill-in continues seamlessly into magit's real menus.
-;;
-;; This is pure data plus key dispatch: nothing here requires magit at
-;; load time.  Keys are executed in the magit buffer through the same
-;; allowlisted `eabp.keymap.run' action as everything else.
-
-;;; Code:
-
-(require 'eabp-keymap)
-
-(defconst eabp-magit--menu
-  '(("Stage" "add"
-     ("s"   "Stage")
-     ("u"   "Unstage")
-     ("S"   "Stage all")
-     ("U"   "Unstage all")
-     ("k"   "Discard")
-     ("g"   "Refresh"))
-    ("Share" "sync"
-     ("c"   "Commit" t)
-     ("P"   "Push" t)
-     ("F"   "Pull" t)
-     ("f"   "Fetch" t)
-     ("!"   "Run" t))
-    ("Branch" "call_split"
-     ("b"   "Branch" t)
-     ("m"   "Merge" t)
-     ("r"   "Rebase" t)
-     ("z"   "Stash" t)
-     ("t"   "Tag" t))
-    ("Inspect" "history"
-     ("l"   "Log" t)
-     ("d"   "Diff" t)
-     ("y"   "Refs" t)
-     ("$"   "Process")))
-  "Curated magit-status pie menu: (CATEGORY ICON (KEY LABEL [PREFIX-P])...).
-PREFIX-P marks a transient prefix — the pie shows a ▸ and running it
-drills into the live transient's own pie.")
-
-(defun eabp-magit--binding-spec (entry buffer-name)
-  "Build one pie binding spec from ENTRY (KEY LABEL [PREFIX-P])."
-  (pcase-let ((`(,key ,label ,prefix-p) entry))
-    (append
-     `((key . ,key)
-       (label . ,label)
-       (action . ,(eabp-action "eabp.keymap.run"
-                               :args `((buffer . ,buffer-name)
-                                       (key . ,key))
-                               :when-offline "drop")))
-     (when prefix-p '((is_prefix . t))))))
-
-(defun eabp-magit-pie-spec (buffer)
-  "Curated Tier 1 pie-menu spec for magit BUFFER."
-  (let ((buffer-name (buffer-name buffer)))
-    `((center_label . "Magit")
-      (buffer . ,buffer-name)
-      (categories
-       . ,(vconcat
-           (mapcar
-            (lambda (cat)
-              (pcase-let ((`(,label ,icon . ,entries) cat))
-                `((label . ,label)
-                  (icon . ,icon)
-                  (bindings . ,(vconcat
-                                (mapcar (lambda (e)
-                                          (eabp-magit--binding-spec e buffer-name))
-                                        entries))))))
-            eabp-magit--menu))))))
-
-(eabp-keymap-register-tier1 'magit-status-mode #'eabp-magit-pie-spec)
-
-(provide 'eabp-magit)
-;;; eabp-magit.el ends here
-
-;;; ==================================================================
-;;; BEGIN eabp-sync.el
+;;; BEGIN core/eabp-sync.el
 ;;; ==================================================================
 
 ;;; eabp-sync.el --- Live editor-buffer sync + diagnostics push -*- lexical-binding: t; -*-
@@ -5682,7 +4248,7 @@ language server warm for the next open."
 ;;; eabp-sync.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-complete.el
+;;; BEGIN core/eabp-complete.el
 ;;; ==================================================================
 
 ;;; eabp-complete.el --- Completion-at-point bridge (Tier 0 IDE) -*- lexical-binding: t; -*-
@@ -5923,7 +4489,7 @@ Returns (PREFIX . CANDIDATE-NODES) or nil."
 ;;; eabp-complete.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-settings.el
+;;; BEGIN core/eabp-settings.el
 ;;; ==================================================================
 
 ;;; eabp-settings.el --- Schema-driven settings from defcustom metadata -*- lexical-binding: t; -*-
@@ -6248,7 +4814,7 @@ text inputs save through settings.set on submit."
 ;;; eabp-settings.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-files.el
+;;; BEGIN core/eabp-files.el
 ;;; ==================================================================
 
 ;;; eabp-files.el --- File browser & editor for EABP -*- lexical-binding: t; -*-
@@ -6741,7 +5307,7 @@ state (the same pattern as the capture form)."
 ;;; eabp-files.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-emacs-ui.el
+;;; BEGIN core/eabp-emacs-ui.el
 ;;; ==================================================================
 
 ;;; eabp-emacs-ui.el --- EABP Emacs REPL & Buffer Viewer -*- lexical-binding: t; -*-
@@ -7152,10 +5718,1444 @@ with a keyboard FAB that opens the buffer's keymap."
 ;;; eabp-emacs-ui.el ends here
 
 ;;; ==================================================================
-;;; BEGIN eabp-org-ui.el
+;;; BEGIN apps/eabp-package-browser.el
 ;;; ==================================================================
 
-;;; eabp-org-ui.el --- The Glasspane org app for EABP -*- lexical-binding: t; -*-
+;;; eabp-package-browser.el --- Package browser skin for the tablist renderer -*- lexical-binding: t; -*-
+
+;; The first Tier 1 tablist skin, and the worked example of the pattern:
+;; package-menu-mode derives from tabulated-list-mode, so the generic walk
+;; in eabp-tablist.el is reused; this file only registers the three skin
+;; hooks (header, row, filter) plus its curated actions.
+;;
+;; It adds search + status chips, install/delete per row, and archive
+;; refresh / upgrade-all — the actions validate package names against the
+;; archive/installed lists, keeping the wire semantic (see the
+;; command-dispatch boundary: nothing on the wire names arbitrary code).
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'package)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-tablist)
+(require 'eabp-shell)
+
+(defvar eabp-pkg--search ""
+  "Current package search string (matches name and summary).")
+
+(defvar eabp-pkg--status "all"
+  "Current package status filter chip.")
+
+(defconst eabp-pkg--statuses
+  '(("all")
+    ("installed" "installed" "dependency" "unsigned" "external" "held")
+    ("available" "available" "new")
+    ("built-in" "built-in")
+    ("upgradable" "obsolete"))
+  "Chip name -> package-menu status strings it admits.")
+
+(defun eabp-pkg--toast (text)
+  (eabp-send "toast.show" `((text . ,text))))
+
+(defun eabp-pkg--filter (id entry)
+  "Keep package row (ID ENTRY) when it matches the search and status chips."
+  (let ((statuses (cdr (assoc eabp-pkg--status eabp-pkg--statuses)))
+        (status (or (eabp-tablist-entry-col entry "Status") ""))
+        (hay (concat (eabp-tablist-col-string (aref entry 0)) " "
+                     (and (package-desc-p id)
+                          (or (package-desc-summary id) "")))))
+    (and (or (null statuses) (member status statuses))
+         (or (string-empty-p eabp-pkg--search)
+             (string-match-p (regexp-quote eabp-pkg--search)
+                             (downcase hay))))))
+
+(defun eabp-pkg--header (_buf)
+  (list
+   (eabp-text-input "pkg-search"
+                    :value eabp-pkg--search
+                    :label "Search packages" :single-line t
+                    :on-submit (eabp-action "packages.search"))
+   (apply #'eabp-flow-row
+          (mapcar (lambda (chip)
+                    (let ((s (car chip)))
+                      (eabp-chip (capitalize s)
+                                 :selected (equal eabp-pkg--status s)
+                                 :on-tap (eabp-action
+                                          "packages.status-filter"
+                                          :args `((status . ,s))
+                                          :when-offline "drop"))))
+                  eabp-pkg--statuses))
+   (eabp-row
+    (eabp-button "Refresh archives"
+                 (eabp-action "packages.refresh-archives" :when-offline "drop")
+                 :variant "text")
+    (eabp-spacer :weight 1)
+    (when (fboundp 'package-upgrade-all)
+      (eabp-button "Upgrade all"
+                   (eabp-action "packages.upgrade-all" :when-offline "drop")
+                   :variant "text")))))
+
+(defun eabp-pkg--row (id entry _pos)
+  (when (package-desc-p id)
+    (let* ((sym (package-desc-name id))
+           (name (symbol-name sym))
+           (version (or (eabp-tablist-entry-col entry "Version") ""))
+           (status (or (eabp-tablist-entry-col entry "Status") ""))
+           (summary (or (package-desc-summary id) ""))
+           (installed (assq sym package-alist)))
+      (eabp-card
+       (list
+        (eabp-row
+         (eabp-box
+          (list (eabp-column
+                 (eabp-row (eabp-text name 'label)
+                           (eabp-text version 'caption)
+                           (eabp-text status 'caption))
+                 (eabp-text summary 'caption)))
+          :weight 1)
+         (cond
+          (installed
+           (eabp-icon-button "delete"
+                             (eabp-action "packages.delete"
+                                          :args `((package . ,name))
+                                          :when-offline "drop")
+                             :content-description (format "Uninstall %s" name)))
+          ((not (equal status "built-in"))
+           (eabp-icon-button "arrow_downward"
+                             (eabp-action "packages.install"
+                                          :args `((package . ,name))
+                                          :when-offline "drop")
+                             :content-description (format "Install %s" name))))))
+       :on-tap (eabp-action "packages.describe"
+                            :args `((package . ,name))
+                            :when-offline "drop")))))
+
+(setf (alist-get 'package-menu-mode eabp-tablist-header-functions)
+      #'eabp-pkg--header)
+(setf (alist-get 'package-menu-mode eabp-tablist-row-functions)
+      #'eabp-pkg--row)
+(setf (alist-get 'package-menu-mode eabp-tablist-filter-functions)
+      #'eabp-pkg--filter)
+
+;; ─── Actions ─────────────────────────────────────────────────────────────────
+
+(defun eabp-pkg--buffer ()
+  "The live *Packages* menu buffer, creating (without fetching) if needed."
+  (require 'package)
+  (unless package--initialized (package-initialize))
+  (or (get-buffer "*Packages*")
+      (save-window-excursion
+        (list-packages t)
+        (get-buffer "*Packages*"))))
+
+(defun eabp-pkg--revert ()
+  "Re-generate the package menu after an install/delete and re-push."
+  (let ((buf (get-buffer "*Packages*")))
+    (when buf
+      (with-current-buffer buf
+        (ignore-errors (revert-buffer)))))
+  (eabp-tablist-refresh-view))
+
+(eabp-defaction "packages.show"
+  (lambda (_ __)
+    (let ((buf (eabp-pkg--buffer)))
+      (when (and buf (null package-archive-contents))
+        (eabp-pkg--toast
+         "Archives not fetched yet - tap Refresh archives"))
+      (funcall eabp-tablist-view-buffer-function (buffer-name buf)))))
+
+(eabp-defaction "packages.search"
+  (lambda (args _)
+    (let ((q (alist-get 'value args)))
+      (setq eabp-pkg--search
+            (downcase (or (and (stringp q) q) "")))
+      (eabp-tablist-refresh-view))))
+
+(eabp-defaction "packages.status-filter"
+  (lambda (args _)
+    (let ((s (alist-get 'status args)))
+      (when (assoc s eabp-pkg--statuses)
+        (setq eabp-pkg--status s)
+        (eabp-tablist-refresh-view)))))
+
+(eabp-defaction "packages.install"
+  (lambda (args _)
+    (let* ((name (alist-get 'package args))
+           (sym (and (stringp name) (intern-soft name))))
+      (if (not (and sym (assq sym package-archive-contents)))
+          (eabp-pkg--toast (format "%s is not in the archives" name))
+        (eabp-pkg--toast (format "Installing %s…" name))
+        (condition-case err
+            (progn
+              (package-install sym)
+              (eabp-pkg--toast (format "Installed %s" name)))
+          (error (eabp-pkg--toast
+                  (format "Install failed: %s" (error-message-string err)))))
+        (eabp-pkg--revert)))))
+
+(eabp-defaction "packages.delete"
+  (lambda (args _)
+    (let* ((name (alist-get 'package args))
+           (sym (and (stringp name) (intern-soft name)))
+           (desc (and sym (cadr (assq sym package-alist)))))
+      (if (not desc)
+          (eabp-pkg--toast (format "%s is not installed" name))
+        (condition-case err
+            (progn
+              (package-delete desc)
+              (eabp-pkg--toast (format "Deleted %s" name)))
+          (error (eabp-pkg--toast
+                  ;; Typically: something still depends on it.
+                  (format "Delete failed: %s" (error-message-string err)))))
+        (eabp-pkg--revert)))))
+
+(eabp-defaction "packages.refresh-archives"
+  (lambda (_ __)
+    (eabp-pkg--toast "Refreshing package archives…")
+    (condition-case err
+        (progn
+          (require 'package)
+          (unless package--initialized (package-initialize))
+          (package-refresh-contents)
+          (eabp-pkg--toast "Archives refreshed"))
+      (error (eabp-pkg--toast
+              (format "Refresh failed: %s" (error-message-string err)))))
+    (eabp-pkg--revert)))
+
+(eabp-defaction "packages.upgrade-all"
+  (lambda (_ __)
+    (if (not (fboundp 'package-upgrade-all))
+        (eabp-pkg--toast "Upgrade-all needs Emacs 29+")
+      (eabp-pkg--toast "Upgrading all packages…")
+      (condition-case err
+          (progn
+            (package-upgrade-all nil)
+            (eabp-pkg--toast "Upgrades complete"))
+        (error (eabp-pkg--toast
+                (format "Upgrade failed: %s" (error-message-string err)))))
+      (eabp-pkg--revert))))
+
+(eabp-defaction "packages.describe"
+  (lambda (args _)
+    (let* ((name (alist-get 'package args))
+           (sym (and (stringp name) (intern-soft name))))
+      (when (and sym
+                 (or (assq sym package-archive-contents)
+                     (assq sym package-alist)
+                     (assq sym package--builtins)))
+        (save-window-excursion (describe-package sym))
+        (funcall eabp-tablist-view-buffer-function "*Help*")))))
+
+;; The browser's drawer entry in the shell.
+(eabp-shell-add-drawer-item
+ 40 (lambda ()
+      (eabp-drawer-item "archive" "Packages"
+                        (eabp-action "packages.show" :when-offline "drop"))))
+
+(provide 'eabp-package-browser)
+;;; eabp-package-browser.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/eabp-magit.el
+;;; ==================================================================
+
+;;; eabp-magit.el --- Curated Tier 1 magit pie menu -*- lexical-binding: t; -*-
+
+;; The first curated Tier 1 radial menu: magit-status.  Four categories
+;; fan out as a speed dial; each opens a pie of hand-labelled bindings.
+;; Entries marked as prefixes (Commit, Push, Branch, …) are magit's
+;; transient commands — running one activates the transient, and
+;; `eabp-keymap--sync-pie' then pushes the live transient's own pie, so
+;; the drill-in continues seamlessly into magit's real menus.
+;;
+;; This is pure data plus key dispatch: nothing here requires magit at
+;; load time.  Keys are executed in the magit buffer through the same
+;; allowlisted `eabp.keymap.run' action as everything else.
+
+;;; Code:
+
+(require 'eabp-keymap)
+
+(defconst eabp-magit--menu
+  '(("Stage" "add"
+     ("s"   "Stage")
+     ("u"   "Unstage")
+     ("S"   "Stage all")
+     ("U"   "Unstage all")
+     ("k"   "Discard")
+     ("g"   "Refresh"))
+    ("Share" "sync"
+     ("c"   "Commit" t)
+     ("P"   "Push" t)
+     ("F"   "Pull" t)
+     ("f"   "Fetch" t)
+     ("!"   "Run" t))
+    ("Branch" "call_split"
+     ("b"   "Branch" t)
+     ("m"   "Merge" t)
+     ("r"   "Rebase" t)
+     ("z"   "Stash" t)
+     ("t"   "Tag" t))
+    ("Inspect" "history"
+     ("l"   "Log" t)
+     ("d"   "Diff" t)
+     ("y"   "Refs" t)
+     ("$"   "Process")))
+  "Curated magit-status pie menu: (CATEGORY ICON (KEY LABEL [PREFIX-P])...).
+PREFIX-P marks a transient prefix — the pie shows a ▸ and running it
+drills into the live transient's own pie.")
+
+(defun eabp-magit--binding-spec (entry buffer-name)
+  "Build one pie binding spec from ENTRY (KEY LABEL [PREFIX-P])."
+  (pcase-let ((`(,key ,label ,prefix-p) entry))
+    (append
+     `((key . ,key)
+       (label . ,label)
+       (action . ,(eabp-action "eabp.keymap.run"
+                               :args `((buffer . ,buffer-name)
+                                       (key . ,key))
+                               :when-offline "drop")))
+     (when prefix-p '((is_prefix . t))))))
+
+(defun eabp-magit-pie-spec (buffer)
+  "Curated Tier 1 pie-menu spec for magit BUFFER."
+  (let ((buffer-name (buffer-name buffer)))
+    `((center_label . "Magit")
+      (buffer . ,buffer-name)
+      (categories
+       . ,(vconcat
+           (mapcar
+            (lambda (cat)
+              (pcase-let ((`(,label ,icon . ,entries) cat))
+                `((label . ,label)
+                  (icon . ,icon)
+                  (bindings . ,(vconcat
+                                (mapcar (lambda (e)
+                                          (eabp-magit--binding-spec e buffer-name))
+                                        entries))))))
+            eabp-magit--menu))))))
+
+(eabp-keymap-register-tier1 'magit-status-mode #'eabp-magit-pie-spec)
+
+(provide 'eabp-magit)
+;;; eabp-magit.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-org.el
+;;; ==================================================================
+
+;;; glasspane-org.el --- EABP Org-Mode Data Extraction -*- lexical-binding: t; -*-
+
+;; Provides functions to extract structured data from org-mode buffers.
+;; This layer is pure Elisp and has no bridge dependencies.
+
+;;; Code:
+
+(require 'org)
+(require 'org-agenda)
+(require 'org-clock)
+(require 'org-capture)
+(require 'org-id)
+(require 'cl-lib)
+
+;; ─── Refresh coordination ──────────────────────────────────────────────────────
+
+(defvar glasspane-org--inhibit-save-refresh nil
+  "When non-nil, the `after-save-hook' dashboard refresh is suppressed.
+Bound around our own programmatic saves (heading edits, file saves) so an
+explicit dashboard push isn't doubled by the save-hook firing on top.")
+
+;; The dashboard pushes every view on every action (so navigation stays
+;; instant and offline-capable), which means the expensive extractions here
+;; — a full `org-agenda' run, an `org-map-entries' sweep — used to execute
+;; on every chip tap and snackbar.  They are memoised now; this table is
+;; dropped through `glasspane-org-cache-invalidate', the single seam every
+;; mutation path (heading actions, saves, capture, queue replay) already
+;; calls.
+(defvar glasspane-org--cache (make-hash-table :test 'equal)
+  "Memoised org extraction results.
+Keys are built by `glasspane-org--cache-key' and include today's date, so
+day-relative readers (the agenda) roll over at midnight even without an
+explicit invalidation.")
+
+(defun glasspane-org--cache-key (&rest parts)
+  "Build a cache key from PARTS, scoped to today's date."
+  (cons (format-time-string "%Y-%m-%d") parts))
+
+(defmacro glasspane-org--with-cache (key &rest body)
+  "Memoise BODY's result in `glasspane-org--cache' under KEY."
+  (declare (indent 1))
+  (let ((k (gensym "key")) (hit (gensym "hit")))
+    `(let* ((,k ,key)
+            (,hit (gethash ,k glasspane-org--cache 'glasspane-org--miss)))
+       (if (eq ,hit 'glasspane-org--miss)
+           (puthash ,k (progn ,@body) glasspane-org--cache)
+         ,hit))))
+
+(defun glasspane-org-cache-invalidate ()
+  "Drop every memoised org extraction.
+Called by every mutation path (heading actions, phone/desktop saves,
+capture, offline-queue drain), so the readers recompute from fresh org
+state on the next dashboard push."
+  (clrhash glasspane-org--cache))
+
+;; ─── Heading references ────────────────────────────────────────────────────────
+;;
+;; Every heading the UI lists carries a `ref' — a small, JSON-safe alist that
+;; lets a later action (drill-in, todo-set, schedule, clock-in) find the same
+;; heading again. The round-trip is: build with `glasspane-org--heading-ref' while
+;; point is on the heading, ship it to the device inside an action's `:args',
+;; and resolve it back to a live marker with `glasspane-org--resolve-ref'.
+
+(defun glasspane-org--heading-ref ()
+  "Build a location ref for the org heading at point.
+Returns an alist with `file'/`pos'/`headline', plus `id' when the entry
+already has an ID property (never created here — we don't mutate files).
+nil-valued keys are omitted so the alist serialises cleanly to JSON."
+  (save-excursion
+    (unless (org-at-heading-p)
+      (ignore-errors (org-back-to-heading t)))
+    (let ((id (org-entry-get nil "ID"))
+          (ref `((file . ,(or (buffer-file-name) ""))
+                 (pos . ,(point))
+                 (headline . ,(or (nth 4 (org-heading-components)) "")))))
+      (if (and (stringp id) (not (string-empty-p id)))
+          (cons `(id . ,id) ref)
+        ref))))
+
+(defun glasspane-org--resolve-ref (ref)
+  "Resolve REF to a live marker at its org heading, or signal an error.
+REF is an alist as built by `glasspane-org--heading-ref' (extra keys such as a
+consed-on `state' are ignored). Resolution tries, in order: the stable
+`id' (survives edits anywhere), the recorded `pos' accepted only if its
+headline still matches, then a headline search through the file."
+  (let ((id (alist-get 'id ref))
+        (file (alist-get 'file ref))
+        (pos (alist-get 'pos ref))
+        (headline (alist-get 'headline ref)))
+    (or
+     ;; 1. Stable org ID — robust against edits elsewhere in the file.
+     (and (stringp id) (not (string-empty-p id))
+          (ignore-errors (org-id-find id 'marker)))
+     ;; 2. Recorded position, trusted only if the headline still matches.
+     (and (stringp file) (file-readable-p file)
+          (let ((buf (find-file-noselect file)))
+            (with-current-buffer buf
+              (org-with-wide-buffer
+               (when (and (integerp pos) (<= (point-min) pos (point-max)))
+                 (goto-char pos)
+                 (when (ignore-errors (org-back-to-heading t) t)
+                   (when (or (not (stringp headline)) (string-empty-p headline)
+                             (equal (nth 4 (org-heading-components)) headline))
+                     (copy-marker (point)))))))))
+     ;; 3. Headline search — the heading moved but still exists in the file.
+     (and (stringp file) (file-readable-p file)
+          (stringp headline) (not (string-empty-p headline))
+          (let ((buf (find-file-noselect file)))
+            (with-current-buffer buf
+              (org-with-wide-buffer
+               (goto-char (point-min))
+               (catch 'found
+                 (while (re-search-forward org-heading-regexp nil t)
+                   (when (equal (nth 4 (org-heading-components)) headline)
+                     (throw 'found (copy-marker (line-beginning-position)))))
+                 nil)))))
+     (error "Heading not found: %s"
+            (or headline id file "?")))))
+
+(defun glasspane-org--agenda-items (&optional span start-day)
+  "Extract agenda items for SPAN (\\='day, \\='week, or \\='month).
+START-DAY is an optional string (e.g. \"2026-11-01\") to start the agenda on.
+Returns a list of alists representing agenda items.  Memoised; see
+`glasspane-org-cache-invalidate'."
+  (glasspane-org--with-cache (glasspane-org--cache-key 'agenda (or span 'day) start-day)
+    (glasspane-org--agenda-items-1 span start-day)))
+
+(defconst glasspane-org--agenda-buffer "*EABP Agenda*"
+  "Private buffer the agenda extraction builds into (and kills after).")
+
+(defun glasspane-org--agenda-items-1 (span start-day)
+  "Uncached worker for `glasspane-org--agenda-items'."
+  (let ((org-agenda-span (or span 'day))
+        (org-agenda-start-day start-day)
+        (org-agenda-files (org-agenda-files))
+        ;; Build into a private buffer so a user's open *Org Agenda* on the
+        ;; desktop is never clobbered (and never killed) by an extraction.
+        ;; `org-agenda-buffer-tmp-name' is the supported redirect: `org-agenda'
+        ;; REBINDS `org-agenda-buffer-name' in its own let* and recomputes it,
+        ;; so binding that variable directly gets shadowed — the build then
+        ;; lands in *Org Agenda* while we look for (and fail to find, and fail
+        ;; to kill) our own name.
+        (org-agenda-buffer-tmp-name glasspane-org--agenda-buffer)
+        (org-agenda-sticky nil)
+        (inhibit-redisplay t)
+        items)
+    (unwind-protect
+        (save-window-excursion
+          (let ((org-agenda-window-setup 'current-window))
+            (org-agenda nil "a")
+            (with-current-buffer glasspane-org--agenda-buffer
+          (goto-char (point-min))
+          (while (not (eobp))
+            (let* ((marker (get-text-property (point) 'org-marker))
+                   (tags (get-text-property (point) 'tags))
+                   (time (get-text-property (point) 'time))
+                   (type (get-text-property (point) 'type))
+                   (date-abs (get-text-property (point) 'date))
+                   ;; org ≥9.6 stores the gregorian (MONTH DAY YEAR) list
+                   ;; directly; older code stored the absolute day number.
+                   ;; Feeding the list to calendar-gregorian-from-absolute
+                   ;; signals, which emptied the whole agenda.
+                   (date-list (cond ((consp date-abs) date-abs)
+                                    ((numberp date-abs)
+                                     (calendar-gregorian-from-absolute date-abs))))
+                   (date-str (when date-list (format "%04d-%02d-%02d" (nth 2 date-list) (nth 0 date-list) (nth 1 date-list)))))
+              (when marker
+                (with-current-buffer (marker-buffer marker)
+                  (save-excursion
+                    (goto-char marker)
+                    (let* ((components (org-heading-components))
+                           (todo (nth 2 components))
+                           (priority (nth 3 components))
+                           (headline (nth 4 components)))
+                      (push `((headline . ,headline)
+                              (todo . ,todo)
+                              (priority . ,(if priority (char-to-string priority) nil))
+                              (tags . ,(vconcat tags))
+                              (file . ,(buffer-file-name))
+                              (pos . ,(marker-position marker))
+                              (time . ,time)
+                              (date . ,date-str)
+                              (type . ,(when type (format "%s" type)))
+                              (ref . ,(glasspane-org--heading-ref)))
+                            items))))))
+            (forward-line 1)))))
+      ;; Kill by buffer object, not name, and even when extraction errored.
+      (when-let ((buf (get-buffer glasspane-org--agenda-buffer)))
+        (kill-buffer buf)))
+    (nreverse items)))
+
+(defun glasspane-org--todo-items (&optional files)
+  "Extract TODO items from FILES (or agenda files).
+Memoised; see `glasspane-org-cache-invalidate'."
+  (glasspane-org--with-cache (glasspane-org--cache-key 'todos files)
+    (glasspane-org--todo-items-1 files)))
+
+(defun glasspane-org--todo-items-1 (files)
+  "Uncached worker for `glasspane-org--todo-items'."
+  (let (items)
+    (org-map-entries
+     (lambda ()
+       (let* ((components (org-heading-components))
+              (todo (nth 2 components))
+              (priority (nth 3 components))
+              (headline (nth 4 components))
+              (tags (org-get-tags))
+              (scheduled (org-entry-get (point) "SCHEDULED"))
+              (deadline  (org-entry-get (point) "DEADLINE")))
+         (when todo
+           (push `((headline . ,headline)
+                   (todo . ,todo)
+                   (priority . ,(if priority (char-to-string priority) nil))
+                   (tags . ,(vconcat tags))
+                   (scheduled . ,scheduled)
+                   (deadline  . ,deadline)
+                   (file . ,(buffer-file-name))
+                   (pos . ,(point))
+                   (ref . ,(glasspane-org--heading-ref)))
+                 items))))
+     "TODO<>\"\"" (or files 'agenda))
+    (nreverse items)))
+
+(defun glasspane-org--heading-item-at ()
+  "Build a heading item alist for the org entry at point.
+Same shape as `glasspane-org--todo-items' entries (headline/todo/priority/
+tags/file/pos/ref); used by the search layer."
+  (let* ((components (org-heading-components))
+         (todo (nth 2 components))
+         (priority (nth 3 components))
+         (headline (nth 4 components))
+         (tags (org-get-tags))
+         (scheduled (org-entry-get (point) "SCHEDULED"))
+         (deadline  (org-entry-get (point) "DEADLINE")))
+    `((headline . ,headline)
+      (todo . ,todo)
+      (priority . ,(if priority (char-to-string priority) nil))
+      (tags . ,(vconcat tags))
+      (scheduled . ,scheduled)
+      (deadline  . ,deadline)
+      (file . ,(buffer-file-name))
+      (pos . ,(point))
+      (ref . ,(glasspane-org--heading-ref)))))
+
+(defun glasspane-org--file-heading-items (file)
+  "Extract level-1 headings from FILE as item alists.
+Same shape as `glasspane-org--todo-items' entries (plus scheduled/deadline),
+suitable for `glasspane-ui--agenda-card'."
+  (when (and file (file-readable-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (let (items)
+         (org-map-entries
+          (lambda ()
+            (let* ((components (org-heading-components))
+                   (level (nth 0 components))
+                   (todo (nth 2 components))
+                   (priority (nth 3 components))
+                   (headline (nth 4 components))
+                   (tags (org-get-tags))
+                   (scheduled (org-entry-get (point) "SCHEDULED"))
+                   (deadline  (org-entry-get (point) "DEADLINE")))
+              (when (= level 1)
+                (push `((headline . ,headline)
+                        (todo . ,todo)
+                        (priority . ,(if priority (char-to-string priority) nil))
+                        (tags . ,(vconcat tags))
+                        (scheduled . ,scheduled)
+                        (deadline  . ,deadline)
+                        (file . ,(buffer-file-name))
+                        (pos . ,(point))
+                        (ref . ,(glasspane-org--heading-ref)))
+                      items))))
+          nil nil)
+         (nreverse items))))))
+
+(defun glasspane-org--search-substring (query)
+  "Case-insensitive substring search of agenda files for QUERY.
+Matches headline text or any tag. Returns a list of heading items."
+  (let ((q (downcase (string-trim query))) items)
+    (org-map-entries
+     (lambda ()
+       (let* ((comps (org-heading-components))
+              (headline (downcase (or (nth 4 comps) "")))
+              (tags (org-get-tags)))
+         (when (or (string-search q headline)
+                   (cl-some (lambda (tg) (string-search q (downcase tg))) tags))
+           (push (glasspane-org--heading-item-at) items))))
+     nil 'agenda)
+    (nreverse items)))
+
+(defun glasspane-org--search (query)
+  "Search agenda files for QUERY; return a list of heading items.
+Uses `org-ql' when available, falling back to a substring match.
+Memoised; see `glasspane-org-cache-invalidate'."
+  (if (string-empty-p (string-trim query))
+      nil
+    (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
+      (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
+                          (condition-case nil (read query) (error query))
+                        query)))
+        (if (fboundp 'org-ql-select)
+            (condition-case nil
+                (org-ql-select (org-agenda-files) ql-query
+                               :action #'glasspane-org--heading-item-at)
+              (error (glasspane-org--search-substring query)))
+          (glasspane-org--search-substring query))))))
+
+(defun glasspane-org--file-list ()
+  "List of agenda files and basic stats."
+  (mapcar (lambda (f) 
+            `((file . ,f)
+              (name . ,(file-name-nondirectory f))))
+          (org-agenda-files)))
+
+(defun glasspane-org--heading-at (pos file)
+  "Get full heading detail at POS in FILE."
+  (with-current-buffer (find-file-noselect file)
+    (save-excursion
+      (goto-char pos)
+      (let* ((components (org-heading-components))
+             (todo (nth 2 components))
+             (priority (nth 3 components))
+             (headline (nth 4 components))
+             (tags (org-get-tags))
+             (props (org-entry-properties))
+             ;; Basic body extraction:
+             (end (save-excursion (org-end-of-subtree t t)))
+             (body-start (save-excursion (forward-line 1) (point)))
+             (body (if (< body-start end)
+                       (buffer-substring-no-properties body-start end)
+                     "")))
+        `((headline . ,headline)
+          (todo . ,todo)
+          (priority . ,(if priority (char-to-string priority) nil))
+          (tags . ,(vconcat tags))
+          (properties . ,props)
+          (body . ,body))))))
+
+(defun glasspane-org--parse-template-prompts (template-string)
+  "Return the ordered field names to collect for TEMPLATE-STRING.
+Each `%^{NAME}' or `%^{NAME|default}' contributes NAME (the default is
+dropped from the label but honoured at fill time). A `%?' body position
+adds a leading \"Headline\" field. Duplicates are removed."
+  (let (prompts (start 0))
+    (while (string-match "%\\^{\\([^}]+\\)}" template-string start)
+      ;; Capture the match BEFORE `split-string' runs — it calls `string-match'
+      ;; internally and would clobber the match data, leaving `match-end' wrong
+      ;; and the loop spinning forever.
+      (let ((spec (match-string 1 template-string))
+            (end (match-end 0)))
+        (push (string-trim (car (split-string spec "|"))) prompts)
+        (setq start end)))
+    (setq prompts (nreverse prompts))
+    (delete-dups
+     (if (string-match-p "%\\?" template-string)
+         (cons "Headline" prompts)
+       prompts))))
+
+(defun glasspane-org--capture-templates ()
+  "Return list of capture templates."
+  (mapcar (lambda (tmpl)
+            (let ((key (nth 0 tmpl))
+                  (desc (nth 1 tmpl))
+                  (template-string (nth 4 tmpl)))
+              `((key . ,key)
+                (description . ,desc)
+                (prompts . ,(vconcat (glasspane-org--parse-template-prompts 
+                                      (if (stringp template-string) template-string "")))))))
+          org-capture-templates))
+
+(defun glasspane-org--fill-template (tmpl values)
+  "Fill org capture TMPL string from VALUES (NAME -> user input alist).
+`%?' becomes the Headline value; each `%^{NAME|default}' becomes the user
+value for NAME, else its default, else empty. Any *other* interactive
+escape that survives (`%^{…}' with no value, `%^t', `%^g', …) is then
+stripped, so `org-capture' can never block on a minibuffer prompt — which
+on the phone would hang behind the bridge."
+  (let ((headline (or (cdr (assoc "Headline" values)) "")))
+    ;; %? — free-form body position.
+    (setq tmpl (replace-regexp-in-string "%\\?" headline tmpl t t))
+    ;; %^{NAME|default} — scan the template's own tokens so NAME always
+    ;; matches what `glasspane-org--parse-template-prompts' produced.
+    (setq tmpl (replace-regexp-in-string
+                "%\\^{\\([^}]*\\)}"
+                (lambda (m)
+                  ;; M is the whole "%^{ … }" match; parse it directly rather
+                  ;; than via match-data (unreliable inside this callback).
+                  (let* ((spec (substring m 3 -1))
+                         (bar (string-search "|" spec))
+                         (name (string-trim (if bar (substring spec 0 bar) spec)))
+                         (default (and bar (substring spec (1+ bar))))
+                         (val (cdr (assoc name values))))
+                    (cond ((and (stringp val) (not (string-empty-p val))) val)
+                          ((stringp default) default)
+                          (t ""))))
+                tmpl t t))
+    ;; Neutralise any remaining caret (interactive) escapes; leave plain
+    ;; ones like %U %t %i %a for org to expand non-interactively.
+    (replace-regexp-in-string "%\\^.?" "" tmpl t t)))
+
+(defun glasspane-org--do-capture (template-key values &optional extra-body)
+  "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input).
+EXTRA-BODY, when non-empty, is appended below the filled template —
+the carrier for text shared from another app via the share sheet."
+  (let ((entry (assoc template-key org-capture-templates)))
+    (when entry
+      (let* ((tmpl (nth 4 entry))
+             (filled (if (stringp tmpl)
+                         (glasspane-org--fill-template tmpl values)
+                       tmpl))
+             (filled (if (and (stringp filled)
+                              (stringp extra-body)
+                              (not (string-empty-p (string-trim extra-body))))
+                         (concat filled "\n" (string-trim extra-body))
+                       filled))
+             ;; Shallow-copy the entry, swap in the filled template, and force
+             ;; :immediate-finish so the capture buffer never waits for the
+             ;; C-c C-c a phone user can't press.
+             (new-entry (copy-sequence entry)))
+        (setcar (nthcdr 4 new-entry) filled)
+        (setcdr (nthcdr 4 new-entry)
+                (append (nthcdr 5 new-entry) '(:immediate-finish t)))
+        ;; `org-capture-entry' short-circuits template selection inside
+        ;; `org-capture', so binding it to the FILLED copy is what makes the
+        ;; pre-filled template the one that actually runs.  (Binding it to
+        ;; the original — as this code once did — re-ran the raw %^{...}
+        ;; prompts and double-asked the user through the bridge.)
+        (let ((org-capture-entry new-entry))
+          ;; Safety net: a fully pre-filled template shouldn't prompt at all,
+          ;; but if any escape slips through, never let `org-capture' block
+          ;; Emacs forever on a minibuffer the phone can't answer. `with-timeout'
+          ;; fires even while a synchronous read is waiting.
+          (with-timeout (30 (message "eabp: capture timed out (a prompt was left unanswered)"))
+            (org-capture)))))))
+
+(defun glasspane-org--item-hm (time)
+  "Normalize an agenda item's raw `time' property to \"HH:MM\", or nil.
+The property comes straight from the agenda's time grid and looks like
+\" 9:15......\" or \"14:00-15:00\" — leading space, no zero padding,
+grid filler dots."
+  (when (stringp time)
+    (let ((s (string-trim time)))
+      (when (string-match "\\`\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)" s)
+        (format "%02d:%s"
+                (string-to-number (match-string 1 s))
+                (match-string 2 s))))))
+
+(defun glasspane-org--upcoming-reminders (&optional horizon-hours)
+  "Timed agenda items within HORIZON-HOURS (default 24) as reminder specs.
+Only items with a clock time qualify (a date alone isn't an alarm).
+Each spec is ((id . STR) (at_ms . MS) (title . STR) (body . STR)),
+ready for the companion's `reminders.set' frame."
+  (let* ((horizon (* (or horizon-hours 24) 3600))
+         (now (float-time))
+         (items (append (glasspane-org--agenda-items 'day nil)
+                        (glasspane-org--agenda-items
+                         'day (format-time-string "%Y-%m-%d"
+                                                  (time-add nil 86400)))))
+         reminders)
+    (dolist (it items)
+      (let ((date (alist-get 'date it))
+            (hm (glasspane-org--item-hm (alist-get 'time it)))
+            (headline (alist-get 'headline it))
+            (type (alist-get 'type it)))
+        (when (and (stringp date) hm)
+          (let ((at (float-time (org-time-string-to-time
+                                 (concat date " " hm)))))
+            (when (and (> at now) (< (- at now) horizon))
+              (push `((id . ,(format "%s/%s" date (or headline "?")))
+                      (at_ms . ,(truncate (* at 1000)))
+                      (title . ,(or headline "Org reminder"))
+                      (body . ,(concat hm (when (stringp type)
+                                            (concat " · " type)))))
+                    reminders))))))
+    (nreverse reminders)))
+
+(defun glasspane-org--clock-status ()
+  "Current clock status."
+  (when (org-clock-is-active)
+    `((task . ,org-clock-current-task)
+      (start . ,(float-time org-clock-start-time))
+      (file . ,(buffer-file-name (marker-buffer org-clock-marker)))
+      (pos . ,(marker-position org-clock-marker)))))
+
+(defun glasspane-org--recent-clocks (n)
+  "Last N clocked tasks."
+  (let (items)
+    (dolist (m org-clock-history)
+      (when (and m (marker-buffer m))
+        (with-current-buffer (marker-buffer m)
+          (save-excursion
+            (goto-char m)
+            (let* ((components (org-heading-components))
+                   (headline (nth 4 components)))
+              (push `((headline . ,headline)
+                      (file . ,(buffer-file-name))
+                      (pos . ,(marker-position m))
+                      (ref . ,(glasspane-org--heading-ref)))
+                    items))))))
+    (cl-subseq (nreverse items) 0 (min n (length items)))))
+
+(provide 'glasspane-org)
+;;; glasspane-org.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-org-rich.el
+;;; ==================================================================
+
+;;; glasspane-org-rich.el --- Org → rich-text SDUI emitter -*- lexical-binding: t; -*-
+
+;; Turns org content into EABP `rich_text' nodes (styled span runs) instead of
+;; the syntax-highlighted monospace `eabp-markup' produces. Emacs does the
+;; parsing via `org-element', so the device never re-parses org — it only paints
+;; the spans. Inline emphasis (bold/italic/underline/strike/code/verbatim),
+;; links (tappable), timestamps, and #hashtags all map to native styling.
+;;
+;; Block-level content that doesn't fit a single styled paragraph — source
+;; blocks, tables, example blocks — falls back to `eabp-markup' so code keeps
+;; its highlighted, fixed-width look.
+;;
+;; Entry point: `glasspane-org-rich-body' (an org body string -> a list of nodes).
+
+;;; Code:
+
+(require 'org)
+(require 'org-element)
+(require 'cl-lib)
+(require 'eabp-widgets)
+
+;; ─── Dynamic context for interactive elements ───────────────────────────────
+
+(defvar glasspane-org-rich--file nil
+  "File path being rendered; enables interactive checkboxes when non-nil.")
+
+(defvar glasspane-org-rich--body-offset nil
+  "Offset mapping temp-buffer positions to real-file positions.
+real-pos = offset + temp-pos.  Set by `glasspane-org-rich-body' when
+FILE and OFFSET are supplied.")
+
+;; ─── Inline spans ────────────────────────────────────────────────────────────
+
+(defun glasspane-org-rich--flag (style key)
+  "Return STYLE (a plist of emphasis flags) with KEY turned on.
+Prepended so `plist-get' sees the new value first; STYLE is never mutated."
+  (cons key (cons t style)))
+
+(defun glasspane-org-rich--leaf (text style)
+  "Build a span for TEXT carrying the emphasis flags set in STYLE."
+  (apply #'eabp-span (or text "")
+         (append (when (plist-get style :bold)      '(:bold t))
+                 (when (plist-get style :italic)    '(:italic t))
+                 (when (plist-get style :underline) '(:underline t))
+                 (when (plist-get style :strike)    '(:strike t))
+                 (when (plist-get style :code)      '(:code t))
+                 (when (plist-get style :tag)       '(:tag t))
+                 (when (plist-get style :baseline)
+                   (list :baseline (plist-get style :baseline))))))
+
+(defconst glasspane-org-rich--image-re
+  "\\.\\(png\\|jpe?g\\|gif\\|webp\\|bmp\\|svg\\)\\'"
+  "Matches link targets that should render as inline images.")
+
+(defun glasspane-org-rich--image-url (type target)
+  "Return a renderable URL for a link of TYPE to TARGET if it's an image.
+http(s) image URLs pass through; local file/attachment paths become
+file:// URIs the companion can try to load. Returns nil for non-images."
+  (when (and (stringp target)
+             (string-match-p glasspane-org-rich--image-re (downcase target)))
+    (let ((ty (and type (downcase type))))
+      (cond
+       ((member ty '("http" "https")) (concat ty ":" target))
+       ((or (null ty) (equal ty "file"))
+        (concat "file://" (expand-file-name target)))
+       ((equal ty "attachment")
+        (let ((dir (ignore-errors (org-attach-dir))))
+          (when dir (concat "file://" (expand-file-name target dir)))))))))
+
+(defun glasspane-org-rich--text-spans (text style)
+  "Split TEXT into plain runs and #hashtag runs, all under STYLE.
+A hashtag must follow start-of-string or a non-word character, so `C#'
+and URL fragments aren't mistaken for tags."
+  (let ((spans nil) (start 0) (len (length text)))
+    (while (string-match "\\(?:^\\|[^[:alnum:]_]\\)\\(#[[:alnum:]_-]+\\)" text start)
+      (let ((mb (match-beginning 1)) (me (match-end 1)))
+        (when (> mb start)
+          (push (glasspane-org-rich--leaf (substring text start mb) style) spans))
+        (push (glasspane-org-rich--leaf (substring text mb me)
+                                   (glasspane-org-rich--flag style :tag))
+              spans)
+        (setq start me)))
+    (when (< start len)
+      (push (glasspane-org-rich--leaf (substring text start) style) spans))
+    (nreverse spans)))
+
+(defun glasspane-org-rich--linkify (spans action)
+  "Attach ON-TAP ACTION to every span in SPANS that doesn't already have one."
+  (mapcar (lambda (sp)
+            (if (assq 'on_tap sp) sp (cons (cons 'on_tap action) sp)))
+          spans))
+
+(defun glasspane-org-rich--inline (objects style)
+  "Convert a list of org inline OBJECTS (strings and elements) to spans.
+STYLE carries inherited emphasis flags as recursion descends into
+bold/italic/... containers."
+  (let (spans)
+    (dolist (obj objects)
+      (cond
+       ((stringp obj)
+        (setq spans (append spans (glasspane-org-rich--text-spans obj style))))
+       ((null obj) nil)
+       (t
+        (pcase (org-element-type obj)
+          ('bold (setq spans (append spans
+                                     (glasspane-org-rich--inline
+                                      (org-element-contents obj)
+                                      (glasspane-org-rich--flag style :bold)))))
+          ('italic (setq spans (append spans
+                                       (glasspane-org-rich--inline
+                                        (org-element-contents obj)
+                                        (glasspane-org-rich--flag style :italic)))))
+          ('underline (setq spans (append spans
+                                          (glasspane-org-rich--inline
+                                           (org-element-contents obj)
+                                           (glasspane-org-rich--flag style :underline)))))
+          ('strike-through (setq spans (append spans
+                                               (glasspane-org-rich--inline
+                                                (org-element-contents obj)
+                                                (glasspane-org-rich--flag style :strike)))))
+          ('code (setq spans (append spans
+                                     (list (glasspane-org-rich--leaf
+                                            (org-element-property :value obj)
+                                            (glasspane-org-rich--flag style :code))))))
+          ('verbatim (setq spans (append spans
+                                         (list (glasspane-org-rich--leaf
+                                                (org-element-property :value obj)
+                                                (glasspane-org-rich--flag style :code))))))
+          ('link
+           (let* ((raw (org-element-property :raw-link obj))
+                  (contents (org-element-contents obj))
+                  (child (if contents
+                             (glasspane-org-rich--inline contents style)
+                           (list (glasspane-org-rich--leaf (or raw "link") style))))
+                  (action (eabp-action "org.link.open"
+                                       :args (list (cons 'link raw)))))
+             (setq spans (append spans (glasspane-org-rich--linkify child action)))))
+          ('timestamp
+           (setq spans (append spans
+                               (list (glasspane-org-rich--leaf
+                                      (org-element-property :raw-value obj)
+                                      (glasspane-org-rich--flag style :code))))))
+          ('entity
+           ;; Render org entities (\alpha, \rightarrow, …) as their Unicode form.
+           (let ((utf8 (or (org-element-property :utf-8 obj)
+                           (org-element-property :name obj))))
+             (when utf8
+               (setq spans (append spans (list (glasspane-org-rich--leaf utf8 style)))))))
+          ('subscript
+           (setq spans (append spans
+                               (glasspane-org-rich--inline
+                                (org-element-contents obj)
+                                (cons :baseline (cons "sub" style))))))
+          ('superscript
+           (setq spans (append spans
+                               (glasspane-org-rich--inline
+                                (org-element-contents obj)
+                                (cons :baseline (cons "super" style))))))
+          ('footnote-reference
+           ;; A superscript, link-colored marker; tapping reports the inline
+           ;; definition (when the reference carries one) via snackbar.
+           (let* ((label (org-element-property :label obj))
+                  (marker (format "[%s]" (if (and (stringp label)
+                                                  (string-prefix-p "fn:" label))
+                                             (substring label 3)
+                                           (or label "*"))))
+                  (def (string-trim
+                        (or (ignore-errors
+                              (org-element-interpret-data
+                               (org-element-contents obj)))
+                            "")))
+                  (action (eabp-action "org.footnote.show"
+                                       :args (list (cons 'label (or label ""))
+                                                   (cons 'def def)))))
+             (setq spans
+                   (append spans
+                           (list (eabp-span marker
+                                            :baseline "super"
+                                            :tag t
+                                            :on-tap action))))))
+          ('line-break
+           (setq spans (append spans (list (eabp-span "\n")))))
+          (_
+           ;; Anything else (latex fragment, export snippet, …): fall back to
+           ;; its interpreted source text.
+           (let ((txt (ignore-errors (org-element-interpret-data obj))))
+             (when (stringp txt)
+               (setq spans (append spans
+                                   (glasspane-org-rich--text-spans
+                                    (string-trim-right txt) style))))))))))
+    spans))
+
+;; ─── Block elements ──────────────────────────────────────────────────────────
+
+(defun glasspane-org-rich--item (item)
+  "Render a plain-list ITEM to a node (bullet/number + content, plus sub-elements).
+
+When `glasspane-org-rich--file' and `glasspane-org-rich--body-offset' are set
+(the reader passes them), checkbox items get a tappable icon that
+toggles the checkbox via Emacs without entering edit mode."
+  (let* ((bullet (or (org-element-property :bullet item) "- "))
+         (checkbox (org-element-property :checkbox item))
+         (contents (org-element-contents item))
+         (para (cl-find-if (lambda (c) (eq (org-element-type c) 'paragraph)) contents))
+         (inline (when para (glasspane-org-rich--inline (org-element-contents para) nil)))
+         (lead-text (concat (string-trim-right bullet) " "))
+         (head
+          (if (and checkbox glasspane-org-rich--file glasspane-org-rich--body-offset)
+              ;; Interactive checkbox — a tappable icon beside the item text.
+              (let* ((checked (eq checkbox 'on))
+                     (item-pos (+ glasspane-org-rich--body-offset
+                                  (org-element-property :begin item)))
+                     (cb-icon (pcase checkbox
+                                ('on  "check_box")
+                                ('off "check_box_outline_blank")
+                                (_    "indeterminate_check_box")))
+                     (cb (eabp-box
+                          (list (eabp-icon cb-icon :size 20))
+                          :on-tap (eabp-action
+                                   "checkbox.toggle"
+                                   :args `((file . ,glasspane-org-rich--file)
+                                           (pos  . ,item-pos))))))
+                (eabp-row cb
+                          (eabp-box
+                           (list (eabp-rich-text
+                                  (cons (eabp-span lead-text)
+                                        (or inline (list (eabp-span ""))))))
+                           :weight 1)))
+            ;; No checkbox, or no file context — plain text as before.
+            (let* ((mark (pcase checkbox
+                           ('on "☑ ") ('off "☐ ") ('trans "◪ ") (_ "")))
+                   (lead (eabp-span (concat lead-text mark))))
+              (eabp-rich-text (cons lead (or inline (list (eabp-span ""))))))))
+         (rest-contents (delq para (copy-sequence contents)))
+         (sub-nodes (delq nil (mapcar #'glasspane-org-rich--element rest-contents))))
+    (if sub-nodes
+        (eabp-column head
+                     (eabp-row (eabp-spacer :width 16)
+                               (eabp-box (list (apply #'eabp-column sub-nodes)) :weight 1)))
+      head)))
+
+(defun glasspane-org-rich--list (el)
+  "Render a plain-list EL to a column of item nodes."
+  (let ((items (delq nil
+                     (mapcar (lambda (item)
+                               (when (eq (org-element-type item) 'item)
+                                 (glasspane-org-rich--item item)))
+                             (org-element-contents el)))))
+    (when items (apply #'eabp-column items))))
+
+(defun glasspane-org-rich--paragraph-image (el)
+  "If paragraph EL is just a single image link, return an `eabp-image' node."
+  (let* ((contents (org-element-contents el))
+         (non-blank (cl-remove-if (lambda (c) (and (stringp c) (string-blank-p c)))
+                                  contents)))
+    (when (and (= (length non-blank) 1)
+               (consp (car non-blank))
+               (eq (org-element-type (car non-blank)) 'link))
+      (let* ((lnk (car non-blank))
+             (url (glasspane-org-rich--image-url (org-element-property :type lnk)
+                                            (org-element-property :path lnk))))
+        (when url (eabp-image url))))))
+
+(defun glasspane-org-rich--element (el)
+  "Render one top-level org element EL to a node, or nil to skip it."
+  (pcase (org-element-type el)
+    ('paragraph
+     (or (glasspane-org-rich--paragraph-image el)
+         (let ((spans (glasspane-org-rich--inline (org-element-contents el) nil)))
+           (when spans (eabp-rich-text spans)))))
+    ('plain-list (glasspane-org-rich--list el))
+    ('src-block
+     (eabp-markup (or (org-element-property :value el) "")
+                  :syntax (or (org-element-property :language el) "text")))
+    ((or 'example-block 'fixed-width)
+     (eabp-markup (or (org-element-property :value el) "")))
+    ('quote-block
+     (let ((inner (delq nil (mapcar #'glasspane-org-rich--element
+                                    (org-element-contents el)))))
+       (when inner (apply #'eabp-column inner))))
+    ('table
+     (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org"))
+    ('horizontal-rule (eabp-divider))
+    ;; Structural noise the reader handles elsewhere (properties drawer) or
+    ;; that carries no display value on its own.
+    ((or 'keyword 'comment 'comment-block 'planning
+         'property-drawer 'drawer 'node-property)
+     nil)
+    (_
+     (let ((txt (ignore-errors (string-trim (org-element-interpret-data el)))))
+       (when (and (stringp txt) (not (string-empty-p txt)))
+         (eabp-markup txt :syntax "org"))))))
+
+(defun glasspane-org-rich--top-elements (tree)
+  "Return the top-level elements of parsed TREE, descending through a section."
+  (let (out)
+    (dolist (el (org-element-contents tree))
+      (if (eq (org-element-type el) 'section)
+          (setq out (append out (org-element-contents el)))
+        (setq out (append out (list el)))))
+    out))
+
+;;;###autoload
+(defun glasspane-org-rich-body (body &optional base-dir file offset)
+  "Parse org BODY string into a list of EABP rich/markup nodes.
+Paragraphs and lists become native `rich_text'; code/tables/examples
+fall back to highlighted `eabp-markup'. BASE-DIR resolves relative image
+paths (pass the org file's directory).
+
+FILE and OFFSET enable interactive elements (checkboxes): OFFSET maps
+temp-buffer positions to real file positions (real = offset + temp).
+Returns nil for empty input."
+  (if (or (null body) (string-empty-p (string-trim body)))
+      nil
+    (let ((glasspane-org-rich--file file)
+          (glasspane-org-rich--body-offset offset))
+      (with-temp-buffer
+        (insert body)
+        (when (and base-dir (file-directory-p base-dir))
+          (setq default-directory base-dir))
+        (let ((org-inhibit-startup t)
+              (org-element-use-cache nil))
+          (delay-mode-hooks (org-mode))
+          (let ((tree (org-element-parse-buffer)))
+            (delq nil (mapcar #'glasspane-org-rich--element
+                              (glasspane-org-rich--top-elements tree)))))))))
+
+(provide 'glasspane-org-rich)
+;;; glasspane-org-rich.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-org-reader.el
+;;; ==================================================================
+
+;;; glasspane-org-reader.el --- Foldable org outline renderer for EABP -*- lexical-binding: t; -*-
+
+;; Renders an org buffer (or a single subtree) into a tree of EABP widgets:
+;; each heading becomes an `eabp-collapsible' whose header is the org-highlighted
+;; heading line and whose children are an optional (collapsed) PROPERTIES drawer,
+;; the heading's own body as highlighted org text, and its child headings —
+;; recursively. Folding is resolved entirely on the device (see the `collapsible'
+;; widget), so the whole subtree is shipped once and folds without a round-trip.
+;;
+;; Two entry points feed the UI layer (glasspane-ui):
+;;   `glasspane-org-reader-file'    — whole file, every top-level heading foldable
+;;   `glasspane-org-reader-subtree' — one heading's content inline + children foldable
+
+;;; Code:
+
+(require 'org)
+(require 'cl-lib)
+(require 'eabp-widgets)
+(require 'glasspane-org-rich)
+
+(defcustom glasspane-org-reader-max-headings 400
+  "Cap on headings rendered in one reader pass, to bound very large files."
+  :type 'integer :group 'eabp)
+
+;; ─── Parsing ───────────────────────────────────────────────────────────────────
+
+(defun glasspane-org-reader--record (pos next)
+  "Build a record for the heading at POS, whose body ends at NEXT.
+Returns a plist with :level :pos :line :props :body :body-start.
+:body-start is the real-buffer position of the first non-blank char
+in the body, used to map temp-buffer positions back for interactive
+elements (checkboxes)."
+  (save-excursion
+    (goto-char pos)
+    (let* ((comps (org-heading-components))
+           (level (or (nth 0 comps) 1))
+           (line (buffer-substring-no-properties
+                  (line-beginning-position) (line-end-position)))
+           (props (ignore-errors (org-entry-properties pos 'standard)))
+           (body-info
+            (progn
+              (goto-char pos)
+              (ignore-errors (org-end-of-meta-data t))
+              (let* ((b (min (point) next))
+                     (raw (buffer-substring-no-properties b next))
+                     (trimmed (string-trim-left raw "\\(?:[ \t]*[\n\r]\\)+"))
+                     (trim-count (- (length raw) (length trimmed))))
+                (list (string-trim-right trimmed) (+ b trim-count)))))
+           (body (car body-info))
+           (body-start (cadr body-info)))
+      (list :level level :pos pos :line line :props props
+            :body body :body-start body-start))))
+
+(defun glasspane-org-reader--collect (beg end include-first)
+  "Collect heading records between BEG and END.
+INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
+  (let (positions records)
+    (save-excursion
+      (goto-char beg)
+      (when (and include-first (org-at-heading-p))
+        (push (line-beginning-position) positions)
+        (end-of-line))                  ; don't re-match this heading below
+      (while (re-search-forward org-heading-regexp end t)
+        (push (line-beginning-position) positions)))
+    (setq positions (nreverse positions))
+    (cl-loop for cell on positions
+             for pos = (car cell)
+             for next = (or (cadr cell) end)
+             do (push (glasspane-org-reader--record pos next) records))
+    (nreverse records)))
+
+(defun glasspane-org-reader--build-tree (records)
+  "Nest flat RECORDS into a tree by :level. Each node gains a :children list."
+  (let* ((root (list :level 0 :children nil))
+         (stack (list root)))
+    (dolist (rec records)
+      (let ((node (append rec (list :children nil)))
+            (level (plist-get rec :level)))
+        (while (>= (plist-get (car stack) :level) level)
+          (pop stack))
+        (let ((parent (car stack)))
+          (plist-put parent :children
+                     (append (plist-get parent :children) (list node))))
+        (push node stack)))
+    (plist-get root :children)))
+
+;; ─── Rendering ──────────────────────────────────────────────────────────────────
+
+(defun glasspane-org-reader--props-node (props file pos)
+  "A collapsed PROPERTIES drawer node for PROPS (an alist of KEY . VALUE)."
+  (let ((text (mapconcat (lambda (kv) (format ":%s: %s" (car kv) (cdr kv)))
+                         props "\n")))
+    (eabp-collapsible (format "fold-props/%s/%s" file pos)
+                      (eabp-text "PROPERTIES" 'label)
+                      (list (eabp-text text 'mono))
+                      :collapsed t)))
+
+(defun glasspane-org-reader--content-nodes (n file &optional skip-props)
+  "Inline content nodes for tree node N: PROPERTIES drawer, body, child headings.
+When SKIP-PROPS is non-nil, omit the PROPERTIES drawer (used when the
+detail view already shows properties in its own section)."
+  (let ((pos (plist-get n :pos))
+        (props (plist-get n :props))
+        (body (plist-get n :body))
+        (body-start (plist-get n :body-start))
+        (children (plist-get n :children)))
+    (delq nil
+          (append
+           (when (and props (not skip-props))
+             (list (glasspane-org-reader--props-node props file pos)))
+           (when (and body (not (string-empty-p body)))
+             ;; Native rich text (emphasis, links, #tags) instead of the
+             ;; monospace org highlighter; code/tables still fall back to it.
+             ;; file + offset enable interactive checkboxes.
+             (glasspane-org-rich-body body (and file (file-name-directory file))
+                                file (when body-start (1- body-start))))
+           (mapcar (lambda (c) (glasspane-org-reader--heading-node c file)) children)))))
+
+(defun glasspane-org-reader--heading-node (n file)
+  "Render tree node N (and its subtree) to a foldable `eabp-collapsible'.
+Long-pressing the header opens the heading detail view when FILE is available."
+  (let* ((pos (plist-get n :pos))
+         (ref (when file
+                `((file . ,file) (pos . ,pos) (headline . "")))))
+    (eabp-collapsible (format "fold/%s/%s" file pos)
+                      (eabp-markup (plist-get n :line) :syntax "org")
+                      (glasspane-org-reader--content-nodes n file)
+                      :on-long-tap (when ref
+                                     (eabp-action "heading.tap" :args ref)))))
+
+;; ─── Entry points ───────────────────────────────────────────────────────────────
+
+(defun glasspane-org-reader--cap (records)
+  "Truncate RECORDS to `glasspane-org-reader-max-headings'."
+  (if (> (length records) glasspane-org-reader-max-headings)
+      (cl-subseq records 0 glasspane-org-reader-max-headings)
+    records))
+
+(defun glasspane-org-reader-file (file)
+  "Render the whole org FILE to a list of foldable widget nodes.
+Content before the first heading is not shown."
+  (when (and file (file-readable-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (let* ((records (glasspane-org-reader--cap
+                        (glasspane-org-reader--collect (point-min) (point-max) nil)))
+              (tree (glasspane-org-reader--build-tree records)))
+         (mapcar (lambda (n) (glasspane-org-reader--heading-node n file)) tree))))))
+
+(defun glasspane-org-reader-subtree (file pos &optional skip-props)
+  "Render the org subtree at POS in FILE.
+The drilled-into heading's own PROPERTIES/body render inline (its title is
+already in the top bar); its child headings render as foldable sections.
+Returns a list of widget nodes (possibly empty).
+When SKIP-PROPS is non-nil, the top-level PROPERTIES drawer is omitted."
+  (when (and file (file-readable-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (goto-char (min pos (point-max)))
+       (unless (org-at-heading-p) (ignore-errors (org-back-to-heading t)))
+       (let* ((beg (point))
+              (end (save-excursion (org-end-of-subtree t t)))
+              (records (glasspane-org-reader--cap
+                        (glasspane-org-reader--collect beg end t)))
+              (tree (glasspane-org-reader--build-tree records))
+              (root (car tree)))
+         (when root
+           (glasspane-org-reader--content-nodes root file skip-props)))))))
+
+(defun glasspane-org-reader-refile-list (file)
+  "Render all headings in FILE as a flat reorderable item list.
+Returns a single `eabp-reorderable-list' node for refile mode."
+  (when (and file (file-readable-p file))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (let* ((records (glasspane-org-reader--cap
+                        (glasspane-org-reader--collect (point-min) (point-max) nil)))
+              (items (mapcar (lambda (r)
+                               `((label . ,(plist-get r :line))
+                                 (level . ,(plist-get r :level))
+                                 (pos   . ,(plist-get r :pos))
+                                 (file  . ,file)))
+                             records)))
+         (eabp-reorderable-list
+          items
+          :on-reorder (eabp-action "heading.reorder"
+                                   :args `((file . ,file)))))))))
+
+(provide 'glasspane-org-reader)
+;;; glasspane-org-reader.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-clock.el
+;;; ==================================================================
+
+;;; glasspane-clock.el --- org-clock chronometer notification -*- lexical-binding: t; -*-
+
+;; Tier 1 org integration: mirrors the running org clock to the companion
+;; as an ongoing chronometer notification with Clock out / Switch task
+;; buttons, and re-asserts it on reconnect so the phone's cache matches
+;; reality after an Emacs restart.
+;;
+;; This is app-layer code — the core (eabp-surfaces) knows nothing about
+;; org; it only carries the `notification:org-clock' surface this module
+;; pushes through the generic senders.
+
+;;; Code:
+
+(require 'eabp)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'org-clock)
+
+(defun glasspane-clock-in-notification ()
+  "Push the org-clock chronometer notification surface."
+  (when (and (boundp 'org-clock-current-task) org-clock-current-task)
+    (eabp-surface-push
+     "notification:org-clock"
+     (eabp-notification-spec
+      :channel "clocking" :ongoing t :category "stopwatch"
+      :chronometer `((base_ms . ,(truncate (* (float-time org-clock-start-time) 1000))))
+      :body (list
+             (eabp-text (format "Clocked in: %s" org-clock-current-task) 'title)
+             (eabp-row
+              (eabp-button "Clock out"
+                           (eabp-action "org.clock.out" :when-offline "wake"))
+              (eabp-button "Switch task"
+                           (eabp-action "org.clock.switch" :when-offline "wake"))))))))
+
+(defun glasspane-clock-out-notification ()
+  "Remove the org-clock notification surface."
+  (eabp-surface-remove "notification:org-clock"))
+
+;; Closing the loop: a tap on "Clock out" arrives here as an event.action.
+(eabp-defaction "org.clock.out"
+                (lambda (&rest _) (when (org-clock-is-active) (org-clock-out))))
+(eabp-defaction "org.clock.switch"
+                ;; Placeholder: jump to the running task. Swap for a real
+                ;; task-picker (e.g. org-clock-in to a recent task) when ready.
+                (lambda (&rest _) (org-clock-goto)))
+(eabp-defaction "org.clock.in-last"
+                ;; The home-screen widget's "Clock In (Last)" button.
+                (lambda (&rest _)
+                  (condition-case err
+                      (org-clock-in-last)
+                    (error (message "EABP clock-in-last failed: %s"
+                                    (error-message-string err))))))
+
+(add-hook 'org-clock-in-hook  #'glasspane-clock-in-notification)
+(add-hook 'org-clock-out-hook #'glasspane-clock-out-notification)
+
+;; On (re)connect, re-assert current clock state so the companion's cache
+;; matches reality after an Emacs restart. (Runs after the revision snapshot
+;; has been absorbed — see the -50 depth in eabp-surfaces.)
+(add-hook 'eabp-connected-hook
+          (lambda (_welcome)
+            (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
+              (glasspane-clock-in-notification))))
+
+(provide 'glasspane-clock)
+;;; glasspane-clock.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-ui.el
+;;; ==================================================================
+
+;;; glasspane-ui.el --- The Glasspane org app for EABP -*- lexical-binding: t; -*-
 
 ;; The reference Tier 1 app: registers the org views (agenda, tasks, clock,
 ;; search, detail, settings) into the generic shell (eabp-shell.el) and
@@ -7170,105 +7170,105 @@ with a keyboard FAB that opens the buffer's keymap."
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
 (require 'eabp-shell)
-(require 'eabp-org)
-(require 'eabp-org-clock)
-(require 'eabp-org-reader)
+(require 'glasspane-org)
+(require 'glasspane-clock)
+(require 'glasspane-org-reader)
 (require 'eabp-files)
 (require 'eabp-keymap)
 (require 'eabp-magit)
 (require 'eabp-settings)
-;; Not used directly — pulled in so (require 'eabp-org-ui) still assembles
+;; Not used directly — pulled in so (require 'glasspane-ui) still assembles
 ;; the complete reference app for init-file users.
 (require 'eabp-emacs-ui)
 (require 'eabp-package-browser)
 (require 'cl-lib)
 
-(defvar eabp-org-ui--detail-ref nil
+(defvar glasspane-ui--detail-ref nil
   "Reference alist (id/file/pos/headline) of the heading being viewed, or nil.")
 
-(defvar eabp-org-ui--detail-read-mode t
+(defvar glasspane-ui--detail-read-mode t
   "When non-nil, detail view shows the foldable reader instead of the editor.")
 
-(defvar eabp-org-ui--tasks-filter "ALL"
+(defvar glasspane-ui--tasks-filter "ALL"
   "Current filter for the Tasks tab.")
 
-(defvar eabp-org-ui--search-query ""
+(defvar glasspane-ui--search-query ""
   "Last submitted query for the Search view.")
 
-(defcustom eabp-org-custom-agendas nil
+(defcustom glasspane-org-custom-agendas nil
   "Alist of custom agenda views (Name . Query) for EABP."
   :type '(alist :key-type string :value-type string)
   :group 'eabp)
 
-(defvar eabp-org-ui--search-results nil
+(defvar glasspane-ui--search-results nil
   "Cached heading items from the last search.")
 
 ;; ─── Reminders & home-screen widget (piggybacked on each shell push) ────────
 
-(defvar eabp-org-ui--last-reminders 'unset
+(defvar glasspane-ui--last-reminders 'unset
   "Reminder list from the previous sync, to suppress identical sends.")
 
-(defun eabp-org-ui--sync-reminders ()
+(defun glasspane-ui--sync-reminders ()
   "Send upcoming timed items to the companion as exact-alarm reminders."
-  (let ((rems (condition-case nil (eabp-org--upcoming-reminders) (error nil))))
-    (unless (equal rems eabp-org-ui--last-reminders)
-      (setq eabp-org-ui--last-reminders rems)
+  (let ((rems (condition-case nil (glasspane-org--upcoming-reminders) (error nil))))
+    (unless (equal rems glasspane-ui--last-reminders)
+      (setq glasspane-ui--last-reminders rems)
       (eabp-send "reminders.set" `((reminders . ,(vconcat rems)))))))
 
-(defvar eabp-org-ui--last-widget 'unset
+(defvar glasspane-ui--last-widget 'unset
   "Widget lines from the previous push, to suppress identical pushes.")
 
-(defun eabp-org-ui--widget-lines ()
+(defun glasspane-ui--widget-lines ()
   "Today's agenda as short \"HH:MM  Headline\" strings for the widget."
   (mapcar (lambda (it)
-            (let ((hm (eabp-org--item-hm (alist-get 'time it))))
+            (let ((hm (glasspane-org--item-hm (alist-get 'time it))))
               (concat (if hm (concat hm "  ") "")
                       (or (alist-get 'headline it) ""))))
           (seq-take (condition-case nil
-                        (eabp-org--agenda-items 'day nil)
+                        (glasspane-org--agenda-items 'day nil)
                       (error nil))
                     6)))
 
-(defun eabp-org-ui--push-widget ()
+(defun glasspane-ui--push-widget ()
   "Push the `widget:agenda' surface backing the home-screen widget."
-  (let ((lines (eabp-org-ui--widget-lines)))
-    (unless (equal lines eabp-org-ui--last-widget)
-      (setq eabp-org-ui--last-widget lines)
+  (let ((lines (glasspane-ui--widget-lines)))
+    (unless (equal lines glasspane-ui--last-widget)
+      (setq glasspane-ui--last-widget lines)
       (eabp-surface-push
        "widget:agenda"
        `((title . ,(format-time-string "Agenda · %a %b %d"))
          (lines . ,(vconcat lines)))))))
 
 ;; Both are memo-guarded, so unchanged data sends nothing.
-(add-hook 'eabp-shell-after-push-hook #'eabp-org-ui--sync-reminders)
-(add-hook 'eabp-shell-after-push-hook #'eabp-org-ui--push-widget)
+(add-hook 'eabp-shell-after-push-hook #'glasspane-ui--sync-reminders)
+(add-hook 'eabp-shell-after-push-hook #'glasspane-ui--push-widget)
 
 ;; ─── Shell views ─────────────────────────────────────────────────────────────
 
-(defun eabp-org-ui--agenda-view (snackbar)
-  (eabp-shell-tab-view "agenda" (eabp-org-ui--agenda-body)
+(defun glasspane-ui--agenda-view (snackbar)
+  (eabp-shell-tab-view "agenda" (glasspane-ui--agenda-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--tasks-view (snackbar)
-  (eabp-shell-tab-view "tasks" (eabp-org-ui--tasks-body)
+(defun glasspane-ui--tasks-view (snackbar)
+  (eabp-shell-tab-view "tasks" (glasspane-ui--tasks-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--clock-view (snackbar)
-  (eabp-shell-tab-view "clock" (eabp-org-ui--clock-body)
+(defun glasspane-ui--clock-view (snackbar)
+  (eabp-shell-tab-view "clock" (glasspane-ui--clock-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--search-view (snackbar)
-  (eabp-shell-nav-view "Search" (eabp-org-ui--search-body)
+(defun glasspane-ui--search-view (snackbar)
+  (eabp-shell-nav-view "Search" (glasspane-ui--search-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--settings-view (snackbar)
-  (eabp-shell-nav-view "Settings" (eabp-org-ui--settings-body)
+(defun glasspane-ui--settings-view (snackbar)
+  (eabp-shell-nav-view "Settings" (glasspane-ui--settings-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--detail-view (snackbar)
+(defun glasspane-ui--detail-view (snackbar)
   "The heading drill-in: reader/editor body under curated heading actions."
   (eabp-shell-nav-view
-   "Detail" (eabp-org-ui--detail-body eabp-org-ui--detail-ref)
+   "Detail" (glasspane-ui--detail-body glasspane-ui--detail-ref)
    ;; Back is pure navigation: builtin = instant, local, works offline.
    ;; heading.back stays registered for compatibility but nothing emits
    ;; it anymore.
@@ -7277,54 +7277,54 @@ with a keyboard FAB that opens the buffer's keymap."
                    (eabp-icon-button
                     "note_add"
                     (eabp-action "heading.add-note"
-                                 :args eabp-org-ui--detail-ref
+                                 :args glasspane-ui--detail-ref
                                  :when-offline "drop")
                     :content-description "Add note")
                    (eabp-icon-button
                     "drive_file_move"
                     (eabp-action "heading.refile"
-                                 :args eabp-org-ui--detail-ref
+                                 :args glasspane-ui--detail-ref
                                  :when-offline "drop")
                     :content-description "Refile")
                    (eabp-icon-button
                     "archive"
                     (eabp-action "heading.archive"
-                                 :args eabp-org-ui--detail-ref
+                                 :args glasspane-ui--detail-ref
                                  :when-offline "drop")
                     :content-description "Archive")
                    (eabp-icon-button
-                    (if eabp-org-ui--detail-read-mode "edit" "visibility")
+                    (if glasspane-ui--detail-read-mode "edit" "visibility")
                     (eabp-action "detail.toggle-read")
                     :content-description
-                    (if eabp-org-ui--detail-read-mode "Edit" "Read"))
-                   (when (and eabp-org-ui--detail-ref
-                              (eabp-org-ui--org-file-p
-                               (alist-get 'file eabp-org-ui--detail-ref)))
+                    (if glasspane-ui--detail-read-mode "Edit" "Read"))
+                   (when (and glasspane-ui--detail-ref
+                              (glasspane-ui--org-file-p
+                               (alist-get 'file glasspane-ui--detail-ref)))
                      (eabp-icon-button
                       "tune"
                       (eabp-action "files.properties.show"
-                                   :args `((file . ,(alist-get 'file eabp-org-ui--detail-ref))))
+                                   :args `((file . ,(alist-get 'file glasspane-ui--detail-ref))))
                       :content-description "Properties"))))
    :snackbar snackbar))
 
-(eabp-shell-define-view "agenda" :builder #'eabp-org-ui--agenda-view
+(eabp-shell-define-view "agenda" :builder #'glasspane-ui--agenda-view
                         :tab '(:icon "event" :label "Agenda") :order 10)
-(eabp-shell-define-view "tasks" :builder #'eabp-org-ui--tasks-view
+(eabp-shell-define-view "tasks" :builder #'glasspane-ui--tasks-view
                         :tab '(:icon "checklist" :label "Tasks") :order 20)
-(eabp-shell-define-view "clock" :builder #'eabp-org-ui--clock-view
+(eabp-shell-define-view "clock" :builder #'glasspane-ui--clock-view
                         :tab '(:icon "schedule" :label "Clock") :order 30)
-(eabp-shell-define-view "search" :builder #'eabp-org-ui--search-view
+(eabp-shell-define-view "search" :builder #'glasspane-ui--search-view
                         :order 70)
-(eabp-shell-define-view "settings" :builder #'eabp-org-ui--settings-view
+(eabp-shell-define-view "settings" :builder #'glasspane-ui--settings-view
                         :order 80)
-(eabp-shell-define-view "detail" :builder #'eabp-org-ui--detail-view
-                        :when (lambda () (and eabp-org-ui--detail-ref t))
-                        :overlay (lambda () (and eabp-org-ui--detail-ref t))
+(eabp-shell-define-view "detail" :builder #'glasspane-ui--detail-view
+                        :when (lambda () (and glasspane-ui--detail-ref t))
+                        :overlay (lambda () (and glasspane-ui--detail-ref t))
                         :order 110)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
 (add-hook 'eabp-shell-view-switched-hook
-          (lambda (_view) (setq eabp-org-ui--detail-ref nil)))
+          (lambda (_view) (setq glasspane-ui--detail-ref nil)))
 
 ;; Capture is this app's global affordance: the default FAB on every tab
 ;; view that doesn't define its own.
@@ -7343,25 +7343,25 @@ with a keyboard FAB that opens the buffer's keymap."
 
 ;; The org extractions are memoised; an explicit refresh (pull-to-refresh,
 ;; the drawer item, a queue drain) must drop them.
-(add-hook 'eabp-shell-refresh-hook #'eabp-org-cache-invalidate)
+(add-hook 'eabp-shell-refresh-hook #'glasspane-org-cache-invalidate)
 
 ;; ─── Tab Bodies ──────────────────────────────────────────────────────────────
 
 ;; ── Agenda navigation ──
 ;; The agenda is anchored on a date (UI state "agenda-anchor", nil = today).
 ;; The ‹ › buttons shift the anchor by one day/week/month according to the
-;; active span, and the anchor feeds `eabp-org--agenda-items' as START-DAY —
+;; active span, and the anchor feeds `glasspane-org--agenda-items' as START-DAY —
 ;; whose cache keys already include it, so each visited range memoises
 ;; independently.
 
-(defun eabp-org-ui--agenda-anchor ()
+(defun glasspane-ui--agenda-anchor ()
   "The agenda's anchor date as \"YYYY-MM-DD\"; today when unset."
   (let ((a (eabp-ui-state "agenda-anchor")))
     (if (and (stringp a) (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" a))
         a
       (format-time-string "%Y-%m-%d"))))
 
-(defun eabp-org-ui--shift-date (date n unit)
+(defun glasspane-ui--shift-date (date n unit)
   "Shift DATE (\"YYYY-MM-DD\") by N UNITs (`day', `week', or `month').
 Month arithmetic clamps the day into the target month, so Jan 31 + 1
 month is Feb 28, not an invalid date."
@@ -7378,24 +7378,24 @@ month is Feb 28, not an invalid date."
                             (time-add (encode-time 0 0 12 d m y)
                                       (* days 86400)))))))
 
-(defun eabp-org-ui--format-date (date fmt)
+(defun glasspane-ui--format-date (date fmt)
   "Render DATE (\"YYYY-MM-DD\") through `format-time-string' FMT."
   (pcase-let ((`(,y ,m ,d) (mapcar #'string-to-number (split-string date "-"))))
     (format-time-string fmt (encode-time 0 0 12 d m y))))
 
-(defun eabp-org-ui--agenda-nav-row (mode anchor)
+(defun glasspane-ui--agenda-nav-row (mode anchor)
   "The ‹ [range label] [today] › navigation row for the agenda header."
   (let* ((today (format-time-string "%Y-%m-%d"))
          (at-today (pcase mode
                      ("month" (equal (substring anchor 0 7) (substring today 0 7)))
                      (_ (equal anchor today))))
          (label (pcase mode
-                  ("month" (eabp-org-ui--format-date anchor "%B %Y"))
+                  ("month" (glasspane-ui--format-date anchor "%B %Y"))
                   ("week" (concat "Week of "
-                                  (eabp-org-ui--format-date anchor "%b %d")))
+                                  (glasspane-ui--format-date anchor "%b %d")))
                   (_ (if at-today
-                         (concat "Today · " (eabp-org-ui--format-date anchor "%a, %b %d"))
-                       (eabp-org-ui--format-date anchor "%a, %b %d"))))))
+                         (concat "Today · " (glasspane-ui--format-date anchor "%a, %b %d"))
+                       (glasspane-ui--format-date anchor "%a, %b %d"))))))
     (apply #'eabp-row
            (delq nil
                  (list
@@ -7413,7 +7413,7 @@ month is Feb 28, not an invalid date."
 
 ;; ── Agenda cards ──
 
-(defun eabp-org-ui--agenda-type-icon (type)
+(defun glasspane-ui--agenda-type-icon (type)
   "Return (ICON . COLOR) for an agenda item TYPE string (color may be nil)."
   (cond
    ((null type) '("event" . nil))
@@ -7422,7 +7422,7 @@ month is Feb 28, not an invalid date."
    ((string-match-p "scheduled" type) '("schedule" . nil))
    (t '("event" . nil))))
 
-(defun eabp-org-ui--agenda-type-label (type)
+(defun glasspane-ui--agenda-type-label (type)
   "Short human label for an agenda item TYPE string, or nil to omit."
   (pcase type
     ("past-scheduled" "overdue")
@@ -7431,25 +7431,25 @@ month is Feb 28, not an invalid date."
     ("scheduled" "scheduled")
     (_ nil)))
 
-(defun eabp-org-ui--card-date-label (ts)
+(defun glasspane-ui--card-date-label (ts)
   "Format org timestamp TS as a compact \"Mon D\" (or \"Mon D HH:MM\") string."
   (when (and (stringp ts)
              (string-match "\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)" ts))
     (let* ((month (string-to-number (match-string 2 ts)))
            (day   (string-to-number (match-string 3 ts)))
            (mon   (aref eabp--month-abbrevs (1- month)))
-           (time  (eabp-org-ui--ts-time ts)))
+           (time  (glasspane-ui--ts-time ts)))
       (if time (format "%s %d %s" mon day time)
         (format "%s %d" mon day)))))
 
-(defun eabp-org-ui--card-date-row (it)
+(defun glasspane-ui--card-date-row (it)
   "An inline scheduling indicator for card item IT.
 Shows compact icon + text labels for SCHEDULED and/or DEADLINE when present.
 Returns nil when neither is set."
   (let* ((scheduled (alist-get 'scheduled it))
          (deadline  (alist-get 'deadline it))
-         (slabel (eabp-org-ui--card-date-label scheduled))
-         (dlabel (eabp-org-ui--card-date-label deadline))
+         (slabel (glasspane-ui--card-date-label scheduled))
+         (dlabel (glasspane-ui--card-date-label deadline))
          (chips (delq nil
                       (list
                        (when slabel
@@ -7463,7 +7463,7 @@ Returns nil when neither is set."
     (when chips
       (apply #'eabp-flow-row chips))))
 
-(defun eabp-org-ui--agenda-card (it)
+(defun glasspane-ui--agenda-card (it)
   "A detail-rich agenda card for item IT.
 Leading time (or a type icon), priority-prefixed headline (struck
 through when done), a todo/type/file caption, tag chips when present,
@@ -7472,7 +7472,7 @@ and a quick complete button for open todos."
          (todo (alist-get 'todo it))
          ;; Normalized "HH:MM" — the raw property is a time-grid string
          ;; like " 9:15......".
-         (time (eabp-org--item-hm (alist-get 'time it)))
+         (time (glasspane-org--item-hm (alist-get 'time it)))
          (type (alist-get 'type it))
          (file (alist-get 'file it))
          (priority (alist-get 'priority it))
@@ -7480,11 +7480,11 @@ and a quick complete button for open todos."
          (ref (alist-get 'ref it))
          (done (and todo (member todo (or (default-value 'org-done-keywords)
                                           '("DONE" "CANCELLED")))))
-         (icon+color (eabp-org-ui--agenda-type-icon type))
+         (icon+color (glasspane-ui--agenda-type-icon type))
          (caption (string-join
                    (delq nil (list todo
                                    (and (stringp type)
-                                        (eabp-org-ui--agenda-type-label type))
+                                        (glasspane-ui--agenda-type-label type))
                                    (and file (file-name-nondirectory file))))
                    "  ·  "))
          (lead (if (and (stringp time) (not (string-empty-p time)))
@@ -7506,7 +7506,7 @@ and a quick complete button for open todos."
                         headline-node
                         (unless (string-empty-p caption)
                           (eabp-text caption 'caption))
-                        (eabp-org-ui--card-date-row it)
+                        (glasspane-ui--card-date-row it)
                         (when tags
                           (apply #'eabp-flow-row
                                  (mapcar (lambda (tg)
@@ -7530,15 +7530,15 @@ and a quick complete button for open todos."
                                   complete-btn))))
      :on-tap (eabp-action "heading.tap" :args ref))))
 
-(defun eabp-org-ui--agenda-day-view (items)
-  (let ((cards (mapcar #'eabp-org-ui--agenda-card items)))
+(defun glasspane-ui--agenda-day-view (items)
+  (let ((cards (mapcar #'glasspane-ui--agenda-card items)))
     (if cards
         (apply #'eabp-lazy-column cards)
       (eabp-empty-state :icon "event_busy"
                         :title "No agenda items"
                         :caption "Nothing scheduled for this day."))))
 
-(defun eabp-org-ui--agenda-week-view (items)
+(defun glasspane-ui--agenda-week-view (items)
   (let ((elements nil)
         (current-date nil))
     (dolist (it items)
@@ -7546,14 +7546,14 @@ and a quick complete button for open todos."
         (unless (equal date current-date)
           (setq current-date date)
           (push (eabp-section-header (or date "Unknown Date")) elements))
-        (push (eabp-org-ui--agenda-card it) elements)))
+        (push (glasspane-ui--agenda-card it) elements)))
     (if elements
         (apply #'eabp-lazy-column (nreverse elements))
       (eabp-empty-state :icon "event_busy"
                         :title "No agenda items"
                         :caption "Nothing scheduled for this week."))))
 
-(defun eabp-org-ui--agenda-month-view (items anchor)
+(defun glasspane-ui--agenda-month-view (items anchor)
   "Month grid for ITEMS, showing the month containing ANCHOR (YYYY-MM-DD)."
   (let* ((today (format-time-string "%Y-%m-%d"))
          (month-prefix (substring anchor 0 7))
@@ -7606,28 +7606,28 @@ and a quick complete button for open todos."
      (eabp-divider)
      (eabp-section-header (format "Events for %s" selected-date))
      (if selected-items
-         (apply #'eabp-lazy-column (mapcar #'eabp-org-ui--agenda-card selected-items))
+         (apply #'eabp-lazy-column (mapcar #'glasspane-ui--agenda-card selected-items))
        (eabp-text "No events" 'caption)))))
 
-(defun eabp-org-ui--agenda-body ()
+(defun glasspane-ui--agenda-body ()
   (let* ((mode (or (eabp-ui-state "agenda-mode") "day"))
          (is-span (member mode '("day" "week" "month")))
-         (anchor (eabp-org-ui--agenda-anchor))
+         (anchor (glasspane-ui--agenda-anchor))
          ;; The month span always starts on the 1st so the grid and the
          ;; extraction agree on the visible range.
          (start-day (cond ((equal mode "month") (concat (substring anchor 0 7) "-01"))
                           (is-span anchor)))
          (items (cond
-                 ((equal mode "day") (condition-case nil (eabp-org--agenda-items 'day start-day) (error nil)))
-                 ((equal mode "week") (condition-case nil (eabp-org--agenda-items 'week start-day) (error nil)))
-                 ((equal mode "month") (condition-case nil (eabp-org--agenda-items 'month start-day) (error nil)))
-                 (t (condition-case nil (eabp-org--search (cdr (assoc mode eabp-org-custom-agendas))) (error nil)))))
+                 ((equal mode "day") (condition-case nil (glasspane-org--agenda-items 'day start-day) (error nil)))
+                 ((equal mode "week") (condition-case nil (glasspane-org--agenda-items 'week start-day) (error nil)))
+                 ((equal mode "month") (condition-case nil (glasspane-org--agenda-items 'month start-day) (error nil)))
+                 (t (condition-case nil (glasspane-org--search (cdr (assoc mode glasspane-org-custom-agendas))) (error nil)))))
          (custom-chips (mapcar (lambda (ca)
                                  (let ((name (car ca)))
                                    (eabp-chip name
                                               :selected (equal mode name)
                                               :on-tap (eabp-action "agenda.set-mode" :args `((mode . ,name))))))
-                               eabp-org-custom-agendas)))
+                               glasspane-org-custom-agendas)))
     (apply #'eabp-column
            (delq nil
                  (list
@@ -7643,40 +7643,40 @@ and a quick complete button for open todos."
                                     :on-tap (eabp-action "agenda.set-mode" :args '((mode . "month"))))
                          custom-chips)
                   (when is-span
-                    (eabp-org-ui--agenda-nav-row mode anchor))
+                    (glasspane-ui--agenda-nav-row mode anchor))
                   (eabp-spacer :height 4)
                   (cond
                    ((equal mode "day")
-                    (eabp-org-ui--agenda-day-view items))
+                    (glasspane-ui--agenda-day-view items))
                    ((equal mode "week")
-                    (eabp-org-ui--agenda-week-view items))
+                    (glasspane-ui--agenda-week-view items))
                    ((equal mode "month")
-                    (eabp-org-ui--agenda-month-view items anchor))
+                    (glasspane-ui--agenda-month-view items anchor))
                    (t
                     (if items
-                        (apply #'eabp-lazy-column (mapcar #'eabp-org-ui--agenda-card items))
+                        (apply #'eabp-lazy-column (mapcar #'glasspane-ui--agenda-card items))
                       (eabp-empty-state :icon "event_busy"
                                         :title "No results"
                                         :caption "This custom agenda found no items.")))))))))
 
-(defun eabp-org-ui--tasks-body ()
+(defun glasspane-ui--tasks-body ()
   (let* ((items (condition-case nil
-                    (eabp-org--todo-items)
+                    (glasspane-org--todo-items)
                   (error nil)))
-         (filtered (if (equal eabp-org-ui--tasks-filter "ALL") items
+         (filtered (if (equal glasspane-ui--tasks-filter "ALL") items
                      (cl-remove-if-not
                       (lambda (it)
-                        (equal (alist-get 'todo it) eabp-org-ui--tasks-filter))
+                        (equal (alist-get 'todo it) glasspane-ui--tasks-filter))
                       items)))
-         (cards (mapcar #'eabp-org-ui--agenda-card filtered)))
+         (cards (mapcar #'glasspane-ui--agenda-card filtered)))
     (eabp-column
      (apply #'eabp-flow-row
             (mapcar (lambda (kw)
                       (eabp-chip kw
-                                 :selected (equal eabp-org-ui--tasks-filter kw)
+                                 :selected (equal glasspane-ui--tasks-filter kw)
                                  :on-tap (eabp-action "tasks.filter"
                                                       :args `((filter . ,kw)))))
-                    (cons "ALL" (or (eabp-org-ui--global-todo-keywords)
+                    (cons "ALL" (or (glasspane-ui--global-todo-keywords)
                                     '("TODO" "DONE")))))
      (if cards
          (apply #'eabp-lazy-column cards)
@@ -7687,10 +7687,10 @@ and a quick complete button for open todos."
 ;; The old agenda-files-only "files" body is superseded by the full
 ;; browser in eabp-files.el (eabp-files-browser-body).
 
-(defun eabp-org-ui--clock-body ()
-  (let* ((status (eabp-org--clock-status))
+(defun glasspane-ui--clock-body ()
+  (let* ((status (glasspane-org--clock-status))
          (recent (condition-case nil
-                     (eabp-org--recent-clocks 5)
+                     (glasspane-org--recent-clocks 5)
                    (error nil)))
          (status-card
           (if status
@@ -7720,7 +7720,7 @@ and a quick complete button for open todos."
                                        recent-cards)))))
     (apply #'eabp-column all-children)))
 
-(defun eabp-org-ui--result-card (it)
+(defun glasspane-ui--result-card (it)
   "Render a search/heading item IT to a tappable card with tag chips."
   (let* ((headline (or (alist-get 'headline it) "?"))
          (todo (alist-get 'todo it))
@@ -7743,9 +7743,9 @@ and a quick complete button for open todos."
     (eabp-card (list (apply #'eabp-column children))
                :on-tap (eabp-action "heading.tap" :args ref))))
 
-(defun eabp-org-ui--search-body ()
-  (let* ((q (or eabp-org-ui--search-query ""))
-         (results eabp-org-ui--search-results)
+(defun glasspane-ui--search-body ()
+  (let* ((q (or glasspane-ui--search-query ""))
+         (results glasspane-ui--search-results)
          (input (eabp-text-input "search-query"
                                  :value q
                                  :hint "Search headings (text or org-ql query)"
@@ -7775,7 +7775,7 @@ and a quick complete button for open todos."
                                       :single-line t
                                       :on-submit (eabp-action "search.update-filter" :args '((field . "text"))))))
                    :padding 16))
-         (cards (mapcar #'eabp-org-ui--result-card results)))
+         (cards (mapcar #'glasspane-ui--result-card results)))
     (eabp-column
      builder
      (eabp-spacer :height 8)
@@ -7794,7 +7794,7 @@ and a quick complete button for open todos."
                          :title "Search your notes"
                          :caption "Type a query and press search."))))))
 
-(defun eabp-org-ui--global-todo-keywords ()
+(defun glasspane-ui--global-todo-keywords ()
   "Extract a flat list of all global TODO keywords from `org-todo-keywords'."
   (let ((kws nil))
     (dolist (seq (default-value 'org-todo-keywords))
@@ -7807,7 +7807,7 @@ and a quick complete button for open todos."
                 kws))))
     (nreverse kws)))
 
-(defun eabp-org-ui--split-todo-sequence (seq)
+(defun glasspane-ui--split-todo-sequence (seq)
   "Split `org-todo-keywords' entry SEQ into (ACTIVE . FINISHED) keyword lists.
 Keywords keep their fast-access annotations (\"TODO(t!)\").  Mirrors
 org's rule for sequences without an explicit \"|\": the last keyword
@@ -7829,7 +7829,7 @@ is the finished state."
             active (butlast active)))
     (cons active finished)))
 
-(defun eabp-org-ui--settings-body ()
+(defun glasspane-ui--settings-body ()
   (let* ((available-tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))
          (enum-list (eabp-enum-list "settings-tags" available-tags
                                     :value available-tags
@@ -7845,7 +7845,7 @@ is the finished state."
               (cl-loop for seq in (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE")))
                        for i from 0
                        collect
-                       (let* ((split (eabp-org-ui--split-todo-sequence seq))
+                       (let* ((split (glasspane-ui--split-todo-sequence seq))
                               (bare (lambda (w)
                                       (if (string-match "^\\([a-zA-Z0-9_-]+\\)" w)
                                           (match-string 1 w)
@@ -7903,7 +7903,7 @@ is the finished state."
             ;; `eabp-settings-registry', rendered from its custom-type.
             (eabp-settings-sections)))))
 
-(defun eabp-org-ui--todo-chips (current keywords ref)
+(defun glasspane-ui--todo-chips (current keywords ref)
   "A row of chips for KEYWORDS with CURRENT selected; taps carry REF."
   (apply #'eabp-flow-row
          (mapcar (lambda (kw)
@@ -7914,26 +7914,26 @@ is the finished state."
                                        :args (cons (cons 'state kw) ref))))
                  keywords)))
 
-(defun eabp-org-ui--ts-date (ts)
+(defun glasspane-ui--ts-date (ts)
   "Return the YYYY-MM-DD date inside org timestamp string TS, or nil."
   (when (and (stringp ts)
              (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" ts))
     (match-string 1 ts)))
 
-(defun eabp-org-ui--ts-time (ts)
+(defun glasspane-ui--ts-time (ts)
   "Return the HH:MM time inside org timestamp string TS, or nil."
   (when (and (stringp ts)
              (string-match "\\([0-9]\\{1,2\\}:[0-9]\\{2\\}\\)" ts))
     (match-string 1 ts)))
 
-(defun eabp-org-ui--ts-repeater (ts)
+(defun glasspane-ui--ts-repeater (ts)
   "Return the repeater cookie (e.g. \"+1w\", \".+2d\") inside TS, or nil.
 The one part of a timestamp the date-stamp chip can't display."
   (when (and (stringp ts)
              (string-match "\\([.+]?\\+[0-9]+[hdwmy]\\)" ts))
     (match-string 1 ts)))
 
-(defun eabp-org-ui--priority-chips (current ref)
+(defun glasspane-ui--priority-chips (current ref)
   "A row of priority chips (A..C plus None) with CURRENT selected; taps carry REF."
   (let* ((hi (or (bound-and-true-p org-priority-highest) ?A))
          (lo (or (bound-and-true-p org-priority-lowest) ?C))
@@ -7953,7 +7953,7 @@ The one part of a timestamp the date-stamp chip can't display."
                                       "heading.priority"
                                       :args (cons '(value . "") ref))))))))
 
-(defun eabp-org-ui--property-row (key value ref pos)
+(defun glasspane-ui--property-row (key value ref pos)
   "A two-column KEY → editable VALUE row for the detail Properties editor.
 KEY renders without org's colons.  ID is shown read-only (editing it
 breaks links); every other value is an inline input whose submit runs
@@ -7970,7 +7970,7 @@ breaks links); every other value is an inline input whose submit runs
                                                      :args (cons `(name . ,key) ref)))))
     :weight 3)))
 
-(defun eabp-org-ui--properties-section (props ref pos)
+(defun glasspane-ui--properties-section (props ref pos)
   "The Properties collapsible: KEY → VALUE rows plus an + Add button.
 Always present (even with no properties yet) so + Add is reachable."
   (eabp-collapsible
@@ -7980,7 +7980,7 @@ Always present (even with no properties yet) so + Add is reachable."
    (delq nil
          (append
           (mapcar (lambda (kv)
-                    (eabp-org-ui--property-row (car kv) (or (cdr kv) "") ref pos))
+                    (glasspane-ui--property-row (car kv) (or (cdr kv) "") ref pos))
                   props)
           (list
            (when props
@@ -7992,9 +7992,9 @@ Always present (even with no properties yet) so + Add is reachable."
                          :variant "outlined")))))
    :collapsed t))
 
-(defun eabp-org-ui--detail-body (ref)
+(defun glasspane-ui--detail-body (ref)
   (condition-case err
-      (let* ((marker (eabp-org--resolve-ref ref))
+      (let* ((marker (glasspane-org--resolve-ref ref))
              (buf (marker-buffer marker))
              (file (buffer-file-name buf))
              (pos (marker-position marker))
@@ -8031,7 +8031,7 @@ Always present (even with no properties yet) so + Add is reachable."
                              (eabp-action "heading.schedule"
                                           :args (cons (cons 'when when) ref))
                              :variant "text"))))
-        (if (not eabp-org-ui--detail-read-mode)
+        (if (not glasspane-ui--detail-read-mode)
             (let ((content (with-current-buffer buf
                              (org-with-wide-buffer
                               (goto-char pos)
@@ -8046,8 +8046,8 @@ Always present (even with no properties yet) so + Add is reachable."
                                                   :args `((ref . ,ref))
                                                   :when-offline "queue"
                                                   :dedupe (format "save-detail/%s" pos)))))
-          (let ((sdate (eabp-org-ui--ts-date scheduled))
-                (ddate (eabp-org-ui--ts-date deadline))
+          (let ((sdate (glasspane-ui--ts-date scheduled))
+                (ddate (glasspane-ui--ts-date deadline))
                 (entry-props (ignore-errors
                                (with-current-buffer buf
                                  (org-with-wide-buffer
@@ -8062,9 +8062,9 @@ Always present (even with no properties yet) so + Add is reachable."
                            ;; Headline
                            (eabp-text headline 'title)
                            ;; State (always visible)
-                           (eabp-org-ui--todo-chips todo keywords ref)
+                           (glasspane-ui--todo-chips todo keywords ref)
                            ;; Priority (always visible)
-                           (eabp-org-ui--priority-chips priority ref)
+                           (glasspane-ui--priority-chips priority ref)
                            (eabp-divider)
                            ;; ▸ Scheduling (collapsible — expanded when any date is set)
                            ;; The date-stamp chip IS the display (date + time);
@@ -8078,7 +8078,7 @@ Always present (even with no properties yet) so + Add is reachable."
                              (eabp-row
                               (if sdate
                                   (eabp-date-stamp :date sdate
-                                                   :time (eabp-org-ui--ts-time scheduled))
+                                                   :time (glasspane-ui--ts-time scheduled))
                                 (eabp-spacer :width 0))
                               (eabp-box
                                (list
@@ -8088,7 +8088,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                               (eabp-text "Scheduled" 'label)
                                               (unless sdate
                                                 (eabp-text "Not scheduled" 'caption))
-                                              (when-let ((rep (eabp-org-ui--ts-repeater scheduled)))
+                                              (when-let ((rep (glasspane-ui--ts-repeater scheduled)))
                                                 (eabp-text (concat "Repeats " rep) 'caption))
                                               (eabp-flow-row
                                                (eabp-date-button "Set date"
@@ -8096,7 +8096,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                                                  :value sdate)
                                                (eabp-time-button "Set time"
                                                                  (eabp-action "heading.schedule-time" :args ref)
-                                                                 :value (eabp-org-ui--ts-time scheduled))
+                                                                 :value (glasspane-ui--ts-time scheduled))
                                                (funcall sched-button "Today" "+0d")
                                                (funcall sched-button "+1d" "+1d")
                                                (funcall sched-button "+1w" "+1w")
@@ -8109,7 +8109,7 @@ Always present (even with no properties yet) so + Add is reachable."
                              (eabp-row
                               (if ddate
                                   (eabp-date-stamp :date ddate
-                                                   :time (eabp-org-ui--ts-time deadline))
+                                                   :time (glasspane-ui--ts-time deadline))
                                 (eabp-spacer :width 0))
                               (eabp-box
                                (list
@@ -8119,7 +8119,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                               (eabp-text "Deadline" 'label)
                                               (unless ddate
                                                 (eabp-text "No deadline" 'caption))
-                                              (when-let ((rep (eabp-org-ui--ts-repeater deadline)))
+                                              (when-let ((rep (glasspane-ui--ts-repeater deadline)))
                                                 (eabp-text (concat "Repeats " rep) 'caption))
                                               (eabp-flow-row
                                                (eabp-date-button "Set date"
@@ -8165,11 +8165,11 @@ Always present (even with no properties yet) so + Add is reachable."
                             :collapsed (not is-clocked-in))
                            ;; TODO: Add LOGBOOK collapsible section
                            ;; ▸ Properties (collapsible — collapsed by default)
-                           (eabp-org-ui--properties-section entry-props ref pos)
+                           (glasspane-ui--properties-section entry-props ref pos)
                            (eabp-divider))
                           ;; Reader: body (highlighted) and child headings (foldable).
                           ;; Properties are shown above, so skip them here.
-                          (eabp-org-reader-subtree file pos t)))))))
+                          (glasspane-org-reader-subtree file pos t)))))))
     (error
      (eabp-column
       (eabp-text "Error loading heading" 'title)
@@ -8177,14 +8177,14 @@ Always present (even with no properties yet) so + Add is reachable."
 
 ;; ─── Capture Dialog ──────────────────────────────────────────────────────────
 
-(defvar eabp-org-ui--shared-text nil
+(defvar glasspane-ui--shared-text nil
   "Body text shared from another app, pending the next capture submit.")
-(defvar eabp-org-ui--shared-subject nil
+(defvar glasspane-ui--shared-subject nil
   "Subject shared from another app; seeds the capture Headline field.")
 
-(defun eabp-org-ui-show-capture-dialog ()
+(defun glasspane-ui-show-capture-dialog ()
   (condition-case err
-      (let* ((templates (eabp-org--capture-templates))
+      (let* ((templates (glasspane-org--capture-templates))
              (template-buttons
               (mapcar (lambda (t-info)
                         (eabp-button
@@ -8200,11 +8200,11 @@ Always present (even with no properties yet) so + Add is reachable."
                      (append
                       ;; Shared-in content shows a preview so the user knows
                       ;; what this capture will carry.
-                      (when eabp-org-ui--shared-text
+                      (when glasspane-ui--shared-text
                         (list (eabp-card
                                (list (eabp-text
                                       (truncate-string-to-width
-                                       eabp-org-ui--shared-text 200 nil nil "…")
+                                       glasspane-ui--shared-text 200 nil nil "…")
                                       'caption)))))
                       template-buttons
                       (list (eabp-button "Cancel"
@@ -8214,16 +8214,16 @@ Always present (even with no properties yet) so + Add is reachable."
     (error
      (message "EABP capture dialog error: %s" (error-message-string err)))))
 
-(defun eabp-org-ui-show-capture-form (template-key)
+(defun glasspane-ui-show-capture-form (template-key)
   ;; Forget values from any previous capture so they can't leak into
   ;; this submit (`eabp--ui-state' is global and persistent).
   (eabp-ui-state-clear "cap-")
   ;; A shared-in subject pre-fills the Headline field; it must also land
   ;; in UI state, since state.changed only fires for edits the user makes.
-  (when eabp-org-ui--shared-subject
-    (eabp-ui-state-put "cap-Headline" eabp-org-ui--shared-subject))
+  (when glasspane-ui--shared-subject
+    (eabp-ui-state-put "cap-Headline" glasspane-ui--shared-subject))
   (condition-case err
-      (let* ((templates (eabp-org--capture-templates))
+      (let* ((templates (glasspane-org--capture-templates))
              (tmpl (cl-find-if
                     (lambda (t-info) (equal (alist-get 'key t-info) template-key))
                     templates))
@@ -8232,7 +8232,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                (eabp-text-input
                                 (format "cap-%s" p) :label p
                                 :value (and (equal p "Headline")
-                                            eabp-org-ui--shared-subject)))
+                                            glasspane-ui--shared-subject)))
                              prompts))
              (dialog-body
               (apply #'eabp-column
@@ -8256,13 +8256,13 @@ Always present (even with no properties yet) so + Add is reachable."
   (lambda (args _)
     ;; ARGS is the ref alist (id/file/pos/headline) the card embedded.
     ;; This push IS the navigation, so it forces the detail view.
-    (setq eabp-org-ui--detail-ref args)
-    (setq eabp-org-ui--detail-read-mode t)
+    (setq glasspane-ui--detail-ref args)
+    (setq glasspane-ui--detail-read-mode t)
     (eabp-shell-push nil :switch-to "detail")))
 
 (eabp-defaction "detail.toggle-read"
   (lambda (_ _)
-    (setq eabp-org-ui--detail-read-mode (not eabp-org-ui--detail-read-mode))
+    (setq glasspane-ui--detail-read-mode (not glasspane-ui--detail-read-mode))
     (eabp-shell-push nil :switch-to "detail")))
 
 (eabp-defaction "detail.save"
@@ -8271,7 +8271,7 @@ Always present (even with no properties yet) so + Add is reachable."
           (value (alist-get 'value args)))
       (when (and ref value)
         (condition-case err
-            (let* ((marker (eabp-org--resolve-ref ref))
+            (let* ((marker (glasspane-org--resolve-ref ref))
                    (buf (marker-buffer marker))
                    (pos (marker-position marker)))
               (with-current-buffer buf
@@ -8281,13 +8281,13 @@ Always present (even with no properties yet) so + Add is reachable."
                  (delete-region (region-beginning) (region-end))
                  (insert value)
                  (goto-char pos)
-                 (setq eabp-org-ui--detail-ref (eabp-org--heading-ref))
-                 (let ((eabp-org--inhibit-save-refresh t)
+                 (setq glasspane-ui--detail-ref (glasspane-org--heading-ref))
+                 (let ((glasspane-org--inhibit-save-refresh t)
                        (save-silently t))
                    (save-buffer))))
-              (when (fboundp 'eabp-org-cache-invalidate)
-                (eabp-org-cache-invalidate))
-              (setq eabp-org-ui--detail-read-mode t)
+              (when (fboundp 'glasspane-org-cache-invalidate)
+                (glasspane-org-cache-invalidate))
+              (setq glasspane-ui--detail-read-mode t)
               (eabp-shell-notify "Saved heading"))
           (error
            (eabp-shell-notify (format "Save failed: %s" (error-message-string err))))))
@@ -8297,12 +8297,12 @@ Always present (even with no properties yet) so + Add is reachable."
   ;; Legacy: detail's back button is now a companion-local view.switch.
   ;; Kept for stale cached UIs.
   (lambda (_ _)
-    (setq eabp-org-ui--detail-ref nil)
+    (setq glasspane-ui--detail-ref nil)
     (eabp-shell-push nil :switch-to (eabp-shell-current-tab))))
 
 (eabp-defaction "tasks.filter"
   (lambda (args _)
-    (setq eabp-org-ui--tasks-filter (alist-get 'filter args))
+    (setq glasspane-ui--tasks-filter (alist-get 'filter args))
     (eabp-shell-push)))
 
 (eabp-defaction "org.search.run"
@@ -8310,10 +8310,10 @@ Always present (even with no properties yet) so + Add is reachable."
   ;; cache the results, and land the user on the search view.
   (lambda (args _)
     (let ((q (or (alist-get 'value args) "")))
-      (setq eabp-org-ui--search-query q
-            eabp-org-ui--search-results
+      (setq glasspane-ui--search-query q
+            glasspane-ui--search-results
             (condition-case err
-                (eabp-org--search q)
+                (glasspane-org--search q)
               (error
                (message "EABP search error: %s" (error-message-string err))
                nil)))
@@ -8321,16 +8321,16 @@ Always present (even with no properties yet) so + Add is reachable."
 
 (eabp-defaction "org.capture.show"
   (lambda (_ _)
-    (eabp-org-ui-show-capture-dialog)))
+    (glasspane-ui-show-capture-dialog)))
 
 (eabp-defaction "org.capture.select"
   (lambda (args _)
-    (eabp-org-ui-show-capture-form (alist-get 'key args))))
+    (glasspane-ui-show-capture-form (alist-get 'key args))))
 
 (eabp-defaction "org.capture.cancel"
   (lambda (_ _)
-    (setq eabp-org-ui--shared-text nil
-          eabp-org-ui--shared-subject nil)
+    (setq glasspane-ui--shared-text nil
+          glasspane-ui--shared-subject nil)
     (eabp-dismiss-dialog)))
 
 (eabp-defaction "org.capture.share"
@@ -8340,22 +8340,22 @@ Always present (even with no properties yet) so + Add is reachable."
   (lambda (args _)
     (let ((text (alist-get 'text args))
           (subject (alist-get 'subject args)))
-      (setq eabp-org-ui--shared-text
+      (setq glasspane-ui--shared-text
             (and (stringp text) (not (string-empty-p (string-trim text)))
                  (string-trim text))
-            eabp-org-ui--shared-subject
+            glasspane-ui--shared-subject
             (and (stringp subject) (not (string-empty-p (string-trim subject)))
                  (string-trim subject)))
       ;; A share with only a subject still captures: use it as the text too.
-      (unless eabp-org-ui--shared-text
-        (setq eabp-org-ui--shared-text eabp-org-ui--shared-subject))
-      (eabp-org-ui-show-capture-dialog))))
+      (unless glasspane-ui--shared-text
+        (setq glasspane-ui--shared-text glasspane-ui--shared-subject))
+      (glasspane-ui-show-capture-dialog))))
 
 (eabp-defaction "org.capture.submit"
   (lambda (args _)
     (let ((key (alist-get 'key args)))
       (condition-case err
-          (let* ((templates (eabp-org--capture-templates))
+          (let* ((templates (glasspane-org--capture-templates))
                  (tmpl (cl-find-if
                         (lambda (t-info) (equal (alist-get 'key t-info) key))
                         templates))
@@ -8367,37 +8367,37 @@ Always present (even with no properties yet) so + Add is reachable."
                             (let ((v (eabp-ui-state (format "cap-%s" p))))
                               (cons p (if (stringp v) v ""))))
                           prompts)))
-            (eabp-org--do-capture key values eabp-org-ui--shared-text)
-            (setq eabp-org-ui--shared-text nil
-                  eabp-org-ui--shared-subject nil)
-            (eabp-org-cache-invalidate)
+            (glasspane-org--do-capture key values glasspane-ui--shared-text)
+            (setq glasspane-ui--shared-text nil
+                  glasspane-ui--shared-subject nil)
+            (glasspane-org-cache-invalidate)
             (eabp-ui-state-clear "cap-")
             (eabp-shell-notify "Captured ✓")
             (eabp-dismiss-dialog)
             (eabp-shell-push))
         (error
          (message "EABP capture submit error: %s" (error-message-string err))
-         (setq eabp-org-ui--shared-text nil
-               eabp-org-ui--shared-subject nil)
+         (setq glasspane-ui--shared-text nil
+               glasspane-ui--shared-subject nil)
          (eabp-ui-state-clear "cap-")
          (eabp-dismiss-dialog))))))
 
-(defun eabp-org-ui--at-ref (args fn &optional save)
+(defun glasspane-ui--at-ref (args fn &optional save)
   "Resolve ARGS to its heading and call FN with point there.
 With SAVE non-nil, save the buffer afterwards (guarded against
 triggering our own after-save refresh on top of the explicit push).
 Returns non-nil on success; messages and returns nil on failure."
   (condition-case err
-      (let ((marker (eabp-org--resolve-ref args)))
+      (let ((marker (glasspane-org--resolve-ref args)))
         (with-current-buffer (marker-buffer marker)
           (org-with-wide-buffer
            (goto-char marker)
            (funcall fn))
           (when save
-            (let ((eabp-org--inhibit-save-refresh t)
+            (let ((glasspane-org--inhibit-save-refresh t)
                   (save-silently t))
               (save-buffer))))
-        (eabp-org-cache-invalidate)
+        (glasspane-org-cache-invalidate)
         t)
     (error
      (message "EABP: heading action failed: %s" (error-message-string err))
@@ -8409,7 +8409,7 @@ Returns non-nil on success; messages and returns nil on failure."
   (lambda (args _)
     (let ((state (alist-get 'state args)))
       (when (and state
-                 (eabp-org-ui--at-ref args (lambda () (org-todo state)) t))
+                 (glasspane-ui--at-ref args (lambda () (org-todo state)) t))
         (eabp-shell-notify (format "State → %s" state))
         (eabp-shell-push)))))
 
@@ -8420,9 +8420,9 @@ Returns non-nil on success; messages and returns nil on failure."
     (let* ((clear (alist-get 'clear args))
            (date (or (alist-get 'when args) (alist-get 'value args)))
            (ok (cond
-                (clear (eabp-org-ui--at-ref args (lambda () (org-schedule '(4))) t))
+                (clear (glasspane-ui--at-ref args (lambda () (org-schedule '(4))) t))
                 ((and (stringp date) (not (string-empty-p date)))
-                 (eabp-org-ui--at-ref args (lambda () (org-schedule nil date)) t)))))
+                 (glasspane-ui--at-ref args (lambda () (org-schedule nil date)) t)))))
       (when ok
         (eabp-shell-notify (if clear "Schedule cleared" (format "Scheduled %s" date)))
         (eabp-shell-push)))))
@@ -8433,11 +8433,11 @@ Returns non-nil on success; messages and returns nil on failure."
   (lambda (args _)
     (let ((time (alist-get 'value args)))
       (when (and (stringp time) (not (string-empty-p time))
-                 (eabp-org-ui--at-ref
+                 (glasspane-ui--at-ref
                   args
                   (lambda ()
                     (let* ((sched (org-entry-get nil "SCHEDULED"))
-                           (date (or (eabp-org-ui--ts-date sched)
+                           (date (or (glasspane-ui--ts-date sched)
                                      (format-time-string "%Y-%m-%d"))))
                       (org-schedule nil (format "%s %s" date time))))
                   t))
@@ -8461,9 +8461,9 @@ Returns non-nil on success; messages and returns nil on failure."
     (let* ((clear (alist-get 'clear args))
            (date (or (alist-get 'when args) (alist-get 'value args)))
            (ok (cond
-                (clear (eabp-org-ui--at-ref args (lambda () (org-deadline '(4))) t))
+                (clear (glasspane-ui--at-ref args (lambda () (org-deadline '(4))) t))
                 ((and (stringp date) (not (string-empty-p date)))
-                 (eabp-org-ui--at-ref args (lambda () (org-deadline nil date)) t)))))
+                 (glasspane-ui--at-ref args (lambda () (org-deadline nil date)) t)))))
       (when ok
         (eabp-shell-notify (if clear "Deadline cleared" (format "Deadline %s" date)))
         (eabp-shell-push)))))
@@ -8473,7 +8473,7 @@ Returns non-nil on success; messages and returns nil on failure."
     ;; Empty VALUE means None (remove); otherwise the first char is the priority.
     (let* ((val (alist-get 'value args))
            (remove (or (null val) (string-empty-p val)))
-           (ok (eabp-org-ui--at-ref
+           (ok (glasspane-ui--at-ref
                 args
                 (lambda ()
                   (if remove (org-priority 'remove)
@@ -8488,7 +8488,7 @@ Returns non-nil on success; messages and returns nil on failure."
   ;; Bridged picker over org-refile targets; refiles the whole subtree.
   (lambda (args _)
     (condition-case err
-        (let ((marker (eabp-org--resolve-ref args)))
+        (let ((marker (glasspane-org--resolve-ref args)))
           (with-current-buffer (marker-buffer marker)
             (org-with-wide-buffer
              (goto-char marker)
@@ -8503,11 +8503,11 @@ Returns non-nil on success; messages and returns nil on failure."
                (if (not target)
                    (eabp-shell-notify "Refile cancelled")
                  (org-refile nil nil target)
-                 (let ((eabp-org--inhibit-save-refresh t)
+                 (let ((glasspane-org--inhibit-save-refresh t)
                        (save-silently t))
                    (org-save-all-org-buffers))
-                 (eabp-org-cache-invalidate)
-                 (setq eabp-org-ui--detail-ref nil)
+                 (glasspane-org-cache-invalidate)
+                 (setq glasspane-ui--detail-ref nil)
                  (eabp-shell-notify (format "Refiled to %s" choice))))))
           (eabp-shell-push nil :switch-to (eabp-shell-current-tab)))
       (error
@@ -8521,14 +8521,14 @@ Returns non-nil on success; messages and returns nil on failure."
     (let ((headline (or (alist-get 'headline args) "this heading")))
       (if (not (yes-or-no-p (format "Archive \"%s\"? " headline)))
           (eabp-shell-notify "Archive cancelled")
-        (when (eabp-org-ui--at-ref
+        (when (glasspane-ui--at-ref
                args
                (lambda ()
                  (org-archive-subtree)
-                 (let ((eabp-org--inhibit-save-refresh t)
+                 (let ((glasspane-org--inhibit-save-refresh t)
                        (save-silently t))
                    (org-save-all-org-buffers))))
-          (setq eabp-org-ui--detail-ref nil)
+          (setq glasspane-ui--detail-ref nil)
           (eabp-shell-notify "Archived")))
       (eabp-shell-push nil :switch-to (eabp-shell-current-tab)))))
 
@@ -8541,7 +8541,7 @@ Returns non-nil on success; messages and returns nil on failure."
                                (quit "")))))
       (if (string-empty-p note)
           (eabp-shell-notify "Note cancelled")
-        (when (eabp-org-ui--at-ref
+        (when (glasspane-ui--at-ref
                args
                (lambda ()
                  (goto-char (org-log-beginning t))
@@ -8560,7 +8560,7 @@ Returns non-nil on success; messages and returns nil on failure."
     (let* ((name (alist-get 'name args))
            (value (string-trim (or (alist-get 'value args) "")))
            (ok (and (stringp name) (not (string-empty-p name))
-                    (eabp-org-ui--at-ref
+                    (glasspane-ui--at-ref
                      args
                      (lambda ()
                        (if (string-empty-p value)
@@ -8584,7 +8584,7 @@ Returns non-nil on success; messages and returns nil on failure."
        ((string-empty-p name) nil)
        ((string-match-p "[: \t]" name)
         (eabp-shell-notify "Property names can't contain colons or spaces"))
-       ((eabp-org-ui--at-ref args
+       ((glasspane-ui--at-ref args
                              (lambda () (org-set-property (upcase name) ""))
                              t)
         (eabp-shell-notify (format "Added %s — fill in its value" (upcase name)))))
@@ -8598,7 +8598,7 @@ Returns non-nil on success; messages and returns nil on failure."
                   ((listp val) val)
                   ((stringp val) (split-string val "[ \t:,]+" t))
                   (t nil)))
-           (ok (eabp-org-ui--at-ref args (lambda () (org-set-tags tags)) t)))
+           (ok (glasspane-ui--at-ref args (lambda () (org-set-tags tags)) t)))
       (when ok
         (eabp-shell-notify (if tags (format "Tags: %s" (string-join tags " "))
                                 "Tags cleared"))
@@ -8633,7 +8633,7 @@ Returns non-nil on success; messages and returns nil on failure."
                                      (if existing existing tg)))
                                  tags-list)))
           (setq org-tag-alist new-alist)
-          (eabp-org-ui--customize-save 'org-tag-alist org-tag-alist)))
+          (glasspane-ui--customize-save 'org-tag-alist org-tag-alist)))
       (eabp-shell-notify "Settings saved")
       (eabp-shell-push))))
 
@@ -8662,14 +8662,14 @@ Returns non-nil on success; messages and returns nil on failure."
 (add-hook 'eabp-settings-after-set-hook
           (lambda (sym _value)
             (when (string-prefix-p "org-" (symbol-name sym))
-              (eabp-org-cache-invalidate))))
+              (glasspane-org-cache-invalidate))))
 
-(defalias 'eabp-org-ui--customize-save #'eabp-settings-save-variable
+(defalias 'glasspane-ui--customize-save #'eabp-settings-save-variable
   "Persist a variable through Customize, surfacing failures.
 Kept as an alias for the todo/tag actions that predate the generic
 settings module (`eabp-settings-save-variable').")
 
-(defun eabp-org-ui--todo-keywords-apply (seqs)
+(defun glasspane-ui--todo-keywords-apply (seqs)
   "Make SEQS the effective and persisted `org-todo-keywords'.
 Live org buffers cache the keywords buffer-locally at mode init
 (`org-todo-keywords-1', `org-todo-regexp', ...), so each one is
@@ -8680,8 +8680,8 @@ with the new states.  Returns non-nil when persisting succeeded."
     (with-current-buffer buf
       (when (derived-mode-p 'org-mode)
         (ignore-errors (org-mode-restart)))))
-  (eabp-org-cache-invalidate)
-  (eabp-org-ui--customize-save 'org-todo-keywords seqs))
+  (glasspane-org-cache-invalidate)
+  (glasspane-ui--customize-save 'org-todo-keywords seqs))
 
 (eabp-defaction "settings.todo.edit"
   (lambda (args _)
@@ -8696,7 +8696,7 @@ with the new states.  Returns non-nil when persisting succeeded."
             (let* ((type (car seq))
                    ;; Keep the raw keyword strings, fast-access keys and all
                    ;; ("TODO(t!)"), so an untouched save round-trips losslessly.
-                   (split (eabp-org-ui--split-todo-sequence seq))
+                   (split (glasspane-ui--split-todo-sequence seq))
                    (active (mapconcat #'identity (car split) ", "))
                    (finished (mapconcat #'identity (cdr split) ", ")))
               ;; Pre-filled `:value's must be seeded by hand: state.changed
@@ -8747,7 +8747,7 @@ with the new states.  Returns non-nil when persisting succeeded."
         (if (>= idx 0)
             (setcar (nthcdr idx seqs) new-seq)
           (setq seqs (append seqs (list new-seq))))
-        (when (eabp-org-ui--todo-keywords-apply seqs)
+        (when (glasspane-ui--todo-keywords-apply seqs)
           (eabp-shell-notify "TODO sequence saved"))
         (eabp-dismiss-dialog)
         (eabp-shell-push))))))
@@ -8761,7 +8761,7 @@ with the new states.  Returns non-nil when persisting succeeded."
                        ;; Org misbehaves with no keywords at all; deleting
                        ;; the last sequence falls back to the stock one.
                        '((sequence "TODO" "|" "DONE"))))
-        (when (eabp-org-ui--todo-keywords-apply seqs)
+        (when (glasspane-ui--todo-keywords-apply seqs)
           (eabp-shell-notify "TODO sequence deleted"))
         (eabp-dismiss-dialog)
         (eabp-shell-push)))))
@@ -8787,7 +8787,7 @@ with the new states.  Returns non-nil when persisting succeeded."
                          (format "%S" (car clauses))
                        (format "%S" `(and ,@(nreverse clauses))))
                    "")))
-          (setq eabp-org-ui--search-query q)
+          (setq glasspane-ui--search-query q)
           (eabp-ui-state-put "search-query" q)))
       (eabp-shell-push))))
 
@@ -8797,9 +8797,9 @@ with the new states.  Returns non-nil when persisting succeeded."
            (name (read-string "Agenda Name: ")))
       (when (and (stringp name) (not (string-empty-p name)))
         ;; Remove existing if overriding
-        (setq eabp-org-custom-agendas (assoc-delete-all name eabp-org-custom-agendas))
-        (add-to-list 'eabp-org-custom-agendas (cons name query) t)
-        (customize-save-variable 'eabp-org-custom-agendas eabp-org-custom-agendas)
+        (setq glasspane-org-custom-agendas (assoc-delete-all name glasspane-org-custom-agendas))
+        (add-to-list 'glasspane-org-custom-agendas (cons name query) t)
+        (customize-save-variable 'glasspane-org-custom-agendas glasspane-org-custom-agendas)
         (eabp-shell-notify (format "Saved custom agenda: %s" name))
         (eabp-shell-push)))))
 
@@ -8816,12 +8816,12 @@ with the new states.  Returns non-nil when persisting succeeded."
            (dir (if (numberp dir) dir 1))
            (mode (or (eabp-ui-state "agenda-mode") "day"))
            (unit (pcase mode ("week" 'week) ("month" 'month) (_ 'day)))
-           (anchor (eabp-org-ui--agenda-anchor)))
+           (anchor (glasspane-ui--agenda-anchor)))
       ;; Month steps walk 1st → 1st so ±1 never skips a short month.
       (when (eq unit 'month)
         (setq anchor (concat (substring anchor 0 7) "-01")))
       (eabp-ui-state-put "agenda-anchor"
-                         (eabp-org-ui--shift-date anchor dir unit))
+                         (glasspane-ui--shift-date anchor dir unit))
       (eabp-shell-push))))
 
 (eabp-defaction "agenda.today"
@@ -8839,7 +8839,7 @@ with the new states.  Returns non-nil when persisting succeeded."
 
 (eabp-defaction "heading.clock-in"
   (lambda (args _)
-    (when (eabp-org-ui--at-ref args #'org-clock-in)
+    (when (glasspane-ui--at-ref args #'org-clock-in)
       (eabp-shell-notify "Clocked in")
       (eabp-shell-push "clock"))))
 
@@ -8872,10 +8872,10 @@ with the new states.  Returns non-nil when persisting succeeded."
                 (org-with-wide-buffer
                  (goto-char pos)
                  (org-toggle-checkbox))
-                (let ((eabp-org--inhibit-save-refresh t)
+                (let ((glasspane-org--inhibit-save-refresh t)
                       (save-silently t))
                   (save-buffer)))
-              (eabp-org-cache-invalidate)
+              (glasspane-org-cache-invalidate)
               (eabp-shell-push))
           (error
            (eabp-shell-notify
@@ -8912,11 +8912,11 @@ with the new states.  Returns non-nil when persisting succeeded."
                  (goto-char (line-beginning-position))))
              ;; Paste at the new level (or original level if nil)
              (org-paste-subtree (or new-level from-level)))))
-        (let ((eabp-org--inhibit-save-refresh t)
+        (let ((glasspane-org--inhibit-save-refresh t)
               (save-silently t))
           (with-current-buffer (find-file-noselect file)
             (save-buffer)))
-        (eabp-org-cache-invalidate)
+        (glasspane-org-cache-invalidate)
         (eabp-shell-push nil :switch-to "edit")))))
 
 (eabp-defaction "file.view"
@@ -8931,71 +8931,71 @@ with the new states.  Returns non-nil when persisting succeeded."
 ;; Registered on the core files module's app seams; the editor itself stays
 ;; org-agnostic.
 
-(defvar eabp-org-ui--files-read-mode nil
+(defvar glasspane-ui--files-read-mode nil
   "When non-nil, org files open in the foldable reader instead of the editor.")
 
-(defvar eabp-org-ui--files-refile-mode nil
+(defvar glasspane-ui--files-refile-mode nil
   "When non-nil, org reader shows a flat drag-to-reorder heading list.")
 
-(defun eabp-org-ui--org-file-p (file)
+(defun glasspane-ui--org-file-p (file)
   "Non-nil when FILE is an org file."
   (and file (string-match-p "\\.org\\'" file)))
 
-(defun eabp-org-ui--org-editor-body (file)
+(defun glasspane-ui--org-editor-body (file)
   "Reader body for org FILE while read mode is on; nil = plain editor."
-  (when (and eabp-org-ui--files-read-mode (eabp-org-ui--org-file-p file))
-    (if eabp-org-ui--files-refile-mode
-        (or (eabp-org-reader-refile-list file)
+  (when (and glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))
+    (if glasspane-ui--files-refile-mode
+        (or (glasspane-org-reader-refile-list file)
             (eabp-text "No headings to show." 'caption))
-      (let ((items (eabp-org--file-heading-items file)))
+      (let ((items (glasspane-org--file-heading-items file)))
         (if items
             (apply #'eabp-lazy-column
-                   (mapcar #'eabp-org-ui--agenda-card items))
+                   (mapcar #'glasspane-ui--agenda-card items))
           (eabp-empty-state :icon "description"
                             :title "Empty file"
                             :caption "No headings found."))))))
 
-(defun eabp-org-ui--org-editor-actions (file)
+(defun glasspane-ui--org-editor-actions (file)
   "Reader/refile toggles and the properties dialog for org FILE."
-  (when (eabp-org-ui--org-file-p file)
+  (when (glasspane-ui--org-file-p file)
     (delq nil
           (list
-           (when eabp-org-ui--files-read-mode
+           (when glasspane-ui--files-read-mode
              (eabp-icon-button
-              (if eabp-org-ui--files-refile-mode "visibility" "swap_vert")
+              (if glasspane-ui--files-refile-mode "visibility" "swap_vert")
               (eabp-action "files.toggle-refile")
               :content-description
-              (if eabp-org-ui--files-refile-mode "Reader" "Refile")))
+              (if glasspane-ui--files-refile-mode "Reader" "Refile")))
            (eabp-icon-button
-            (if eabp-org-ui--files-read-mode "edit" "visibility")
+            (if glasspane-ui--files-read-mode "edit" "visibility")
             (eabp-action "files.toggle-read")
             :content-description
-            (if eabp-org-ui--files-read-mode "Edit" "Read"))
+            (if glasspane-ui--files-read-mode "Edit" "Read"))
            (eabp-icon-button
             "tune"
             (eabp-action "files.properties.show" :args `((file . ,file)))
             :content-description "Properties")))))
 
-(add-hook 'eabp-files-editor-body-functions #'eabp-org-ui--org-editor-body)
-(add-hook 'eabp-files-editor-actions-functions #'eabp-org-ui--org-editor-actions)
+(add-hook 'eabp-files-editor-body-functions #'glasspane-ui--org-editor-body)
+(add-hook 'eabp-files-editor-actions-functions #'glasspane-ui--org-editor-actions)
 
 ;; Org files open reader-first; everything else lands in the editor.
 (add-hook 'eabp-files-open-hook
           (lambda (file)
-            (setq eabp-org-ui--files-read-mode (eabp-org-ui--org-file-p file))))
+            (setq glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))))
 
 ;; A phone-side save may have changed org data the views memoise.
 (add-hook 'eabp-files-after-save-hook
-          (lambda (_file) (eabp-org-cache-invalidate)))
+          (lambda (_file) (glasspane-org-cache-invalidate)))
 
 (eabp-defaction "files.toggle-read"
   (lambda (_ _)
-    (setq eabp-org-ui--files-read-mode (not eabp-org-ui--files-read-mode))
+    (setq glasspane-ui--files-read-mode (not glasspane-ui--files-read-mode))
     (eabp-shell-push nil :switch-to "edit")))
 
 (eabp-defaction "files.toggle-refile"
   (lambda (_ _)
-    (setq eabp-org-ui--files-refile-mode (not eabp-org-ui--files-refile-mode))
+    (setq glasspane-ui--files-refile-mode (not glasspane-ui--files-refile-mode))
     (eabp-shell-push nil :switch-to "edit")))
 
 (eabp-defaction "files.properties.show"
@@ -9059,52 +9059,52 @@ with the new states.  Returns non-nil when persisting succeeded."
               (funcall update-kwd "TITLE" title)
               (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
               (funcall update-kwd "CATEGORY" category))
-            (let ((eabp-org--inhibit-save-refresh t)
+            (let ((glasspane-org--inhibit-save-refresh t)
                   (save-silently t))
               (save-buffer)))))
       (eabp-dismiss-dialog)
-      (eabp-org-cache-invalidate)
+      (glasspane-org-cache-invalidate)
       (eabp-shell-push))))
 
 ;; ─── Auto-refresh ────────────────────────────────────────────────────────────
 
-(defvar eabp-org-ui--save-refresh-timer nil)
+(defvar glasspane-ui--save-refresh-timer nil)
 
-(defcustom eabp-org-ui-save-refresh-delay 2
+(defcustom glasspane-ui-save-refresh-delay 2
   "Idle seconds after saving an agenda file before re-pushing the dashboard.
 Debounces bursts of saves (e.g. `org-save-all-org-buffers') into one push."
   :type 'integer :group 'eabp)
 
-(defun eabp-org-ui--after-save-refresh ()
+(defun glasspane-ui--after-save-refresh ()
   "Schedule a dashboard refresh if an org agenda file was just saved.
 No-op for saves EABP itself performs — anything inside an action
 handler (`eabp--in-action-handler') pushes explicitly, and other
-programmatic saves bind `eabp-org--inhibit-save-refresh' — which would
+programmatic saves bind `glasspane-org--inhibit-save-refresh' — which would
 otherwise refresh twice or loop."
   (when (and (eabp-connected-p)
-             (not (bound-and-true-p eabp-org--inhibit-save-refresh))
+             (not (bound-and-true-p glasspane-org--inhibit-save-refresh))
              (not (bound-and-true-p eabp--in-action-handler))
              buffer-file-name
              (derived-mode-p 'org-mode)
              (ignore-errors
                (member (expand-file-name buffer-file-name)
                        (mapcar #'expand-file-name (org-agenda-files)))))
-    (eabp-org-cache-invalidate)
-    (when (timerp eabp-org-ui--save-refresh-timer)
-      (cancel-timer eabp-org-ui--save-refresh-timer))
-    (setq eabp-org-ui--save-refresh-timer
-          (run-with-idle-timer eabp-org-ui-save-refresh-delay nil
+    (glasspane-org-cache-invalidate)
+    (when (timerp glasspane-ui--save-refresh-timer)
+      (cancel-timer glasspane-ui--save-refresh-timer))
+    (setq glasspane-ui--save-refresh-timer
+          (run-with-idle-timer glasspane-ui-save-refresh-delay nil
                                #'eabp-shell-push))))
 
-(add-hook 'after-save-hook #'eabp-org-ui--after-save-refresh)
+(add-hook 'after-save-hook #'glasspane-ui--after-save-refresh)
 
-(defun eabp-org-ui--refresh-if-connected (&rest _)
+(defun glasspane-ui--refresh-if-connected (&rest _)
   "Re-push the dashboard when there's a live session.
 Safe to put on any hook: a no-op while disconnected.  Invalidates the
 extraction cache first — this runs on clock in/out, which mutate the
 org buffer without necessarily saving it."
   (when (eabp-connected-p)
-    (eabp-org-cache-invalidate)
+    (glasspane-org-cache-invalidate)
     (eabp-shell-push)))
 
 ;; The connect and queue-drained pushes are owned by the shell; this app
@@ -9112,25 +9112,25 @@ org buffer without necessarily saving it."
 
 ;; Clock state shows on the Clock tab and the dashboard generally —
 ;; keep it live. Depth 90: after eabp-surfaces' notification hooks.
-(add-hook 'org-clock-in-hook  #'eabp-org-ui--refresh-if-connected 90)
-(add-hook 'org-clock-out-hook #'eabp-org-ui--refresh-if-connected 90)
+(add-hook 'org-clock-in-hook  #'glasspane-ui--refresh-if-connected 90)
+(add-hook 'org-clock-out-hook #'glasspane-ui--refresh-if-connected 90)
 
-(provide 'eabp-org-ui)
-;;; eabp-org-ui.el ends here
+(provide 'glasspane-ui)
+;;; glasspane-ui.el ends here
 ;;; ==================================================================
-;;; BEGIN eabp-demo.el
+;;; BEGIN apps/glasspane/glasspane-demo.el
 ;;; ==================================================================
 
-;;; eabp-demo.el --- Guided-tour demo files for the mobile IDE -*- lexical-binding: t; -*-
+;;; glasspane-demo.el --- Guided-tour demo files for the mobile IDE -*- lexical-binding: t; -*-
 
-;; Writes a set of small tour files into `eabp-demo-directory' so the
+;; Writes a set of small tour files into `glasspane-demo-directory' so the
 ;; phone editor's IDE features can be demoed on demand: completion,
 ;; eldoc signatures, and flymake squiggles today; each file also marks
 ;; what upgrades once the eglot phase lands.
 ;;
 ;; The files ship *inside the bundle* rather than as repo files because
 ;; Emacs's home on Android is app-private storage — adb can't push into
-;; it, but Emacs itself can write there.  Run `M-x eabp-demo-setup' (or
+;; it, but Emacs itself can write there.  Run `M-x glasspane-demo-setup' (or
 ;; the `demo.setup' action from the phone) and the files appear under
 ;; the Files tab.  Setup always overwrites, so a mangled demo resets to
 ;; pristine by running it again.
@@ -9139,13 +9139,13 @@ org buffer without necessarily saving it."
 
 (require 'eabp-surfaces)
 
-(defcustom eabp-demo-directory "~/eabp-demo/"
-  "Directory `eabp-demo-setup' writes the tour files into.
+(defcustom glasspane-demo-directory "~/glasspane-demo/"
+  "Directory `glasspane-demo-setup' writes the tour files into.
 Must lie within `eabp-files-roots' to be reachable from the phone's
 Files browser (the default is inside the Home root)."
   :type 'directory :group 'eabp)
 
-(defconst eabp-demo--files
+(defconst glasspane-demo--files
   `(("demo.el" . "\
 ;;; demo.el --- Glasspane mobile IDE tour -*- lexical-binding: t; -*-
 
@@ -9268,21 +9268,21 @@ headline completes your =:server:= tag from the phone.
 Type here — completion offers words already in this file, like
 completion or formatting or headline.
 "))
-  "Alist of (FILENAME . CONTENT) written by `eabp-demo-setup'.")
+  "Alist of (FILENAME . CONTENT) written by `glasspane-demo-setup'.")
 
 ;;;###autoload
-(defun eabp-demo-setup (&optional dir)
-  "Write the mobile-IDE tour files into DIR (default `eabp-demo-directory').
+(defun glasspane-demo-setup (&optional dir)
+  "Write the mobile-IDE tour files into DIR (default `glasspane-demo-directory').
 Existing copies are overwritten so the tour always starts pristine.
 Returns the directory the files were written to."
   (interactive)
   (let ((dir (file-name-as-directory
-              (expand-file-name (or dir eabp-demo-directory))))
+              (expand-file-name (or dir glasspane-demo-directory))))
         ;; The tour files contain non-ASCII (section rules, em-dashes);
         ;; pin utf-8 so no platform default can make write-region prompt.
         (coding-system-for-write 'utf-8))
     (make-directory dir t)
-    (dolist (spec eabp-demo--files)
+    (dolist (spec glasspane-demo--files)
       (write-region (cdr spec) nil (expand-file-name (car spec) dir)
                     nil 'silent))
     (when (called-interactively-p 'interactive)
@@ -9291,17 +9291,40 @@ Returns the directory the files were written to."
 
 (eabp-defaction "demo.setup"
   ;; Allowlisted and argument-free: always writes the fixed file set into
-  ;; `eabp-demo-directory' — nothing on the wire chooses paths or content.
+  ;; `glasspane-demo-directory' — nothing on the wire chooses paths or content.
   (lambda (_ _)
-    (eabp-demo-setup)
+    (glasspane-demo-setup)
     (when (fboundp 'eabp-shell-notify)
       (eabp-shell-notify
        (format "Demo files in %s"
                (abbreviate-file-name
-                (expand-file-name eabp-demo-directory)))))))
+                (expand-file-name glasspane-demo-directory)))))))
 
-(provide 'eabp-demo)
-;;; eabp-demo.el ends here
+(provide 'glasspane-demo)
+;;; glasspane-demo.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane.el
+;;; ==================================================================
+
+;;; glasspane.el --- Glasspane: the reference org app on EABP -*- lexical-binding: t; -*-
+
+;; The one-require entry point for the full reference app.  Pulls in the
+;; EABP core (transport, shell, renderers, editor bridge) plus every
+;; Glasspane module (org views, clock notification, magit pie, package
+;; browser, demo tour):
+;;
+;;   (require 'glasspane)
+;;
+;; The pre-built single-file bundle at the repo root carries the same
+;; feature name, so init files work unchanged with either install option.
+
+;;; Code:
+
+(require 'glasspane-ui)
+
+(provide 'glasspane)
+;;; glasspane.el ends here
 
 (provide 'glasspane)
 ;;; glasspane.el ends here

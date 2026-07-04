@@ -1,4 +1,4 @@
-;;; eabp-org-reader.el --- Foldable org outline renderer for EABP -*- lexical-binding: t; -*-
+;;; glasspane-org-reader.el --- Foldable org outline renderer for EABP -*- lexical-binding: t; -*-
 
 ;; Renders an org buffer (or a single subtree) into a tree of EABP widgets:
 ;; each heading becomes an `eabp-collapsible' whose header is the org-highlighted
@@ -7,24 +7,24 @@
 ;; recursively. Folding is resolved entirely on the device (see the `collapsible'
 ;; widget), so the whole subtree is shipped once and folds without a round-trip.
 ;;
-;; Two entry points feed the UI layer (eabp-org-ui):
-;;   `eabp-org-reader-file'    — whole file, every top-level heading foldable
-;;   `eabp-org-reader-subtree' — one heading's content inline + children foldable
+;; Two entry points feed the UI layer (glasspane-ui):
+;;   `glasspane-org-reader-file'    — whole file, every top-level heading foldable
+;;   `glasspane-org-reader-subtree' — one heading's content inline + children foldable
 
 ;;; Code:
 
 (require 'org)
 (require 'cl-lib)
 (require 'eabp-widgets)
-(require 'eabp-org-rich)
+(require 'glasspane-org-rich)
 
-(defcustom eabp-org-reader-max-headings 400
+(defcustom glasspane-org-reader-max-headings 400
   "Cap on headings rendered in one reader pass, to bound very large files."
   :type 'integer :group 'eabp)
 
 ;; ─── Parsing ───────────────────────────────────────────────────────────────────
 
-(defun eabp-org-reader--record (pos next)
+(defun glasspane-org-reader--record (pos next)
   "Build a record for the heading at POS, whose body ends at NEXT.
 Returns a plist with :level :pos :line :props :body :body-start.
 :body-start is the real-buffer position of the first non-blank char
@@ -51,7 +51,7 @@ elements (checkboxes)."
       (list :level level :pos pos :line line :props props
             :body body :body-start body-start))))
 
-(defun eabp-org-reader--collect (beg end include-first)
+(defun glasspane-org-reader--collect (beg end include-first)
   "Collect heading records between BEG and END.
 INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
   (let (positions records)
@@ -66,10 +66,10 @@ INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
     (cl-loop for cell on positions
              for pos = (car cell)
              for next = (or (cadr cell) end)
-             do (push (eabp-org-reader--record pos next) records))
+             do (push (glasspane-org-reader--record pos next) records))
     (nreverse records)))
 
-(defun eabp-org-reader--build-tree (records)
+(defun glasspane-org-reader--build-tree (records)
   "Nest flat RECORDS into a tree by :level. Each node gains a :children list."
   (let* ((root (list :level 0 :children nil))
          (stack (list root)))
@@ -86,7 +86,7 @@ INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
 
 ;; ─── Rendering ──────────────────────────────────────────────────────────────────
 
-(defun eabp-org-reader--props-node (props file pos)
+(defun glasspane-org-reader--props-node (props file pos)
   "A collapsed PROPERTIES drawer node for PROPS (an alist of KEY . VALUE)."
   (let ((text (mapconcat (lambda (kv) (format ":%s: %s" (car kv) (cdr kv)))
                          props "\n")))
@@ -95,7 +95,7 @@ INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
                       (list (eabp-text text 'mono))
                       :collapsed t)))
 
-(defun eabp-org-reader--content-nodes (n file &optional skip-props)
+(defun glasspane-org-reader--content-nodes (n file &optional skip-props)
   "Inline content nodes for tree node N: PROPERTIES drawer, body, child headings.
 When SKIP-PROPS is non-nil, omit the PROPERTIES drawer (used when the
 detail view already shows properties in its own section)."
@@ -107,16 +107,16 @@ detail view already shows properties in its own section)."
     (delq nil
           (append
            (when (and props (not skip-props))
-             (list (eabp-org-reader--props-node props file pos)))
+             (list (glasspane-org-reader--props-node props file pos)))
            (when (and body (not (string-empty-p body)))
              ;; Native rich text (emphasis, links, #tags) instead of the
              ;; monospace org highlighter; code/tables still fall back to it.
              ;; file + offset enable interactive checkboxes.
-             (eabp-org-rich-body body (and file (file-name-directory file))
+             (glasspane-org-rich-body body (and file (file-name-directory file))
                                 file (when body-start (1- body-start))))
-           (mapcar (lambda (c) (eabp-org-reader--heading-node c file)) children)))))
+           (mapcar (lambda (c) (glasspane-org-reader--heading-node c file)) children)))))
 
-(defun eabp-org-reader--heading-node (n file)
+(defun glasspane-org-reader--heading-node (n file)
   "Render tree node N (and its subtree) to a foldable `eabp-collapsible'.
 Long-pressing the header opens the heading detail view when FILE is available."
   (let* ((pos (plist-get n :pos))
@@ -124,30 +124,30 @@ Long-pressing the header opens the heading detail view when FILE is available."
                 `((file . ,file) (pos . ,pos) (headline . "")))))
     (eabp-collapsible (format "fold/%s/%s" file pos)
                       (eabp-markup (plist-get n :line) :syntax "org")
-                      (eabp-org-reader--content-nodes n file)
+                      (glasspane-org-reader--content-nodes n file)
                       :on-long-tap (when ref
                                      (eabp-action "heading.tap" :args ref)))))
 
 ;; ─── Entry points ───────────────────────────────────────────────────────────────
 
-(defun eabp-org-reader--cap (records)
-  "Truncate RECORDS to `eabp-org-reader-max-headings'."
-  (if (> (length records) eabp-org-reader-max-headings)
-      (cl-subseq records 0 eabp-org-reader-max-headings)
+(defun glasspane-org-reader--cap (records)
+  "Truncate RECORDS to `glasspane-org-reader-max-headings'."
+  (if (> (length records) glasspane-org-reader-max-headings)
+      (cl-subseq records 0 glasspane-org-reader-max-headings)
     records))
 
-(defun eabp-org-reader-file (file)
+(defun glasspane-org-reader-file (file)
   "Render the whole org FILE to a list of foldable widget nodes.
 Content before the first heading is not shown."
   (when (and file (file-readable-p file))
     (with-current-buffer (find-file-noselect file)
       (org-with-wide-buffer
-       (let* ((records (eabp-org-reader--cap
-                        (eabp-org-reader--collect (point-min) (point-max) nil)))
-              (tree (eabp-org-reader--build-tree records)))
-         (mapcar (lambda (n) (eabp-org-reader--heading-node n file)) tree))))))
+       (let* ((records (glasspane-org-reader--cap
+                        (glasspane-org-reader--collect (point-min) (point-max) nil)))
+              (tree (glasspane-org-reader--build-tree records)))
+         (mapcar (lambda (n) (glasspane-org-reader--heading-node n file)) tree))))))
 
-(defun eabp-org-reader-subtree (file pos &optional skip-props)
+(defun glasspane-org-reader-subtree (file pos &optional skip-props)
   "Render the org subtree at POS in FILE.
 The drilled-into heading's own PROPERTIES/body render inline (its title is
 already in the top bar); its child headings render as foldable sections.
@@ -160,21 +160,21 @@ When SKIP-PROPS is non-nil, the top-level PROPERTIES drawer is omitted."
        (unless (org-at-heading-p) (ignore-errors (org-back-to-heading t)))
        (let* ((beg (point))
               (end (save-excursion (org-end-of-subtree t t)))
-              (records (eabp-org-reader--cap
-                        (eabp-org-reader--collect beg end t)))
-              (tree (eabp-org-reader--build-tree records))
+              (records (glasspane-org-reader--cap
+                        (glasspane-org-reader--collect beg end t)))
+              (tree (glasspane-org-reader--build-tree records))
               (root (car tree)))
          (when root
-           (eabp-org-reader--content-nodes root file skip-props)))))))
+           (glasspane-org-reader--content-nodes root file skip-props)))))))
 
-(defun eabp-org-reader-refile-list (file)
+(defun glasspane-org-reader-refile-list (file)
   "Render all headings in FILE as a flat reorderable item list.
 Returns a single `eabp-reorderable-list' node for refile mode."
   (when (and file (file-readable-p file))
     (with-current-buffer (find-file-noselect file)
       (org-with-wide-buffer
-       (let* ((records (eabp-org-reader--cap
-                        (eabp-org-reader--collect (point-min) (point-max) nil)))
+       (let* ((records (glasspane-org-reader--cap
+                        (glasspane-org-reader--collect (point-min) (point-max) nil)))
               (items (mapcar (lambda (r)
                                `((label . ,(plist-get r :line))
                                  (level . ,(plist-get r :level))
@@ -186,5 +186,5 @@ Returns a single `eabp-reorderable-list' node for refile mode."
           :on-reorder (eabp-action "heading.reorder"
                                    :args `((file . ,file)))))))))
 
-(provide 'eabp-org-reader)
-;;; eabp-org-reader.el ends here
+(provide 'glasspane-org-reader)
+;;; glasspane-org-reader.el ends here

@@ -1,13 +1,13 @@
-;;; eabp-demo.el --- Guided-tour demo files for the mobile IDE -*- lexical-binding: t; -*-
+;;; glasspane-demo.el --- Guided-tour demo files for the mobile IDE -*- lexical-binding: t; -*-
 
-;; Writes a set of small tour files into `eabp-demo-directory' so the
+;; Writes a set of small tour files into `glasspane-demo-directory' so the
 ;; phone editor's IDE features can be demoed on demand: completion,
 ;; eldoc signatures, and flymake squiggles today; each file also marks
 ;; what upgrades once the eglot phase lands.
 ;;
 ;; The files ship *inside the bundle* rather than as repo files because
 ;; Emacs's home on Android is app-private storage — adb can't push into
-;; it, but Emacs itself can write there.  Run `M-x eabp-demo-setup' (or
+;; it, but Emacs itself can write there.  Run `M-x glasspane-demo-setup' (or
 ;; the `demo.setup' action from the phone) and the files appear under
 ;; the Files tab.  Setup always overwrites, so a mangled demo resets to
 ;; pristine by running it again.
@@ -16,13 +16,13 @@
 
 (require 'eabp-surfaces)
 
-(defcustom eabp-demo-directory "~/eabp-demo/"
-  "Directory `eabp-demo-setup' writes the tour files into.
+(defcustom glasspane-demo-directory "~/glasspane-demo/"
+  "Directory `glasspane-demo-setup' writes the tour files into.
 Must lie within `eabp-files-roots' to be reachable from the phone's
 Files browser (the default is inside the Home root)."
   :type 'directory :group 'eabp)
 
-(defconst eabp-demo--files
+(defconst glasspane-demo--files
   `(("demo.el" . "\
 ;;; demo.el --- Glasspane mobile IDE tour -*- lexical-binding: t; -*-
 
@@ -145,21 +145,21 @@ headline completes your =:server:= tag from the phone.
 Type here — completion offers words already in this file, like
 completion or formatting or headline.
 "))
-  "Alist of (FILENAME . CONTENT) written by `eabp-demo-setup'.")
+  "Alist of (FILENAME . CONTENT) written by `glasspane-demo-setup'.")
 
 ;;;###autoload
-(defun eabp-demo-setup (&optional dir)
-  "Write the mobile-IDE tour files into DIR (default `eabp-demo-directory').
+(defun glasspane-demo-setup (&optional dir)
+  "Write the mobile-IDE tour files into DIR (default `glasspane-demo-directory').
 Existing copies are overwritten so the tour always starts pristine.
 Returns the directory the files were written to."
   (interactive)
   (let ((dir (file-name-as-directory
-              (expand-file-name (or dir eabp-demo-directory))))
+              (expand-file-name (or dir glasspane-demo-directory))))
         ;; The tour files contain non-ASCII (section rules, em-dashes);
         ;; pin utf-8 so no platform default can make write-region prompt.
         (coding-system-for-write 'utf-8))
     (make-directory dir t)
-    (dolist (spec eabp-demo--files)
+    (dolist (spec glasspane-demo--files)
       (write-region (cdr spec) nil (expand-file-name (car spec) dir)
                     nil 'silent))
     (when (called-interactively-p 'interactive)
@@ -168,14 +168,14 @@ Returns the directory the files were written to."
 
 (eabp-defaction "demo.setup"
   ;; Allowlisted and argument-free: always writes the fixed file set into
-  ;; `eabp-demo-directory' — nothing on the wire chooses paths or content.
+  ;; `glasspane-demo-directory' — nothing on the wire chooses paths or content.
   (lambda (_ _)
-    (eabp-demo-setup)
+    (glasspane-demo-setup)
     (when (fboundp 'eabp-shell-notify)
       (eabp-shell-notify
        (format "Demo files in %s"
                (abbreviate-file-name
-                (expand-file-name eabp-demo-directory)))))))
+                (expand-file-name glasspane-demo-directory)))))))
 
-(provide 'eabp-demo)
-;;; eabp-demo.el ends here
+(provide 'glasspane-demo)
+;;; glasspane-demo.el ends here

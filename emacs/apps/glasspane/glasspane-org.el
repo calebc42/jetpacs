@@ -1,4 +1,4 @@
-;;; eabp-org.el --- EABP Org-Mode Data Extraction -*- lexical-binding: t; -*-
+;;; glasspane-org.el --- EABP Org-Mode Data Extraction -*- lexical-binding: t; -*-
 
 ;; Provides functions to extract structured data from org-mode buffers.
 ;; This layer is pure Elisp and has no bridge dependencies.
@@ -14,7 +14,7 @@
 
 ;; ─── Refresh coordination ──────────────────────────────────────────────────────
 
-(defvar eabp-org--inhibit-save-refresh nil
+(defvar glasspane-org--inhibit-save-refresh nil
   "When non-nil, the `after-save-hook' dashboard refresh is suppressed.
 Bound around our own programmatic saves (heading edits, file saves) so an
 explicit dashboard push isn't doubled by the save-hook firing on top.")
@@ -23,45 +23,45 @@ explicit dashboard push isn't doubled by the save-hook firing on top.")
 ;; instant and offline-capable), which means the expensive extractions here
 ;; — a full `org-agenda' run, an `org-map-entries' sweep — used to execute
 ;; on every chip tap and snackbar.  They are memoised now; this table is
-;; dropped through `eabp-org-cache-invalidate', the single seam every
+;; dropped through `glasspane-org-cache-invalidate', the single seam every
 ;; mutation path (heading actions, saves, capture, queue replay) already
 ;; calls.
-(defvar eabp-org--cache (make-hash-table :test 'equal)
+(defvar glasspane-org--cache (make-hash-table :test 'equal)
   "Memoised org extraction results.
-Keys are built by `eabp-org--cache-key' and include today's date, so
+Keys are built by `glasspane-org--cache-key' and include today's date, so
 day-relative readers (the agenda) roll over at midnight even without an
 explicit invalidation.")
 
-(defun eabp-org--cache-key (&rest parts)
+(defun glasspane-org--cache-key (&rest parts)
   "Build a cache key from PARTS, scoped to today's date."
   (cons (format-time-string "%Y-%m-%d") parts))
 
-(defmacro eabp-org--with-cache (key &rest body)
-  "Memoise BODY's result in `eabp-org--cache' under KEY."
+(defmacro glasspane-org--with-cache (key &rest body)
+  "Memoise BODY's result in `glasspane-org--cache' under KEY."
   (declare (indent 1))
   (let ((k (gensym "key")) (hit (gensym "hit")))
     `(let* ((,k ,key)
-            (,hit (gethash ,k eabp-org--cache 'eabp-org--miss)))
-       (if (eq ,hit 'eabp-org--miss)
-           (puthash ,k (progn ,@body) eabp-org--cache)
+            (,hit (gethash ,k glasspane-org--cache 'glasspane-org--miss)))
+       (if (eq ,hit 'glasspane-org--miss)
+           (puthash ,k (progn ,@body) glasspane-org--cache)
          ,hit))))
 
-(defun eabp-org-cache-invalidate ()
+(defun glasspane-org-cache-invalidate ()
   "Drop every memoised org extraction.
 Called by every mutation path (heading actions, phone/desktop saves,
 capture, offline-queue drain), so the readers recompute from fresh org
 state on the next dashboard push."
-  (clrhash eabp-org--cache))
+  (clrhash glasspane-org--cache))
 
 ;; ─── Heading references ────────────────────────────────────────────────────────
 ;;
 ;; Every heading the UI lists carries a `ref' — a small, JSON-safe alist that
 ;; lets a later action (drill-in, todo-set, schedule, clock-in) find the same
-;; heading again. The round-trip is: build with `eabp-org--heading-ref' while
+;; heading again. The round-trip is: build with `glasspane-org--heading-ref' while
 ;; point is on the heading, ship it to the device inside an action's `:args',
-;; and resolve it back to a live marker with `eabp-org--resolve-ref'.
+;; and resolve it back to a live marker with `glasspane-org--resolve-ref'.
 
-(defun eabp-org--heading-ref ()
+(defun glasspane-org--heading-ref ()
   "Build a location ref for the org heading at point.
 Returns an alist with `file'/`pos'/`headline', plus `id' when the entry
 already has an ID property (never created here — we don't mutate files).
@@ -77,9 +77,9 @@ nil-valued keys are omitted so the alist serialises cleanly to JSON."
           (cons `(id . ,id) ref)
         ref))))
 
-(defun eabp-org--resolve-ref (ref)
+(defun glasspane-org--resolve-ref (ref)
   "Resolve REF to a live marker at its org heading, or signal an error.
-REF is an alist as built by `eabp-org--heading-ref' (extra keys such as a
+REF is an alist as built by `glasspane-org--heading-ref' (extra keys such as a
 consed-on `state' are ignored). Resolution tries, in order: the stable
 `id' (survives edits anywhere), the recorded `pos' accepted only if its
 headline still matches, then a headline search through the file."
@@ -117,19 +117,19 @@ headline still matches, then a headline search through the file."
      (error "Heading not found: %s"
             (or headline id file "?")))))
 
-(defun eabp-org--agenda-items (&optional span start-day)
+(defun glasspane-org--agenda-items (&optional span start-day)
   "Extract agenda items for SPAN (\\='day, \\='week, or \\='month).
 START-DAY is an optional string (e.g. \"2026-11-01\") to start the agenda on.
 Returns a list of alists representing agenda items.  Memoised; see
-`eabp-org-cache-invalidate'."
-  (eabp-org--with-cache (eabp-org--cache-key 'agenda (or span 'day) start-day)
-    (eabp-org--agenda-items-1 span start-day)))
+`glasspane-org-cache-invalidate'."
+  (glasspane-org--with-cache (glasspane-org--cache-key 'agenda (or span 'day) start-day)
+    (glasspane-org--agenda-items-1 span start-day)))
 
-(defconst eabp-org--agenda-buffer "*EABP Agenda*"
+(defconst glasspane-org--agenda-buffer "*EABP Agenda*"
   "Private buffer the agenda extraction builds into (and kills after).")
 
-(defun eabp-org--agenda-items-1 (span start-day)
-  "Uncached worker for `eabp-org--agenda-items'."
+(defun glasspane-org--agenda-items-1 (span start-day)
+  "Uncached worker for `glasspane-org--agenda-items'."
   (let ((org-agenda-span (or span 'day))
         (org-agenda-start-day start-day)
         (org-agenda-files (org-agenda-files))
@@ -140,7 +140,7 @@ Returns a list of alists representing agenda items.  Memoised; see
         ;; so binding that variable directly gets shadowed — the build then
         ;; lands in *Org Agenda* while we look for (and fail to find, and fail
         ;; to kill) our own name.
-        (org-agenda-buffer-tmp-name eabp-org--agenda-buffer)
+        (org-agenda-buffer-tmp-name glasspane-org--agenda-buffer)
         (org-agenda-sticky nil)
         (inhibit-redisplay t)
         items)
@@ -148,7 +148,7 @@ Returns a list of alists representing agenda items.  Memoised; see
         (save-window-excursion
           (let ((org-agenda-window-setup 'current-window))
             (org-agenda nil "a")
-            (with-current-buffer eabp-org--agenda-buffer
+            (with-current-buffer glasspane-org--agenda-buffer
           (goto-char (point-min))
           (while (not (eobp))
             (let* ((marker (get-text-property (point) 'org-marker))
@@ -181,22 +181,22 @@ Returns a list of alists representing agenda items.  Memoised; see
                               (time . ,time)
                               (date . ,date-str)
                               (type . ,(when type (format "%s" type)))
-                              (ref . ,(eabp-org--heading-ref)))
+                              (ref . ,(glasspane-org--heading-ref)))
                             items))))))
             (forward-line 1)))))
       ;; Kill by buffer object, not name, and even when extraction errored.
-      (when-let ((buf (get-buffer eabp-org--agenda-buffer)))
+      (when-let ((buf (get-buffer glasspane-org--agenda-buffer)))
         (kill-buffer buf)))
     (nreverse items)))
 
-(defun eabp-org--todo-items (&optional files)
+(defun glasspane-org--todo-items (&optional files)
   "Extract TODO items from FILES (or agenda files).
-Memoised; see `eabp-org-cache-invalidate'."
-  (eabp-org--with-cache (eabp-org--cache-key 'todos files)
-    (eabp-org--todo-items-1 files)))
+Memoised; see `glasspane-org-cache-invalidate'."
+  (glasspane-org--with-cache (glasspane-org--cache-key 'todos files)
+    (glasspane-org--todo-items-1 files)))
 
-(defun eabp-org--todo-items-1 (files)
-  "Uncached worker for `eabp-org--todo-items'."
+(defun glasspane-org--todo-items-1 (files)
+  "Uncached worker for `glasspane-org--todo-items'."
   (let (items)
     (org-map-entries
      (lambda ()
@@ -216,14 +216,14 @@ Memoised; see `eabp-org-cache-invalidate'."
                    (deadline  . ,deadline)
                    (file . ,(buffer-file-name))
                    (pos . ,(point))
-                   (ref . ,(eabp-org--heading-ref)))
+                   (ref . ,(glasspane-org--heading-ref)))
                  items))))
      "TODO<>\"\"" (or files 'agenda))
     (nreverse items)))
 
-(defun eabp-org--heading-item-at ()
+(defun glasspane-org--heading-item-at ()
   "Build a heading item alist for the org entry at point.
-Same shape as `eabp-org--todo-items' entries (headline/todo/priority/
+Same shape as `glasspane-org--todo-items' entries (headline/todo/priority/
 tags/file/pos/ref); used by the search layer."
   (let* ((components (org-heading-components))
          (todo (nth 2 components))
@@ -240,12 +240,12 @@ tags/file/pos/ref); used by the search layer."
       (deadline  . ,deadline)
       (file . ,(buffer-file-name))
       (pos . ,(point))
-      (ref . ,(eabp-org--heading-ref)))))
+      (ref . ,(glasspane-org--heading-ref)))))
 
-(defun eabp-org--file-heading-items (file)
+(defun glasspane-org--file-heading-items (file)
   "Extract level-1 headings from FILE as item alists.
-Same shape as `eabp-org--todo-items' entries (plus scheduled/deadline),
-suitable for `eabp-org-ui--agenda-card'."
+Same shape as `glasspane-org--todo-items' entries (plus scheduled/deadline),
+suitable for `glasspane-ui--agenda-card'."
   (when (and file (file-readable-p file))
     (with-current-buffer (find-file-noselect file)
       (org-with-wide-buffer
@@ -269,12 +269,12 @@ suitable for `eabp-org-ui--agenda-card'."
                         (deadline  . ,deadline)
                         (file . ,(buffer-file-name))
                         (pos . ,(point))
-                        (ref . ,(eabp-org--heading-ref)))
+                        (ref . ,(glasspane-org--heading-ref)))
                       items))))
           nil nil)
          (nreverse items))))))
 
-(defun eabp-org--search-substring (query)
+(defun glasspane-org--search-substring (query)
   "Case-insensitive substring search of agenda files for QUERY.
 Matches headline text or any tag. Returns a list of heading items."
   (let ((q (downcase (string-trim query))) items)
@@ -285,35 +285,35 @@ Matches headline text or any tag. Returns a list of heading items."
               (tags (org-get-tags)))
          (when (or (string-search q headline)
                    (cl-some (lambda (tg) (string-search q (downcase tg))) tags))
-           (push (eabp-org--heading-item-at) items))))
+           (push (glasspane-org--heading-item-at) items))))
      nil 'agenda)
     (nreverse items)))
 
-(defun eabp-org--search (query)
+(defun glasspane-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
 Uses `org-ql' when available, falling back to a substring match.
-Memoised; see `eabp-org-cache-invalidate'."
+Memoised; see `glasspane-org-cache-invalidate'."
   (if (string-empty-p (string-trim query))
       nil
-    (eabp-org--with-cache (eabp-org--cache-key 'search query)
+    (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
       (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
                           (condition-case nil (read query) (error query))
                         query)))
         (if (fboundp 'org-ql-select)
             (condition-case nil
                 (org-ql-select (org-agenda-files) ql-query
-                               :action #'eabp-org--heading-item-at)
-              (error (eabp-org--search-substring query)))
-          (eabp-org--search-substring query))))))
+                               :action #'glasspane-org--heading-item-at)
+              (error (glasspane-org--search-substring query)))
+          (glasspane-org--search-substring query))))))
 
-(defun eabp-org--file-list ()
+(defun glasspane-org--file-list ()
   "List of agenda files and basic stats."
   (mapcar (lambda (f) 
             `((file . ,f)
               (name . ,(file-name-nondirectory f))))
           (org-agenda-files)))
 
-(defun eabp-org--heading-at (pos file)
+(defun glasspane-org--heading-at (pos file)
   "Get full heading detail at POS in FILE."
   (with-current-buffer (find-file-noselect file)
     (save-excursion
@@ -337,7 +337,7 @@ Memoised; see `eabp-org-cache-invalidate'."
           (properties . ,props)
           (body . ,body))))))
 
-(defun eabp-org--parse-template-prompts (template-string)
+(defun glasspane-org--parse-template-prompts (template-string)
   "Return the ordered field names to collect for TEMPLATE-STRING.
 Each `%^{NAME}' or `%^{NAME|default}' contributes NAME (the default is
 dropped from the label but honoured at fill time). A `%?' body position
@@ -357,7 +357,7 @@ adds a leading \"Headline\" field. Duplicates are removed."
          (cons "Headline" prompts)
        prompts))))
 
-(defun eabp-org--capture-templates ()
+(defun glasspane-org--capture-templates ()
   "Return list of capture templates."
   (mapcar (lambda (tmpl)
             (let ((key (nth 0 tmpl))
@@ -365,11 +365,11 @@ adds a leading \"Headline\" field. Duplicates are removed."
                   (template-string (nth 4 tmpl)))
               `((key . ,key)
                 (description . ,desc)
-                (prompts . ,(vconcat (eabp-org--parse-template-prompts 
+                (prompts . ,(vconcat (glasspane-org--parse-template-prompts 
                                       (if (stringp template-string) template-string "")))))))
           org-capture-templates))
 
-(defun eabp-org--fill-template (tmpl values)
+(defun glasspane-org--fill-template (tmpl values)
   "Fill org capture TMPL string from VALUES (NAME -> user input alist).
 `%?' becomes the Headline value; each `%^{NAME|default}' becomes the user
 value for NAME, else its default, else empty. Any *other* interactive
@@ -380,7 +380,7 @@ on the phone would hang behind the bridge."
     ;; %? — free-form body position.
     (setq tmpl (replace-regexp-in-string "%\\?" headline tmpl t t))
     ;; %^{NAME|default} — scan the template's own tokens so NAME always
-    ;; matches what `eabp-org--parse-template-prompts' produced.
+    ;; matches what `glasspane-org--parse-template-prompts' produced.
     (setq tmpl (replace-regexp-in-string
                 "%\\^{\\([^}]*\\)}"
                 (lambda (m)
@@ -399,7 +399,7 @@ on the phone would hang behind the bridge."
     ;; ones like %U %t %i %a for org to expand non-interactively.
     (replace-regexp-in-string "%\\^.?" "" tmpl t t)))
 
-(defun eabp-org--do-capture (template-key values &optional extra-body)
+(defun glasspane-org--do-capture (template-key values &optional extra-body)
   "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input).
 EXTRA-BODY, when non-empty, is appended below the filled template —
 the carrier for text shared from another app via the share sheet."
@@ -407,7 +407,7 @@ the carrier for text shared from another app via the share sheet."
     (when entry
       (let* ((tmpl (nth 4 entry))
              (filled (if (stringp tmpl)
-                         (eabp-org--fill-template tmpl values)
+                         (glasspane-org--fill-template tmpl values)
                        tmpl))
              (filled (if (and (stringp filled)
                               (stringp extra-body)
@@ -434,7 +434,7 @@ the carrier for text shared from another app via the share sheet."
           (with-timeout (30 (message "eabp: capture timed out (a prompt was left unanswered)"))
             (org-capture)))))))
 
-(defun eabp-org--item-hm (time)
+(defun glasspane-org--item-hm (time)
   "Normalize an agenda item's raw `time' property to \"HH:MM\", or nil.
 The property comes straight from the agenda's time grid and looks like
 \" 9:15......\" or \"14:00-15:00\" — leading space, no zero padding,
@@ -446,21 +446,21 @@ grid filler dots."
                 (string-to-number (match-string 1 s))
                 (match-string 2 s))))))
 
-(defun eabp-org--upcoming-reminders (&optional horizon-hours)
+(defun glasspane-org--upcoming-reminders (&optional horizon-hours)
   "Timed agenda items within HORIZON-HOURS (default 24) as reminder specs.
 Only items with a clock time qualify (a date alone isn't an alarm).
 Each spec is ((id . STR) (at_ms . MS) (title . STR) (body . STR)),
 ready for the companion's `reminders.set' frame."
   (let* ((horizon (* (or horizon-hours 24) 3600))
          (now (float-time))
-         (items (append (eabp-org--agenda-items 'day nil)
-                        (eabp-org--agenda-items
+         (items (append (glasspane-org--agenda-items 'day nil)
+                        (glasspane-org--agenda-items
                          'day (format-time-string "%Y-%m-%d"
                                                   (time-add nil 86400)))))
          reminders)
     (dolist (it items)
       (let ((date (alist-get 'date it))
-            (hm (eabp-org--item-hm (alist-get 'time it)))
+            (hm (glasspane-org--item-hm (alist-get 'time it)))
             (headline (alist-get 'headline it))
             (type (alist-get 'type it)))
         (when (and (stringp date) hm)
@@ -475,7 +475,7 @@ ready for the companion's `reminders.set' frame."
                     reminders))))))
     (nreverse reminders)))
 
-(defun eabp-org--clock-status ()
+(defun glasspane-org--clock-status ()
   "Current clock status."
   (when (org-clock-is-active)
     `((task . ,org-clock-current-task)
@@ -483,7 +483,7 @@ ready for the companion's `reminders.set' frame."
       (file . ,(buffer-file-name (marker-buffer org-clock-marker)))
       (pos . ,(marker-position org-clock-marker)))))
 
-(defun eabp-org--recent-clocks (n)
+(defun glasspane-org--recent-clocks (n)
   "Last N clocked tasks."
   (let (items)
     (dolist (m org-clock-history)
@@ -496,9 +496,9 @@ ready for the companion's `reminders.set' frame."
               (push `((headline . ,headline)
                       (file . ,(buffer-file-name))
                       (pos . ,(marker-position m))
-                      (ref . ,(eabp-org--heading-ref)))
+                      (ref . ,(glasspane-org--heading-ref)))
                     items))))))
     (cl-subseq (nreverse items) 0 (min n (length items)))))
 
-(provide 'eabp-org)
-;;; eabp-org.el ends here
+(provide 'glasspane-org)
+;;; glasspane-org.el ends here

@@ -1,4 +1,4 @@
-;;; eabp-org-ui.el --- The Glasspane org app for EABP -*- lexical-binding: t; -*-
+;;; glasspane-ui.el --- The Glasspane org app for EABP -*- lexical-binding: t; -*-
 
 ;; The reference Tier 1 app: registers the org views (agenda, tasks, clock,
 ;; search, detail, settings) into the generic shell (eabp-shell.el) and
@@ -13,105 +13,105 @@
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
 (require 'eabp-shell)
-(require 'eabp-org)
-(require 'eabp-org-clock)
-(require 'eabp-org-reader)
+(require 'glasspane-org)
+(require 'glasspane-clock)
+(require 'glasspane-org-reader)
 (require 'eabp-files)
 (require 'eabp-keymap)
 (require 'eabp-magit)
 (require 'eabp-settings)
-;; Not used directly — pulled in so (require 'eabp-org-ui) still assembles
+;; Not used directly — pulled in so (require 'glasspane-ui) still assembles
 ;; the complete reference app for init-file users.
 (require 'eabp-emacs-ui)
 (require 'eabp-package-browser)
 (require 'cl-lib)
 
-(defvar eabp-org-ui--detail-ref nil
+(defvar glasspane-ui--detail-ref nil
   "Reference alist (id/file/pos/headline) of the heading being viewed, or nil.")
 
-(defvar eabp-org-ui--detail-read-mode t
+(defvar glasspane-ui--detail-read-mode t
   "When non-nil, detail view shows the foldable reader instead of the editor.")
 
-(defvar eabp-org-ui--tasks-filter "ALL"
+(defvar glasspane-ui--tasks-filter "ALL"
   "Current filter for the Tasks tab.")
 
-(defvar eabp-org-ui--search-query ""
+(defvar glasspane-ui--search-query ""
   "Last submitted query for the Search view.")
 
-(defcustom eabp-org-custom-agendas nil
+(defcustom glasspane-org-custom-agendas nil
   "Alist of custom agenda views (Name . Query) for EABP."
   :type '(alist :key-type string :value-type string)
   :group 'eabp)
 
-(defvar eabp-org-ui--search-results nil
+(defvar glasspane-ui--search-results nil
   "Cached heading items from the last search.")
 
 ;; ─── Reminders & home-screen widget (piggybacked on each shell push) ────────
 
-(defvar eabp-org-ui--last-reminders 'unset
+(defvar glasspane-ui--last-reminders 'unset
   "Reminder list from the previous sync, to suppress identical sends.")
 
-(defun eabp-org-ui--sync-reminders ()
+(defun glasspane-ui--sync-reminders ()
   "Send upcoming timed items to the companion as exact-alarm reminders."
-  (let ((rems (condition-case nil (eabp-org--upcoming-reminders) (error nil))))
-    (unless (equal rems eabp-org-ui--last-reminders)
-      (setq eabp-org-ui--last-reminders rems)
+  (let ((rems (condition-case nil (glasspane-org--upcoming-reminders) (error nil))))
+    (unless (equal rems glasspane-ui--last-reminders)
+      (setq glasspane-ui--last-reminders rems)
       (eabp-send "reminders.set" `((reminders . ,(vconcat rems)))))))
 
-(defvar eabp-org-ui--last-widget 'unset
+(defvar glasspane-ui--last-widget 'unset
   "Widget lines from the previous push, to suppress identical pushes.")
 
-(defun eabp-org-ui--widget-lines ()
+(defun glasspane-ui--widget-lines ()
   "Today's agenda as short \"HH:MM  Headline\" strings for the widget."
   (mapcar (lambda (it)
-            (let ((hm (eabp-org--item-hm (alist-get 'time it))))
+            (let ((hm (glasspane-org--item-hm (alist-get 'time it))))
               (concat (if hm (concat hm "  ") "")
                       (or (alist-get 'headline it) ""))))
           (seq-take (condition-case nil
-                        (eabp-org--agenda-items 'day nil)
+                        (glasspane-org--agenda-items 'day nil)
                       (error nil))
                     6)))
 
-(defun eabp-org-ui--push-widget ()
+(defun glasspane-ui--push-widget ()
   "Push the `widget:agenda' surface backing the home-screen widget."
-  (let ((lines (eabp-org-ui--widget-lines)))
-    (unless (equal lines eabp-org-ui--last-widget)
-      (setq eabp-org-ui--last-widget lines)
+  (let ((lines (glasspane-ui--widget-lines)))
+    (unless (equal lines glasspane-ui--last-widget)
+      (setq glasspane-ui--last-widget lines)
       (eabp-surface-push
        "widget:agenda"
        `((title . ,(format-time-string "Agenda · %a %b %d"))
          (lines . ,(vconcat lines)))))))
 
 ;; Both are memo-guarded, so unchanged data sends nothing.
-(add-hook 'eabp-shell-after-push-hook #'eabp-org-ui--sync-reminders)
-(add-hook 'eabp-shell-after-push-hook #'eabp-org-ui--push-widget)
+(add-hook 'eabp-shell-after-push-hook #'glasspane-ui--sync-reminders)
+(add-hook 'eabp-shell-after-push-hook #'glasspane-ui--push-widget)
 
 ;; ─── Shell views ─────────────────────────────────────────────────────────────
 
-(defun eabp-org-ui--agenda-view (snackbar)
-  (eabp-shell-tab-view "agenda" (eabp-org-ui--agenda-body)
+(defun glasspane-ui--agenda-view (snackbar)
+  (eabp-shell-tab-view "agenda" (glasspane-ui--agenda-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--tasks-view (snackbar)
-  (eabp-shell-tab-view "tasks" (eabp-org-ui--tasks-body)
+(defun glasspane-ui--tasks-view (snackbar)
+  (eabp-shell-tab-view "tasks" (glasspane-ui--tasks-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--clock-view (snackbar)
-  (eabp-shell-tab-view "clock" (eabp-org-ui--clock-body)
+(defun glasspane-ui--clock-view (snackbar)
+  (eabp-shell-tab-view "clock" (glasspane-ui--clock-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--search-view (snackbar)
-  (eabp-shell-nav-view "Search" (eabp-org-ui--search-body)
+(defun glasspane-ui--search-view (snackbar)
+  (eabp-shell-nav-view "Search" (glasspane-ui--search-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--settings-view (snackbar)
-  (eabp-shell-nav-view "Settings" (eabp-org-ui--settings-body)
+(defun glasspane-ui--settings-view (snackbar)
+  (eabp-shell-nav-view "Settings" (glasspane-ui--settings-body)
                        :snackbar snackbar))
 
-(defun eabp-org-ui--detail-view (snackbar)
+(defun glasspane-ui--detail-view (snackbar)
   "The heading drill-in: reader/editor body under curated heading actions."
   (eabp-shell-nav-view
-   "Detail" (eabp-org-ui--detail-body eabp-org-ui--detail-ref)
+   "Detail" (glasspane-ui--detail-body glasspane-ui--detail-ref)
    ;; Back is pure navigation: builtin = instant, local, works offline.
    ;; heading.back stays registered for compatibility but nothing emits
    ;; it anymore.
@@ -120,54 +120,54 @@
                    (eabp-icon-button
                     "note_add"
                     (eabp-action "heading.add-note"
-                                 :args eabp-org-ui--detail-ref
+                                 :args glasspane-ui--detail-ref
                                  :when-offline "drop")
                     :content-description "Add note")
                    (eabp-icon-button
                     "drive_file_move"
                     (eabp-action "heading.refile"
-                                 :args eabp-org-ui--detail-ref
+                                 :args glasspane-ui--detail-ref
                                  :when-offline "drop")
                     :content-description "Refile")
                    (eabp-icon-button
                     "archive"
                     (eabp-action "heading.archive"
-                                 :args eabp-org-ui--detail-ref
+                                 :args glasspane-ui--detail-ref
                                  :when-offline "drop")
                     :content-description "Archive")
                    (eabp-icon-button
-                    (if eabp-org-ui--detail-read-mode "edit" "visibility")
+                    (if glasspane-ui--detail-read-mode "edit" "visibility")
                     (eabp-action "detail.toggle-read")
                     :content-description
-                    (if eabp-org-ui--detail-read-mode "Edit" "Read"))
-                   (when (and eabp-org-ui--detail-ref
-                              (eabp-org-ui--org-file-p
-                               (alist-get 'file eabp-org-ui--detail-ref)))
+                    (if glasspane-ui--detail-read-mode "Edit" "Read"))
+                   (when (and glasspane-ui--detail-ref
+                              (glasspane-ui--org-file-p
+                               (alist-get 'file glasspane-ui--detail-ref)))
                      (eabp-icon-button
                       "tune"
                       (eabp-action "files.properties.show"
-                                   :args `((file . ,(alist-get 'file eabp-org-ui--detail-ref))))
+                                   :args `((file . ,(alist-get 'file glasspane-ui--detail-ref))))
                       :content-description "Properties"))))
    :snackbar snackbar))
 
-(eabp-shell-define-view "agenda" :builder #'eabp-org-ui--agenda-view
+(eabp-shell-define-view "agenda" :builder #'glasspane-ui--agenda-view
                         :tab '(:icon "event" :label "Agenda") :order 10)
-(eabp-shell-define-view "tasks" :builder #'eabp-org-ui--tasks-view
+(eabp-shell-define-view "tasks" :builder #'glasspane-ui--tasks-view
                         :tab '(:icon "checklist" :label "Tasks") :order 20)
-(eabp-shell-define-view "clock" :builder #'eabp-org-ui--clock-view
+(eabp-shell-define-view "clock" :builder #'glasspane-ui--clock-view
                         :tab '(:icon "schedule" :label "Clock") :order 30)
-(eabp-shell-define-view "search" :builder #'eabp-org-ui--search-view
+(eabp-shell-define-view "search" :builder #'glasspane-ui--search-view
                         :order 70)
-(eabp-shell-define-view "settings" :builder #'eabp-org-ui--settings-view
+(eabp-shell-define-view "settings" :builder #'glasspane-ui--settings-view
                         :order 80)
-(eabp-shell-define-view "detail" :builder #'eabp-org-ui--detail-view
-                        :when (lambda () (and eabp-org-ui--detail-ref t))
-                        :overlay (lambda () (and eabp-org-ui--detail-ref t))
+(eabp-shell-define-view "detail" :builder #'glasspane-ui--detail-view
+                        :when (lambda () (and glasspane-ui--detail-ref t))
+                        :overlay (lambda () (and glasspane-ui--detail-ref t))
                         :order 110)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
 (add-hook 'eabp-shell-view-switched-hook
-          (lambda (_view) (setq eabp-org-ui--detail-ref nil)))
+          (lambda (_view) (setq glasspane-ui--detail-ref nil)))
 
 ;; Capture is this app's global affordance: the default FAB on every tab
 ;; view that doesn't define its own.
@@ -186,25 +186,25 @@
 
 ;; The org extractions are memoised; an explicit refresh (pull-to-refresh,
 ;; the drawer item, a queue drain) must drop them.
-(add-hook 'eabp-shell-refresh-hook #'eabp-org-cache-invalidate)
+(add-hook 'eabp-shell-refresh-hook #'glasspane-org-cache-invalidate)
 
 ;; ─── Tab Bodies ──────────────────────────────────────────────────────────────
 
 ;; ── Agenda navigation ──
 ;; The agenda is anchored on a date (UI state "agenda-anchor", nil = today).
 ;; The ‹ › buttons shift the anchor by one day/week/month according to the
-;; active span, and the anchor feeds `eabp-org--agenda-items' as START-DAY —
+;; active span, and the anchor feeds `glasspane-org--agenda-items' as START-DAY —
 ;; whose cache keys already include it, so each visited range memoises
 ;; independently.
 
-(defun eabp-org-ui--agenda-anchor ()
+(defun glasspane-ui--agenda-anchor ()
   "The agenda's anchor date as \"YYYY-MM-DD\"; today when unset."
   (let ((a (eabp-ui-state "agenda-anchor")))
     (if (and (stringp a) (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" a))
         a
       (format-time-string "%Y-%m-%d"))))
 
-(defun eabp-org-ui--shift-date (date n unit)
+(defun glasspane-ui--shift-date (date n unit)
   "Shift DATE (\"YYYY-MM-DD\") by N UNITs (`day', `week', or `month').
 Month arithmetic clamps the day into the target month, so Jan 31 + 1
 month is Feb 28, not an invalid date."
@@ -221,24 +221,24 @@ month is Feb 28, not an invalid date."
                             (time-add (encode-time 0 0 12 d m y)
                                       (* days 86400)))))))
 
-(defun eabp-org-ui--format-date (date fmt)
+(defun glasspane-ui--format-date (date fmt)
   "Render DATE (\"YYYY-MM-DD\") through `format-time-string' FMT."
   (pcase-let ((`(,y ,m ,d) (mapcar #'string-to-number (split-string date "-"))))
     (format-time-string fmt (encode-time 0 0 12 d m y))))
 
-(defun eabp-org-ui--agenda-nav-row (mode anchor)
+(defun glasspane-ui--agenda-nav-row (mode anchor)
   "The ‹ [range label] [today] › navigation row for the agenda header."
   (let* ((today (format-time-string "%Y-%m-%d"))
          (at-today (pcase mode
                      ("month" (equal (substring anchor 0 7) (substring today 0 7)))
                      (_ (equal anchor today))))
          (label (pcase mode
-                  ("month" (eabp-org-ui--format-date anchor "%B %Y"))
+                  ("month" (glasspane-ui--format-date anchor "%B %Y"))
                   ("week" (concat "Week of "
-                                  (eabp-org-ui--format-date anchor "%b %d")))
+                                  (glasspane-ui--format-date anchor "%b %d")))
                   (_ (if at-today
-                         (concat "Today · " (eabp-org-ui--format-date anchor "%a, %b %d"))
-                       (eabp-org-ui--format-date anchor "%a, %b %d"))))))
+                         (concat "Today · " (glasspane-ui--format-date anchor "%a, %b %d"))
+                       (glasspane-ui--format-date anchor "%a, %b %d"))))))
     (apply #'eabp-row
            (delq nil
                  (list
@@ -256,7 +256,7 @@ month is Feb 28, not an invalid date."
 
 ;; ── Agenda cards ──
 
-(defun eabp-org-ui--agenda-type-icon (type)
+(defun glasspane-ui--agenda-type-icon (type)
   "Return (ICON . COLOR) for an agenda item TYPE string (color may be nil)."
   (cond
    ((null type) '("event" . nil))
@@ -265,7 +265,7 @@ month is Feb 28, not an invalid date."
    ((string-match-p "scheduled" type) '("schedule" . nil))
    (t '("event" . nil))))
 
-(defun eabp-org-ui--agenda-type-label (type)
+(defun glasspane-ui--agenda-type-label (type)
   "Short human label for an agenda item TYPE string, or nil to omit."
   (pcase type
     ("past-scheduled" "overdue")
@@ -274,25 +274,25 @@ month is Feb 28, not an invalid date."
     ("scheduled" "scheduled")
     (_ nil)))
 
-(defun eabp-org-ui--card-date-label (ts)
+(defun glasspane-ui--card-date-label (ts)
   "Format org timestamp TS as a compact \"Mon D\" (or \"Mon D HH:MM\") string."
   (when (and (stringp ts)
              (string-match "\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)" ts))
     (let* ((month (string-to-number (match-string 2 ts)))
            (day   (string-to-number (match-string 3 ts)))
            (mon   (aref eabp--month-abbrevs (1- month)))
-           (time  (eabp-org-ui--ts-time ts)))
+           (time  (glasspane-ui--ts-time ts)))
       (if time (format "%s %d %s" mon day time)
         (format "%s %d" mon day)))))
 
-(defun eabp-org-ui--card-date-row (it)
+(defun glasspane-ui--card-date-row (it)
   "An inline scheduling indicator for card item IT.
 Shows compact icon + text labels for SCHEDULED and/or DEADLINE when present.
 Returns nil when neither is set."
   (let* ((scheduled (alist-get 'scheduled it))
          (deadline  (alist-get 'deadline it))
-         (slabel (eabp-org-ui--card-date-label scheduled))
-         (dlabel (eabp-org-ui--card-date-label deadline))
+         (slabel (glasspane-ui--card-date-label scheduled))
+         (dlabel (glasspane-ui--card-date-label deadline))
          (chips (delq nil
                       (list
                        (when slabel
@@ -306,7 +306,7 @@ Returns nil when neither is set."
     (when chips
       (apply #'eabp-flow-row chips))))
 
-(defun eabp-org-ui--agenda-card (it)
+(defun glasspane-ui--agenda-card (it)
   "A detail-rich agenda card for item IT.
 Leading time (or a type icon), priority-prefixed headline (struck
 through when done), a todo/type/file caption, tag chips when present,
@@ -315,7 +315,7 @@ and a quick complete button for open todos."
          (todo (alist-get 'todo it))
          ;; Normalized "HH:MM" — the raw property is a time-grid string
          ;; like " 9:15......".
-         (time (eabp-org--item-hm (alist-get 'time it)))
+         (time (glasspane-org--item-hm (alist-get 'time it)))
          (type (alist-get 'type it))
          (file (alist-get 'file it))
          (priority (alist-get 'priority it))
@@ -323,11 +323,11 @@ and a quick complete button for open todos."
          (ref (alist-get 'ref it))
          (done (and todo (member todo (or (default-value 'org-done-keywords)
                                           '("DONE" "CANCELLED")))))
-         (icon+color (eabp-org-ui--agenda-type-icon type))
+         (icon+color (glasspane-ui--agenda-type-icon type))
          (caption (string-join
                    (delq nil (list todo
                                    (and (stringp type)
-                                        (eabp-org-ui--agenda-type-label type))
+                                        (glasspane-ui--agenda-type-label type))
                                    (and file (file-name-nondirectory file))))
                    "  ·  "))
          (lead (if (and (stringp time) (not (string-empty-p time)))
@@ -349,7 +349,7 @@ and a quick complete button for open todos."
                         headline-node
                         (unless (string-empty-p caption)
                           (eabp-text caption 'caption))
-                        (eabp-org-ui--card-date-row it)
+                        (glasspane-ui--card-date-row it)
                         (when tags
                           (apply #'eabp-flow-row
                                  (mapcar (lambda (tg)
@@ -373,15 +373,15 @@ and a quick complete button for open todos."
                                   complete-btn))))
      :on-tap (eabp-action "heading.tap" :args ref))))
 
-(defun eabp-org-ui--agenda-day-view (items)
-  (let ((cards (mapcar #'eabp-org-ui--agenda-card items)))
+(defun glasspane-ui--agenda-day-view (items)
+  (let ((cards (mapcar #'glasspane-ui--agenda-card items)))
     (if cards
         (apply #'eabp-lazy-column cards)
       (eabp-empty-state :icon "event_busy"
                         :title "No agenda items"
                         :caption "Nothing scheduled for this day."))))
 
-(defun eabp-org-ui--agenda-week-view (items)
+(defun glasspane-ui--agenda-week-view (items)
   (let ((elements nil)
         (current-date nil))
     (dolist (it items)
@@ -389,14 +389,14 @@ and a quick complete button for open todos."
         (unless (equal date current-date)
           (setq current-date date)
           (push (eabp-section-header (or date "Unknown Date")) elements))
-        (push (eabp-org-ui--agenda-card it) elements)))
+        (push (glasspane-ui--agenda-card it) elements)))
     (if elements
         (apply #'eabp-lazy-column (nreverse elements))
       (eabp-empty-state :icon "event_busy"
                         :title "No agenda items"
                         :caption "Nothing scheduled for this week."))))
 
-(defun eabp-org-ui--agenda-month-view (items anchor)
+(defun glasspane-ui--agenda-month-view (items anchor)
   "Month grid for ITEMS, showing the month containing ANCHOR (YYYY-MM-DD)."
   (let* ((today (format-time-string "%Y-%m-%d"))
          (month-prefix (substring anchor 0 7))
@@ -449,28 +449,28 @@ and a quick complete button for open todos."
      (eabp-divider)
      (eabp-section-header (format "Events for %s" selected-date))
      (if selected-items
-         (apply #'eabp-lazy-column (mapcar #'eabp-org-ui--agenda-card selected-items))
+         (apply #'eabp-lazy-column (mapcar #'glasspane-ui--agenda-card selected-items))
        (eabp-text "No events" 'caption)))))
 
-(defun eabp-org-ui--agenda-body ()
+(defun glasspane-ui--agenda-body ()
   (let* ((mode (or (eabp-ui-state "agenda-mode") "day"))
          (is-span (member mode '("day" "week" "month")))
-         (anchor (eabp-org-ui--agenda-anchor))
+         (anchor (glasspane-ui--agenda-anchor))
          ;; The month span always starts on the 1st so the grid and the
          ;; extraction agree on the visible range.
          (start-day (cond ((equal mode "month") (concat (substring anchor 0 7) "-01"))
                           (is-span anchor)))
          (items (cond
-                 ((equal mode "day") (condition-case nil (eabp-org--agenda-items 'day start-day) (error nil)))
-                 ((equal mode "week") (condition-case nil (eabp-org--agenda-items 'week start-day) (error nil)))
-                 ((equal mode "month") (condition-case nil (eabp-org--agenda-items 'month start-day) (error nil)))
-                 (t (condition-case nil (eabp-org--search (cdr (assoc mode eabp-org-custom-agendas))) (error nil)))))
+                 ((equal mode "day") (condition-case nil (glasspane-org--agenda-items 'day start-day) (error nil)))
+                 ((equal mode "week") (condition-case nil (glasspane-org--agenda-items 'week start-day) (error nil)))
+                 ((equal mode "month") (condition-case nil (glasspane-org--agenda-items 'month start-day) (error nil)))
+                 (t (condition-case nil (glasspane-org--search (cdr (assoc mode glasspane-org-custom-agendas))) (error nil)))))
          (custom-chips (mapcar (lambda (ca)
                                  (let ((name (car ca)))
                                    (eabp-chip name
                                               :selected (equal mode name)
                                               :on-tap (eabp-action "agenda.set-mode" :args `((mode . ,name))))))
-                               eabp-org-custom-agendas)))
+                               glasspane-org-custom-agendas)))
     (apply #'eabp-column
            (delq nil
                  (list
@@ -486,40 +486,40 @@ and a quick complete button for open todos."
                                     :on-tap (eabp-action "agenda.set-mode" :args '((mode . "month"))))
                          custom-chips)
                   (when is-span
-                    (eabp-org-ui--agenda-nav-row mode anchor))
+                    (glasspane-ui--agenda-nav-row mode anchor))
                   (eabp-spacer :height 4)
                   (cond
                    ((equal mode "day")
-                    (eabp-org-ui--agenda-day-view items))
+                    (glasspane-ui--agenda-day-view items))
                    ((equal mode "week")
-                    (eabp-org-ui--agenda-week-view items))
+                    (glasspane-ui--agenda-week-view items))
                    ((equal mode "month")
-                    (eabp-org-ui--agenda-month-view items anchor))
+                    (glasspane-ui--agenda-month-view items anchor))
                    (t
                     (if items
-                        (apply #'eabp-lazy-column (mapcar #'eabp-org-ui--agenda-card items))
+                        (apply #'eabp-lazy-column (mapcar #'glasspane-ui--agenda-card items))
                       (eabp-empty-state :icon "event_busy"
                                         :title "No results"
                                         :caption "This custom agenda found no items.")))))))))
 
-(defun eabp-org-ui--tasks-body ()
+(defun glasspane-ui--tasks-body ()
   (let* ((items (condition-case nil
-                    (eabp-org--todo-items)
+                    (glasspane-org--todo-items)
                   (error nil)))
-         (filtered (if (equal eabp-org-ui--tasks-filter "ALL") items
+         (filtered (if (equal glasspane-ui--tasks-filter "ALL") items
                      (cl-remove-if-not
                       (lambda (it)
-                        (equal (alist-get 'todo it) eabp-org-ui--tasks-filter))
+                        (equal (alist-get 'todo it) glasspane-ui--tasks-filter))
                       items)))
-         (cards (mapcar #'eabp-org-ui--agenda-card filtered)))
+         (cards (mapcar #'glasspane-ui--agenda-card filtered)))
     (eabp-column
      (apply #'eabp-flow-row
             (mapcar (lambda (kw)
                       (eabp-chip kw
-                                 :selected (equal eabp-org-ui--tasks-filter kw)
+                                 :selected (equal glasspane-ui--tasks-filter kw)
                                  :on-tap (eabp-action "tasks.filter"
                                                       :args `((filter . ,kw)))))
-                    (cons "ALL" (or (eabp-org-ui--global-todo-keywords)
+                    (cons "ALL" (or (glasspane-ui--global-todo-keywords)
                                     '("TODO" "DONE")))))
      (if cards
          (apply #'eabp-lazy-column cards)
@@ -530,10 +530,10 @@ and a quick complete button for open todos."
 ;; The old agenda-files-only "files" body is superseded by the full
 ;; browser in eabp-files.el (eabp-files-browser-body).
 
-(defun eabp-org-ui--clock-body ()
-  (let* ((status (eabp-org--clock-status))
+(defun glasspane-ui--clock-body ()
+  (let* ((status (glasspane-org--clock-status))
          (recent (condition-case nil
-                     (eabp-org--recent-clocks 5)
+                     (glasspane-org--recent-clocks 5)
                    (error nil)))
          (status-card
           (if status
@@ -563,7 +563,7 @@ and a quick complete button for open todos."
                                        recent-cards)))))
     (apply #'eabp-column all-children)))
 
-(defun eabp-org-ui--result-card (it)
+(defun glasspane-ui--result-card (it)
   "Render a search/heading item IT to a tappable card with tag chips."
   (let* ((headline (or (alist-get 'headline it) "?"))
          (todo (alist-get 'todo it))
@@ -586,9 +586,9 @@ and a quick complete button for open todos."
     (eabp-card (list (apply #'eabp-column children))
                :on-tap (eabp-action "heading.tap" :args ref))))
 
-(defun eabp-org-ui--search-body ()
-  (let* ((q (or eabp-org-ui--search-query ""))
-         (results eabp-org-ui--search-results)
+(defun glasspane-ui--search-body ()
+  (let* ((q (or glasspane-ui--search-query ""))
+         (results glasspane-ui--search-results)
          (input (eabp-text-input "search-query"
                                  :value q
                                  :hint "Search headings (text or org-ql query)"
@@ -618,7 +618,7 @@ and a quick complete button for open todos."
                                       :single-line t
                                       :on-submit (eabp-action "search.update-filter" :args '((field . "text"))))))
                    :padding 16))
-         (cards (mapcar #'eabp-org-ui--result-card results)))
+         (cards (mapcar #'glasspane-ui--result-card results)))
     (eabp-column
      builder
      (eabp-spacer :height 8)
@@ -637,7 +637,7 @@ and a quick complete button for open todos."
                          :title "Search your notes"
                          :caption "Type a query and press search."))))))
 
-(defun eabp-org-ui--global-todo-keywords ()
+(defun glasspane-ui--global-todo-keywords ()
   "Extract a flat list of all global TODO keywords from `org-todo-keywords'."
   (let ((kws nil))
     (dolist (seq (default-value 'org-todo-keywords))
@@ -650,7 +650,7 @@ and a quick complete button for open todos."
                 kws))))
     (nreverse kws)))
 
-(defun eabp-org-ui--split-todo-sequence (seq)
+(defun glasspane-ui--split-todo-sequence (seq)
   "Split `org-todo-keywords' entry SEQ into (ACTIVE . FINISHED) keyword lists.
 Keywords keep their fast-access annotations (\"TODO(t!)\").  Mirrors
 org's rule for sequences without an explicit \"|\": the last keyword
@@ -672,7 +672,7 @@ is the finished state."
             active (butlast active)))
     (cons active finished)))
 
-(defun eabp-org-ui--settings-body ()
+(defun glasspane-ui--settings-body ()
   (let* ((available-tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))
          (enum-list (eabp-enum-list "settings-tags" available-tags
                                     :value available-tags
@@ -688,7 +688,7 @@ is the finished state."
               (cl-loop for seq in (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE")))
                        for i from 0
                        collect
-                       (let* ((split (eabp-org-ui--split-todo-sequence seq))
+                       (let* ((split (glasspane-ui--split-todo-sequence seq))
                               (bare (lambda (w)
                                       (if (string-match "^\\([a-zA-Z0-9_-]+\\)" w)
                                           (match-string 1 w)
@@ -746,7 +746,7 @@ is the finished state."
             ;; `eabp-settings-registry', rendered from its custom-type.
             (eabp-settings-sections)))))
 
-(defun eabp-org-ui--todo-chips (current keywords ref)
+(defun glasspane-ui--todo-chips (current keywords ref)
   "A row of chips for KEYWORDS with CURRENT selected; taps carry REF."
   (apply #'eabp-flow-row
          (mapcar (lambda (kw)
@@ -757,26 +757,26 @@ is the finished state."
                                        :args (cons (cons 'state kw) ref))))
                  keywords)))
 
-(defun eabp-org-ui--ts-date (ts)
+(defun glasspane-ui--ts-date (ts)
   "Return the YYYY-MM-DD date inside org timestamp string TS, or nil."
   (when (and (stringp ts)
              (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" ts))
     (match-string 1 ts)))
 
-(defun eabp-org-ui--ts-time (ts)
+(defun glasspane-ui--ts-time (ts)
   "Return the HH:MM time inside org timestamp string TS, or nil."
   (when (and (stringp ts)
              (string-match "\\([0-9]\\{1,2\\}:[0-9]\\{2\\}\\)" ts))
     (match-string 1 ts)))
 
-(defun eabp-org-ui--ts-repeater (ts)
+(defun glasspane-ui--ts-repeater (ts)
   "Return the repeater cookie (e.g. \"+1w\", \".+2d\") inside TS, or nil.
 The one part of a timestamp the date-stamp chip can't display."
   (when (and (stringp ts)
              (string-match "\\([.+]?\\+[0-9]+[hdwmy]\\)" ts))
     (match-string 1 ts)))
 
-(defun eabp-org-ui--priority-chips (current ref)
+(defun glasspane-ui--priority-chips (current ref)
   "A row of priority chips (A..C plus None) with CURRENT selected; taps carry REF."
   (let* ((hi (or (bound-and-true-p org-priority-highest) ?A))
          (lo (or (bound-and-true-p org-priority-lowest) ?C))
@@ -796,7 +796,7 @@ The one part of a timestamp the date-stamp chip can't display."
                                       "heading.priority"
                                       :args (cons '(value . "") ref))))))))
 
-(defun eabp-org-ui--property-row (key value ref pos)
+(defun glasspane-ui--property-row (key value ref pos)
   "A two-column KEY → editable VALUE row for the detail Properties editor.
 KEY renders without org's colons.  ID is shown read-only (editing it
 breaks links); every other value is an inline input whose submit runs
@@ -813,7 +813,7 @@ breaks links); every other value is an inline input whose submit runs
                                                      :args (cons `(name . ,key) ref)))))
     :weight 3)))
 
-(defun eabp-org-ui--properties-section (props ref pos)
+(defun glasspane-ui--properties-section (props ref pos)
   "The Properties collapsible: KEY → VALUE rows plus an + Add button.
 Always present (even with no properties yet) so + Add is reachable."
   (eabp-collapsible
@@ -823,7 +823,7 @@ Always present (even with no properties yet) so + Add is reachable."
    (delq nil
          (append
           (mapcar (lambda (kv)
-                    (eabp-org-ui--property-row (car kv) (or (cdr kv) "") ref pos))
+                    (glasspane-ui--property-row (car kv) (or (cdr kv) "") ref pos))
                   props)
           (list
            (when props
@@ -835,9 +835,9 @@ Always present (even with no properties yet) so + Add is reachable."
                          :variant "outlined")))))
    :collapsed t))
 
-(defun eabp-org-ui--detail-body (ref)
+(defun glasspane-ui--detail-body (ref)
   (condition-case err
-      (let* ((marker (eabp-org--resolve-ref ref))
+      (let* ((marker (glasspane-org--resolve-ref ref))
              (buf (marker-buffer marker))
              (file (buffer-file-name buf))
              (pos (marker-position marker))
@@ -874,7 +874,7 @@ Always present (even with no properties yet) so + Add is reachable."
                              (eabp-action "heading.schedule"
                                           :args (cons (cons 'when when) ref))
                              :variant "text"))))
-        (if (not eabp-org-ui--detail-read-mode)
+        (if (not glasspane-ui--detail-read-mode)
             (let ((content (with-current-buffer buf
                              (org-with-wide-buffer
                               (goto-char pos)
@@ -889,8 +889,8 @@ Always present (even with no properties yet) so + Add is reachable."
                                                   :args `((ref . ,ref))
                                                   :when-offline "queue"
                                                   :dedupe (format "save-detail/%s" pos)))))
-          (let ((sdate (eabp-org-ui--ts-date scheduled))
-                (ddate (eabp-org-ui--ts-date deadline))
+          (let ((sdate (glasspane-ui--ts-date scheduled))
+                (ddate (glasspane-ui--ts-date deadline))
                 (entry-props (ignore-errors
                                (with-current-buffer buf
                                  (org-with-wide-buffer
@@ -905,9 +905,9 @@ Always present (even with no properties yet) so + Add is reachable."
                            ;; Headline
                            (eabp-text headline 'title)
                            ;; State (always visible)
-                           (eabp-org-ui--todo-chips todo keywords ref)
+                           (glasspane-ui--todo-chips todo keywords ref)
                            ;; Priority (always visible)
-                           (eabp-org-ui--priority-chips priority ref)
+                           (glasspane-ui--priority-chips priority ref)
                            (eabp-divider)
                            ;; ▸ Scheduling (collapsible — expanded when any date is set)
                            ;; The date-stamp chip IS the display (date + time);
@@ -921,7 +921,7 @@ Always present (even with no properties yet) so + Add is reachable."
                              (eabp-row
                               (if sdate
                                   (eabp-date-stamp :date sdate
-                                                   :time (eabp-org-ui--ts-time scheduled))
+                                                   :time (glasspane-ui--ts-time scheduled))
                                 (eabp-spacer :width 0))
                               (eabp-box
                                (list
@@ -931,7 +931,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                               (eabp-text "Scheduled" 'label)
                                               (unless sdate
                                                 (eabp-text "Not scheduled" 'caption))
-                                              (when-let ((rep (eabp-org-ui--ts-repeater scheduled)))
+                                              (when-let ((rep (glasspane-ui--ts-repeater scheduled)))
                                                 (eabp-text (concat "Repeats " rep) 'caption))
                                               (eabp-flow-row
                                                (eabp-date-button "Set date"
@@ -939,7 +939,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                                                  :value sdate)
                                                (eabp-time-button "Set time"
                                                                  (eabp-action "heading.schedule-time" :args ref)
-                                                                 :value (eabp-org-ui--ts-time scheduled))
+                                                                 :value (glasspane-ui--ts-time scheduled))
                                                (funcall sched-button "Today" "+0d")
                                                (funcall sched-button "+1d" "+1d")
                                                (funcall sched-button "+1w" "+1w")
@@ -952,7 +952,7 @@ Always present (even with no properties yet) so + Add is reachable."
                              (eabp-row
                               (if ddate
                                   (eabp-date-stamp :date ddate
-                                                   :time (eabp-org-ui--ts-time deadline))
+                                                   :time (glasspane-ui--ts-time deadline))
                                 (eabp-spacer :width 0))
                               (eabp-box
                                (list
@@ -962,7 +962,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                               (eabp-text "Deadline" 'label)
                                               (unless ddate
                                                 (eabp-text "No deadline" 'caption))
-                                              (when-let ((rep (eabp-org-ui--ts-repeater deadline)))
+                                              (when-let ((rep (glasspane-ui--ts-repeater deadline)))
                                                 (eabp-text (concat "Repeats " rep) 'caption))
                                               (eabp-flow-row
                                                (eabp-date-button "Set date"
@@ -1008,11 +1008,11 @@ Always present (even with no properties yet) so + Add is reachable."
                             :collapsed (not is-clocked-in))
                            ;; TODO: Add LOGBOOK collapsible section
                            ;; ▸ Properties (collapsible — collapsed by default)
-                           (eabp-org-ui--properties-section entry-props ref pos)
+                           (glasspane-ui--properties-section entry-props ref pos)
                            (eabp-divider))
                           ;; Reader: body (highlighted) and child headings (foldable).
                           ;; Properties are shown above, so skip them here.
-                          (eabp-org-reader-subtree file pos t)))))))
+                          (glasspane-org-reader-subtree file pos t)))))))
     (error
      (eabp-column
       (eabp-text "Error loading heading" 'title)
@@ -1020,14 +1020,14 @@ Always present (even with no properties yet) so + Add is reachable."
 
 ;; ─── Capture Dialog ──────────────────────────────────────────────────────────
 
-(defvar eabp-org-ui--shared-text nil
+(defvar glasspane-ui--shared-text nil
   "Body text shared from another app, pending the next capture submit.")
-(defvar eabp-org-ui--shared-subject nil
+(defvar glasspane-ui--shared-subject nil
   "Subject shared from another app; seeds the capture Headline field.")
 
-(defun eabp-org-ui-show-capture-dialog ()
+(defun glasspane-ui-show-capture-dialog ()
   (condition-case err
-      (let* ((templates (eabp-org--capture-templates))
+      (let* ((templates (glasspane-org--capture-templates))
              (template-buttons
               (mapcar (lambda (t-info)
                         (eabp-button
@@ -1043,11 +1043,11 @@ Always present (even with no properties yet) so + Add is reachable."
                      (append
                       ;; Shared-in content shows a preview so the user knows
                       ;; what this capture will carry.
-                      (when eabp-org-ui--shared-text
+                      (when glasspane-ui--shared-text
                         (list (eabp-card
                                (list (eabp-text
                                       (truncate-string-to-width
-                                       eabp-org-ui--shared-text 200 nil nil "…")
+                                       glasspane-ui--shared-text 200 nil nil "…")
                                       'caption)))))
                       template-buttons
                       (list (eabp-button "Cancel"
@@ -1057,16 +1057,16 @@ Always present (even with no properties yet) so + Add is reachable."
     (error
      (message "EABP capture dialog error: %s" (error-message-string err)))))
 
-(defun eabp-org-ui-show-capture-form (template-key)
+(defun glasspane-ui-show-capture-form (template-key)
   ;; Forget values from any previous capture so they can't leak into
   ;; this submit (`eabp--ui-state' is global and persistent).
   (eabp-ui-state-clear "cap-")
   ;; A shared-in subject pre-fills the Headline field; it must also land
   ;; in UI state, since state.changed only fires for edits the user makes.
-  (when eabp-org-ui--shared-subject
-    (eabp-ui-state-put "cap-Headline" eabp-org-ui--shared-subject))
+  (when glasspane-ui--shared-subject
+    (eabp-ui-state-put "cap-Headline" glasspane-ui--shared-subject))
   (condition-case err
-      (let* ((templates (eabp-org--capture-templates))
+      (let* ((templates (glasspane-org--capture-templates))
              (tmpl (cl-find-if
                     (lambda (t-info) (equal (alist-get 'key t-info) template-key))
                     templates))
@@ -1075,7 +1075,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                (eabp-text-input
                                 (format "cap-%s" p) :label p
                                 :value (and (equal p "Headline")
-                                            eabp-org-ui--shared-subject)))
+                                            glasspane-ui--shared-subject)))
                              prompts))
              (dialog-body
               (apply #'eabp-column
@@ -1099,13 +1099,13 @@ Always present (even with no properties yet) so + Add is reachable."
   (lambda (args _)
     ;; ARGS is the ref alist (id/file/pos/headline) the card embedded.
     ;; This push IS the navigation, so it forces the detail view.
-    (setq eabp-org-ui--detail-ref args)
-    (setq eabp-org-ui--detail-read-mode t)
+    (setq glasspane-ui--detail-ref args)
+    (setq glasspane-ui--detail-read-mode t)
     (eabp-shell-push nil :switch-to "detail")))
 
 (eabp-defaction "detail.toggle-read"
   (lambda (_ _)
-    (setq eabp-org-ui--detail-read-mode (not eabp-org-ui--detail-read-mode))
+    (setq glasspane-ui--detail-read-mode (not glasspane-ui--detail-read-mode))
     (eabp-shell-push nil :switch-to "detail")))
 
 (eabp-defaction "detail.save"
@@ -1114,7 +1114,7 @@ Always present (even with no properties yet) so + Add is reachable."
           (value (alist-get 'value args)))
       (when (and ref value)
         (condition-case err
-            (let* ((marker (eabp-org--resolve-ref ref))
+            (let* ((marker (glasspane-org--resolve-ref ref))
                    (buf (marker-buffer marker))
                    (pos (marker-position marker)))
               (with-current-buffer buf
@@ -1124,13 +1124,13 @@ Always present (even with no properties yet) so + Add is reachable."
                  (delete-region (region-beginning) (region-end))
                  (insert value)
                  (goto-char pos)
-                 (setq eabp-org-ui--detail-ref (eabp-org--heading-ref))
-                 (let ((eabp-org--inhibit-save-refresh t)
+                 (setq glasspane-ui--detail-ref (glasspane-org--heading-ref))
+                 (let ((glasspane-org--inhibit-save-refresh t)
                        (save-silently t))
                    (save-buffer))))
-              (when (fboundp 'eabp-org-cache-invalidate)
-                (eabp-org-cache-invalidate))
-              (setq eabp-org-ui--detail-read-mode t)
+              (when (fboundp 'glasspane-org-cache-invalidate)
+                (glasspane-org-cache-invalidate))
+              (setq glasspane-ui--detail-read-mode t)
               (eabp-shell-notify "Saved heading"))
           (error
            (eabp-shell-notify (format "Save failed: %s" (error-message-string err))))))
@@ -1140,12 +1140,12 @@ Always present (even with no properties yet) so + Add is reachable."
   ;; Legacy: detail's back button is now a companion-local view.switch.
   ;; Kept for stale cached UIs.
   (lambda (_ _)
-    (setq eabp-org-ui--detail-ref nil)
+    (setq glasspane-ui--detail-ref nil)
     (eabp-shell-push nil :switch-to (eabp-shell-current-tab))))
 
 (eabp-defaction "tasks.filter"
   (lambda (args _)
-    (setq eabp-org-ui--tasks-filter (alist-get 'filter args))
+    (setq glasspane-ui--tasks-filter (alist-get 'filter args))
     (eabp-shell-push)))
 
 (eabp-defaction "org.search.run"
@@ -1153,10 +1153,10 @@ Always present (even with no properties yet) so + Add is reachable."
   ;; cache the results, and land the user on the search view.
   (lambda (args _)
     (let ((q (or (alist-get 'value args) "")))
-      (setq eabp-org-ui--search-query q
-            eabp-org-ui--search-results
+      (setq glasspane-ui--search-query q
+            glasspane-ui--search-results
             (condition-case err
-                (eabp-org--search q)
+                (glasspane-org--search q)
               (error
                (message "EABP search error: %s" (error-message-string err))
                nil)))
@@ -1164,16 +1164,16 @@ Always present (even with no properties yet) so + Add is reachable."
 
 (eabp-defaction "org.capture.show"
   (lambda (_ _)
-    (eabp-org-ui-show-capture-dialog)))
+    (glasspane-ui-show-capture-dialog)))
 
 (eabp-defaction "org.capture.select"
   (lambda (args _)
-    (eabp-org-ui-show-capture-form (alist-get 'key args))))
+    (glasspane-ui-show-capture-form (alist-get 'key args))))
 
 (eabp-defaction "org.capture.cancel"
   (lambda (_ _)
-    (setq eabp-org-ui--shared-text nil
-          eabp-org-ui--shared-subject nil)
+    (setq glasspane-ui--shared-text nil
+          glasspane-ui--shared-subject nil)
     (eabp-dismiss-dialog)))
 
 (eabp-defaction "org.capture.share"
@@ -1183,22 +1183,22 @@ Always present (even with no properties yet) so + Add is reachable."
   (lambda (args _)
     (let ((text (alist-get 'text args))
           (subject (alist-get 'subject args)))
-      (setq eabp-org-ui--shared-text
+      (setq glasspane-ui--shared-text
             (and (stringp text) (not (string-empty-p (string-trim text)))
                  (string-trim text))
-            eabp-org-ui--shared-subject
+            glasspane-ui--shared-subject
             (and (stringp subject) (not (string-empty-p (string-trim subject)))
                  (string-trim subject)))
       ;; A share with only a subject still captures: use it as the text too.
-      (unless eabp-org-ui--shared-text
-        (setq eabp-org-ui--shared-text eabp-org-ui--shared-subject))
-      (eabp-org-ui-show-capture-dialog))))
+      (unless glasspane-ui--shared-text
+        (setq glasspane-ui--shared-text glasspane-ui--shared-subject))
+      (glasspane-ui-show-capture-dialog))))
 
 (eabp-defaction "org.capture.submit"
   (lambda (args _)
     (let ((key (alist-get 'key args)))
       (condition-case err
-          (let* ((templates (eabp-org--capture-templates))
+          (let* ((templates (glasspane-org--capture-templates))
                  (tmpl (cl-find-if
                         (lambda (t-info) (equal (alist-get 'key t-info) key))
                         templates))
@@ -1210,37 +1210,37 @@ Always present (even with no properties yet) so + Add is reachable."
                             (let ((v (eabp-ui-state (format "cap-%s" p))))
                               (cons p (if (stringp v) v ""))))
                           prompts)))
-            (eabp-org--do-capture key values eabp-org-ui--shared-text)
-            (setq eabp-org-ui--shared-text nil
-                  eabp-org-ui--shared-subject nil)
-            (eabp-org-cache-invalidate)
+            (glasspane-org--do-capture key values glasspane-ui--shared-text)
+            (setq glasspane-ui--shared-text nil
+                  glasspane-ui--shared-subject nil)
+            (glasspane-org-cache-invalidate)
             (eabp-ui-state-clear "cap-")
             (eabp-shell-notify "Captured ✓")
             (eabp-dismiss-dialog)
             (eabp-shell-push))
         (error
          (message "EABP capture submit error: %s" (error-message-string err))
-         (setq eabp-org-ui--shared-text nil
-               eabp-org-ui--shared-subject nil)
+         (setq glasspane-ui--shared-text nil
+               glasspane-ui--shared-subject nil)
          (eabp-ui-state-clear "cap-")
          (eabp-dismiss-dialog))))))
 
-(defun eabp-org-ui--at-ref (args fn &optional save)
+(defun glasspane-ui--at-ref (args fn &optional save)
   "Resolve ARGS to its heading and call FN with point there.
 With SAVE non-nil, save the buffer afterwards (guarded against
 triggering our own after-save refresh on top of the explicit push).
 Returns non-nil on success; messages and returns nil on failure."
   (condition-case err
-      (let ((marker (eabp-org--resolve-ref args)))
+      (let ((marker (glasspane-org--resolve-ref args)))
         (with-current-buffer (marker-buffer marker)
           (org-with-wide-buffer
            (goto-char marker)
            (funcall fn))
           (when save
-            (let ((eabp-org--inhibit-save-refresh t)
+            (let ((glasspane-org--inhibit-save-refresh t)
                   (save-silently t))
               (save-buffer))))
-        (eabp-org-cache-invalidate)
+        (glasspane-org-cache-invalidate)
         t)
     (error
      (message "EABP: heading action failed: %s" (error-message-string err))
@@ -1252,7 +1252,7 @@ Returns non-nil on success; messages and returns nil on failure."
   (lambda (args _)
     (let ((state (alist-get 'state args)))
       (when (and state
-                 (eabp-org-ui--at-ref args (lambda () (org-todo state)) t))
+                 (glasspane-ui--at-ref args (lambda () (org-todo state)) t))
         (eabp-shell-notify (format "State → %s" state))
         (eabp-shell-push)))))
 
@@ -1263,9 +1263,9 @@ Returns non-nil on success; messages and returns nil on failure."
     (let* ((clear (alist-get 'clear args))
            (date (or (alist-get 'when args) (alist-get 'value args)))
            (ok (cond
-                (clear (eabp-org-ui--at-ref args (lambda () (org-schedule '(4))) t))
+                (clear (glasspane-ui--at-ref args (lambda () (org-schedule '(4))) t))
                 ((and (stringp date) (not (string-empty-p date)))
-                 (eabp-org-ui--at-ref args (lambda () (org-schedule nil date)) t)))))
+                 (glasspane-ui--at-ref args (lambda () (org-schedule nil date)) t)))))
       (when ok
         (eabp-shell-notify (if clear "Schedule cleared" (format "Scheduled %s" date)))
         (eabp-shell-push)))))
@@ -1276,11 +1276,11 @@ Returns non-nil on success; messages and returns nil on failure."
   (lambda (args _)
     (let ((time (alist-get 'value args)))
       (when (and (stringp time) (not (string-empty-p time))
-                 (eabp-org-ui--at-ref
+                 (glasspane-ui--at-ref
                   args
                   (lambda ()
                     (let* ((sched (org-entry-get nil "SCHEDULED"))
-                           (date (or (eabp-org-ui--ts-date sched)
+                           (date (or (glasspane-ui--ts-date sched)
                                      (format-time-string "%Y-%m-%d"))))
                       (org-schedule nil (format "%s %s" date time))))
                   t))
@@ -1304,9 +1304,9 @@ Returns non-nil on success; messages and returns nil on failure."
     (let* ((clear (alist-get 'clear args))
            (date (or (alist-get 'when args) (alist-get 'value args)))
            (ok (cond
-                (clear (eabp-org-ui--at-ref args (lambda () (org-deadline '(4))) t))
+                (clear (glasspane-ui--at-ref args (lambda () (org-deadline '(4))) t))
                 ((and (stringp date) (not (string-empty-p date)))
-                 (eabp-org-ui--at-ref args (lambda () (org-deadline nil date)) t)))))
+                 (glasspane-ui--at-ref args (lambda () (org-deadline nil date)) t)))))
       (when ok
         (eabp-shell-notify (if clear "Deadline cleared" (format "Deadline %s" date)))
         (eabp-shell-push)))))
@@ -1316,7 +1316,7 @@ Returns non-nil on success; messages and returns nil on failure."
     ;; Empty VALUE means None (remove); otherwise the first char is the priority.
     (let* ((val (alist-get 'value args))
            (remove (or (null val) (string-empty-p val)))
-           (ok (eabp-org-ui--at-ref
+           (ok (glasspane-ui--at-ref
                 args
                 (lambda ()
                   (if remove (org-priority 'remove)
@@ -1331,7 +1331,7 @@ Returns non-nil on success; messages and returns nil on failure."
   ;; Bridged picker over org-refile targets; refiles the whole subtree.
   (lambda (args _)
     (condition-case err
-        (let ((marker (eabp-org--resolve-ref args)))
+        (let ((marker (glasspane-org--resolve-ref args)))
           (with-current-buffer (marker-buffer marker)
             (org-with-wide-buffer
              (goto-char marker)
@@ -1346,11 +1346,11 @@ Returns non-nil on success; messages and returns nil on failure."
                (if (not target)
                    (eabp-shell-notify "Refile cancelled")
                  (org-refile nil nil target)
-                 (let ((eabp-org--inhibit-save-refresh t)
+                 (let ((glasspane-org--inhibit-save-refresh t)
                        (save-silently t))
                    (org-save-all-org-buffers))
-                 (eabp-org-cache-invalidate)
-                 (setq eabp-org-ui--detail-ref nil)
+                 (glasspane-org-cache-invalidate)
+                 (setq glasspane-ui--detail-ref nil)
                  (eabp-shell-notify (format "Refiled to %s" choice))))))
           (eabp-shell-push nil :switch-to (eabp-shell-current-tab)))
       (error
@@ -1364,14 +1364,14 @@ Returns non-nil on success; messages and returns nil on failure."
     (let ((headline (or (alist-get 'headline args) "this heading")))
       (if (not (yes-or-no-p (format "Archive \"%s\"? " headline)))
           (eabp-shell-notify "Archive cancelled")
-        (when (eabp-org-ui--at-ref
+        (when (glasspane-ui--at-ref
                args
                (lambda ()
                  (org-archive-subtree)
-                 (let ((eabp-org--inhibit-save-refresh t)
+                 (let ((glasspane-org--inhibit-save-refresh t)
                        (save-silently t))
                    (org-save-all-org-buffers))))
-          (setq eabp-org-ui--detail-ref nil)
+          (setq glasspane-ui--detail-ref nil)
           (eabp-shell-notify "Archived")))
       (eabp-shell-push nil :switch-to (eabp-shell-current-tab)))))
 
@@ -1384,7 +1384,7 @@ Returns non-nil on success; messages and returns nil on failure."
                                (quit "")))))
       (if (string-empty-p note)
           (eabp-shell-notify "Note cancelled")
-        (when (eabp-org-ui--at-ref
+        (when (glasspane-ui--at-ref
                args
                (lambda ()
                  (goto-char (org-log-beginning t))
@@ -1403,7 +1403,7 @@ Returns non-nil on success; messages and returns nil on failure."
     (let* ((name (alist-get 'name args))
            (value (string-trim (or (alist-get 'value args) "")))
            (ok (and (stringp name) (not (string-empty-p name))
-                    (eabp-org-ui--at-ref
+                    (glasspane-ui--at-ref
                      args
                      (lambda ()
                        (if (string-empty-p value)
@@ -1427,7 +1427,7 @@ Returns non-nil on success; messages and returns nil on failure."
        ((string-empty-p name) nil)
        ((string-match-p "[: \t]" name)
         (eabp-shell-notify "Property names can't contain colons or spaces"))
-       ((eabp-org-ui--at-ref args
+       ((glasspane-ui--at-ref args
                              (lambda () (org-set-property (upcase name) ""))
                              t)
         (eabp-shell-notify (format "Added %s — fill in its value" (upcase name)))))
@@ -1441,7 +1441,7 @@ Returns non-nil on success; messages and returns nil on failure."
                   ((listp val) val)
                   ((stringp val) (split-string val "[ \t:,]+" t))
                   (t nil)))
-           (ok (eabp-org-ui--at-ref args (lambda () (org-set-tags tags)) t)))
+           (ok (glasspane-ui--at-ref args (lambda () (org-set-tags tags)) t)))
       (when ok
         (eabp-shell-notify (if tags (format "Tags: %s" (string-join tags " "))
                                 "Tags cleared"))
@@ -1476,7 +1476,7 @@ Returns non-nil on success; messages and returns nil on failure."
                                      (if existing existing tg)))
                                  tags-list)))
           (setq org-tag-alist new-alist)
-          (eabp-org-ui--customize-save 'org-tag-alist org-tag-alist)))
+          (glasspane-ui--customize-save 'org-tag-alist org-tag-alist)))
       (eabp-shell-notify "Settings saved")
       (eabp-shell-push))))
 
@@ -1505,14 +1505,14 @@ Returns non-nil on success; messages and returns nil on failure."
 (add-hook 'eabp-settings-after-set-hook
           (lambda (sym _value)
             (when (string-prefix-p "org-" (symbol-name sym))
-              (eabp-org-cache-invalidate))))
+              (glasspane-org-cache-invalidate))))
 
-(defalias 'eabp-org-ui--customize-save #'eabp-settings-save-variable
+(defalias 'glasspane-ui--customize-save #'eabp-settings-save-variable
   "Persist a variable through Customize, surfacing failures.
 Kept as an alias for the todo/tag actions that predate the generic
 settings module (`eabp-settings-save-variable').")
 
-(defun eabp-org-ui--todo-keywords-apply (seqs)
+(defun glasspane-ui--todo-keywords-apply (seqs)
   "Make SEQS the effective and persisted `org-todo-keywords'.
 Live org buffers cache the keywords buffer-locally at mode init
 (`org-todo-keywords-1', `org-todo-regexp', ...), so each one is
@@ -1523,8 +1523,8 @@ with the new states.  Returns non-nil when persisting succeeded."
     (with-current-buffer buf
       (when (derived-mode-p 'org-mode)
         (ignore-errors (org-mode-restart)))))
-  (eabp-org-cache-invalidate)
-  (eabp-org-ui--customize-save 'org-todo-keywords seqs))
+  (glasspane-org-cache-invalidate)
+  (glasspane-ui--customize-save 'org-todo-keywords seqs))
 
 (eabp-defaction "settings.todo.edit"
   (lambda (args _)
@@ -1539,7 +1539,7 @@ with the new states.  Returns non-nil when persisting succeeded."
             (let* ((type (car seq))
                    ;; Keep the raw keyword strings, fast-access keys and all
                    ;; ("TODO(t!)"), so an untouched save round-trips losslessly.
-                   (split (eabp-org-ui--split-todo-sequence seq))
+                   (split (glasspane-ui--split-todo-sequence seq))
                    (active (mapconcat #'identity (car split) ", "))
                    (finished (mapconcat #'identity (cdr split) ", ")))
               ;; Pre-filled `:value's must be seeded by hand: state.changed
@@ -1590,7 +1590,7 @@ with the new states.  Returns non-nil when persisting succeeded."
         (if (>= idx 0)
             (setcar (nthcdr idx seqs) new-seq)
           (setq seqs (append seqs (list new-seq))))
-        (when (eabp-org-ui--todo-keywords-apply seqs)
+        (when (glasspane-ui--todo-keywords-apply seqs)
           (eabp-shell-notify "TODO sequence saved"))
         (eabp-dismiss-dialog)
         (eabp-shell-push))))))
@@ -1604,7 +1604,7 @@ with the new states.  Returns non-nil when persisting succeeded."
                        ;; Org misbehaves with no keywords at all; deleting
                        ;; the last sequence falls back to the stock one.
                        '((sequence "TODO" "|" "DONE"))))
-        (when (eabp-org-ui--todo-keywords-apply seqs)
+        (when (glasspane-ui--todo-keywords-apply seqs)
           (eabp-shell-notify "TODO sequence deleted"))
         (eabp-dismiss-dialog)
         (eabp-shell-push)))))
@@ -1630,7 +1630,7 @@ with the new states.  Returns non-nil when persisting succeeded."
                          (format "%S" (car clauses))
                        (format "%S" `(and ,@(nreverse clauses))))
                    "")))
-          (setq eabp-org-ui--search-query q)
+          (setq glasspane-ui--search-query q)
           (eabp-ui-state-put "search-query" q)))
       (eabp-shell-push))))
 
@@ -1640,9 +1640,9 @@ with the new states.  Returns non-nil when persisting succeeded."
            (name (read-string "Agenda Name: ")))
       (when (and (stringp name) (not (string-empty-p name)))
         ;; Remove existing if overriding
-        (setq eabp-org-custom-agendas (assoc-delete-all name eabp-org-custom-agendas))
-        (add-to-list 'eabp-org-custom-agendas (cons name query) t)
-        (customize-save-variable 'eabp-org-custom-agendas eabp-org-custom-agendas)
+        (setq glasspane-org-custom-agendas (assoc-delete-all name glasspane-org-custom-agendas))
+        (add-to-list 'glasspane-org-custom-agendas (cons name query) t)
+        (customize-save-variable 'glasspane-org-custom-agendas glasspane-org-custom-agendas)
         (eabp-shell-notify (format "Saved custom agenda: %s" name))
         (eabp-shell-push)))))
 
@@ -1659,12 +1659,12 @@ with the new states.  Returns non-nil when persisting succeeded."
            (dir (if (numberp dir) dir 1))
            (mode (or (eabp-ui-state "agenda-mode") "day"))
            (unit (pcase mode ("week" 'week) ("month" 'month) (_ 'day)))
-           (anchor (eabp-org-ui--agenda-anchor)))
+           (anchor (glasspane-ui--agenda-anchor)))
       ;; Month steps walk 1st → 1st so ±1 never skips a short month.
       (when (eq unit 'month)
         (setq anchor (concat (substring anchor 0 7) "-01")))
       (eabp-ui-state-put "agenda-anchor"
-                         (eabp-org-ui--shift-date anchor dir unit))
+                         (glasspane-ui--shift-date anchor dir unit))
       (eabp-shell-push))))
 
 (eabp-defaction "agenda.today"
@@ -1682,7 +1682,7 @@ with the new states.  Returns non-nil when persisting succeeded."
 
 (eabp-defaction "heading.clock-in"
   (lambda (args _)
-    (when (eabp-org-ui--at-ref args #'org-clock-in)
+    (when (glasspane-ui--at-ref args #'org-clock-in)
       (eabp-shell-notify "Clocked in")
       (eabp-shell-push "clock"))))
 
@@ -1715,10 +1715,10 @@ with the new states.  Returns non-nil when persisting succeeded."
                 (org-with-wide-buffer
                  (goto-char pos)
                  (org-toggle-checkbox))
-                (let ((eabp-org--inhibit-save-refresh t)
+                (let ((glasspane-org--inhibit-save-refresh t)
                       (save-silently t))
                   (save-buffer)))
-              (eabp-org-cache-invalidate)
+              (glasspane-org-cache-invalidate)
               (eabp-shell-push))
           (error
            (eabp-shell-notify
@@ -1755,11 +1755,11 @@ with the new states.  Returns non-nil when persisting succeeded."
                  (goto-char (line-beginning-position))))
              ;; Paste at the new level (or original level if nil)
              (org-paste-subtree (or new-level from-level)))))
-        (let ((eabp-org--inhibit-save-refresh t)
+        (let ((glasspane-org--inhibit-save-refresh t)
               (save-silently t))
           (with-current-buffer (find-file-noselect file)
             (save-buffer)))
-        (eabp-org-cache-invalidate)
+        (glasspane-org-cache-invalidate)
         (eabp-shell-push nil :switch-to "edit")))))
 
 (eabp-defaction "file.view"
@@ -1774,71 +1774,71 @@ with the new states.  Returns non-nil when persisting succeeded."
 ;; Registered on the core files module's app seams; the editor itself stays
 ;; org-agnostic.
 
-(defvar eabp-org-ui--files-read-mode nil
+(defvar glasspane-ui--files-read-mode nil
   "When non-nil, org files open in the foldable reader instead of the editor.")
 
-(defvar eabp-org-ui--files-refile-mode nil
+(defvar glasspane-ui--files-refile-mode nil
   "When non-nil, org reader shows a flat drag-to-reorder heading list.")
 
-(defun eabp-org-ui--org-file-p (file)
+(defun glasspane-ui--org-file-p (file)
   "Non-nil when FILE is an org file."
   (and file (string-match-p "\\.org\\'" file)))
 
-(defun eabp-org-ui--org-editor-body (file)
+(defun glasspane-ui--org-editor-body (file)
   "Reader body for org FILE while read mode is on; nil = plain editor."
-  (when (and eabp-org-ui--files-read-mode (eabp-org-ui--org-file-p file))
-    (if eabp-org-ui--files-refile-mode
-        (or (eabp-org-reader-refile-list file)
+  (when (and glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))
+    (if glasspane-ui--files-refile-mode
+        (or (glasspane-org-reader-refile-list file)
             (eabp-text "No headings to show." 'caption))
-      (let ((items (eabp-org--file-heading-items file)))
+      (let ((items (glasspane-org--file-heading-items file)))
         (if items
             (apply #'eabp-lazy-column
-                   (mapcar #'eabp-org-ui--agenda-card items))
+                   (mapcar #'glasspane-ui--agenda-card items))
           (eabp-empty-state :icon "description"
                             :title "Empty file"
                             :caption "No headings found."))))))
 
-(defun eabp-org-ui--org-editor-actions (file)
+(defun glasspane-ui--org-editor-actions (file)
   "Reader/refile toggles and the properties dialog for org FILE."
-  (when (eabp-org-ui--org-file-p file)
+  (when (glasspane-ui--org-file-p file)
     (delq nil
           (list
-           (when eabp-org-ui--files-read-mode
+           (when glasspane-ui--files-read-mode
              (eabp-icon-button
-              (if eabp-org-ui--files-refile-mode "visibility" "swap_vert")
+              (if glasspane-ui--files-refile-mode "visibility" "swap_vert")
               (eabp-action "files.toggle-refile")
               :content-description
-              (if eabp-org-ui--files-refile-mode "Reader" "Refile")))
+              (if glasspane-ui--files-refile-mode "Reader" "Refile")))
            (eabp-icon-button
-            (if eabp-org-ui--files-read-mode "edit" "visibility")
+            (if glasspane-ui--files-read-mode "edit" "visibility")
             (eabp-action "files.toggle-read")
             :content-description
-            (if eabp-org-ui--files-read-mode "Edit" "Read"))
+            (if glasspane-ui--files-read-mode "Edit" "Read"))
            (eabp-icon-button
             "tune"
             (eabp-action "files.properties.show" :args `((file . ,file)))
             :content-description "Properties")))))
 
-(add-hook 'eabp-files-editor-body-functions #'eabp-org-ui--org-editor-body)
-(add-hook 'eabp-files-editor-actions-functions #'eabp-org-ui--org-editor-actions)
+(add-hook 'eabp-files-editor-body-functions #'glasspane-ui--org-editor-body)
+(add-hook 'eabp-files-editor-actions-functions #'glasspane-ui--org-editor-actions)
 
 ;; Org files open reader-first; everything else lands in the editor.
 (add-hook 'eabp-files-open-hook
           (lambda (file)
-            (setq eabp-org-ui--files-read-mode (eabp-org-ui--org-file-p file))))
+            (setq glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))))
 
 ;; A phone-side save may have changed org data the views memoise.
 (add-hook 'eabp-files-after-save-hook
-          (lambda (_file) (eabp-org-cache-invalidate)))
+          (lambda (_file) (glasspane-org-cache-invalidate)))
 
 (eabp-defaction "files.toggle-read"
   (lambda (_ _)
-    (setq eabp-org-ui--files-read-mode (not eabp-org-ui--files-read-mode))
+    (setq glasspane-ui--files-read-mode (not glasspane-ui--files-read-mode))
     (eabp-shell-push nil :switch-to "edit")))
 
 (eabp-defaction "files.toggle-refile"
   (lambda (_ _)
-    (setq eabp-org-ui--files-refile-mode (not eabp-org-ui--files-refile-mode))
+    (setq glasspane-ui--files-refile-mode (not glasspane-ui--files-refile-mode))
     (eabp-shell-push nil :switch-to "edit")))
 
 (eabp-defaction "files.properties.show"
@@ -1902,52 +1902,52 @@ with the new states.  Returns non-nil when persisting succeeded."
               (funcall update-kwd "TITLE" title)
               (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
               (funcall update-kwd "CATEGORY" category))
-            (let ((eabp-org--inhibit-save-refresh t)
+            (let ((glasspane-org--inhibit-save-refresh t)
                   (save-silently t))
               (save-buffer)))))
       (eabp-dismiss-dialog)
-      (eabp-org-cache-invalidate)
+      (glasspane-org-cache-invalidate)
       (eabp-shell-push))))
 
 ;; ─── Auto-refresh ────────────────────────────────────────────────────────────
 
-(defvar eabp-org-ui--save-refresh-timer nil)
+(defvar glasspane-ui--save-refresh-timer nil)
 
-(defcustom eabp-org-ui-save-refresh-delay 2
+(defcustom glasspane-ui-save-refresh-delay 2
   "Idle seconds after saving an agenda file before re-pushing the dashboard.
 Debounces bursts of saves (e.g. `org-save-all-org-buffers') into one push."
   :type 'integer :group 'eabp)
 
-(defun eabp-org-ui--after-save-refresh ()
+(defun glasspane-ui--after-save-refresh ()
   "Schedule a dashboard refresh if an org agenda file was just saved.
 No-op for saves EABP itself performs — anything inside an action
 handler (`eabp--in-action-handler') pushes explicitly, and other
-programmatic saves bind `eabp-org--inhibit-save-refresh' — which would
+programmatic saves bind `glasspane-org--inhibit-save-refresh' — which would
 otherwise refresh twice or loop."
   (when (and (eabp-connected-p)
-             (not (bound-and-true-p eabp-org--inhibit-save-refresh))
+             (not (bound-and-true-p glasspane-org--inhibit-save-refresh))
              (not (bound-and-true-p eabp--in-action-handler))
              buffer-file-name
              (derived-mode-p 'org-mode)
              (ignore-errors
                (member (expand-file-name buffer-file-name)
                        (mapcar #'expand-file-name (org-agenda-files)))))
-    (eabp-org-cache-invalidate)
-    (when (timerp eabp-org-ui--save-refresh-timer)
-      (cancel-timer eabp-org-ui--save-refresh-timer))
-    (setq eabp-org-ui--save-refresh-timer
-          (run-with-idle-timer eabp-org-ui-save-refresh-delay nil
+    (glasspane-org-cache-invalidate)
+    (when (timerp glasspane-ui--save-refresh-timer)
+      (cancel-timer glasspane-ui--save-refresh-timer))
+    (setq glasspane-ui--save-refresh-timer
+          (run-with-idle-timer glasspane-ui-save-refresh-delay nil
                                #'eabp-shell-push))))
 
-(add-hook 'after-save-hook #'eabp-org-ui--after-save-refresh)
+(add-hook 'after-save-hook #'glasspane-ui--after-save-refresh)
 
-(defun eabp-org-ui--refresh-if-connected (&rest _)
+(defun glasspane-ui--refresh-if-connected (&rest _)
   "Re-push the dashboard when there's a live session.
 Safe to put on any hook: a no-op while disconnected.  Invalidates the
 extraction cache first — this runs on clock in/out, which mutate the
 org buffer without necessarily saving it."
   (when (eabp-connected-p)
-    (eabp-org-cache-invalidate)
+    (glasspane-org-cache-invalidate)
     (eabp-shell-push)))
 
 ;; The connect and queue-drained pushes are owned by the shell; this app
@@ -1955,8 +1955,8 @@ org buffer without necessarily saving it."
 
 ;; Clock state shows on the Clock tab and the dashboard generally —
 ;; keep it live. Depth 90: after eabp-surfaces' notification hooks.
-(add-hook 'org-clock-in-hook  #'eabp-org-ui--refresh-if-connected 90)
-(add-hook 'org-clock-out-hook #'eabp-org-ui--refresh-if-connected 90)
+(add-hook 'org-clock-in-hook  #'glasspane-ui--refresh-if-connected 90)
+(add-hook 'org-clock-out-hook #'glasspane-ui--refresh-if-connected 90)
 
-(provide 'eabp-org-ui)
-;;; eabp-org-ui.el ends here
+(provide 'glasspane-ui)
+;;; glasspane-ui.el ends here

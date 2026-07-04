@@ -61,13 +61,14 @@ monospace. STYLE is the base text style (title/body/caption/label)."
               'style (and style (format "%s" style))
               'padding padding))
 
-(cl-defun eabp-span (text &key bold italic underline strike code tag baseline color on-tap mono)
+(cl-defun eabp-span (text &key bold italic underline strike code tag baseline color bg on-tap mono)
   "A styled text run for `eabp-rich-text'.
 BOLD/ITALIC/UNDERLINE/STRIKE/CODE toggle emphasis; TAG themes it like a
-#hashtag; BASELINE is \"super\" or \"sub\"; COLOR is a hex override; ON-TAP
-makes it a clickable link.  MONO renders the run in a fixed-width font
-without the code-styling background — used by the generic buffer renderer to
-preserve column alignment (dired, magit, tables, ascii)."
+#hashtag; BASELINE is \"super\" or \"sub\"; COLOR is a hex foreground
+override and BG a hex background (diff shading, hl-line, region, isearch);
+ON-TAP makes it a clickable link.  MONO renders the run in a fixed-width
+font without the code-styling background — used by the generic buffer
+renderer to preserve column alignment (dired, magit, tables, ascii)."
   (eabp--node nil
               'text text
               'bold (and bold t)
@@ -78,6 +79,7 @@ preserve column alignment (dired, magit, tables, ascii)."
               'tag (and tag t)
               'baseline baseline
               'color color
+              'bg bg
               'on_tap on-tap
               'mono (and mono t)))
 

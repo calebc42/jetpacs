@@ -127,6 +127,8 @@ internal fun SduiRichText(node: JSONObject, modifier: Modifier, dispatch: (JSONO
                 val isTag = s.optBoolean("tag")
                 val colorHex = s.optString("color")
                 val explicitColor = if (colorHex.isNotEmpty()) parseHexColor(colorHex) else Color.Unspecified
+                val bgHex = s.optString("bg")
+                val bgColor = if (bgHex.isNotEmpty()) parseHexColor(bgHex) else Color.Unspecified
                 val baseline = s.optString("baseline")
                 val span = SpanStyle(
                     fontWeight = if (s.optBoolean("bold") || isTag) FontWeight.Bold else null,
@@ -142,6 +144,9 @@ internal fun SduiRichText(node: JSONObject, modifier: Modifier, dispatch: (JSONO
                         else -> null
                     },
                     fontSize = if (baseline.isNotEmpty()) 0.8.em else TextUnit.Unspecified,
+                    // `bg` carries a face background (diff shading, hl-line,
+                    // region, isearch) so semantic backgrounds survive.
+                    background = bgColor,
                     color = when {
                         explicitColor != Color.Unspecified -> explicitColor
                         isTag -> tagColor

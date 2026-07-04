@@ -25,6 +25,7 @@
 (require 'eabp-minibuffer)
 (require 'eabp-shell)
 (require 'eabp-witheditor)
+(require 'eabp-buffer)
 
 ;; ─── Bridge harness ──────────────────────────────────────────────────────────
 
@@ -265,6 +266,104 @@ sends are captured into `eabp-prim--sent'."
   (skip-unless (fboundp 'read-char-from-minibuffer))
   (eabp-prim--with-bridge (list "b")
     (should (equal ?b (read-char-from-minibuffer "Pick: " '(?a ?b ?c))))))
+
+;; ─── P2: Tier 0 renderer fidelity ────────────────────────────────────────────
+
+(defun eabp-prim--all-spans (nodes)
+  "Flatten every span alist out of rendered NODES (a rich_text list)."
+  (let (spans)
+    (dolist (n nodes)
+      (when (equal (alist-get 't n) "rich_text")
+        (setq spans (append spans (append (alist-get 'spans n) nil)))))
+    spans))
+
+(defun eabp-prim--span-text (spans)
+  "The concatenated text of SPANS."
+  (mapconcat (lambda (s) (or (alist-get 'text s) "")) spans ""))
+
+;; Task 11: face :background → span bg
+(ert-deftest eabp-prim-buffer-background-span ()
+  "A background-only face yields a span with `bg' and no `color'."
+  (with-temp-buffer
+    (insert "shaded")
+    (put-text-property (point-min) (point-max) 'face '(:background "#FF0000"))
+    (let ((s (car (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))
+      (should (equal (alist-get 'bg s) "#FF0000"))
+      (should-not (alist-get 'color s)))))
+
+;; Task 13.1: font-lock-face fallback
+(ert-deftest eabp-prim-buffer-font-lock-face-fallback ()
+  "`font-lock-face' is honoured when `face' is absent."
+  (with-temp-buffer
+    (insert "kw")
+    (put-text-property (point-min) (point-max) 'font-lock-face '(:weight bold))
+    (let ((s (car (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))
+      (should (eq t (alist-get 'bold s))))))
+
+;; Task 13.4: anonymous face plist :inherit
+(ert-deftest eabp-prim-buffer-anon-inherit ()
+  "An anonymous face plist resolves attributes through `:inherit'."
+  (with-temp-buffer
+    (insert "inh")
+    (put-text-property (point-min) (point-max) 'face '(:inherit bold))
+    (let ((s (car (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))
+      (should (eq t (alist-get 'bold s))))))
+
+;; Task 12: line-prefix
+(ert-deftest eabp-prim-buffer-line-prefix ()
+  "A string `line-prefix' is prepended as a gutter span."
+  (with-temp-buffer
+    (insert "content")
+    (put-text-property (point-min) (point-max) 'line-prefix "»» ")
+    (let ((spans (eabp-prim--all-spans (eabp-buffer-render (current-buffer)))))
+      (should (equal (alist-get 'text (car spans)) "»» ")))))
+
+;; Task 13.2: tab expansion
+(ert-deftest eabp-prim-buffer-tab-expansion ()
+  "TABs expand to spaces on `tab-width' stops."
+  (with-temp-buffer
+    (setq tab-width 4)
+    (insert "a\tb")
+    (let ((text (eabp-prim--span-text
+                 (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))
+      (should (equal text "a   b")))))
+
+;; Task 13.3: form feed → divider
+(ert-deftest eabp-prim-buffer-form-feed-divider ()
+  "A form-feed line renders as a divider node."
+  (with-temp-buffer
+    (insert "before\n\f\nafter")
+    (let ((nodes (eabp-buffer-render (current-buffer))))
+      (should (cl-some (lambda (n) (equal (alist-get 't n) "divider")) nodes)))))
+
+;; Task 9: overlay before/after strings
+(ert-deftest eabp-prim-buffer-overlay-before-string ()
+  "An overlay `before-string' is spliced in at the overlay start."
+  (with-temp-buffer
+    (insert "line")
+    (overlay-put (make-overlay (point-min) (point-min)) 'before-string "PRE")
+    (should (string-prefix-p
+             "PRE" (eabp-prim--span-text
+                    (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
+
+(ert-deftest eabp-prim-buffer-overlay-after-string ()
+  "An overlay `after-string' is spliced in at the overlay end."
+  (with-temp-buffer
+    (insert "line")
+    (overlay-put (make-overlay (point-max) (point-max)) 'after-string "POST")
+    (should (string-suffix-p
+             "POST" (eabp-prim--span-text
+                     (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
+
+;; Task 10: display space spec
+(ert-deftest eabp-prim-buffer-display-space ()
+  "A `(space :width N)' display spec becomes N spaces."
+  (with-temp-buffer
+    (insert "ab")
+    (put-text-property 1 2 'display '(space :width 4))
+    (should (equal "    b"
+                   (eabp-prim--span-text
+                    (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
 
 (provide 'eabp-primitives-test)
 ;;; eabp-primitives-test.el ends here

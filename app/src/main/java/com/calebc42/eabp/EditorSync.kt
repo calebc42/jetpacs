@@ -161,6 +161,7 @@ internal data class FontifyRun(
     val start: Int,
     val end: Int,
     val color: Color?,
+    val bg: Color?,
     val bold: Boolean,
     val italic: Boolean,
     val underline: Boolean,
@@ -233,8 +234,11 @@ internal fun parseFontify(
             val color = r.optString("c").takeIf { it.isNotEmpty() }?.let { hex ->
                 runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
             }
+            val bg = r.optString("bg").takeIf { it.isNotEmpty() }?.let { hex ->
+                runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+            }
             add(FontifyRun(
-                start = beg, end = end, color = color,
+                start = beg, end = end, color = color, bg = bg,
                 bold = r.optBoolean("bold"),
                 italic = r.optBoolean("italic"),
                 underline = r.optBoolean("underline"),
@@ -386,6 +390,7 @@ internal class EditorStyles(
 
     private fun runStyle(r: FontifyRun) = SpanStyle(
         color = r.color ?: Color.Unspecified,
+        background = r.bg ?: Color.Unspecified,
         fontWeight = if (r.bold) FontWeight.Bold else null,
         fontStyle = if (r.italic) FontStyle.Italic else null,
         textDecoration = when {

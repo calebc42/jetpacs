@@ -71,6 +71,12 @@ Kept as a seam so this module never depends on a specific UI layer.")
 Spans whose foreground matches this are emitted without a color so the
 device theme owns ordinary text.")
 
+(defvar eabp-buffer--default-bg-hex nil
+  "Hex of the default face background, bound for the duration of a render.
+Spans whose background matches this emit no `:bg', so ordinary text keeps
+the device theme's surface color and only semantic backgrounds (diff
+shading, hl-line, region, isearch) are carried over.")
+
 ;; ─── Face resolution ─────────────────────────────────────────────────────────
 
 (defun eabp-buffer--color-hex (color)
@@ -97,10 +103,18 @@ precedence, matching Emacs's left-to-right face merging."
    (t nil)))
 
 (defun eabp-buffer--ref-attr (ref attr)
-  "Read ATTR from a single face REF (symbol or plist); nil if unspecified."
+  "Read ATTR from a single face REF (symbol or plist); nil if unspecified.
+An anonymous plist that lacks ATTR but names an `:inherit' face resolves
+ATTR through the inherited face(s), matching Emacs's own face merging (the
+symbol branch already inherits via `face-attribute')."
   (let ((v (cond
             ((symbolp ref) (face-attribute ref attr nil t))
-            ((listp ref) (plist-get ref attr))
+            ((listp ref)
+             (if (plist-member ref attr)
+                 (plist-get ref attr)
+               (let ((inherit (plist-get ref :inherit)))
+                 (and inherit
+                      (eabp-buffer--attr (eabp-buffer--face-refs inherit) attr)))))
             (t nil))))
     (if (eq v 'unspecified) nil v)))
 
@@ -113,9 +127,10 @@ precedence, matching Emacs's left-to-right face merging."
   "Weight symbols treated as bold.")
 
 (defun eabp-buffer--span-style (face)
-  "Return a plist (:bold :italic :underline :strike :color) for FACE.
-COLOR is included only when it resolves and differs from the default
-foreground.  Returns nil for an unstyled run."
+  "Return a plist (:bold :italic :underline :strike :color :bg) for FACE.
+COLOR/:bg are included only when they resolve and differ from the default
+foreground/background, so ordinary text carries neither.  Returns nil for
+an unstyled run."
   (condition-case nil
       (let* ((refs (eabp-buffer--face-refs face))
              (weight (eabp-buffer--attr refs :weight))
@@ -124,14 +139,19 @@ foreground.  Returns nil for an unstyled run."
              (strike (eabp-buffer--attr refs :strike-through))
              (fg (and eabp-buffer-emit-colors
                       (eabp-buffer--attr refs :foreground)))
-             (hex (and fg (eabp-buffer--color-hex fg))))
+             (hex (and fg (eabp-buffer--color-hex fg)))
+             (bg (and eabp-buffer-emit-colors
+                      (eabp-buffer--attr refs :background)))
+             (bghex (and bg (eabp-buffer--color-hex bg))))
         (append
          (when (memq weight eabp-buffer--bold-weights) '(:bold t))
          (when (memq slant '(italic oblique)) '(:italic t))
          (when underline '(:underline t))
          (when strike '(:strike t))
          (when (and hex (not (equal hex eabp-buffer--default-fg-hex)))
-           (list :color hex))))
+           (list :color hex))
+         (when (and bghex (not (equal bghex eabp-buffer--default-bg-hex)))
+           (list :bg bghex))))
     (error nil)))
 
 ;; ─── Interactivity ─────────────────────────────────────────────────────────
@@ -211,34 +231,132 @@ differ on whether the heading's newline or the body's first char carries the
 
 ;; ─── Region → spans ─────────────────────────────────────────────────────────
 
+(defun eabp-buffer--expand-tabs (text col)
+  "Expand TABs in TEXT to spaces given the starting column COL.
+Returns (EXPANDED-TEXT . END-COL).  Text with no TAB is returned as-is, so
+the common line pays only a `string-search'.  Keeps column alignment
+faithful (dired, tables, source) since the phone's tab stops differ."
+  (if (not (string-search "\t" text))
+      (cons text (+ col (length text)))
+    (let ((c col) parts)
+      (dolist (ch (append text nil))
+        (if (eq ch ?\t)
+            (let ((n (- tab-width (mod c tab-width))))
+              (push (make-string n ?\s) parts)
+              (setq c (+ c n)))
+          (push (char-to-string ch) parts)
+          (setq c (1+ c))))
+      (cons (apply #'concat (nreverse parts)) c))))
+
+(defun eabp-buffer--space-width (disp col)
+  "Columns a `(space …)' display spec DISP occupies starting at column COL.
+Handles `:width N' and `:align-to COL'; pixel/relative forms approximate
+to a single space."
+  (let ((plist (cdr disp)))
+    (cond
+     ((plist-member plist :width)
+      (let ((w (plist-get plist :width)))
+        (max 0 (if (numberp w) (round w) 1))))
+     ((plist-member plist :align-to)
+      (let ((to (plist-get plist :align-to)))
+        (max 1 (- (if (numberp to) (round to) col) col))))
+     (t 1))))
+
+(defun eabp-buffer--string-spans (str col)
+  "Render a propertized STR (an overlay before/after-string) into spans.
+Returns (SPANS . END-COL); honors `face'/`font-lock-face', string `display'
+overrides, and TAB expansion so injected virtual text matches the buffer."
+  (let ((i 0) (n (length str)) (c col) out)
+    (while (< i n)
+      (let* ((next (or (next-property-change i str) n))
+             (disp (get-text-property i 'display str))
+             (raw (if (stringp disp) disp (substring-no-properties str i next)))
+             (face (or (get-text-property i 'face str)
+                       (get-text-property i 'font-lock-face str)))
+             (style (eabp-buffer--span-style face))
+             (exp (eabp-buffer--expand-tabs raw c)))
+        (setq c (cdr exp))
+        (when (and (stringp (car exp)) (not (string-empty-p (car exp))))
+          (push (apply #'eabp-span (car exp)
+                       (append style (when eabp-buffer-monospace '(:mono t))))
+                out))
+        (setq i next)))
+    (cons (nreverse out) c)))
+
+(defun eabp-buffer--overlay-strings (bol eol)
+  "Insertions ((POS TIE STRING) …) from overlay before/after-strings on a line.
+`before-string' is placed at the overlay start, `after-string' at its end,
+when those fall within [BOL, EOL].  Invisible overlays contribute nothing.
+Sorted by position, before-strings ahead of after-strings at a tie.  These
+are OVERLAY properties, not char properties, so the main span walk (which
+uses `get-char-property') never sees them — this surfaces flymake inline
+hints, diff-hl markers, and similar virtual text that would otherwise vanish."
+  (let (ins)
+    (dolist (ov (overlays-in bol (min (1+ eol) (point-max))))
+      (let ((iv (overlay-get ov 'invisible)))
+        (unless (and iv (invisible-p iv))
+          (let ((bs (overlay-get ov 'before-string))
+                (as (overlay-get ov 'after-string))
+                (os (overlay-start ov))
+                (oe (overlay-end ov)))
+            (when (and (stringp bs) (>= os bol) (<= os eol))
+              (push (list os 0 bs) ins))
+            (when (and (stringp as) (>= oe bol) (<= oe eol))
+              (push (list oe 1 as) ins))))))
+    (sort ins (lambda (a b) (or (< (car a) (car b))
+                                (and (= (car a) (car b))
+                                     (< (nth 1 a) (nth 1 b))))))))
+
 (defun eabp-buffer--line-spans (bol eol buffer-name)
   "Build the list of spans for the buffer text in [BOL, EOL).
-Honors `invisible' (skips folded text) and string `display' overrides, maps
-faces to styling, and attaches a tap action at the start of each actionable
-property run."
-  (let ((pos bol) spans)
-    (while (< pos eol)
-      (let ((next (next-char-property-change pos eol)))
-        (when (<= next pos) (setq next (1+ pos))) ; defensive: always advance
-        (setq next (min next eol))
-        (let ((invis (get-char-property pos 'invisible)))
-          (unless (and invis (invisible-p invis))
-            (let* ((disp (get-char-property pos 'display))
-                   (text (if (stringp disp)
-                             disp
-                           (buffer-substring-no-properties pos next)))
-                   (style (eabp-buffer--span-style (get-char-property pos 'face)))
-                   (act (when (eabp-buffer--actionable-p pos)
-                          (eabp-action "eabp.buffer.act"
-                                       :args `((buffer . ,buffer-name)
-                                               (pos . ,pos))))))
-              (when (and (stringp text) (not (string-empty-p text)))
-                (push (apply #'eabp-span text
-                             (append style
-                                     (when eabp-buffer-monospace '(:mono t))
-                                     (when act (list :on-tap act))))
-                      spans)))))
-        (setq pos next)))
+Honors `invisible' (skips folded text), string and `(space …)' `display'
+overrides, and overlay before/after-strings; expands TABs to `tab-width'
+stops; maps `face'/`font-lock-face' to styling; and attaches a tap action
+at the start of each actionable property run."
+  (let ((pos bol) (col 0) spans
+        (inserts (eabp-buffer--overlay-strings bol eol)))
+    (cl-flet ((flush (upto)
+                ;; Emit pending overlay-string insertions at or before UPTO,
+                ;; splicing them into the run at the right column.
+                (while (and inserts (<= (caar inserts) upto))
+                  (let ((ss (eabp-buffer--string-spans (nth 2 (pop inserts)) col)))
+                    (setq spans (nconc (nreverse (car ss)) spans)
+                          col (cdr ss))))))
+      (while (< pos eol)
+        (flush pos)
+        (let ((next (next-char-property-change pos eol)))
+          (when (<= next pos) (setq next (1+ pos))) ; defensive: always advance
+          (setq next (min next eol))
+          (let ((invis (get-char-property pos 'invisible)))
+            (unless (and invis (invisible-p invis))
+              (let* ((disp (get-char-property pos 'display))
+                     (face (or (get-char-property pos 'face)
+                               (get-char-property pos 'font-lock-face)))
+                     (style (eabp-buffer--span-style face))
+                     (act (when (eabp-buffer--actionable-p pos)
+                            (eabp-action "eabp.buffer.act"
+                                         :args `((buffer . ,buffer-name)
+                                                 (pos . ,pos)))))
+                     text)
+                (cond
+                 ((stringp disp)
+                  (setq text disp col (+ col (length disp))))
+                 ((and (consp disp) (eq (car disp) 'space))
+                  (let ((w (eabp-buffer--space-width disp col)))
+                    (setq text (make-string w ?\s) col (+ col w))))
+                 (t
+                  (let ((exp (eabp-buffer--expand-tabs
+                              (buffer-substring-no-properties pos next) col)))
+                    (setq text (car exp) col (cdr exp)))))
+                (when (and (stringp text) (not (string-empty-p text)))
+                  (push (apply #'eabp-span text
+                               (append style
+                                       (when eabp-buffer-monospace '(:mono t))
+                                       (when act (list :on-tap act))))
+                        spans)))))
+          (setq pos next)))
+      ;; Trailing insertions at EOL (e.g. an after-string at end of line).
+      (flush eol))
     (nreverse spans)))
 
 (defun eabp-buffer--fold-state (bol eol limit)
@@ -280,6 +398,8 @@ is prefixed with a dim gutter span carrying its (absolute or relative)
 number — real buffer lines, so folded regions skip numbers faithfully."
   (let* ((eabp-buffer--default-fg-hex
           (eabp-buffer--color-hex (face-attribute 'default :foreground nil t)))
+         (eabp-buffer--default-bg-hex
+          (eabp-buffer--color-hex (face-attribute 'default :background nil t)))
          (pt-line (and eabp-line-numbers (line-number-at-pos (point))))
          (num-fmt (and eabp-line-numbers
                        (format "%%%dd " (length (number-to-string
@@ -292,26 +412,42 @@ number — real buffer lines, so folded regions skip numbers faithfully."
       (goto-char beg)
       (while (and (< (point) end) (< count eabp-buffer-max-lines))
         (let* ((bol (line-beginning-position))
-               (eol (min end (line-end-position)))
-               (spans (eabp-buffer--line-spans bol eol buffer-name)))
-          ;; A fully-folded line (no visible spans, hidden at bol) is dropped
-          ;; entirely so collapsed content truly disappears instead of leaving
-          ;; a blank gap.  Visible lines render; a collapsed heading gets a
-          ;; trailing ▸ affordance to expand it from the app, unfolded gets ▾.
-          (unless (and (null spans) (eabp-buffer--invisible-at bol))
-            (pcase (eabp-buffer--fold-state bol eol end)
-              ('folded
-               (setq spans (append (or spans (list (eabp-span " ")))
-                                   (list (eabp-buffer--fold-span bol buffer-name "  ▸")))))
-              ('unfolded
-               (setq spans (append (or spans (list (eabp-span " ")))
-                                   (list (eabp-buffer--fold-span bol buffer-name "  ▾"))))))
-            (setq spans (or spans (list (eabp-span " "))))
-            (when ln
-              (setq spans (cons (eabp-buffer--line-number-span ln pt-line num-fmt)
-                                spans)))
-            (push (eabp-rich-text spans) nodes)
-            (setq count (1+ count))))
+               (eol (min end (line-end-position))))
+          (cond
+           ;; A page break (^L alone on the line) renders as a divider rather
+           ;; than a raw control glyph.
+           ((and (< bol eol)
+                 (save-excursion (goto-char bol) (looking-at "\f+$")))
+            (push (eabp-divider) nodes)
+            (setq count (1+ count)))
+           (t
+            (let ((spans (eabp-buffer--line-spans bol eol buffer-name)))
+              ;; A fully-folded line (no visible spans, hidden at bol) is
+              ;; dropped entirely so collapsed content truly disappears instead
+              ;; of leaving a blank gap.  Visible lines render; a collapsed
+              ;; heading gets a trailing ▸ affordance to expand it, unfolded ▾.
+              (unless (and (null spans) (eabp-buffer--invisible-at bol))
+                (pcase (eabp-buffer--fold-state bol eol end)
+                  ('folded
+                   (setq spans (append (or spans (list (eabp-span " ")))
+                                       (list (eabp-buffer--fold-span bol buffer-name "  ▸")))))
+                  ('unfolded
+                   (setq spans (append (or spans (list (eabp-span " ")))
+                                       (list (eabp-buffer--fold-span bol buffer-name "  ▾"))))))
+                (setq spans (or spans (list (eabp-span " "))))
+                ;; `line-prefix' (org-indent's virtual indentation, etc.) is a
+                ;; text property, not part of the buffer text — prepend it as a
+                ;; dim gutter span so the indentation survives.
+                (let ((prefix (get-char-property bol 'line-prefix)))
+                  (when (stringp prefix)
+                    (setq spans (cons (eabp-span prefix :mono t
+                                                 :color eabp-buffer--line-number-color)
+                                      spans))))
+                (when ln
+                  (setq spans (cons (eabp-buffer--line-number-span ln pt-line num-fmt)
+                                    spans)))
+                (push (eabp-rich-text spans) nodes)
+                (setq count (1+ count)))))))
         (when ln (setq ln (1+ ln)))
         (forward-line 1)))
     (nreverse nodes)))

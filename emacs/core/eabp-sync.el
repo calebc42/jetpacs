@@ -563,6 +563,8 @@ with 0-based code-point offsets.  Unstyled stretches ship nothing."
   (ignore-errors (font-lock-ensure))
   (let ((eabp-buffer--default-fg-hex
          (eabp-buffer--color-hex (face-attribute 'default :foreground nil t)))
+        (eabp-buffer--default-bg-hex
+         (eabp-buffer--color-hex (face-attribute 'default :background nil t)))
         (pos (point-min))
         runs)
     (while (< pos (point-max))
@@ -572,6 +574,7 @@ with 0-based code-point offsets.  Unstyled stretches ship nothing."
           (push (append
                  `((b . ,(1- pos)) (e . ,(1- next)))
                  (when-let ((c (plist-get style :color))) `((c . ,c)))
+                 (when-let ((bg (plist-get style :bg))) `((bg . ,bg)))
                  (when (plist-get style :bold) '((bold . t)))
                  (when (plist-get style :italic) '((italic . t)))
                  (when (plist-get style :underline) '((underline . t)))

@@ -1,0 +1,160 @@
+# Building your own Tier 1
+
+The core (`eabp-core.el`) is deliberately unopinionated: it will render
+any buffer, palette any keymap, and bridge any prompt — but it has no
+idea what *your* workflow looks like. That layer is yours. Glasspane (the
+org app in `emacs/apps/glasspane/`) is one opinion; this guide is the map
+for writing another, at whatever size fits: a single buffer skin, a
+curated pie menu, or a full app with its own tabs.
+
+Everything below assumes `(require 'eabp-emacs-ui)` or the `eabp-core.el`
+bundle is loaded. Nothing here requires Glasspane.
+
+## The extension surfaces, smallest first
+
+### 1. A buffer skin — restyle one major mode
+
+Register a function that turns a buffer into a list of widget nodes, and
+every appearance of that mode (the Buffers tab, the Files view, a skin
+that opens it) uses your rendering instead of the generic one:
+
+```elisp
+(require 'eabp-buffer)
+(require 'eabp-widgets)
+
+(defun my/proced-cards (buffer)
+  (with-current-buffer buffer
+    (mapcar (lambda (line) (eabp-card (list (eabp-text line 'mono))))
+            (split-string (buffer-string) "\n" t))))
+
+(eabp-render-buffer-register 'proced-mode #'my/proced-cards)
+```
+
+Fall through is automatic: modes you don't register keep the faithful
+Tier 0 rendering, so a skin is pure polish, never a prerequisite.
+
+### 2. A tablist skin — specialize the table renderer
+
+Anything derived from `tabulated-list-mode` already renders as sortable
+cards. To specialize without replacing the walk, set entries in the three
+hook alists — header (filters, bulk actions), row (custom card), filter
+(which rows show). **The worked example is
+[`emacs/apps/eabp-package-browser.el`](../emacs/apps/eabp-package-browser.el)**:
+~230 lines that turn the stock package menu into a searchable browser
+with install/delete — read it top to bottom, it demonstrates every hook
+plus the action rules below.
+
+### 3. A curated pie menu
+
+The command palette is the Tier 0 default for raw keymaps; the radial pie
+is reserved for menus with human-written labels and ≤ ~10 items. Live
+transient sessions get a pie automatically (eabp-keymap syncs it); for a
+hand-curated pie over a mode, see
+[`emacs/apps/eabp-magit.el`](../emacs/apps/eabp-magit.el) — pure data
+plus key dispatch through the existing allowlisted action.
+
+### 4. Shell views — your own tabs
+
+The shell (`eabp-shell.el`) owns the phone's app scaffold: bottom-bar
+tabs, drawer, top bar, snackbar, pull-to-refresh, and the push that ships
+every view in one multi-view surface. An app is a set of registered
+views:
+
+```elisp
+(require 'eabp-shell)
+
+(defun my/bookmarks-body ()
+  (apply #'eabp-lazy-column
+         (mapcar (lambda (bm)
+                   (eabp-card (list (eabp-text (car bm) 'body))
+                              :on-tap (eabp-action "my.bookmark.jump"
+                                                   :args `((name . ,(car bm))))))
+                 bookmark-alist)))
+
+(eabp-shell-define-view "bookmarks"
+  :builder (lambda (snackbar)
+             (eabp-shell-tab-view "bookmarks" (my/bookmarks-body)
+                                  :snackbar snackbar))
+  :tab '(:icon "bookmark" :label "Marks")
+  :order 15)
+
+(eabp-defaction "my.bookmark.jump"
+  (lambda (args _)
+    (when-let ((bm (assoc (alist-get 'name args) bookmark-alist)))
+      (bookmark-jump (car bm)))
+    (eabp-shell-notify "Jumped")   ; snackbar on the next push
+    (eabp-shell-push)))            ; re-render everything (cheap: memoise!)
+```
+
+That's a complete Tier 1: load it next to `eabp-core.el` and the phone
+grows a Marks tab between Agenda-less core tabs. The pieces:
+
+- `eabp-shell-define-view NAME :builder FN` — FN gets the snackbar text
+  (or nil) and returns a scaffold view. Use `eabp-shell-tab-view` (tab
+  chrome: drawer, bottom bar, pull-to-refresh) or `eabp-shell-nav-view`
+  (back-arrow chrome) rather than hand-building scaffolds.
+- `:tab '(:icon I :label L)` puts it in the bottom bar; `:when PRED`
+  includes it only sometimes (an editor view while a file is open);
+  `:overlay PRED` makes it the active view while the predicate holds (a
+  detail drill-in) without being a tab.
+- `eabp-shell-add-drawer-item` / `eabp-shell-add-top-action` add global
+  chrome; `eabp-shell-default-fab-function` offers your app's signature
+  affordance on tab views (Glasspane uses it for Capture).
+- Hooks: `eabp-shell-view-switched-hook` (reset drill-in state),
+  `eabp-shell-refresh-hook` (drop your memo caches — pull-to-refresh and
+  queue drains run it), `eabp-shell-after-push-hook` (piggyback cheap,
+  memo-guarded sends: home-screen widgets, reminders).
+
+### 5. Per-file-type editor behaviour
+
+`eabp-files.el` owns the Files tab and the plain editor; your app teaches
+it about a file type without the core learning anything:
+
+- `eabp-files-editor-body-functions` — return a replacement body for FILE
+  (Glasspane returns its foldable org reader), or nil to keep the editor.
+- `eabp-files-editor-actions-functions` — add top-bar buttons for FILE.
+- `eabp-files-editor-toolbar-function` — name a keyboard toolbar the
+  companion should attach (`"org"` is the one the reference companion
+  ships).
+- `eabp-files-open-hook` / `eabp-files-after-save-hook` — set per-type
+  state on open; drop caches after a phone-side save.
+
+### 6. Settings
+
+Expose defcustoms to the phone with
+`(eabp-settings-register-section TITLE ENTRIES)`. The registry is a
+security boundary: only listed symbols can be set from the wire, values
+are validated against the `custom-type` schema, and persistence goes
+through Customize. Register cache-invalidation on
+`eabp-settings-after-set-hook`.
+
+## The rules that keep the wire safe
+
+Read [SPEC §5](SPEC.md#5-events-the-semantic-action-boundary) before
+defining actions. In short:
+
+1. **Actions are an allowlist.** `eabp-defaction` registers a name; the
+   handler validates its args and performs one specific operation. Never
+   write a handler that runs code, commands, or paths straight off the
+   wire.
+2. **Namespace your actions** (`my.bookmark.jump`, not `jump`). Core
+   namespaces are listed in the spec.
+3. **Choose queue policies deliberately.** `:when-offline "queue"` for
+   mutations (they replay), `"drop"` for navigation and refreshes,
+   `"wake"` for things worth starting Emacs over. Give repeated mutations
+   a `:dedupe` key.
+4. **Honor the cache contract.** If your views memoise, every mutation
+   path must invalidate — your own actions directly, plus a handler on
+   `eabp-shell-refresh-hook` for pull-to-refresh and queue replays.
+5. **Prompts are free.** Inside an action handler, plain `y-or-n-p`,
+   `read-string`, and `completing-read` are automatically bridged to
+   native dialogs on the phone. Write handlers as if the user were at the
+   keyboard.
+
+## Shipping it
+
+A Tier 1 is an ordinary Emacs package that requires the core features it
+uses. Users load `eabp-core.el` (or the individual `emacs/core/` files)
+plus your package. If you want a single-file artifact, mimic
+`emacs/build-bundle.el` — concatenation in dependency order is the whole
+trick.

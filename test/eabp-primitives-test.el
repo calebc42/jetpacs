@@ -28,6 +28,7 @@
 (require 'eabp-buffer)
 (require 'eabp-emacs-ui)
 (require 'eabp-keymap)
+(require 'eabp-transient)
 
 ;; ─── Bridge harness ──────────────────────────────────────────────────────────
 
@@ -417,6 +418,57 @@ A desktop commit (no recent action) must not pop a dialog on the phone."
                    (eabp-prim--span-text
                     (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
 
+;; Offscreen display specs (magit's "fringe" and "o" placeholders)
+(ert-deftest eabp-prim-buffer-fringe-placeholder-dropped ()
+  "An overlay before-string carrying a fringe display spec renders nothing.
+Magit's section indicators are (propertize \"fringe\" \\='display
+\\='(left-fringe BITMAP FACE)) — the literal text must never leak."
+  (with-temp-buffer
+    (insert "Untracked files (13)")
+    (overlay-put (make-overlay (point-min) (point-min))
+                 'before-string
+                 (propertize "fringe" 'display '(left-fringe right-triangle)))
+    (should (equal "Untracked files (13)"
+                   (eabp-prim--span-text
+                    (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
+
+(ert-deftest eabp-prim-buffer-margin-placeholder-dropped ()
+  "An overlay before-string with a margin display spec renders nothing.
+Magit's margin overlays are (propertize \"o\" \\='display
+\\='((margin right-margin) DATE)) anchored mid-line."
+  (with-temp-buffer
+    (insert "Recent commits")
+    ;; Anchored mid-word, as magit-make-margin-overlay does (at point).
+    (overlay-put (make-overlay 2 2)
+                 'before-string
+                 (propertize "o" 'display '((margin right-margin) "3 days")))
+    (should (equal "Recent commits"
+                   (eabp-prim--span-text
+                    (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
+
+(ert-deftest eabp-prim-buffer-margin-textprop-dropped ()
+  "A margin display spec as a TEXT property also drops its covered text."
+  (with-temp-buffer
+    (insert "xY")
+    (put-text-property 2 3 'display '((margin right-margin) "hidden"))
+    (should (equal "x"
+                   (eabp-prim--span-text
+                    (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
+
+(ert-deftest eabp-prim-buffer-folded-line-with-margin-overlay-dropped ()
+  "A fully-invisible line still disappears despite a margin placeholder.
+The collapsed magit commit lines must not render as lone \"o\" rows."
+  (with-temp-buffer
+    (insert "visible\nhidden line\n")
+    (put-text-property 9 21 'invisible t)     ; "hidden line" + newline
+    (overlay-put (make-overlay 9 9)
+                 'before-string
+                 (propertize "o" 'display '((margin right-margin) "date")))
+    (let ((nodes (eabp-buffer-render (current-buffer))))
+      ;; Only the "visible" line renders (plus possibly a trailing blank).
+      (should-not (string-match-p
+                   "o" (eabp-prim--span-text (eabp-prim--all-spans nodes)))))))
+
 ;; ─── P3: liveness ────────────────────────────────────────────────────────────
 
 ;; Task 14: live re-push for self-updating buffers
@@ -627,6 +679,56 @@ disabled items are excluded."
     (let* ((nodes (eabp-render-buffer (current-buffer)))
            (cards (cl-mapcan (lambda (n) (eabp-prim--find-all n "card")) nodes)))
       (should (>= (length cards) 2)))))
+
+;; ─── Transient layout reader (magit-commit dialog) ───────────────────────────
+;;
+;; `transient--layout' has two incompatible shapes across versions; the dialog
+;; renderer must handle both.  Regression for the magit-commit crash:
+;;   "Wrong type argument: listp, [2 nil ([transient-column ...])]".
+
+(defun eabp-prim--assert-transient-groups (layout)
+  "Put LAYOUT on a temp symbol and assert `eabp-transient--groups' parses it."
+  (let ((sym (make-symbol "eabp-prim-tsym")))
+    (put sym 'transient--layout layout)
+    (let ((groups (eabp-transient--groups sym)))
+      (should (assoc "Arguments" groups))
+      (should (assoc "Create" groups))
+      ;; The --all switch parses as an infix.
+      (should (cl-find "--all" (cdr (assoc "Arguments" groups))
+                       :key (lambda (k) (plist-get k :argument)) :test #'equal))
+      ;; The Commit suffix parses as a command.
+      (should (cl-find 'ignore (cdr (assoc "Create" groups))
+                       :key (lambda (k) (plist-get k :command)))))))
+
+(ert-deftest eabp-prim-transient-layout-new-format ()
+  "The newer single-root-vector layout (inline-plist leaves) parses.
+This is the exact shape from the on-device magit-commit crash, INCLUDING
+the bare \"\" separator children the layout interleaves — parsing those
+as leaves was the second crash (Wrong type argument: listp, \"\")."
+  (eabp-prim--assert-transient-groups
+   [2 nil ([transient-column (:description "Arguments")
+                             ((transient-switch :key "-a" :description "All"
+                                                :argument "--all" :command ignore))]
+           [transient-columns nil
+                              ([transient-column (:description "Create")
+                                                 ((transient-suffix :key "c"
+                                                                    :description "Commit"
+                                                                    :command ignore)
+                                                  ""      ; separator
+                                                  (transient-suffix :key "e"
+                                                                    :description "Extend"
+                                                                    :command ignore))])])]))
+
+(ert-deftest eabp-prim-transient-layout-old-format ()
+  "The 0.7.x list-of-groups layout (nested-plist leaves) still parses."
+  (eabp-prim--assert-transient-groups
+   '([1 transient-column (:description "Arguments")
+        ((1 transient-switch (:key "-a" :description "All"
+                                   :argument "--all" :command ignore)))]
+     [1 transient-columns nil
+        ([1 transient-column (:description "Create")
+            ((1 transient-suffix (:key "c" :description "Commit"
+                                       :command ignore)))])])))
 
 (provide 'eabp-primitives-test)
 ;;; eabp-primitives-test.el ends here

@@ -2295,6 +2295,20 @@ faithful (dired, tables, source) since the phone's tab stops differ."
           (setq c (1+ c))))
       (cons (apply #'concat (nreverse parts)) c))))
 
+(defun eabp-buffer--offscreen-display-p (disp)
+  "Non-nil when display spec DISP renders outside the text area.
+Fringe bitmaps (`(left-fringe …)' / `(right-fringe …)') and margin specs
+\(`((margin …) …)') show in the fringe/margin, never in the text flow —
+the text they cover is a placeholder (magit literally uses \"fringe\" and
+\"o\") that must not be rendered.  Also recognises a list of specs whose
+members include one."
+  (and (consp disp)
+       (or (memq (car-safe disp) '(left-fringe right-fringe))
+           (eq (car-safe (car-safe disp)) 'margin)
+           ;; A list of display specs: offscreen if any member is.
+           (and (consp (car-safe disp))
+                (cl-some #'eabp-buffer--offscreen-display-p disp)))))
+
 (defun eabp-buffer--space-width (disp col)
   "Columns a `(space …)' display spec DISP occupies starting at column COL.
 Handles `:width N' and `:align-to COL'; pixel/relative forms approximate
@@ -2312,21 +2326,29 @@ to a single space."
 (defun eabp-buffer--string-spans (str col)
   "Render a propertized STR (an overlay before/after-string) into spans.
 Returns (SPANS . END-COL); honors `face'/`font-lock-face', string `display'
-overrides, and TAB expansion so injected virtual text matches the buffer."
+overrides, and TAB expansion so injected virtual text matches the buffer.
+Runs covered by an offscreen display spec (fringe bitmaps, margin dates —
+magit's \"fringe\" and \"o\" placeholders) render nothing."
   (let ((i 0) (n (length str)) (c col) out)
     (while (< i n)
       (let* ((next (or (next-property-change i str) n))
              (disp (get-text-property i 'display str))
-             (raw (if (stringp disp) disp (substring-no-properties str i next)))
+             (raw (cond
+                   ((stringp disp) disp)
+                   ((eabp-buffer--offscreen-display-p disp) nil)
+                   ((and (consp disp) (eq (car disp) 'space))
+                    (make-string (eabp-buffer--space-width disp c) ?\s))
+                   (t (substring-no-properties str i next))))
              (face (or (get-text-property i 'face str)
                        (get-text-property i 'font-lock-face str)))
-             (style (eabp-buffer--span-style face))
-             (exp (eabp-buffer--expand-tabs raw c)))
-        (setq c (cdr exp))
-        (when (and (stringp (car exp)) (not (string-empty-p (car exp))))
-          (push (apply #'eabp-span (car exp)
-                       (append style (when eabp-buffer-monospace '(:mono t))))
-                out))
+             (style (eabp-buffer--span-style face)))
+        (when raw
+          (let ((exp (eabp-buffer--expand-tabs raw c)))
+            (setq c (cdr exp))
+            (unless (string-empty-p (car exp))
+              (push (apply #'eabp-span (car exp)
+                           (append style (when eabp-buffer-monospace '(:mono t))))
+                    out))))
         (setq i next)))
     (cons (nreverse out) c)))
 
@@ -2388,6 +2410,10 @@ at the start of each actionable property run."
                 (cond
                  ((stringp disp)
                   (setq text disp col (+ col (length disp))))
+                 ;; Fringe/margin display: the covered text is a placeholder
+                 ;; that never shows in the text flow — render nothing.
+                 ((eabp-buffer--offscreen-display-p disp)
+                  (setq text nil))
                  ((and (consp disp) (eq (car disp) 'space))
                   (let ((w (eabp-buffer--space-width disp col)))
                     (setq text (make-string w ?\s) col (+ col w))))
@@ -3321,48 +3347,104 @@ Only the common forms are handled; anything unrecognised is visible."
            (not (derived-mode-p (plist-get plist :if-not-mode))))
           (t t))))
 
+;; The `transient--layout' shape changed across transient versions, and the
+;; two shapes are NOT compatible:
+;;
+;;   0.7.x (Emacs 30 bundled): the property is a LIST of group vectors, each
+;;     [LEVEL CLASS PLIST CHILDREN] (4 slots); a suffix/infix leaf is a nested
+;;     list (LEVEL CLASS (:key … :command …)).
+;;   newer (what a MELPA/Android magit pulls): the property is a single ROOT
+;;     vector, groups are [CLASS PLIST CHILDREN] (3 slots), and a leaf inlines
+;;     its plist as (transient-CLASS :key … :command …).
+;;
+;; The helpers below normalise both: a group's plist is the last plist-shaped
+;; slot, its children the last list slot; a leaf's plist is found wherever the
+;; version put it.  (This is why magit-commit crashed — the old reader did
+;; `dolist' on the new root VECTOR and indexed slots that had moved.)
+
+(defun eabp-transient--vec-plist (g)
+  "The property plist of a group vector G (nil or a keyword-keyed list)."
+  (let ((n (length g)))
+    (when (> n 1)
+      (let ((cand (aref g (- n 2))))
+        (and (consp cand) (keywordp (car cand)) cand)))))
+
+(defun eabp-transient--vec-children (g)
+  "The child-node list of a group vector G (its last slot when a list)."
+  (let ((n (length g)))
+    (when (> n 0)
+      (let ((last (aref g (1- n))))
+        (and (listp last) last)))))
+
+(defun eabp-transient--leaf-plist (c)
+  "The property plist of a suffix/infix leaf node C, across versions.
+Handles a bare plist, the newer inline (transient-CLASS :k v …), and the
+older nested (LEVEL CLASS (:k v …)) / (LEVEL CLASS :k v …).  Non-cons
+children — the layout intersperses bare \"\" strings as visual
+separators — yield nil."
+  (and (consp c)
+       (cond
+        ((keywordp (car c)) c)
+        ((and (car c) (symbolp (car c))
+              (string-prefix-p "transient-" (symbol-name (car c))))
+         (cdr c))
+        ((integerp (car c))
+         (let ((rest (cddr c)))                   ; drop LEVEL + CLASS
+           (cond ((keywordp (car-safe rest)) rest) ; inline after level
+                 ((and (consp (car-safe rest))     ; nested (…)
+                       (keywordp (car-safe (car rest))))
+                  (car rest))
+                 (t nil))))
+        (t nil))))
+
 (defun eabp-transient--groups (prefix)
   "Flatten PREFIX's layout into (DESCRIPTION . CHILDREN) groups.
 Each child is a plist with :kind (`infix' or `suffix'), :description,
 :argument and :command.  Nested column containers are flattened; group
-and child visibility predicates are honoured where recognisable."
+and child visibility predicates are honoured where recognisable.  Robust
+to both the list-of-groups and single-root-vector layout shapes."
   (let (groups)
     (cl-labels
         ((walk-group (g inherited-desc)
-           (when (and (vectorp g) (>= (length g) 4))
-             (let* ((plist (aref g 2))
-                    (children (aref g 3))
+           (when (vectorp g)
+             (let* ((plist (eabp-transient--vec-plist g))
+                    (children (eabp-transient--vec-children g))
                     (desc (eabp-transient--desc plist inherited-desc)))
                (when (eabp-transient--visible-p plist)
                  (if (cl-some #'vectorp children)
-                     ;; A container of sub-groups (columns/rows): recurse.
+                     ;; A container of sub-groups (columns/rows) or the root:
+                     ;; recurse into each vector child.
                      (dolist (sub children)
-                       (walk-group sub desc))
+                       (when (vectorp sub) (walk-group sub desc)))
                    (let ((kids (delq nil (mapcar #'parse-child children))))
                      (when kids
                        (push (cons desc kids) groups))))))))
          (parse-child (c)
-           (when (and (consp c) (>= (length c) 3))
-             (let* ((plist (nth 2 c))
-                    (arg (plist-get plist :argument))
-                    (cmd (plist-get plist :command)))
-               (when (eabp-transient--visible-p plist)
-                 (cond
-                  ((stringp arg)
-                   (list :kind 'infix
-                         :argument arg
-                         :description (eabp-transient--desc plist arg)))
-                  ((commandp cmd)
-                   (list :kind 'suffix
-                         :command cmd
-                         :description
-                         (eabp-transient--desc
-                          plist
-                          (capitalize
-                           (replace-regexp-in-string
-                            "-" " " (symbol-name cmd))))))))))))
-      (dolist (g (get prefix 'transient--layout))
-        (walk-group g nil)))
+           (let ((plist (eabp-transient--leaf-plist c)))
+             (when plist
+               (let ((arg (plist-get plist :argument))
+                     (cmd (plist-get plist :command)))
+                 (when (eabp-transient--visible-p plist)
+                   (cond
+                    ((stringp arg)
+                     (list :kind 'infix
+                           :argument arg
+                           :description (eabp-transient--desc plist arg)))
+                    ((commandp cmd)
+                     (list :kind 'suffix
+                           :command cmd
+                           :description
+                           (eabp-transient--desc
+                            plist
+                            (capitalize
+                             (replace-regexp-in-string
+                              "-" " " (symbol-name cmd)))))))))))))
+      (let ((layout (get prefix 'transient--layout)))
+        (cond
+         ;; Newer: a single root container vector.
+         ((vectorp layout) (walk-group layout nil))
+         ;; Older: a list of top-level group vectors.
+         ((listp layout) (dolist (g layout) (walk-group g nil))))))
     (nreverse groups)))
 
 (defun eabp-transient--child (prefix key value)

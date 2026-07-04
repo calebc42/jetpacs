@@ -68,48 +68,104 @@ Only the common forms are handled; anything unrecognised is visible."
            (not (derived-mode-p (plist-get plist :if-not-mode))))
           (t t))))
 
+;; The `transient--layout' shape changed across transient versions, and the
+;; two shapes are NOT compatible:
+;;
+;;   0.7.x (Emacs 30 bundled): the property is a LIST of group vectors, each
+;;     [LEVEL CLASS PLIST CHILDREN] (4 slots); a suffix/infix leaf is a nested
+;;     list (LEVEL CLASS (:key … :command …)).
+;;   newer (what a MELPA/Android magit pulls): the property is a single ROOT
+;;     vector, groups are [CLASS PLIST CHILDREN] (3 slots), and a leaf inlines
+;;     its plist as (transient-CLASS :key … :command …).
+;;
+;; The helpers below normalise both: a group's plist is the last plist-shaped
+;; slot, its children the last list slot; a leaf's plist is found wherever the
+;; version put it.  (This is why magit-commit crashed — the old reader did
+;; `dolist' on the new root VECTOR and indexed slots that had moved.)
+
+(defun eabp-transient--vec-plist (g)
+  "The property plist of a group vector G (nil or a keyword-keyed list)."
+  (let ((n (length g)))
+    (when (> n 1)
+      (let ((cand (aref g (- n 2))))
+        (and (consp cand) (keywordp (car cand)) cand)))))
+
+(defun eabp-transient--vec-children (g)
+  "The child-node list of a group vector G (its last slot when a list)."
+  (let ((n (length g)))
+    (when (> n 0)
+      (let ((last (aref g (1- n))))
+        (and (listp last) last)))))
+
+(defun eabp-transient--leaf-plist (c)
+  "The property plist of a suffix/infix leaf node C, across versions.
+Handles a bare plist, the newer inline (transient-CLASS :k v …), and the
+older nested (LEVEL CLASS (:k v …)) / (LEVEL CLASS :k v …).  Non-cons
+children — the layout intersperses bare \"\" strings as visual
+separators — yield nil."
+  (and (consp c)
+       (cond
+        ((keywordp (car c)) c)
+        ((and (car c) (symbolp (car c))
+              (string-prefix-p "transient-" (symbol-name (car c))))
+         (cdr c))
+        ((integerp (car c))
+         (let ((rest (cddr c)))                   ; drop LEVEL + CLASS
+           (cond ((keywordp (car-safe rest)) rest) ; inline after level
+                 ((and (consp (car-safe rest))     ; nested (…)
+                       (keywordp (car-safe (car rest))))
+                  (car rest))
+                 (t nil))))
+        (t nil))))
+
 (defun eabp-transient--groups (prefix)
   "Flatten PREFIX's layout into (DESCRIPTION . CHILDREN) groups.
 Each child is a plist with :kind (`infix' or `suffix'), :description,
 :argument and :command.  Nested column containers are flattened; group
-and child visibility predicates are honoured where recognisable."
+and child visibility predicates are honoured where recognisable.  Robust
+to both the list-of-groups and single-root-vector layout shapes."
   (let (groups)
     (cl-labels
         ((walk-group (g inherited-desc)
-           (when (and (vectorp g) (>= (length g) 4))
-             (let* ((plist (aref g 2))
-                    (children (aref g 3))
+           (when (vectorp g)
+             (let* ((plist (eabp-transient--vec-plist g))
+                    (children (eabp-transient--vec-children g))
                     (desc (eabp-transient--desc plist inherited-desc)))
                (when (eabp-transient--visible-p plist)
                  (if (cl-some #'vectorp children)
-                     ;; A container of sub-groups (columns/rows): recurse.
+                     ;; A container of sub-groups (columns/rows) or the root:
+                     ;; recurse into each vector child.
                      (dolist (sub children)
-                       (walk-group sub desc))
+                       (when (vectorp sub) (walk-group sub desc)))
                    (let ((kids (delq nil (mapcar #'parse-child children))))
                      (when kids
                        (push (cons desc kids) groups))))))))
          (parse-child (c)
-           (when (and (consp c) (>= (length c) 3))
-             (let* ((plist (nth 2 c))
-                    (arg (plist-get plist :argument))
-                    (cmd (plist-get plist :command)))
-               (when (eabp-transient--visible-p plist)
-                 (cond
-                  ((stringp arg)
-                   (list :kind 'infix
-                         :argument arg
-                         :description (eabp-transient--desc plist arg)))
-                  ((commandp cmd)
-                   (list :kind 'suffix
-                         :command cmd
-                         :description
-                         (eabp-transient--desc
-                          plist
-                          (capitalize
-                           (replace-regexp-in-string
-                            "-" " " (symbol-name cmd))))))))))))
-      (dolist (g (get prefix 'transient--layout))
-        (walk-group g nil)))
+           (let ((plist (eabp-transient--leaf-plist c)))
+             (when plist
+               (let ((arg (plist-get plist :argument))
+                     (cmd (plist-get plist :command)))
+                 (when (eabp-transient--visible-p plist)
+                   (cond
+                    ((stringp arg)
+                     (list :kind 'infix
+                           :argument arg
+                           :description (eabp-transient--desc plist arg)))
+                    ((commandp cmd)
+                     (list :kind 'suffix
+                           :command cmd
+                           :description
+                           (eabp-transient--desc
+                            plist
+                            (capitalize
+                             (replace-regexp-in-string
+                              "-" " " (symbol-name cmd)))))))))))))
+      (let ((layout (get prefix 'transient--layout)))
+        (cond
+         ;; Newer: a single root container vector.
+         ((vectorp layout) (walk-group layout nil))
+         ;; Older: a list of top-level group vectors.
+         ((listp layout) (dolist (g layout) (walk-group g nil))))))
     (nreverse groups)))
 
 (defun eabp-transient--child (prefix key value)

@@ -57,6 +57,19 @@
                 android:value="Hosts a local loopback socket bridge so GNU Emacs (a separate on-device app) can post notifications and render widgets through this app. The service must persist to accept connections and respond to notification actions." />
         </service>
 
+        <!-- Quick Settings tile: one-tap org capture. exported + the bind
+             permission are both required for the system to host the tile. -->
+        <service
+            android:name=".CaptureTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_widget_add"
+            android:label="@string/tile_capture_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- Internal only: notification action PendingIntents target it directly. -->
         <receiver
             android:name=".ActionReceiver"

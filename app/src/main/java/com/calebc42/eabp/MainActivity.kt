@@ -100,11 +100,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Agenda-widget row tap → open the app AND dispatch the embedded action
-     * (`heading.tap` with the row's ref). Rebroadcast through ActionReceiver
-     * so it shares the live/queue pipeline; Emacs answers by pushing the
-     * detail view into the now-visible app. Offline, the tap queues and the
-     * app opens on the cached view.
+     * External-entry trampoline: agenda-widget row taps (`heading.tap`), the
+     * widget's + button and the QS tile (`org.capture.show`) open the app
+     * with an action embedded. Rebroadcast through ActionReceiver so it
+     * shares the live/queue pipeline; Emacs answers by pushing the target
+     * view or dialog into the now-visible app. Offline, the action queues
+     * and the app opens on the cached view.
      */
     private fun handleWidgetIntent(intent: Intent?) {
         val actionJson = intent?.getStringExtra(EXTRA_WIDGET_ACTION) ?: return

@@ -493,5 +493,90 @@ disabled items are excluded."
         (should (member "» alpha" texts))     ; affixation prefix prepended
         (should (member "[alpha]" texts))))))  ; suffix as caption
 
+;; ─── P5: gauntlet — pre-existing prompt bridges ──────────────────────────────
+;;
+;; The advices below predate this plan, but the gauntlet asserts every bridged
+;; primitive, so a regression in any of them fails a test rather than the app.
+
+(ert-deftest eabp-prim-y-or-n-p ()
+  "`y-or-n-p' returns t for yes and nil for no/cancel."
+  (eabp-prim--with-bridge (list t)
+    (should (eq t (y-or-n-p "OK? "))))
+  (eabp-prim--with-bridge (list :false)
+    (should (eq nil (y-or-n-p "OK? "))))
+  (eabp-prim--with-bridge (list 'cancelled)
+    (should (eq nil (y-or-n-p "OK? ")))))
+
+(ert-deftest eabp-prim-yes-or-no-p ()
+  "`yes-or-no-p' shares the y-or-n-p bridge."
+  (eabp-prim--with-bridge (list t)
+    (should (eq t (yes-or-no-p "Sure? ")))))
+
+(ert-deftest eabp-prim-read-from-minibuffer ()
+  "`read-from-minibuffer'/`read-string' return the typed value."
+  (eabp-prim--with-bridge (list "hello")
+    (should (equal "hello" (read-from-minibuffer "Name: "))))
+  (eabp-prim--with-bridge (list "hi")
+    (should (equal "hi" (read-string "S: ")))))
+
+(ert-deftest eabp-prim-read-char ()
+  "`read-char' returns the first character of the reply."
+  (eabp-prim--with-bridge (list "x")
+    (should (equal ?x (read-char "Ch: ")))))
+
+(ert-deftest eabp-prim-read-char-choice ()
+  "`read-char-choice' returns the chosen (valid) character."
+  (eabp-prim--with-bridge (list "y")
+    (should (equal ?y (read-char-choice "y/n: " '(?y ?n))))))
+
+(ert-deftest eabp-prim-read-multiple-choice ()
+  "`read-multiple-choice' returns the whole chosen entry."
+  (eabp-prim--with-bridge (list "y")
+    (should (equal '(?y "yes")
+                   (read-multiple-choice "Q " '((?y "yes") (?n "no")))))))
+
+(ert-deftest eabp-prim-completing-read-pick ()
+  "A tapped candidate is returned by `completing-read' (static collection)."
+  (eabp-prim--with-bridge (list "beta")
+    (should (equal "beta" (completing-read "Pick: " '("alpha" "beta" "gamma"))))))
+
+(ert-deftest eabp-prim-completing-read-dynamic-pick ()
+  "A dynamic (function) collection returns a valid tapped candidate."
+  (let ((coll (lambda (s p a) (complete-with-action a '("red" "green") s p))))
+    (eabp-prim--with-bridge (list "green")
+      (should (equal "green" (completing-read "Color: " coll))))))
+
+(ert-deftest eabp-prim-completing-read-multiple ()
+  "`completing-read-multiple' returns the selected strings."
+  (eabp-prim--with-bridge (list ["a" "b"])
+    (should (equal '("a" "b")
+                   (completing-read-multiple "Tags: " '("a" "b" "c"))))))
+
+;; ─── P5: gauntlet — render substrates ────────────────────────────────────────
+
+(ert-deftest eabp-prim-render-folded-outline ()
+  "A collapsed outline heading renders its ▸ expand affordance."
+  (with-temp-buffer
+    (insert "* Heading\nbody line\nmore body\n* Two\n")
+    (outline-mode)
+    (goto-char (point-min))
+    (outline-hide-subtree)
+    (let ((texts (eabp-prim--span-text
+                  (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))
+      (should (string-match-p "▸" texts)))))
+
+(ert-deftest eabp-prim-render-tabulated-list ()
+  "A tabulated-list buffer renders as sortable cards via the Tier 0.5 skin."
+  (require 'eabp-tablist)
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (setq tabulated-list-format [("Name" 10 t) ("Val" 6 nil)]
+          tabulated-list-entries '(("id1" ["foo" "1"]) ("id2" ["bar" "2"])))
+    (tabulated-list-init-header)
+    (tabulated-list-print)
+    (let* ((nodes (eabp-render-buffer (current-buffer)))
+           (cards (cl-mapcan (lambda (n) (eabp-prim--find-all n "card")) nodes)))
+      (should (>= (length cards) 2)))))
+
 (provide 'eabp-primitives-test)
 ;;; eabp-primitives-test.el ends here

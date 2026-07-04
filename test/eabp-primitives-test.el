@@ -103,6 +103,18 @@ sends are captured into `eabp-prim--sent'."
     (should (= 42 (eabp--map-y-or-n-p-advice
                    (lambda (&rest _) 42) "P %s?" #'identity '(a))))))
 
+(ert-deftest eabp-prim-map-y-or-n-p-prompter-contract ()
+  "A function PROMPTER's non-string truthy return acts silently; nil skips.
+Matches subr.el: only a STRING return actually asks."
+  (let (acted)
+    (eabp-prim--with-bridge nil        ; no replies: nothing may ask
+      (should (= 2 (map-y-or-n-p
+                    (lambda (x) (if (eq x 'skip-me) nil 'act)) ; truthy ≠ t
+                    (lambda (x) (push x acted))
+                    '(a skip-me b))))
+      (should-not eabp-prim--sent))    ; no dialog was ever sent
+    (should (equal acted '(b a)))))
+
 ;; ─── Task 2: raw event readers ───────────────────────────────────────────────
 
 (ert-deftest eabp-prim-read-event-bridges ()
@@ -174,6 +186,44 @@ sends are captured into `eabp-prim--sent'."
     (let ((r (eabp-witheditor--message-region)))
       (should (= (cdr r) (point-max))))
     (should (equal (eabp-witheditor--current-message) "just a message"))))
+
+(ert-deftest eabp-prim-witheditor-phone-initiated-gate ()
+  "The bridge fires only for sessions started near a phone action.
+A desktop commit (no recent action) must not pop a dialog on the phone."
+  (let (presented (eabp-witheditor--active nil))
+    (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+              ((symbol-function 'eabp-witheditor--present)
+               (lambda (buf) (setq presented buf))))
+      ;; Desktop-initiated: last action long ago → no bridge.
+      (with-temp-buffer
+        (set (make-local-variable 'with-editor-mode) t)
+        (let ((eabp--in-action-handler nil)
+              (eabp--last-action-time 0))
+          (eabp-witheditor--maybe-bridge))
+        (should-not presented))
+      ;; Phone-initiated: a fresh action → bridge, exactly once.
+      (with-temp-buffer
+        (set (make-local-variable 'with-editor-mode) t)
+        (let ((eabp--in-action-handler nil)
+              (eabp--last-action-time (float-time)))
+          (eabp-witheditor--maybe-bridge)
+          (should (eq presented (current-buffer)))
+          (setq presented nil)
+          (eabp-witheditor--maybe-bridge)   ; double-fire guard
+          (should-not presented))))))
+
+(ert-deftest eabp-prim-witheditor-session-ended-dismisses ()
+  "An externally finished session dismisses the dialog once, then no-ops."
+  (let ((dismissals 0)
+        (eabp-witheditor--active "COMMIT_EDITMSG"))
+    (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+              ((symbol-function 'eabp-dismiss-dialog)
+               (lambda () (setq dismissals (1+ dismissals)))))
+      (eabp-witheditor--session-ended)
+      (should (= dismissals 1))
+      (should-not eabp-witheditor--active)
+      (eabp-witheditor--session-ended)     ; already cleared → no-op
+      (should (= dismissals 1)))))
 
 ;; ─── Node-tree search (for inspecting captured dialog specs) ─────────────────
 

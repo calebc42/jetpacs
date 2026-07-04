@@ -1015,6 +1015,12 @@ BODY is a list of UI-tree nodes."
 (defvar eabp-action-handlers (make-hash-table :test 'equal)
   "Map of action name (string) -> function called with (ARGS PAYLOAD).")
 
+(defvar eabp--last-action-time 0
+  "`float-time' of the most recent dispatched action.
+Lets async continuations of a phone-initiated flow (e.g. git calling back
+into Emacs for a commit message after `magit-commit' already returned)
+distinguish themselves from desktop-initiated activity.")
+
 (defun eabp-defaction (name fn)
   "Register FN as the handler for action NAME."
   (puthash name fn eabp-action-handlers))
@@ -1033,19 +1039,21 @@ command runs instead of raw-reading a confirmation char (another hang)."
          (args   (alist-get 'args payload))
          (fn     (gethash action eabp-action-handlers)))
     (if fn
-        (let ((eabp--in-action-handler t)
-              (completing-read-function #'completing-read-default)
-              (read-file-name-function #'read-file-name-default)
-              (read-buffer-function nil)
-              (disabled-command-function nil))
-          (condition-case err
-              (funcall fn args payload)
-            ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
-            ;; which `error' does not catch — treat it as a clean abort
-            ;; rather than letting it unwind through the process filter.
-            (quit (message "EABP action %s cancelled" action))
-            (error (message "EABP action %s failed: %s"
-                            action (error-message-string err)))))
+        (progn
+          (setq eabp--last-action-time (float-time))
+          (let ((eabp--in-action-handler t)
+                (completing-read-function #'completing-read-default)
+                (read-file-name-function #'read-file-name-default)
+                (read-buffer-function nil)
+                (disabled-command-function nil))
+            (condition-case err
+                (funcall fn args payload)
+              ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
+              ;; which `error' does not catch — treat it as a clean abort
+              ;; rather than letting it unwind through the process filter.
+              (quit (message "EABP action %s cancelled" action))
+              (error (message "EABP action %s failed: %s"
+                              action (error-message-string err))))))
       (message "EABP: no handler for action %s" action))))
 
 (eabp-register-handler "event.action" #'eabp--on-action)
@@ -1330,8 +1338,10 @@ or nil (skip silently)."
                        ((stringp prompter) (format prompter obj))
                        (t (format "%s? " obj)))))
           (cond
-           ;; PROMPTER may resolve to "act, don't ask" (t) or "skip" (nil).
-           ((eq p t) (funcall actor obj) (setq count (1+ count)))
+           ;; PROMPTER contract (subr.el): a string asks; any other non-nil
+           ;; value acts without asking; nil skips without asking.
+           ((and p (not (stringp p)))
+            (funcall actor obj) (setq count (1+ count)))
            ((null p) nil)
            ;; A prior "Yes to all" acts on every remaining object silently.
            (all (funcall actor obj) (setq count (1+ count)))
@@ -6040,10 +6050,25 @@ state (the same pattern as the capture form)."
 (require 'eabp-surfaces)
 (require 'eabp-shell)
 
+(defcustom eabp-witheditor-action-window 30
+  "Seconds after a phone action within which a with-editor buffer bridges.
+The git editor callback lands asynchronously AFTER the action handler that
+started the commit has returned, so the bridge can't test
+`eabp--in-action-handler' — instead it treats an editor buffer appearing
+this soon after a dispatched action as phone-initiated.  Outside the
+window (a commit made at the desktop while the phone happens to be
+connected) nothing is pushed to the phone."
+  :type 'integer :group 'eabp)
+
 (defvar-local eabp-witheditor--bridged nil
   "Non-nil once this buffer's with-editor session has been bridged.
 Guards against the enable/disable double-fire of `with-editor-mode-hook'
 and the overlap with `git-commit-setup-hook' (both fire for a commit).")
+
+(defvar eabp-witheditor--active nil
+  "Buffer name of the with-editor session currently shown as a dialog, or nil.
+Lets the post-finish/cancel hooks dismiss the phone dialog when the
+session ends from the desktop side (or any path that isn't our actions).")
 
 ;; ─── Message region ──────────────────────────────────────────────────────────
 
@@ -6076,14 +6101,20 @@ message; those comment lines are excluded so editing can't clobber them."
   (with-current-buffer buf
     (let* ((name (buffer-name buf))
            (eid (eabp-witheditor--state-id name))
-           (content (eabp-witheditor--current-message)))
+           (content (eabp-witheditor--current-message))
+           ;; Rebase todos and other non-commit editor buffers get their
+           ;; buffer name; only a real commit gets the friendly title.
+           (title (if (bound-and-true-p git-commit-mode)
+                      "Commit message"
+                    name)))
       ;; Seed UI state so the Commit button reads the initial text even if
       ;; the user finishes without editing (publish-state only emits on
       ;; change — same pattern as the eval REPL / capture form).
       (eabp-ui-state-put eid content)
+      (setq eabp-witheditor--active name)
       (eabp-send-dialog
        (eabp-column
-        (eabp-text "Commit message" 'title)
+        (eabp-text title 'title)
         (eabp-editor eid content
                      :chromeless t
                      :publish-state t)
@@ -6096,15 +6127,38 @@ message; those comment lines are excluded so editing can't clobber them."
                       (eabp-action "witheditor.finish"
                                    :args `((buffer . ,name))))))))))
 
+(defvar eabp--last-action-time)     ; eabp-surfaces.el
+(defvar eabp--in-action-handler)    ; eabp-minibuffer.el
+
+(defun eabp-witheditor--phone-initiated-p ()
+  "Non-nil when the current editor buffer plausibly stems from a phone action.
+True inside an action handler, or within `eabp-witheditor-action-window'
+seconds of one (the git callback lands after the handler returned)."
+  (or eabp--in-action-handler
+      (< (- (float-time) eabp--last-action-time)
+         eabp-witheditor-action-window)))
+
 (defun eabp-witheditor--maybe-bridge ()
   "Bridge the current with-editor buffer to the phone, once, when connected.
-Runs from `git-commit-setup-hook' / `with-editor-mode-hook'; a no-op at
-the keyboard (nothing connected) so desktop magit is unaffected."
+Runs from `git-commit-setup-hook' / `with-editor-mode-hook'.  Bridges only
+flows the phone plausibly started (see `eabp-witheditor--phone-initiated-p')
+— a commit made at the desktop while the phone is connected must NOT pop
+an uninvited dialog on it."
   (when (and (bound-and-true-p with-editor-mode)
              (eabp-connected-p)
+             (eabp-witheditor--phone-initiated-p)
              (not eabp-witheditor--bridged))
     (setq eabp-witheditor--bridged t)
     (eabp-witheditor--present (current-buffer))))
+
+(defun eabp-witheditor--session-ended ()
+  "Dismiss the phone dialog when a bridged session ends outside our actions.
+On `with-editor-post-finish/cancel-hook': the user may have finished the
+commit at the desktop (C-c C-c there) while the phone dialog was up."
+  (when eabp-witheditor--active
+    (setq eabp-witheditor--active nil)
+    (when (eabp-connected-p)
+      (eabp-dismiss-dialog))))
 
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 
@@ -6133,6 +6187,9 @@ this is the validation the command-dispatch boundary requires."
             (goto-char (point-min))
             (insert (if (stringp value) value "") "\n"))
           (eabp-ui-state-clear (eabp-witheditor--state-id name))
+          ;; Clear BEFORE finishing: the post-finish hook must not
+          ;; double-dismiss (it would race a dialog a later flow opened).
+          (setq eabp-witheditor--active nil)
           (when (fboundp 'with-editor-finish)
             (with-editor-finish nil)))
         (eabp-dismiss-dialog)
@@ -6145,6 +6202,7 @@ this is the validation the command-dispatch boundary requires."
       (when buf
         (with-current-buffer buf
           (eabp-ui-state-clear (eabp-witheditor--state-id name))
+          (setq eabp-witheditor--active nil)
           (when (fboundp 'with-editor-cancel)
             (with-editor-cancel nil)))
         (eabp-dismiss-dialog)
@@ -6153,7 +6211,10 @@ this is the validation the command-dispatch boundary requires."
 ;; ─── Hooks (installed only once with-editor/git-commit are present) ───────────
 
 (with-eval-after-load 'with-editor
-  (add-hook 'with-editor-mode-hook #'eabp-witheditor--maybe-bridge))
+  (add-hook 'with-editor-mode-hook #'eabp-witheditor--maybe-bridge)
+  ;; Dismiss our dialog when the session ends from the desktop side.
+  (add-hook 'with-editor-post-finish-hook #'eabp-witheditor--session-ended)
+  (add-hook 'with-editor-post-cancel-hook #'eabp-witheditor--session-ended))
 
 (with-eval-after-load 'git-commit
   (add-hook 'git-commit-setup-hook #'eabp-witheditor--maybe-bridge))

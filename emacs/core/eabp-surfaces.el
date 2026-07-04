@@ -109,6 +109,12 @@ BODY is a list of UI-tree nodes."
 (defvar eabp-action-handlers (make-hash-table :test 'equal)
   "Map of action name (string) -> function called with (ARGS PAYLOAD).")
 
+(defvar eabp--last-action-time 0
+  "`float-time' of the most recent dispatched action.
+Lets async continuations of a phone-initiated flow (e.g. git calling back
+into Emacs for a commit message after `magit-commit' already returned)
+distinguish themselves from desktop-initiated activity.")
+
 (defun eabp-defaction (name fn)
   "Register FN as the handler for action NAME."
   (puthash name fn eabp-action-handlers))
@@ -127,19 +133,21 @@ command runs instead of raw-reading a confirmation char (another hang)."
          (args   (alist-get 'args payload))
          (fn     (gethash action eabp-action-handlers)))
     (if fn
-        (let ((eabp--in-action-handler t)
-              (completing-read-function #'completing-read-default)
-              (read-file-name-function #'read-file-name-default)
-              (read-buffer-function nil)
-              (disabled-command-function nil))
-          (condition-case err
-              (funcall fn args payload)
-            ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
-            ;; which `error' does not catch — treat it as a clean abort
-            ;; rather than letting it unwind through the process filter.
-            (quit (message "EABP action %s cancelled" action))
-            (error (message "EABP action %s failed: %s"
-                            action (error-message-string err)))))
+        (progn
+          (setq eabp--last-action-time (float-time))
+          (let ((eabp--in-action-handler t)
+                (completing-read-function #'completing-read-default)
+                (read-file-name-function #'read-file-name-default)
+                (read-buffer-function nil)
+                (disabled-command-function nil))
+            (condition-case err
+                (funcall fn args payload)
+              ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
+              ;; which `error' does not catch — treat it as a clean abort
+              ;; rather than letting it unwind through the process filter.
+              (quit (message "EABP action %s cancelled" action))
+              (error (message "EABP action %s failed: %s"
+                              action (error-message-string err))))))
       (message "EABP: no handler for action %s" action))))
 
 (eabp-register-handler "event.action" #'eabp--on-action)

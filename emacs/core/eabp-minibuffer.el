@@ -215,8 +215,10 @@ or nil (skip silently)."
                        ((stringp prompter) (format prompter obj))
                        (t (format "%s? " obj)))))
           (cond
-           ;; PROMPTER may resolve to "act, don't ask" (t) or "skip" (nil).
-           ((eq p t) (funcall actor obj) (setq count (1+ count)))
+           ;; PROMPTER contract (subr.el): a string asks; any other non-nil
+           ;; value acts without asking; nil skips without asking.
+           ((and p (not (stringp p)))
+            (funcall actor obj) (setq count (1+ count)))
            ((null p) nil)
            ;; A prior "Yes to all" acts on every remaining object silently.
            (all (funcall actor obj) (setq count (1+ count)))

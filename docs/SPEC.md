@@ -133,7 +133,7 @@ Actions are dot-namespaced `noun.verb` (`heading.todo-set`,
 registers the handler; the core reserves `eabp.*`, `nav.*`, `view.*`,
 `dialog.*`, `edit.*`, `tablist.*`, `settings.*`, `prompt.*`,
 `dashboard.*`, `files.*`, `emacs.*`, `packages.*`, `transient.*`,
-`share.*`, `demo.*`.
+`share.*`, `demo.*`, `witheditor.*`.
 
 - `when_offline` is the queue policy the *spec author* chose for the
   control: `"queue"` (default — persist and replay), `"drop"` (meaningless
@@ -176,10 +176,21 @@ mutated state the cached views no longer reflect).
 | `reminders.set`                   | → comp.   | `{reminders: [{title, body, at_ms, ...}]}` — the set **replaces** the previous one, so cancelled items never fire stale | optional |
 
 The minibuffer bridge rides on dialogs: when a client action handler hits
-a prompting call (`y-or-n-p`, `completing-read`, …) it sends the prompt
-as a dialog and blocks for the answering `prompt.reply` /
-`prompt.dismiss` action, exactly as the original function would block for
-keyboard input.
+a prompting call (`y-or-n-p`, `completing-read`, `read-passwd`,
+`map-y-or-n-p`, raw event reads, …) it sends the prompt as a dialog and
+blocks for the answering `prompt.reply` / `prompt.dismiss` action,
+exactly as the original function would block for keyboard input.
+
+Editor-callback sessions (with-editor: commit messages, rebase todos)
+ride on dialogs too, but asynchronously — the buffer appears after the
+originating action handler has returned, so the client pushes an editor
+dialog and later receives `witheditor.finish {buffer}` (splices the
+edited message, runs `with-editor-finish`) or `witheditor.cancel
+{buffer}`.  Both handlers validate that `buffer` names a live
+with-editor session before acting — never arbitrary dispatch — and the
+client should only bridge sessions plausibly initiated from the
+companion (e.g. shortly after a dispatched action), so a desktop commit
+never pops a dialog on the phone.
 
 ## 8. Editor sync sub-protocol (optional)
 
@@ -220,15 +231,18 @@ The normative, machine-checked reference for every node's wire shape is
 constructor, kept honest by the ERT suite. Summary by family:
 
 - **Content**: `text` (style/color/syntax/selectable), `rich_text` +
-  styled `spans`, `icon`, `image`, `date_stamp`, `divider`,
-  `section_header`, `empty_state`, `progress`.
+  styled `spans` (emphasis, `color`/`bg` hex overrides, `mono`, tap
+  links), `icon`, `image`, `date_stamp`, `divider`, `section_header`,
+  `empty_state`, `progress`.
 - **Layout**: `row`, `column`, `flow_row`, `lazy_column`, `box` (weight /
   alignment / tap), `surface` (tonal container), `card`, `spacer`,
   `collapsible` (folds on-device), `reorderable_list` (drag to reorder,
   reports via `on_reorder`).
 - **Input**: `button`, `icon_button`, `chip`, `assist_chip`, `menu`,
-  `checkbox`, `switch`, `text_input`, `enum_list` (single/multi select,
-  optional free-add), `date_button` / `time_button` (native pickers),
+  `checkbox`, `switch`, `text_input` (optional `password` masks entry and
+  requests a password keyboard; such values must not be logged or
+  retained), `enum_list` (single/multi select, optional free-add),
+  `date_button` / `time_button` (native pickers),
   `editor` (full editor: save/undo header, optional `syntax`, gutter
   `line_numbers`, `complete` for the completion strip, `chromeless`,
   `publish_state`, and a server-chosen `toolbar` — `"org"` today).

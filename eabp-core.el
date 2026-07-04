@@ -1529,6 +1529,80 @@ marginalia-style captions survive the bridge."
             (let ((s (string-trim (substring-no-properties a))))
               (unless (string-empty-p s) s))))))))
 
+(defun eabp-minibuffer--clean (s)
+  "Trim S to a plain display string, or \"\" when nil/blank.
+For suffixes, which are shown as a separate caption."
+  (if (stringp s) (string-trim (substring-no-properties s)) ""))
+
+(defun eabp-minibuffer--strip (s)
+  "S without text properties, or \"\" when not a string.
+For affixation PREFIXES, which are concatenated onto the candidate — their
+separator whitespace is intentional and must survive (unlike suffixes)."
+  (if (stringp s) (substring-no-properties s) ""))
+
+(defun eabp-minibuffer--group-fn (collection predicate)
+  "COLLECTION's `group-function' from completion metadata, or nil."
+  (let ((md (ignore-errors (completion-metadata "" collection predicate))))
+    (and md (completion-metadata-get md 'group-function))))
+
+(defun eabp-minibuffer--decorations (collection predicate shown)
+  "A hash CAND→(PREFIX . SUFFIX) decorating SHOWN, or nil when undecorated.
+Prefers `affixation-function' (M-x key hints, marginalia's aligned columns),
+which is computed once over the whole SHOWN batch; falls back to
+`annotation-function' for a suffix only."
+  (let* ((md (ignore-errors (completion-metadata "" collection predicate)))
+         (aff (or (and md (completion-metadata-get md 'affixation-function))
+                  (plist-get completion-extra-properties :affixation-function)))
+         (ann (or (and md (completion-metadata-get md 'annotation-function))
+                  (plist-get completion-extra-properties :annotation-function)))
+         (table (make-hash-table :test 'equal)))
+    (cond
+     (aff
+      (dolist (tr (ignore-errors (funcall aff (copy-sequence shown))))
+        ;; Each TR is (CANDIDATE PREFIX SUFFIX): PREFIX is concatenated onto
+        ;; the label (keep its spacing), SUFFIX becomes a trimmed caption.
+        (when (consp tr)
+          (puthash (nth 0 tr)
+                   (cons (eabp-minibuffer--strip (nth 1 tr))
+                         (eabp-minibuffer--clean (nth 2 tr)))
+                   table)))
+      table)
+     (ann
+      (dolist (c shown)
+        (let ((s (ignore-errors (funcall ann c))))
+          (when (stringp s)
+            (puthash c (cons "" (eabp-minibuffer--clean s)) table))))
+      table)
+     (t nil))))
+
+(defun eabp-minibuffer--picker-cards (shown id value-prefix decor group-fn)
+  "Candidate card nodes for SHOWN, with affixation and group-header nodes.
+ID is the prompt id; VALUE-PREFIX is prepended to the reply value.  DECOR is
+a hash CAND→(PREFIX . SUFFIX) or nil; GROUP-FN, when non-nil, groups the
+candidates with `eabp-section-header' dividers whenever its title changes."
+  (let (nodes (last-group nil))
+    (dolist (c shown)
+      (when group-fn
+        (let ((g (ignore-errors (funcall group-fn c nil))))
+          (when (and (stringp g) (not (equal g last-group)))
+            (setq last-group g)
+            (push (eabp-section-header g) nodes))))
+      (let* ((pair (and decor (gethash c decor)))
+             (pre (and pair (car pair)))
+             (suf (and pair (cdr pair)))
+             (label (if (and pre (not (string-empty-p pre))) (concat pre c) c)))
+        (push (eabp-card
+               (list (if (and suf (not (string-empty-p suf)))
+                         (eabp-row
+                          (eabp-box (list (eabp-text label 'body)) :weight 1)
+                          (eabp-text suf 'caption))
+                       (eabp-text label 'body)))
+               :on-tap (eabp-action "prompt.reply"
+                                    :args `((prompt_id . ,id)
+                                            (value . ,(concat value-prefix c)))))
+              nodes)))
+    (nreverse nodes)))
+
 (defun eabp--completing-read-advice (orig-fn prompt collection &rest args)
   "Around advice for `completing-read': a live-filtering picker over the bridge.
 As the user types in the filter field, the candidate list re-filters and
@@ -1555,7 +1629,7 @@ the query each keystroke, so typing a path navigates directories."
                          (ignore-errors
                            (sort (all-completions "" collection predicate)
                                  #'string<))))
-           (annotate (eabp-minibuffer--annotator collection predicate))
+           (group-fn (eabp-minibuffer--group-fn collection predicate))
            ;; (PREFIX . MATCHES) for QUERY.  PREFIX is the completion-
            ;; boundaries head (e.g. the directory part of a file name) that
            ;; rebuilds a full value from a returned candidate.
@@ -1582,21 +1656,13 @@ the query each keystroke, so typing a path navigates directories."
                      (shown (if (> total max-display)
                                 (cl-subseq matches 0 max-display)
                               matches))
-                     (cards (mapcar
-                             (lambda (c)
-                               (let ((a (and annotate (funcall annotate c))))
-                                 (eabp-card
-                                  (list (if a
-                                            (eabp-row
-                                             (eabp-box (list (eabp-text c 'body))
-                                                       :weight 1)
-                                             (eabp-text a 'caption))
-                                          (eabp-text c 'body)))
-                                  :on-tap (eabp-action
-                                           "prompt.reply"
-                                           :args `((prompt_id . ,id)
-                                                   (value . ,(concat prefix c)))))))
-                             shown)))
+                     ;; Decorations (affixation/annotation) are computed once
+                     ;; over the shown batch; group headers come from the
+                     ;; collection's group-function.
+                     (decor (eabp-minibuffer--decorations
+                             collection predicate shown))
+                     (cards (eabp-minibuffer--picker-cards
+                             shown id prefix decor group-fn)))
                 ;; A lazy (scrollable) column: long candidate lists scroll
                 ;; instead of pushing everything below off-screen.  Cancel
                 ;; sits in the header row so it is reachable regardless of
@@ -3894,23 +3960,134 @@ default command palette; the first matching entry wins.")
                 (and (derived-mode-p (car cell)) (cdr cell)))
               eabp-keymap-tier1-menus)))
 
+;; ─── Menu-bar mining ────────────────────────────────────────────────────────
+;;
+;; A mode's menu-bar keymap is the ONE place its author writes human labels and
+;; :help strings — exactly the curated metadata a raw keymap dump lacks.  We
+;; mine the local and minor-mode menus (not the generic global File/Edit menu)
+;; into palette entries: breadcrumb-labeled, help-annotated, dispatched by
+;; command symbol.  Same class of curated, mode-owned command the palette
+;; already runs, so this stays inside the command-dispatch boundary.
+
+(defcustom eabp-keymap-menu-max-items 150
+  "Cap on menu-derived palette entries mined from a buffer's menus."
+  :type 'integer :group 'eabp)
+
+(defun eabp-keymap--menu-pred (props key)
+  "Non-nil when PROPS' KEY predicate (`:enable'/`:visible') passes or is absent.
+A predicate that signals is treated as passing — better to offer a command
+that turns out disabled than to hide one on a spurious error."
+  (let ((m (plist-member props key)))
+    (or (not m)
+        (condition-case nil (eval (plist-get props key) t) (error t)))))
+
+(defun eabp-keymap--menu-item-parse (binding)
+  "Parse a menu keymap BINDING into (LABEL REAL HELP), or nil.
+Handles the `menu-item' form and the older (STRING . REAL) /
+\(STRING HELP . REAL) forms; applies `:filter' and drops items whose
+`:enable'/`:visible' predicate is nil, and separators."
+  (cond
+   ((and (consp binding) (eq (car binding) 'menu-item))
+    (let* ((label (nth 1 binding))
+           (real (nth 2 binding))
+           (props (nthcdr 3 binding))
+           (filter (plist-get props :filter)))
+      (when (functionp filter)
+        (setq real (ignore-errors (funcall filter real))))
+      (when (and (stringp label)
+                 (not (string-prefix-p "--" label)) ; separator
+                 (eabp-keymap--menu-pred props :enable)
+                 (eabp-keymap--menu-pred props :visible))
+        (list label real (plist-get props :help)))))
+   ((and (consp binding) (stringp (car binding)))
+    (let ((label (car binding))
+          (rest (cdr binding)))
+      (unless (string-prefix-p "--" label)
+        (if (and (consp rest) (stringp (car rest)))
+            (list label (cdr rest) (car rest))   ; (STRING HELP . REAL)
+          (list label rest nil)))))              ; (STRING . REAL)
+   (t nil)))
+
+(defun eabp-keymap--menu-entries (keymap)
+  "Flatten menu-bar KEYMAP into (LABEL-PATH HELP COMMAND) leaves.
+Submenus recurse with a breadcrumb label path (\"File ▸ Save As…\");
+disabled/invisible items, separators, and non-command leaves are dropped."
+  (let (out)
+    (cl-labels
+        ((walk (km crumb depth)
+           (when (and (keymapp km) (< depth 5)
+                      (< (length out) eabp-keymap-menu-max-items))
+             (map-keymap
+              (lambda (_event binding)
+                (when (< (length out) eabp-keymap-menu-max-items)
+                  (when-let ((parsed (eabp-keymap--menu-item-parse binding)))
+                    (let* ((label (nth 0 parsed))
+                           (real (nth 1 parsed))
+                           (help (nth 2 parsed))
+                           (path (if crumb (concat crumb " ▸ " label) label)))
+                      (cond
+                       ((keymapp real) (walk real path (1+ depth)))
+                       ((commandp real) (push (list path help real) out)))))))
+              km))))
+      (walk keymap nil 0))
+    (nreverse out)))
+
+(defun eabp-keymap--menu-maps (buf)
+  "Menu-bar keymaps to mine for BUF: minor-mode and local (plus global when
+`eabp-keymap-show-global').  The global menu is skipped by default — its
+File/Edit/… entries are generic noise next to the mode's own menu."
+  (with-current-buffer buf
+    (let (maps)
+      (dolist (km (current-minor-mode-maps))
+        (let ((menu (and (keymapp km) (lookup-key km [menu-bar]))))
+          (when (keymapp menu) (push menu maps))))
+      (when-let* ((lm (current-local-map))
+                  (menu (lookup-key lm [menu-bar])))
+        (when (keymapp menu) (push menu maps)))
+      (when eabp-keymap-show-global
+        (let ((menu (lookup-key (current-global-map) [menu-bar])))
+          (when (keymapp menu) (push menu maps))))
+      (nreverse maps))))
+
+(defun eabp-keymap--menu-candidates (buf)
+  "Palette candidates mined from BUF's menu-bar keymaps.
+Returns an alist of (DISPLAY . (command . SYMBOL)), deduped by command."
+  (let (result (seen (make-hash-table :test 'eq)))
+    (dolist (menu (eabp-keymap--menu-maps buf))
+      (dolist (entry (eabp-keymap--menu-entries menu))
+        (let* ((path (nth 0 entry))
+               (help (nth 1 entry))
+               (cmd (nth 2 entry))
+               (display (if (and (stringp help) (not (string-empty-p help)))
+                            (format "%s — %s" path (car (split-string help "\n" t)))
+                          path)))
+          (unless (or (gethash cmd seen) (memq cmd eabp-keymap-denylist))
+            (puthash cmd t seen)
+            (push (cons display (cons 'command cmd)) result)))))
+    (nreverse result)))
+
 ;; ─── Command palette (Tier 0 default) ──────────────────────────────────────
 
 (defun eabp-keymap--palette-candidates (buf)
-  "Return an alist of (DISPLAY . KEY-DESC) for BUF's extracted bindings."
+  "Alist of (DISPLAY . TARGET) for BUF's key bindings and menu items.
+TARGET is (key . KEY-DESC) for a keybinding or (command . SYMBOL) for a
+menu-derived entry.  Keybindings come first (they carry the shortcut), then
+the human-labeled menu entries."
   (with-current-buffer buf
-    (mapcar (lambda (b)
-              (pcase-let ((`(,key ,cmd ,_source) b))
-                (cons (format "%s  ·  %s" key (eabp-keymap--command-label cmd))
-                      key)))
-            (eabp-keymap--extract-bindings buf))))
+    (append
+     (mapcar (lambda (b)
+               (pcase-let ((`(,key ,cmd ,_source) b))
+                 (cons (format "%s  ·  %s" key (eabp-keymap--command-label cmd))
+                       (cons 'key key))))
+             (eabp-keymap--extract-bindings buf))
+     (eabp-keymap--menu-candidates buf))))
 
 (defun eabp-keymap--show-palette (buf)
-  "Show a searchable command palette for BUF's keybindings.
+  "Show a searchable command palette for BUF's keybindings and menu items.
 Runs inside an action handler, so `completing-read' is bridged to the
-companion as a live-filtering picker dialog.  The chosen binding's key
-is executed in BUF; if that activates a transient, its Tier 1 pie menu
-opens automatically (see `eabp-keymap--sync-pie')."
+companion as a live-filtering picker dialog.  A key binding is executed as
+its key (so an activated transient opens its Tier 1 pie); a menu entry —
+which may carry no key — is run by command symbol."
   (let* ((candidates (eabp-keymap--palette-candidates buf))
          (choice (cond
                   ((null candidates)
@@ -3922,9 +4099,10 @@ opens automatically (see `eabp-keymap--sync-pie')."
                           (format "%s commands" (buffer-name buf))
                           (mapcar #'car candidates) nil t)
                        (quit nil)))))
-         (key (cdr (assoc choice candidates))))
-    (when key
-      (eabp-keymap--execute-key buf key))))
+         (target (cdr (assoc choice candidates))))
+    (pcase target
+      (`(key . ,key) (eabp-keymap--execute-key buf key))
+      (`(command . ,cmd) (eabp-keymap--execute-command buf cmd)))))
 
 ;; ─── Key execution & pie-menu sync ──────────────────────────────────────────
 
@@ -3944,6 +4122,19 @@ it belonged to has finished."
         (execute-kbd-macro (kbd key))
       (error
        (message "EABP keymap: %s failed: %s" key (error-message-string err)))))
+  (eabp-keymap--sync-pie buf)
+  (when (functionp eabp-buffer-refresh-function)
+    (funcall eabp-buffer-refresh-function)))
+
+(defun eabp-keymap--execute-command (buf cmd)
+  "Run CMD interactively in BUF, then sync the pie menu and refresh the surface.
+Menu entries may carry no key sequence, so they dispatch by symbol; any
+minibuffer prompt CMD raises is bridged as always."
+  (with-current-buffer buf
+    (condition-case err
+        (call-interactively cmd)
+      (error
+       (message "EABP keymap: %s failed: %s" cmd (error-message-string err)))))
   (eabp-keymap--sync-pie buf)
   (when (functionp eabp-buffer-refresh-function)
     (funcall eabp-buffer-refresh-function)))

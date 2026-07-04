@@ -27,6 +27,7 @@
 (require 'eabp-witheditor)
 (require 'eabp-buffer)
 (require 'eabp-emacs-ui)
+(require 'eabp-keymap)
 
 ;; ─── Bridge harness ──────────────────────────────────────────────────────────
 
@@ -426,6 +427,71 @@ navigating away tears the watch down."
           (should-not eabp-emacs-ui--live-timer)
           (should (= pushes 0)))
       (eabp-emacs-ui--live-stop))))
+
+;; ─── P4: discovery & picker polish ───────────────────────────────────────────
+
+(defun eabp-prim--find-all (spec type)
+  "Every node in SPEC whose `t' discriminator is TYPE, depth-first."
+  (let (acc)
+    (cl-labels ((walk (x)
+                  (when (consp x)
+                    (when (equal (alist-get 't x) type) (push x acc))
+                    (dolist (kv x)
+                      (let ((v (cdr kv)))
+                        (cond ((vectorp v) (mapc #'walk (append v nil)))
+                              ((consp v) (walk v))))))))
+      (walk spec))
+    (nreverse acc)))
+
+(defun eabp-prim--menu-cmd () "Throwaway command for menu tests." (interactive) 'ok)
+
+;; Task 16: menu-bar mining
+(ert-deftest eabp-prim-menu-candidates ()
+  "Menu items become breadcrumb-labeled, help-annotated command entries;
+disabled items are excluded."
+  (with-temp-buffer
+    (let ((map (make-sparse-keymap)))
+      (define-key map [menu-bar mymenu]
+        (cons "MyMenu" (make-sparse-keymap "MyMenu")))
+      (define-key map [menu-bar mymenu greet]
+        '(menu-item "Greet" eabp-prim--menu-cmd :help "Say hi"))
+      (define-key map [menu-bar mymenu nope]
+        '(menu-item "Nope" eabp-prim--menu-cmd :enable nil))
+      (use-local-map map)
+      (let* ((cands (eabp-keymap--menu-candidates (current-buffer)))
+             (greet (cl-find-if (lambda (c) (string-match-p "Greet" (car c))) cands)))
+        (should greet)
+        (should (string-match-p "MyMenu ▸ Greet — Say hi" (car greet)))
+        (should (equal (cdr greet) '(command . eabp-prim--menu-cmd)))
+        ;; The :enable nil item is dropped (and the command deduped anyway).
+        (should-not (cl-some (lambda (c) (string-match-p "Nope" (car c))) cands))))))
+
+;; Task 17: affixation-function + group-function
+(ert-deftest eabp-prim-picker-affixation-and-groups ()
+  "The picker renders affixation prefixes/suffixes and group headers."
+  (let* ((items '("alpha" "beta" "gamma"))
+         (collection
+          (lambda (str pred action)
+            (if (eq action 'metadata)
+                '(metadata
+                  (affixation-function
+                   . (lambda (cs)
+                       (mapcar (lambda (c) (list c "» " (concat " [" c "]"))) cs)))
+                  (group-function
+                   . (lambda (c transform)
+                       (if transform c (if (string< c "c") "First" "Second")))))
+              (complete-with-action action items str pred)))))
+    (eabp-prim--with-bridge (list "reply")
+      (ignore-errors (completing-read "Pick: " collection))
+      (let* ((spec (car (last eabp-prim--sent)))
+             (headers (mapcar (lambda (n) (alist-get 'title n))
+                              (eabp-prim--find-all spec "section_header")))
+             (texts (mapcar (lambda (n) (alist-get 'text n))
+                            (eabp-prim--find-all spec "text"))))
+        (should (member "First" headers))
+        (should (member "Second" headers))
+        (should (member "» alpha" texts))     ; affixation prefix prepended
+        (should (member "[alpha]" texts))))))  ; suffix as caption
 
 (provide 'eabp-primitives-test)
 ;;; eabp-primitives-test.el ends here

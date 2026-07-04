@@ -414,6 +414,80 @@ marginalia-style captions survive the bridge."
             (let ((s (string-trim (substring-no-properties a))))
               (unless (string-empty-p s) s))))))))
 
+(defun eabp-minibuffer--clean (s)
+  "Trim S to a plain display string, or \"\" when nil/blank.
+For suffixes, which are shown as a separate caption."
+  (if (stringp s) (string-trim (substring-no-properties s)) ""))
+
+(defun eabp-minibuffer--strip (s)
+  "S without text properties, or \"\" when not a string.
+For affixation PREFIXES, which are concatenated onto the candidate — their
+separator whitespace is intentional and must survive (unlike suffixes)."
+  (if (stringp s) (substring-no-properties s) ""))
+
+(defun eabp-minibuffer--group-fn (collection predicate)
+  "COLLECTION's `group-function' from completion metadata, or nil."
+  (let ((md (ignore-errors (completion-metadata "" collection predicate))))
+    (and md (completion-metadata-get md 'group-function))))
+
+(defun eabp-minibuffer--decorations (collection predicate shown)
+  "A hash CAND→(PREFIX . SUFFIX) decorating SHOWN, or nil when undecorated.
+Prefers `affixation-function' (M-x key hints, marginalia's aligned columns),
+which is computed once over the whole SHOWN batch; falls back to
+`annotation-function' for a suffix only."
+  (let* ((md (ignore-errors (completion-metadata "" collection predicate)))
+         (aff (or (and md (completion-metadata-get md 'affixation-function))
+                  (plist-get completion-extra-properties :affixation-function)))
+         (ann (or (and md (completion-metadata-get md 'annotation-function))
+                  (plist-get completion-extra-properties :annotation-function)))
+         (table (make-hash-table :test 'equal)))
+    (cond
+     (aff
+      (dolist (tr (ignore-errors (funcall aff (copy-sequence shown))))
+        ;; Each TR is (CANDIDATE PREFIX SUFFIX): PREFIX is concatenated onto
+        ;; the label (keep its spacing), SUFFIX becomes a trimmed caption.
+        (when (consp tr)
+          (puthash (nth 0 tr)
+                   (cons (eabp-minibuffer--strip (nth 1 tr))
+                         (eabp-minibuffer--clean (nth 2 tr)))
+                   table)))
+      table)
+     (ann
+      (dolist (c shown)
+        (let ((s (ignore-errors (funcall ann c))))
+          (when (stringp s)
+            (puthash c (cons "" (eabp-minibuffer--clean s)) table))))
+      table)
+     (t nil))))
+
+(defun eabp-minibuffer--picker-cards (shown id value-prefix decor group-fn)
+  "Candidate card nodes for SHOWN, with affixation and group-header nodes.
+ID is the prompt id; VALUE-PREFIX is prepended to the reply value.  DECOR is
+a hash CAND→(PREFIX . SUFFIX) or nil; GROUP-FN, when non-nil, groups the
+candidates with `eabp-section-header' dividers whenever its title changes."
+  (let (nodes (last-group nil))
+    (dolist (c shown)
+      (when group-fn
+        (let ((g (ignore-errors (funcall group-fn c nil))))
+          (when (and (stringp g) (not (equal g last-group)))
+            (setq last-group g)
+            (push (eabp-section-header g) nodes))))
+      (let* ((pair (and decor (gethash c decor)))
+             (pre (and pair (car pair)))
+             (suf (and pair (cdr pair)))
+             (label (if (and pre (not (string-empty-p pre))) (concat pre c) c)))
+        (push (eabp-card
+               (list (if (and suf (not (string-empty-p suf)))
+                         (eabp-row
+                          (eabp-box (list (eabp-text label 'body)) :weight 1)
+                          (eabp-text suf 'caption))
+                       (eabp-text label 'body)))
+               :on-tap (eabp-action "prompt.reply"
+                                    :args `((prompt_id . ,id)
+                                            (value . ,(concat value-prefix c)))))
+              nodes)))
+    (nreverse nodes)))
+
 (defun eabp--completing-read-advice (orig-fn prompt collection &rest args)
   "Around advice for `completing-read': a live-filtering picker over the bridge.
 As the user types in the filter field, the candidate list re-filters and
@@ -440,7 +514,7 @@ the query each keystroke, so typing a path navigates directories."
                          (ignore-errors
                            (sort (all-completions "" collection predicate)
                                  #'string<))))
-           (annotate (eabp-minibuffer--annotator collection predicate))
+           (group-fn (eabp-minibuffer--group-fn collection predicate))
            ;; (PREFIX . MATCHES) for QUERY.  PREFIX is the completion-
            ;; boundaries head (e.g. the directory part of a file name) that
            ;; rebuilds a full value from a returned candidate.
@@ -467,21 +541,13 @@ the query each keystroke, so typing a path navigates directories."
                      (shown (if (> total max-display)
                                 (cl-subseq matches 0 max-display)
                               matches))
-                     (cards (mapcar
-                             (lambda (c)
-                               (let ((a (and annotate (funcall annotate c))))
-                                 (eabp-card
-                                  (list (if a
-                                            (eabp-row
-                                             (eabp-box (list (eabp-text c 'body))
-                                                       :weight 1)
-                                             (eabp-text a 'caption))
-                                          (eabp-text c 'body)))
-                                  :on-tap (eabp-action
-                                           "prompt.reply"
-                                           :args `((prompt_id . ,id)
-                                                   (value . ,(concat prefix c)))))))
-                             shown)))
+                     ;; Decorations (affixation/annotation) are computed once
+                     ;; over the shown batch; group headers come from the
+                     ;; collection's group-function.
+                     (decor (eabp-minibuffer--decorations
+                             collection predicate shown))
+                     (cards (eabp-minibuffer--picker-cards
+                             shown id prefix decor group-fn)))
                 ;; A lazy (scrollable) column: long candidate lists scroll
                 ;; instead of pushing everything below off-screen.  Cancel
                 ;; sits in the header row so it is reachable regardless of

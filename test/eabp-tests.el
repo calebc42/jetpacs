@@ -91,20 +91,34 @@
               (should (string-prefix-p "09:15" (alist-get 'body r))))))
       (delete-file file))))
 
-;; ─── Widget lines ───────────────────────────────────────────────────────────
+;; ─── Widget items ───────────────────────────────────────────────────────────
 
-(ert-deftest eabp-widget-lines ()
-  "Widget lines are compact \"HH:MM  Headline\" strings, capped at 6."
+(ert-deftest eabp-widget-items ()
+  "Widget items carry time/headline/todo/done/ref, omit nil fields, cap at 8."
   (cl-letf (((symbol-function 'glasspane-org--agenda-items)
              (lambda (&rest _)
                (append
-                (list '((headline . "Standup") (time . "09:15"))
+                (list '((headline . "Standup") (time . "09:15") (todo . "TODO")
+                        (ref . ((file . "/tmp/a.org") (pos . 1)
+                                (headline . "Standup"))))
+                      '((headline . "Shipped") (todo . "DONE"))
                       '((headline . "No time")))
                 (make-list 8 '((headline . "Filler") (time . "10:00")))))))
-    (let ((lines (glasspane-ui--widget-lines)))
-      (should (= (length lines) 6))
-      (should (equal (nth 0 lines) "09:15  Standup"))
-      (should (equal (nth 1 lines) "No time")))))
+    (let ((items (glasspane-ui--widget-items)))
+      (should (= (length items) 8))
+      (let ((first (nth 0 items)))
+        (should (equal (alist-get 'time first) "09:15"))
+        (should (equal (alist-get 'headline first) "Standup"))
+        (should (equal (alist-get 'todo first) "TODO"))
+        (should-not (alist-get 'done first))
+        (should (equal (alist-get 'file (alist-get 'ref first)) "/tmp/a.org")))
+      (let ((done (nth 1 items)))
+        (should (eq (alist-get 'done done) t))
+        (should-not (assq 'time done)))
+      (let ((plain (nth 2 items)))
+        (should (equal (alist-get 'headline plain) "No time"))
+        (should-not (assq 'todo plain))
+        (should-not (assq 'done plain))))))
 
 ;; ─── Extraction cache ───────────────────────────────────────────────────────
 

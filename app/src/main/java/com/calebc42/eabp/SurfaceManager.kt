@@ -87,7 +87,11 @@ class SurfaceManager(private val context: Context) {
         when (record.type) {
             "notification" -> notifications.render(record)
             "app", "dialog" -> { /* Polled/Observed by MainActivity */ }
-            "widget" -> EabpWidgetProvider.renderAll(context, record)
+            "widget" -> when (record.surface) {
+                EabpWidgetProvider.SURFACE ->
+                    EabpWidgetProvider.renderAll(context, record)
+                else -> Log.w(TAG, "No renderer for surface '${record.surface}'")
+            }
             // "tile" lands in its own phase.
             else -> Log.w(TAG, "No renderer for surface type '${record.type}'")
         }

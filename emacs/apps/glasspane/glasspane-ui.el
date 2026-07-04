@@ -59,32 +59,52 @@
       (eabp-send "reminders.set" `((reminders . ,(vconcat rems)))))))
 
 (defvar glasspane-ui--last-widget 'unset
-  "Widget lines from the previous push, to suppress identical pushes.")
+  "Widget items from the previous push, to suppress identical pushes.")
 
-(defun glasspane-ui--widget-lines ()
-  "Today's agenda as short \"HH:MM  Headline\" strings for the widget."
+(defun glasspane-ui--widget-items ()
+  "Today's agenda as structured items for the home-screen widget.
+Each item carries the display fields (time/headline/todo/done) plus the
+heading ref, so the widget can jump to and todo-cycle individual rows."
   (mapcar (lambda (it)
-            (let ((hm (glasspane-org--item-hm (alist-get 'time it))))
-              (concat (if hm (concat hm "  ") "")
-                      (or (alist-get 'headline it) ""))))
+            (let* ((hm (glasspane-org--item-hm (alist-get 'time it)))
+                   (todo (alist-get 'todo it))
+                   (done (and todo
+                              (member todo (or (default-value 'org-done-keywords)
+                                               '("DONE" "CANCELLED")))
+                              t)))
+              (append
+               (when hm `((time . ,hm)))
+               `((headline . ,(or (alist-get 'headline it) "Untitled")))
+               (when todo `((todo . ,todo)))
+               (when done '((done . t)))
+               `((ref . ,(alist-get 'ref it))))))
           (seq-take (condition-case nil
                         (glasspane-org--agenda-items 'day nil)
                       (error nil))
-                    6)))
+                    8)))
 
 (defun glasspane-ui--push-widget ()
   "Push the `widget:agenda' surface backing the home-screen widget."
-  (let ((lines (glasspane-ui--widget-lines)))
-    (unless (equal lines glasspane-ui--last-widget)
-      (setq glasspane-ui--last-widget lines)
+  (let ((items (glasspane-ui--widget-items)))
+    (unless (equal items glasspane-ui--last-widget)
+      (setq glasspane-ui--last-widget items)
       (eabp-surface-push
        "widget:agenda"
        `((title . ,(format-time-string "Agenda · %a %b %d"))
-         (lines . ,(vconcat lines)))))))
+         (items . ,(vconcat items)))))))
 
 ;; Both are memo-guarded, so unchanged data sends nothing.
 (add-hook 'eabp-shell-after-push-hook #'glasspane-ui--sync-reminders)
 (add-hook 'eabp-shell-after-push-hook #'glasspane-ui--push-widget)
+
+(defun glasspane-ui--forget-widget-memo ()
+  "Force the next widget push even when the items are unchanged.
+An explicit refresh (`dashboard.refresh', e.g. the widget's refresh
+button) must visibly bump the widget's \"Synced\" caption, and a
+suppressed identical push would leave it frozen."
+  (setq glasspane-ui--last-widget 'unset))
+
+(add-hook 'eabp-shell-refresh-hook #'glasspane-ui--forget-widget-memo)
 
 ;; ─── Shell views ─────────────────────────────────────────────────────────────
 

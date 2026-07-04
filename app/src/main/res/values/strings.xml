@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">Glasspane</string>
+    <string name="widget_agenda_label">Org Agenda</string>
+    <string name="widget_title_default">Agenda</string>
+    <string name="widget_description">Today\'s Org agenda. Tap an item to open it; tap its circle to cycle the TODO state. Shows the last synced agenda even while Emacs is offline.</string>
+    <string name="widget_empty">Nothing scheduled today</string>
+    <string name="widget_no_data">Open Glasspane to sync your agenda</string>
+    <string name="widget_synced_at">Synced %1$s</string>
+    <string name="widget_toggle_todo">Cycle TODO state</string>
+    <string name="widget_refresh">Refresh agenda</string>
+    <string name="widget_capture">New capture</string>
+    <string name="widget_clock_label">Org Clock</string>
+    <string name="widget_clock_description">Quick clock in/out shortcuts for the Org clock. Taps queue when Emacs is offline.</string>
+    <string name="widget_clock_in_last">Clock in (last)</string>
+    <string name="widget_clock_out">Clock out</string>
 </resources>

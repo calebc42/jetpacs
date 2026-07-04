@@ -45,18 +45,28 @@ import com.calebc42.eabp.ui.theme.EabpTheme
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        const val EXTRA_WIDGET_ACTION = "widget_action"
+        const val EXTRA_WIDGET_REVISION = "widget_revision"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         BridgeService.start(this)
         // savedInstanceState guard: a rotation must not re-fire the share.
-        if (savedInstanceState == null) handleShareIntent(intent)
+        if (savedInstanceState == null) {
+            handleShareIntent(intent)
+            handleWidgetIntent(intent)
+        }
         setContent { EabpTheme { BridgeScreen() } }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleShareIntent(intent)
+        handleWidgetIntent(intent)
     }
 
     /**
@@ -87,6 +97,28 @@ class MainActivity : ComponentActivity() {
             putExtra(ActionReceiver.EXTRA_ACTION, action.toString())
         })
         Toast.makeText(this, "Sent to Emacs", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Agenda-widget row tap → open the app AND dispatch the embedded action
+     * (`heading.tap` with the row's ref). Rebroadcast through ActionReceiver
+     * so it shares the live/queue pipeline; Emacs answers by pushing the
+     * detail view into the now-visible app. Offline, the tap queues and the
+     * app opens on the cached view.
+     */
+    private fun handleWidgetIntent(intent: Intent?) {
+        val actionJson = intent?.getStringExtra(EXTRA_WIDGET_ACTION) ?: return
+        // Relaunching from recents redelivers the original intent — that is a
+        // "reopen the app" gesture, not a fresh row tap; don't re-navigate.
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        sendBroadcast(Intent(this, ActionReceiver::class.java).apply {
+            action = ActionReceiver.ACTION_TAP
+            putExtra(ActionReceiver.EXTRA_SURFACE, EabpWidgetProvider.SURFACE)
+            putExtra(
+                ActionReceiver.EXTRA_REVISION,
+                intent.getIntExtra(EXTRA_WIDGET_REVISION, -1))
+            putExtra(ActionReceiver.EXTRA_ACTION, actionJson)
+        })
     }
 }
 

@@ -1,54 +1,374 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Google-Calendar-style agenda list: one pill row per item. Rows are
+     fixed slots (not a RemoteViews collection) so each row can carry two
+     independently-typed tap targets — the toggle broadcasts a todo-cycle,
+     the row itself opens the app at that heading. A collection would force
+     both through one PendingIntent template. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@android:color/system_neutral1_800"
-    android:padding="10dp">
-
-    <TextView
-        android:id="@+id/widget_title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Agenda"
-        android:textStyle="bold"
-        android:textSize="14sp"
-        android:textColor="@android:color/white" />
-
-    <TextView
-        android:id="@+id/widget_lines"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:layout_marginBottom="6dp"
-        android:text="Nothing scheduled"
-        android:textSize="12sp"
-        android:lineSpacingExtra="3dp"
-        android:maxLines="6"
-        android:ellipsize="end"
-        android:textColor="#C8FFFFFF" />
+    android:background="@drawable/widget_background"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="12dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginBottom="2dp"
         android:orientation="horizontal"
-        android:gravity="center">
+        android:gravity="center_vertical">
 
-        <Button
-            android:id="@+id/btn_clock_in_last"
+        <TextView
+            android:id="@+id/widget_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Clock In (Last)"
-            android:layout_marginEnd="4dp" />
+            android:text="@string/widget_title_default"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_text_primary" />
 
-        <Button
-            android:id="@+id/btn_clock_out"
+        <TextView
+            android:id="@+id/widget_updated"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textSize="11sp"
+            android:visibility="gone"
+            android:textColor="@color/widget_text_secondary" />
+
+        <ImageButton
+            android:id="@+id/widget_refresh"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="6dp"
+            android:padding="5dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_refresh"
+            android:tint="@color/widget_text_primary"
+            android:contentDescription="@string/widget_refresh" />
+
+        <ImageButton
+            android:id="@+id/widget_capture"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="2dp"
+            android:padding="4dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_add"
+            android:tint="@color/widget_text_primary"
+            android:contentDescription="@string/widget_capture" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/widget_empty"
+        android:textSize="13sp"
+        android:textColor="@color/widget_text_secondary" />
+
+    <LinearLayout
+        android:id="@+id/widget_item0"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item0_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item0_text"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Clock Out"
-            android:layout_marginStart="4dp" />
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item1_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item1_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item2_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item2_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item3"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item3_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item3_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item4"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item4_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item4_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item5"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item5_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item5_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item6"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item6_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item6_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_item7"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_item_bg"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/widget_item7_toggle"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:padding="3dp"
+            android:background="@null"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_button_text"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_item7_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/widget_button_text" />
 
     </LinearLayout>
 

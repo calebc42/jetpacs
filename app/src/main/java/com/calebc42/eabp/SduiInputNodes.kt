@@ -205,7 +205,9 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     val chrome = !node.optBoolean("chromeless", false)
     // Syntax defaults to the file's extension when Emacs doesn't say.
     val syntax = node.optString("syntax").ifEmpty { syntaxForPath(id) }
-    val isOrg = syntax.lowercase() == "org"
+    // The formatting toolbar is server-driven: the spec names it (or omits
+    // it), so this renderer carries no per-app file-type knowledge.
+    val toolbar = node.optString("toolbar")
 
     // TextFieldValue-based state for cursor/selection support.
     val specValue = node.optString("value", "")
@@ -600,9 +602,10 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                 onAccept = onToolbarChange
             )
         }
-        // Org formatting toolbar — sits at the bottom of the editor,
-        // just above the soft keyboard (keyboard-adjacent, à la Orgro).
-        if (isOrg && !readOnly) {
+        // Server-requested formatting toolbar — sits at the bottom of the
+        // editor, just above the soft keyboard (keyboard-adjacent, à la
+        // Orgro). "org" is the only toolbar this renderer ships today.
+        if (toolbar == "org" && !readOnly) {
             OrgEditToolbar(value = tfv, onValueChange = onToolbarChange)
         }
     }

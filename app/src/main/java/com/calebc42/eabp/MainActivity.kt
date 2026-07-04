@@ -60,9 +60,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Android share sheet → org capture. The shared text rides the normal
-     * action pipeline with queue policy, so sharing works with Emacs dead:
-     * the capture dialog appears on the next replay.
+     * Android share sheet → Emacs. Emitted as the app-agnostic `share.text`
+     * action; whatever Tier 1 is loaded decides what receiving shared text
+     * means (Glasspane answers with org capture). The shared text rides the
+     * normal action pipeline with queue policy, so sharing works with Emacs
+     * dead: the handler runs on the next replay.
      */
     private fun handleShareIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
@@ -71,7 +73,7 @@ class MainActivity : ComponentActivity() {
         val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
         if (text.isNullOrBlank() && subject.isNullOrBlank()) return
         val action = JSONObject().apply {
-            put("action", "org.capture.share")
+            put("action", "share.text")
             put("when_offline", "queue")
             put("args", JSONObject().apply {
                 put("text", text ?: "")
@@ -84,7 +86,7 @@ class MainActivity : ComponentActivity() {
             putExtra(ActionReceiver.EXTRA_REVISION, -1)
             putExtra(ActionReceiver.EXTRA_ACTION, action.toString())
         })
-        Toast.makeText(this, "Sent to Emacs capture", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Sent to Emacs", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -246,7 +248,7 @@ private fun PairingScreen() {
         Text(
             "The bridge is listening. Pair Emacs (on this device) by adding the " +
                     "line below to your init, then:\n\n" +
-                    "    (require 'eabp-org-ui)\n" +
+                    "    (require 'glasspane)\n" +
                     "    M-x eabp-connect\n\n" +
                     "Watch *Messages* for \"EABP: handshake ok\". This screen updates " +
                     "automatically once the handshake completes.",

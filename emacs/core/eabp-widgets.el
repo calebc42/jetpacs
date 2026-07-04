@@ -359,7 +359,7 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
 (cl-defun eabp-editor (id value &key on-save read-only syntax line-numbers
-                          complete chromeless publish-state)
+                          complete chromeless publish-state toolbar)
   "A full-height plain-text editor node.
 ID identifies the editor (its unsaved state lives companion-side under
 this key). VALUE seeds the buffer. ON-SAVE is dispatched with the full
@@ -374,7 +374,10 @@ CHROMELESS hides the filename/undo/save header and sizes the field
 compactly instead of full-height — an inline field with the full bridge
 \(completion, squiggles, doc line), e.g. the eval REPL input.
 PUBLISH-STATE emits debounced `state.changed' with the text under ID,
-so button-driven forms can read it back from `eabp-ui-state'."
+so button-driven forms can read it back from `eabp-ui-state'.
+TOOLBAR names a keyboard-adjacent formatting toolbar the client should
+attach (\"org\" today); nil for none.  Server-driven so the renderer
+stays app-agnostic: the app opts an editor into the affordance."
   (eabp--node "editor"
               'id id
               'value value
@@ -384,7 +387,8 @@ so button-driven forms can read it back from `eabp-ui-state'."
               'line_numbers line-numbers
               'complete (and complete t)
               'chromeless (and chromeless t)
-              'publish_state (and publish-state t)))
+              'publish_state (and publish-state t)
+              'toolbar toolbar))
 
 (cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer on-refresh)
   "A full-screen scaffold wrapper.

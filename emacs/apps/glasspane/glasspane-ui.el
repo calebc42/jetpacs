@@ -883,6 +883,7 @@ Always present (even with no properties yet) so + Add is reachable."
               (eabp-column
                (eabp-editor (format "detail-%s" pos) content
                             :syntax "org"
+                            :toolbar "org"
                             :line-numbers (and eabp-line-numbers
                                                (symbol-name eabp-line-numbers))
                             :on-save (eabp-action "detail.save"
@@ -1176,23 +1177,28 @@ Always present (even with no properties yet) so + Add is reachable."
           glasspane-ui--shared-subject nil)
     (eabp-dismiss-dialog)))
 
-(eabp-defaction "org.capture.share"
-  ;; Android share sheet → capture: stash the shared text/subject and open
-  ;; the template picker.  Queued offline, so sharing works with Emacs dead
-  ;; — the capture dialog appears on the next replay.
-  (lambda (args _)
-    (let ((text (alist-get 'text args))
-          (subject (alist-get 'subject args)))
-      (setq glasspane-ui--shared-text
-            (and (stringp text) (not (string-empty-p (string-trim text)))
-                 (string-trim text))
-            glasspane-ui--shared-subject
-            (and (stringp subject) (not (string-empty-p (string-trim subject)))
-                 (string-trim subject)))
-      ;; A share with only a subject still captures: use it as the text too.
-      (unless glasspane-ui--shared-text
-        (setq glasspane-ui--shared-text glasspane-ui--shared-subject))
-      (glasspane-ui-show-capture-dialog))))
+(defun glasspane-ui--on-share (args _payload)
+  "Android share sheet → capture: stash the text/subject, open the picker.
+Queued offline, so sharing works with Emacs dead — the capture dialog
+appears on the next replay."
+  (let ((text (alist-get 'text args))
+        (subject (alist-get 'subject args)))
+    (setq glasspane-ui--shared-text
+          (and (stringp text) (not (string-empty-p (string-trim text)))
+               (string-trim text))
+          glasspane-ui--shared-subject
+          (and (stringp subject) (not (string-empty-p (string-trim subject)))
+               (string-trim subject)))
+    ;; A share with only a subject still captures: use it as the text too.
+    (unless glasspane-ui--shared-text
+      (setq glasspane-ui--shared-text glasspane-ui--shared-subject))
+    (glasspane-ui-show-capture-dialog)))
+
+;; The companion's share sheet emits the app-agnostic `share.text'; this
+;; app answers it with org capture.  The old app-specific id stays
+;; registered so shares queued by a pre-rename companion still replay.
+(eabp-defaction "share.text" #'glasspane-ui--on-share)
+(eabp-defaction "org.capture.share" #'glasspane-ui--on-share)
 
 (eabp-defaction "org.capture.submit"
   (lambda (args _)
@@ -1821,6 +1827,11 @@ with the new states.  Returns non-nil when persisting succeeded."
 
 (add-hook 'eabp-files-editor-body-functions #'glasspane-ui--org-editor-body)
 (add-hook 'eabp-files-editor-actions-functions #'glasspane-ui--org-editor-actions)
+
+;; Org files get the org formatting toolbar above the keyboard — declared
+;; in the editor spec, so the renderer stays app-agnostic.
+(setq eabp-files-editor-toolbar-function
+      (lambda (file) (when (glasspane-ui--org-file-p file) "org")))
 
 ;; Org files open reader-first; everything else lands in the editor.
 (add-hook 'eabp-files-open-hook

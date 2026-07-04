@@ -80,6 +80,12 @@ Apps set their per-file-type editor state here (e.g. reader-first).")
   "Hook run with FILE after a phone-triggered save succeeds.
 Apps whose views memoise data derived from files drop caches here.")
 
+(defvar eabp-files-editor-toolbar-function #'ignore
+  "Function of FILE returning the editor toolbar name to request, or nil.
+Apps point this at their file-type mapping (e.g. \"org\" for org files)
+so the toolbar choice ships in the editor spec instead of being inferred
+client-side.")
+
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 
 ;; The directory listing is backed by a real dired buffer — the standard Emacs
@@ -230,6 +236,7 @@ otherwise the plain-text editor."
                           :line-numbers (and eabp-line-numbers
                                              (symbol-name eabp-line-numbers))
                           :complete (and eabp-complete-enabled (not read-only))
+                          :toolbar (funcall eabp-files-editor-toolbar-function file)
                           :on-save (eabp-action "files.save"
                                                 :args `((file . ,file))
                                                 :when-offline "queue"

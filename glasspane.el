@@ -806,7 +806,7 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
 (cl-defun eabp-editor (id value &key on-save read-only syntax line-numbers
-                          complete chromeless publish-state)
+                          complete chromeless publish-state toolbar)
   "A full-height plain-text editor node.
 ID identifies the editor (its unsaved state lives companion-side under
 this key). VALUE seeds the buffer. ON-SAVE is dispatched with the full
@@ -821,7 +821,10 @@ CHROMELESS hides the filename/undo/save header and sizes the field
 compactly instead of full-height — an inline field with the full bridge
 \(completion, squiggles, doc line), e.g. the eval REPL input.
 PUBLISH-STATE emits debounced `state.changed' with the text under ID,
-so button-driven forms can read it back from `eabp-ui-state'."
+so button-driven forms can read it back from `eabp-ui-state'.
+TOOLBAR names a keyboard-adjacent formatting toolbar the client should
+attach (\"org\" today); nil for none.  Server-driven so the renderer
+stays app-agnostic: the app opts an editor into the affordance."
   (eabp--node "editor"
               'id id
               'value value
@@ -831,7 +834,8 @@ so button-driven forms can read it back from `eabp-ui-state'."
               'line_numbers line-numbers
               'complete (and complete t)
               'chromeless (and chromeless t)
-              'publish_state (and publish-state t)))
+              'publish_state (and publish-state t)
+              'toolbar toolbar))
 
 (cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer on-refresh)
   "A full-screen scaffold wrapper.
@@ -4899,6 +4903,12 @@ Apps set their per-file-type editor state here (e.g. reader-first).")
   "Hook run with FILE after a phone-triggered save succeeds.
 Apps whose views memoise data derived from files drop caches here.")
 
+(defvar eabp-files-editor-toolbar-function #'ignore
+  "Function of FILE returning the editor toolbar name to request, or nil.
+Apps point this at their file-type mapping (e.g. \"org\" for org files)
+so the toolbar choice ships in the editor spec instead of being inferred
+client-side.")
+
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 
 ;; The directory listing is backed by a real dired buffer — the standard Emacs
@@ -5049,6 +5059,7 @@ otherwise the plain-text editor."
                           :line-numbers (and eabp-line-numbers
                                              (symbol-name eabp-line-numbers))
                           :complete (and eabp-complete-enabled (not read-only))
+                          :toolbar (funcall eabp-files-editor-toolbar-function file)
                           :on-save (eabp-action "files.save"
                                                 :args `((file . ,file))
                                                 :when-offline "queue"
@@ -8040,6 +8051,7 @@ Always present (even with no properties yet) so + Add is reachable."
               (eabp-column
                (eabp-editor (format "detail-%s" pos) content
                             :syntax "org"
+                            :toolbar "org"
                             :line-numbers (and eabp-line-numbers
                                                (symbol-name eabp-line-numbers))
                             :on-save (eabp-action "detail.save"
@@ -8333,23 +8345,28 @@ Always present (even with no properties yet) so + Add is reachable."
           glasspane-ui--shared-subject nil)
     (eabp-dismiss-dialog)))
 
-(eabp-defaction "org.capture.share"
-  ;; Android share sheet → capture: stash the shared text/subject and open
-  ;; the template picker.  Queued offline, so sharing works with Emacs dead
-  ;; — the capture dialog appears on the next replay.
-  (lambda (args _)
-    (let ((text (alist-get 'text args))
-          (subject (alist-get 'subject args)))
-      (setq glasspane-ui--shared-text
-            (and (stringp text) (not (string-empty-p (string-trim text)))
-                 (string-trim text))
-            glasspane-ui--shared-subject
-            (and (stringp subject) (not (string-empty-p (string-trim subject)))
-                 (string-trim subject)))
-      ;; A share with only a subject still captures: use it as the text too.
-      (unless glasspane-ui--shared-text
-        (setq glasspane-ui--shared-text glasspane-ui--shared-subject))
-      (glasspane-ui-show-capture-dialog))))
+(defun glasspane-ui--on-share (args _payload)
+  "Android share sheet → capture: stash the text/subject, open the picker.
+Queued offline, so sharing works with Emacs dead — the capture dialog
+appears on the next replay."
+  (let ((text (alist-get 'text args))
+        (subject (alist-get 'subject args)))
+    (setq glasspane-ui--shared-text
+          (and (stringp text) (not (string-empty-p (string-trim text)))
+               (string-trim text))
+          glasspane-ui--shared-subject
+          (and (stringp subject) (not (string-empty-p (string-trim subject)))
+               (string-trim subject)))
+    ;; A share with only a subject still captures: use it as the text too.
+    (unless glasspane-ui--shared-text
+      (setq glasspane-ui--shared-text glasspane-ui--shared-subject))
+    (glasspane-ui-show-capture-dialog)))
+
+;; The companion's share sheet emits the app-agnostic `share.text'; this
+;; app answers it with org capture.  The old app-specific id stays
+;; registered so shares queued by a pre-rename companion still replay.
+(eabp-defaction "share.text" #'glasspane-ui--on-share)
+(eabp-defaction "org.capture.share" #'glasspane-ui--on-share)
 
 (eabp-defaction "org.capture.submit"
   (lambda (args _)
@@ -8978,6 +8995,11 @@ with the new states.  Returns non-nil when persisting succeeded."
 
 (add-hook 'eabp-files-editor-body-functions #'glasspane-ui--org-editor-body)
 (add-hook 'eabp-files-editor-actions-functions #'glasspane-ui--org-editor-actions)
+
+;; Org files get the org formatting toolbar above the keyboard — declared
+;; in the editor spec, so the renderer stays app-agnostic.
+(setq eabp-files-editor-toolbar-function
+      (lambda (file) (when (glasspane-ui--org-file-p file) "org")))
 
 ;; Org files open reader-first; everything else lands in the editor.
 (add-hook 'eabp-files-open-hook

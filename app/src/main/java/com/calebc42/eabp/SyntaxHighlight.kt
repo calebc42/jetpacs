@@ -107,6 +107,9 @@ class SyntaxTransformation(
                 "shell", "sh", "bash" -> highlightCode(
                     text.text, colors, shellKeywords,
                     lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
+                "c", "cpp" -> highlightCode(
+                    text.text, colors, cKeywords,
+                    lineComment = "//", singleQuoteStrings = false, maxChars = maxChars)
                 else -> AnnotatedString(text.text)
             }
         }.getOrElse { AnnotatedString(text.text) }
@@ -122,6 +125,8 @@ fun syntaxForPath(path: String): String =
         "py" -> "python"
         "rs" -> "rust"
         "sh", "bash" -> "shell"
+        "c", "h" -> "c"
+        "cc", "cpp", "hpp" -> "cpp"
         else -> ""
     }
 
@@ -241,6 +246,16 @@ private val shellKeywords = setOf(
     "done", "case", "esac", "in", "function", "local", "return", "exit",
     "export", "readonly", "shift", "break", "continue", "echo", "read",
     "declare", "set", "unset", "source", "trap", "true", "false",
+)
+
+private val cKeywords = setOf(
+    "if", "else", "for", "while", "do", "switch", "case", "default",
+    "break", "continue", "return", "goto", "typedef", "struct", "union",
+    "enum", "static", "extern", "const", "volatile", "inline", "sizeof",
+    "void", "char", "short", "int", "long", "float", "double", "signed",
+    "unsigned", "bool", "true", "false", "NULL", "include", "define",
+    "class", "namespace", "template", "public", "private", "protected",
+    "new", "delete", "nullptr", "auto", "using",
 )
 
 private fun isIdentChar(ch: Char): Boolean = ch.isLetterOrDigit() || ch == '_'

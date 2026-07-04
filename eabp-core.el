@@ -3731,8 +3731,17 @@ Keys: :session (phone-chosen id), :seq (last applied delta), :stale
 
 (defun eabp-sync--mode-for (file)
   "The major mode FILE would get from `auto-mode-alist', or `fundamental-mode'.
-Never visits FILE — the mode is chosen from the name alone."
+Never visits FILE — the mode is chosen from the name alone.  Honors
+`major-mode-remap-alist' like `find-file' does, so a config that remaps
+to tree-sitter modes (python-ts-mode & co.) gets them in the hidden
+shadows too, not just in real-file eglot buffers."
   (let ((mode (assoc-default file auto-mode-alist #'string-match)))
+    (when (and (symbolp mode) mode)
+      (setq mode (cond
+                  ((fboundp 'major-mode-remap) (major-mode-remap mode))
+                  ((bound-and-true-p major-mode-remap-alist)
+                   (or (cdr (assq mode major-mode-remap-alist)) mode))
+                  (t mode))))
     (if (and (symbolp mode) mode (fboundp mode)) mode 'fundamental-mode)))
 
 (defvar-local eabp-sync--prepared nil

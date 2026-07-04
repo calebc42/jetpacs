@@ -711,6 +711,13 @@ the buffer alive (it may be the user's, and it keeps the server warm)."
           (should (assoc "fontify.show" sent)))
       (eabp-sync-close file))))
 
+(ert-deftest eabp-sync-mode-remap-respected ()
+  "Shadow mode selection honors `major-mode-remap-alist' (ts modes)."
+  (let ((major-mode-remap-alist '((emacs-lisp-mode . lisp-interaction-mode))))
+    (should (eq (eabp-sync--mode-for "x.el") 'lisp-interaction-mode)))
+  (let ((major-mode-remap-alist nil))
+    (should (eq (eabp-sync--mode-for "x.el") 'emacs-lisp-mode))))
+
 (ert-deftest eabp-sync-severity-mapping ()
   "Flymake types normalize to the three wire severities."
   (should (equal (eabp-sync--severity :error) "error"))
@@ -788,7 +795,7 @@ the buffer alive (it may be the user's, and it keeps the server warm)."
         (progn
           (glasspane-demo-setup dir)
           (glasspane-demo-setup dir)          ; overwrite must not error
-          (dolist (f '("demo.el" "demo.py" "demo.sh" "demo.org"))
+          (dolist (f '("demo.el" "demo.py" "demo.sh" "demo.c" "demo.org"))
             (let ((path (expand-file-name f dir)))
               (should (file-exists-p path))
               (should (> (file-attribute-size (file-attributes path)) 200)))))

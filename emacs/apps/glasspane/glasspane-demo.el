@@ -125,6 +125,39 @@ count_greetings() {
 
 count_greetings 3
 ")
+    ("demo.c" . "\
+/* Glasspane mobile IDE tour - C.
+ *
+ * Tree-sitter: with the c grammar installed and c-mode remapped to
+ * c-ts-mode in your init, this file's colors come from tree-sitter,
+ * pushed by Emacs (fontify.show) in your real theme.
+ *
+ * LSP: with clangd on the exec-path (Termux), eglot adds completion,
+ * hover, and diagnostics. Without it: word completion still works.
+ */
+
+#include <stdio.h>
+
+static long fibonacci(int n) {
+    return n < 2 ? n : fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+static void print_sequence(int count) {
+    for (int i = 0; i < count; i++) {
+        printf(\"%ld\\n\", fibonacci(i));
+    }
+}
+
+/* 1. Completion: on the line below, type   fib   and pause.
+ * 2. With clangd: add an undefined call like  missing();  inside
+ *    main and pause for the squiggle. */
+
+
+int main(void) {
+    print_sequence(10);
+    return 0;
+}
+")
     ("demo.org" . "\
 #+title: Glasspane mobile IDE tour — Org
 

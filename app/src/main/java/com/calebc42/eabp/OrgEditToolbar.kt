@@ -22,8 +22,12 @@ import java.util.Calendar
  * Sits at the bottom of the editor (just above the soft keyboard) and provides
  * quick-insert buttons for common org structural elements: headings, lists,
  * checkboxes, source blocks, properties drawers, inline emphasis, links, and
- * timestamps. All insertions happen locally on the [TextFieldValue] — no
+ * timestamps. All insertions happen locally on a [TextFieldValue] — no
  * Emacs round-trip is needed; the user saves the full text as before.
+ *
+ * [value] is a getter, read only when a button fires: the editor's buffer
+ * (TextFieldState) materializes a string copy per tap, never per keystroke,
+ * and the toolbar itself never recomposes while the user types.
  *
  * Selection-aware: inline emphasis buttons (bold/italic/code/strike) wrap the
  * current selection when text is selected; otherwise they insert paired markers
@@ -32,7 +36,7 @@ import java.util.Calendar
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OrgEditToolbar(
-    value: TextFieldValue,
+    value: () -> TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit
 ) {
     var showSrcDialog by remember { mutableStateOf(false) }
@@ -66,7 +70,7 @@ fun OrgEditToolbar(
                             text = { Text("${"*".repeat(level)} Heading $level") },
                             onClick = {
                                 showHeadingMenu = false
-                                onValueChange(insertAtLineStart(value, "${"*".repeat(level)} "))
+                                onValueChange(insertAtLineStart(value(),"${"*".repeat(level)} "))
                             }
                         )
                     }
@@ -77,35 +81,35 @@ fun OrgEditToolbar(
             ToolbarChip(
                 icon = "format_indent_decrease",
                 label = "←",
-                onClick = { onValueChange(promoteHeading(value)) }
+                onClick = { onValueChange(promoteHeading(value())) }
             )
 
             // ── Demote (add one * or indent level) ──────────────────────
             ToolbarChip(
                 icon = "format_indent_increase",
                 label = "→",
-                onClick = { onValueChange(demoteHeading(value)) }
+                onClick = { onValueChange(demoteHeading(value())) }
             )
 
             // ── Move line up ────────────────────────────────────────────
             ToolbarChip(
                 icon = "arrow_upward",
                 label = "↑",
-                onClick = { onValueChange(moveLineUp(value)) }
+                onClick = { onValueChange(moveLineUp(value())) }
             )
 
             // ── Move line down ──────────────────────────────────────────
             ToolbarChip(
                 icon = "arrow_downward",
                 label = "↓",
-                onClick = { onValueChange(moveLineDown(value)) }
+                onClick = { onValueChange(moveLineDown(value())) }
             )
 
             // ── Checkbox list item ───────────────────────────────────────
             ToolbarChip(
                 icon = "checklist",
                 label = "☐",
-                onClick = { onValueChange(insertAtLineStart(value, "- [ ] ")) }
+                onClick = { onValueChange(insertAtLineStart(value(),"- [ ] ")) }
             )
 
             // ── Progress cookie: tap = [/], long-press = [%] ────────────
@@ -115,11 +119,11 @@ fun OrgEditToolbar(
                 tonalElevation = 1.dp,
                 modifier = Modifier.combinedClickable(
                     onClick = {
-                        onValueChange(insertAtCursor(value, "[/]"))
+                        onValueChange(insertAtCursor(value(),"[/]"))
                     },
                     onLongClick = {
                         progressHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onValueChange(insertAtCursor(value, "[%]"))
+                        onValueChange(insertAtCursor(value(),"[%]"))
                     }
                 )
             ) {
@@ -141,14 +145,14 @@ fun OrgEditToolbar(
             ToolbarChip(
                 icon = "format_list_bulleted",
                 label = "•",
-                onClick = { onValueChange(insertAtLineStart(value, "- ")) }
+                onClick = { onValueChange(insertAtLineStart(value(),"- ")) }
             )
 
             // ── Numbered list item ───────────────────────────────────────
             ToolbarChip(
                 icon = "format_list_numbered",
                 label = "1.",
-                onClick = { onValueChange(insertAtLineStart(value, "1. ")) }
+                onClick = { onValueChange(insertAtLineStart(value(),"1. ")) }
             )
 
             // ── Source block (language picker) ───────────────────────────
@@ -164,7 +168,7 @@ fun OrgEditToolbar(
                 label = "Props",
                 onClick = {
                     onValueChange(
-                        insertBlock(value, ":PROPERTIES:\n:END:")
+                        insertBlock(value(),":PROPERTIES:\n:END:")
                     )
                 }
             )
@@ -173,35 +177,35 @@ fun OrgEditToolbar(
             ToolbarChip(
                 icon = "format_bold",
                 label = "B",
-                onClick = { onValueChange(wrapSelection(value, "*", "*")) }
+                onClick = { onValueChange(wrapSelection(value(),"*", "*")) }
             )
 
             // ── Italic ───────────────────────────────────────────────────
             ToolbarChip(
                 icon = "format_italic",
                 label = "I",
-                onClick = { onValueChange(wrapSelection(value, "/", "/")) }
+                onClick = { onValueChange(wrapSelection(value(),"/", "/")) }
             )
 
             // ── Code ─────────────────────────────────────────────────────
             ToolbarChip(
                 icon = "code",
                 label = "~",
-                onClick = { onValueChange(wrapSelection(value, "~", "~")) }
+                onClick = { onValueChange(wrapSelection(value(),"~", "~")) }
             )
 
             // ── Strikethrough ────────────────────────────────────────────
             ToolbarChip(
                 icon = "format_strikethrough",
                 label = "S",
-                onClick = { onValueChange(wrapSelection(value, "+", "+")) }
+                onClick = { onValueChange(wrapSelection(value(),"+", "+")) }
             )
 
             // ── Link ─────────────────────────────────────────────────────
             ToolbarChip(
                 icon = "link",
                 label = "Link",
-                onClick = { onValueChange(insertLink(value)) }
+                onClick = { onValueChange(insertLink(value())) }
             )
 
             // ── Timestamp: tap = inactive [date], long-press = active <date> ──
@@ -212,12 +216,12 @@ fun OrgEditToolbar(
                 modifier = Modifier.combinedClickable(
                     onClick = {
                         // Inactive timestamp: [YYYY-MM-DD Day]
-                        onValueChange(insertTimestamp(value, active = false))
+                        onValueChange(insertTimestamp(value(),active = false))
                     },
                     onLongClick = {
                         // Active timestamp: <YYYY-MM-DD Day>
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onValueChange(insertTimestamp(value, active = true))
+                        onValueChange(insertTimestamp(value(),active = true))
                     }
                 )
             ) {
@@ -244,7 +248,7 @@ fun OrgEditToolbar(
             onSelect = { lang ->
                 showSrcDialog = false
                 val block = "#+begin_src $lang\n\n#+end_src"
-                onValueChange(insertBlock(value, block, cursorLineOffset = 1))
+                onValueChange(insertBlock(value(),block, cursorLineOffset = 1))
             }
         )
     }

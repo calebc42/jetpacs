@@ -1,14 +1,11 @@
 package com.calebc42.eabp
 
+import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.TextFieldBuffer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import org.json.JSONObject
 import kotlin.random.Random
@@ -135,10 +132,11 @@ internal data class Splice(val start: Int, val deleted: Int, val inserted: Strin
  * Minimal single-splice diff via common prefix/suffix. Any burst of edits
  * between two snapshots collapses to one splice. Boundaries are nudged off
  * surrogate pairs so the code-point conversion above never splits an astral
- * character. Returns null when the strings are equal.
+ * character. Returns null when the contents are equal (by content, so mixed
+ * CharSequence implementations compare correctly).
  */
-internal fun splice(old: String, new: String): Splice? {
-    if (old == new) return null
+internal fun splice(old: CharSequence, new: CharSequence): Splice? {
+    if (old.contentEquals(new)) return null
     var p = 0
     val maxP = minOf(old.length, new.length)
     while (p < maxP && old[p] == new[p]) p++
@@ -155,7 +153,7 @@ internal fun splice(old: String, new: String): Splice? {
         so++
         sn++
     }
-    return Splice(start = p, deleted = so - p, inserted = new.substring(p, sn))
+    return Splice(start = p, deleted = so - p, inserted = new.subSequence(p, sn).toString())
 }
 
 /** One fontification run from Emacs: UTF-16 offsets into the editor text. */
@@ -169,44 +167,8 @@ internal data class FontifyRun(
     val strike: Boolean,
 )
 
-/**
- * Renders Emacs's own font-lock runs — the user's real theme, every mode
- * Emacs can highlight — in place of the client-side approximation. Length-
- * preserving with identity mapping, so [DiagnosticsTransformation] composes
- * on top unchanged.
- */
-internal class FontifyTransformation(
-    private val runs: List<FontifyRun>,
-) : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText {
-        val n = text.text.length
-        val styled = buildAnnotatedString {
-            append(text.text)
-            for (r in runs) {
-                val s = r.start.coerceIn(0, n)
-                val e = r.end.coerceIn(s, n)
-                if (e > s) {
-                    addStyle(
-                        SpanStyle(
-                            color = r.color ?: Color.Unspecified,
-                            fontWeight = if (r.bold) FontWeight.Bold else null,
-                            fontStyle = if (r.italic) FontStyle.Italic else null,
-                            textDecoration = when {
-                                r.underline && r.strike -> TextDecoration.combine(
-                                    listOf(TextDecoration.Underline, TextDecoration.LineThrough))
-                                r.underline -> TextDecoration.Underline
-                                r.strike -> TextDecoration.LineThrough
-                                else -> null
-                            },
-                        ),
-                        s, e,
-                    )
-                }
-            }
-        }
-        return TransformedText(styled, OffsetMapping.Identity)
-    }
-}
+/** Emacs font-lock runs pinned to the exact [text] they were computed over. */
+internal class FontifySet(val text: String, val runs: List<FontifyRun>)
 
 /** One diagnostic to render: UTF-16 offsets into the editor text. */
 internal data class DiagRange(
@@ -216,29 +178,200 @@ internal data class DiagRange(
     val message: String,
 )
 
+/** Flymake diagnostics pinned to the exact [text] they were computed over. */
+internal class DiagSet(val text: String, val ranges: List<DiagRange>)
+
 /**
- * Overlays diagnostic underlines on top of a base transformation (the syntax
- * highlighter, or None). The base must be length-preserving with an identity
- * offset mapping — true of [SyntaxTransformation] — so diagnostic offsets in
- * original-text coordinates apply directly to the transformed string.
- * Underline + a translucent severity-tinted background stands in for the
- * desktop's wavy squiggle, which Compose spans can't draw.
+ * Sequential code-point → UTF-16 offset converter. Payload offsets arrive
+ * sorted, so each conversion walks forward from the previous one — a whole
+ * payload converts in one O(n) pass instead of O(runs × n) rescans from the
+ * string head. An out-of-order target restarts from the beginning.
+ * Targets must already be clamped to the text's code-point count.
  */
-internal class DiagnosticsTransformation(
-    private val base: VisualTransformation,
-    private val ranges: List<DiagRange>,
-    private val colors: Map<String, Color>,
-) : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText {
-        val t = base.filter(text)
-        val n = t.text.length
-        val styled = buildAnnotatedString {
-            append(t.text)
-            for (r in ranges) {
+internal class CodePointIndex(private val text: String) {
+    private var cp = 0
+    private var utf16 = 0
+    fun toUtf16(targetCp: Int): Int {
+        if (targetCp < cp) {
+            cp = 0
+            utf16 = 0
+        }
+        utf16 = text.offsetByCodePoints(utf16, targetCp - cp)
+        cp = targetCp
+        return utf16
+    }
+}
+
+/**
+ * Parse a `fontify.show` payload against the CURRENT editor text, or null.
+ * Gated like the old render path: the payload must belong to this editor's
+ * session AND the engine must confirm [text] is exactly what its seq was
+ * computed over. Parsing happens once per push (off the main thread), not
+ * once per keystroke; the result stays valid for as long as the editor text
+ * content-matches [FontifySet.text].
+ */
+internal fun parseFontify(
+    payload: JSONObject?,
+    editorId: String,
+    engine: EditorSyncEngine,
+    text: String,
+): FontifySet? {
+    val p = payload ?: return null
+    if (p.optString("id") != editorId) return null
+    if (!engine.isCurrent(text, p.optInt("session"), p.optInt("seq"))) return null
+    val arr = p.optJSONArray("runs") ?: return null
+    val cpTotal = text.codePointCount(0, text.length)
+    val idx = CodePointIndex(text)
+    val runs = buildList {
+        for (i in 0 until arr.length()) {
+            val r = arr.optJSONObject(i) ?: continue
+            val begCp = r.optInt("b").coerceIn(0, cpTotal)
+            val endCp = r.optInt("e").coerceIn(begCp, cpTotal)
+            val beg = idx.toUtf16(begCp)
+            val end = idx.toUtf16(endCp)
+            if (end <= beg) continue
+            val color = r.optString("c").takeIf { it.isNotEmpty() }?.let { hex ->
+                runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+            }
+            add(FontifyRun(
+                start = beg, end = end, color = color,
+                bold = r.optBoolean("bold"),
+                italic = r.optBoolean("italic"),
+                underline = r.optBoolean("underline"),
+                strike = r.optBoolean("strike"),
+            ))
+        }
+    }
+    return FontifySet(text, runs)
+}
+
+/** Parse a `diagnostics.show` payload against the CURRENT editor text, or
+ *  null. Same gating and lifetime as [parseFontify]. */
+internal fun parseDiagnostics(
+    payload: JSONObject?,
+    editorId: String,
+    engine: EditorSyncEngine,
+    text: String,
+): DiagSet? {
+    val p = payload ?: return null
+    if (p.optString("id") != editorId) return null
+    if (!engine.isCurrent(text, p.optInt("session"), p.optInt("seq"))) return null
+    val arr = p.optJSONArray("diags") ?: return null
+    val cpTotal = text.codePointCount(0, text.length)
+    val idx = CodePointIndex(text)
+    val ranges = buildList {
+        for (i in 0 until arr.length()) {
+            val d = arr.optJSONObject(i) ?: continue
+            val begCp = d.optInt("beg").coerceIn(0, cpTotal)
+            val endCp = d.optInt("end").coerceIn(begCp, cpTotal)
+            var beg = idx.toUtf16(begCp)
+            var end = idx.toUtf16(endCp)
+            // Zero-width diagnostics still deserve a visible mark.
+            if (end == beg) {
+                if (end < text.length) end++ else if (beg > 0) beg--
+            }
+            if (end > beg) {
+                add(DiagRange(beg, end,
+                    d.optString("type", "warning"), d.optString("text")))
+            }
+        }
+    }
+    return DiagSet(text, ranges)
+}
+
+/**
+ * Editor text more than this many changed chars away from the last Emacs
+ * fontify push falls back to the client tokenizer instead of run shifting.
+ * Keystrokes, IME batches, and toolbar inserts sit far below this; a big
+ * paste is where approximate re-tokenizing beats a large unstyled hole.
+ */
+internal const val FONTIFY_SHIFT_MAX_EDIT = 256
+
+/**
+ * [runs] shifted across one local edit, so Emacs colors survive the gap
+ * between a keystroke and the next fontify push instead of flapping to the
+ * client-side palette. Runs before the splice keep their offsets, runs
+ * after it slide by the length delta, and a run the edit lands inside
+ * stretches over the typed text — characters typed mid-comment stay
+ * comment-colored. Runs the deletion swallowed drop out; a run clipped at
+ * one end keeps its survivor. Purely cosmetic and possibly wrong (typing
+ * `"` won't restyle the rest of the line) — exactly as wrong as the
+ * tokenizer it replaces, but stable, and Emacs's reply corrects both.
+ */
+internal fun shiftRuns(runs: List<FontifyRun>, s: Splice): List<FontifyRun> {
+    val delta = s.inserted.length - s.deleted
+    val delEnd = s.start + s.deleted
+    return buildList {
+        for (r in runs) {
+            val b = when {
+                r.start < s.start -> r.start
+                r.start >= delEnd -> r.start + delta
+                else -> s.start + s.inserted.length
+            }
+            val e = when {
+                r.end <= s.start -> r.end
+                r.end >= delEnd -> r.end + delta
+                else -> s.start
+            }
+            if (e > b) add(if (b == r.start && e == r.end) r else r.copy(start = b, end = e))
+        }
+    }
+}
+
+/**
+ * The editor's whole styling pipeline as one [OutputTransformation], which
+ * the text field applies once per text change — not per frame per layout
+ * pass like the legacy VisualTransformation chain.
+ *
+ * Emacs's own font-lock runs (the user's real theme, every mode Emacs can
+ * highlight) apply whenever the buffer content-matches the text they were
+ * computed over — and, splice-shifted via [shiftRuns], whenever it's within
+ * one small local edit of it, which keeps the palette stable while a
+ * keystroke is in flight. The client-side tokenizer covers the rest: first
+ * paint, big pastes, and files Emacs skipped. Content matching (not seq
+ * matching) means undoing back to synced text restores exact Emacs colors
+ * instantly. Diagnostics draw on top under a strict content gate: underline
+ * + translucent severity tint standing in for the desktop's wavy squiggle,
+ * hidden rather than mis-drawn while text is in flight.
+ */
+internal class EditorStyles(
+    private val fontify: FontifySet?,
+    private val diags: DiagSet?,
+    private val language: String,
+    private val colors: SyntaxColors,
+    private val diagColors: Map<String, Color>,
+) : OutputTransformation {
+    override fun TextFieldBuffer.transformOutput() {
+        val text = asCharSequence()
+        val n = length
+        val runs = fontify?.let { f ->
+            val sp = splice(f.text, text)
+            when {
+                sp == null -> f.runs
+                sp.deleted + sp.inserted.length <= FONTIFY_SHIFT_MAX_EDIT ->
+                    shiftRuns(f.runs, sp)
+                else -> null
+            }
+        }
+        if (runs != null) {
+            for (r in runs) {
                 val s = r.start.coerceIn(0, n)
                 val e = r.end.coerceIn(s, n)
+                if (e > s) addStyle(runStyle(r), s, e)
+            }
+        } else if (language.isNotEmpty()) {
+            for (span in highlightSpans(language, text.toString(), colors)) {
+                val s = span.start.coerceIn(0, n)
+                val e = span.end.coerceIn(s, n)
+                if (e > s) addStyle(span.item, s, e)
+            }
+        }
+        if (diags != null && text.contentEquals(diags.text)) {
+            for (d in diags.ranges) {
+                val s = d.start.coerceIn(0, n)
+                val e = d.end.coerceIn(s, n)
                 if (e > s) {
-                    val c = colors[r.severity] ?: colors["warning"] ?: Color.Red
+                    val c = diagColors[d.severity] ?: diagColors["warning"] ?: Color.Red
                     addStyle(
                         SpanStyle(
                             textDecoration = TextDecoration.Underline,
@@ -249,8 +382,20 @@ internal class DiagnosticsTransformation(
                 }
             }
         }
-        return TransformedText(styled, t.offsetMapping)
     }
+
+    private fun runStyle(r: FontifyRun) = SpanStyle(
+        color = r.color ?: Color.Unspecified,
+        fontWeight = if (r.bold) FontWeight.Bold else null,
+        fontStyle = if (r.italic) FontStyle.Italic else null,
+        textDecoration = when {
+            r.underline && r.strike -> TextDecoration.combine(
+                listOf(TextDecoration.Underline, TextDecoration.LineThrough))
+            r.underline -> TextDecoration.Underline
+            r.strike -> TextDecoration.LineThrough
+            else -> null
+        },
+    )
 }
 
 /**

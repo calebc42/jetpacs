@@ -1,6 +1,7 @@
 package com.calebc42.eabp
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -44,6 +46,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +75,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -191,9 +196,12 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
  * Note: action delivery rides a broadcast intent, so very large files
  * must arrive read_only from Emacs.
  *
- * Uses TextFieldValue (not plain String) so the formatting toolbar can
- * read/set cursor position and selection for smart insertions.
+ * Built on [TextFieldState]: the IME edits the buffer directly instead of
+ * round-tripping value/onValueChange through recomposition, so a slow frame
+ * can no longer drop or double characters — and styling runs once per text
+ * change (as an OutputTransformation) instead of per layout pass.
  */
+@OptIn(ExperimentalFoundationApi::class) // undoState
 @Composable
 internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Unit) {
     val context = LocalContext.current
@@ -209,67 +217,46 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     // it), so this renderer carries no per-app file-type knowledge.
     val toolbar = node.optString("toolbar")
 
-    // TextFieldValue-based state for cursor/selection support.
     val specValue = node.optString("value", "")
-    var tfv by remember(id) { mutableStateOf(TextFieldValue(specValue)) }
+    val state = remember(id) { TextFieldState(specValue) }
     var seed by remember(id) { mutableStateOf(specValue) }
     // Adopt new spec values only when the user hasn't diverged
-    // (same seed-guard logic as rememberSeeded, but for TextFieldValue).
+    // (same seed-guard logic as rememberSeeded, but against the buffer).
     LaunchedEffect(specValue) {
         if (specValue != seed) {
-            if (tfv.text == seed) {
-                tfv = TextFieldValue(specValue)
+            if (state.text.contentEquals(seed)) {
+                state.edit { replace(0, length, specValue) }
             }
             seed = specValue
         }
     }
-    val modified = tfv.text != seed
+    // The O(n) compare reruns per keystroke, but derivedStateOf means the
+    // chrome recomposes only when the flag actually flips.
+    val modified by remember(id) { derivedStateOf { !state.text.contentEquals(seed) } }
     val fileName = id.substringAfterLast('/').ifEmpty { "untitled" }
 
-    // ── Undo / Redo ──────────────────────────────────────────────
-    // Stacks store *previous* text snapshots. Current state = tfv.
-    val undoStack = remember(id) { mutableListOf<String>() }
-    val redoStack = remember(id) { mutableListOf<String>() }
-    var canUndo by remember(id) { mutableStateOf(false) }
-    var canRedo by remember(id) { mutableStateOf(false) }
-    var lastSnapshot by remember(id) { mutableStateOf(specValue) }
-    var undoRedoActive by remember(id) { mutableStateOf(false) }
-
-    // Debounced snapshot: after the user stops typing for 600ms,
-    // push the *previous* text as an undo point.
-    LaunchedEffect(tfv.text) {
-        if (!undoRedoActive && tfv.text != lastSnapshot) {
-            delay(600)
-            if (tfv.text != lastSnapshot) {
-                undoStack.add(lastSnapshot)
-                if (undoStack.size > 100) undoStack.removeAt(0)
-                redoStack.clear()
-                lastSnapshot = tfv.text
-                canUndo = true
-                canRedo = false
-            }
+    // Bridge for the TextFieldValue-based helpers (toolbar inserts,
+    // completion acceptance): read on demand — never during typing — and
+    // apply as one minimal splice, so each action is one undoable edit
+    // with the cursor where the helper put it.
+    val readValue: () -> TextFieldValue = {
+        TextFieldValue(state.text.toString(), state.selection)
+    }
+    val applyValue: (TextFieldValue) -> Unit = { new ->
+        val s = splice(state.text.toString(), new.text)
+        state.edit {
+            if (s != null) replace(s.start, s.start + s.deleted, s.inserted)
+            selection = new.selection
         }
-        undoRedoActive = false
     }
 
-    // Toolbar changes create immediate undo points (one action = one undo).
-    val onToolbarChange: (TextFieldValue) -> Unit = { newValue ->
-        if (tfv.text != newValue.text) {
-            undoStack.add(tfv.text)
-            if (undoStack.size > 100) undoStack.removeAt(0)
-            redoStack.clear()
-            lastSnapshot = newValue.text
-            canUndo = true
-            canRedo = false
-        }
-        tfv = newValue
-    }
-
-    val highlight = if (syntax.isNotEmpty()) {
-        val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-        val sc = remember(dark) { SyntaxColors.forBackground(dark) }
-        remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
-    } else VisualTransformation.None
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val sc = remember(dark) { SyntaxColors.forBackground(dark) }
+    val diagColors = mapOf(
+        "error" to MaterialTheme.colorScheme.error,
+        "warning" to Color(0xFFC08A00),
+        "note" to MaterialTheme.colorScheme.outline,
+    )
 
     // ── Emacs-backed sync + completion (eabp-sync.el / eabp-complete.el) ──
     // One engine per editor keeps a shadow buffer on the Emacs side current
@@ -281,47 +268,80 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     val completeEnabled = node.optBoolean("complete", false) && !readOnly
     var completionReq by remember(id) { mutableStateOf(0) }
     val syncEngine = remember(id) { EditorSyncEngine(id) }
+
+    // Emacs-pushed styling, parsed ONCE per push (off the main thread) and
+    // pinned to the exact text it describes. [EditorStyles] applies a set
+    // exactly on a content match and splice-shifted while typing has moved
+    // the buffer a small local edit away, so the palette never flaps —
+    // and an undo back to synced text restores exact Emacs colors.
+    var fontifySet by remember(id) { mutableStateOf<FontifySet?>(null) }
+    var diagSet by remember(id) { mutableStateOf<DiagSet?>(null) }
+
     if (completeEnabled) {
         // Seed (or reseed) the session whenever a handshaked connection is
         // available — covers first composition, reconnects, Emacs restarts.
         val connected by EabpRuntime.connected.collectAsState()
         LaunchedEffect(connected) {
-            if (connected) withContext(Dispatchers.IO) { syncEngine.open(tfv.text) }
+            if (connected) withContext(Dispatchers.IO) {
+                syncEngine.open(state.text.toString())
+            }
         }
         // Emacs asks for a full-text reseed after any seq mismatch.
         val resyncReq by EabpRuntime.editSyncState.resync.collectAsState()
         LaunchedEffect(resyncReq) {
             val r = resyncReq ?: return@LaunchedEffect
             if (r.optString("id") == id && r.optInt("session") == syncEngine.session) {
-                withContext(Dispatchers.IO) { syncEngine.open(tfv.text) }
+                withContext(Dispatchers.IO) { syncEngine.open(state.text.toString()) }
             }
+        }
+        val fontifyPayload by EabpRuntime.editSyncState.fontify.collectAsState()
+        LaunchedEffect(fontifyPayload) {
+            val p = fontifyPayload ?: return@LaunchedEffect
+            val text = state.text.toString()
+            withContext(Dispatchers.Default) {
+                parseFontify(p, id, syncEngine, text)
+            }?.let { fontifySet = it }
+        }
+        val diagPayload by EabpRuntime.editSyncState.diagnostics.collectAsState()
+        LaunchedEffect(diagPayload) {
+            val p = diagPayload ?: return@LaunchedEffect
+            val text = state.text.toString()
+            withContext(Dispatchers.Default) {
+                parseDiagnostics(p, id, syncEngine, text)
+            }?.let { diagSet = it }
         }
         // The debounced pipeline: delta first, then (token permitting) the
         // slim completion request, then the caret report for eldoc. All
         // ride one ordered socket, so Emacs always answers against the
         // text the user is looking at. Bare cursor moves skip the delta
-        // and completion but still report the caret.
-        var lastHandled by remember(id) { mutableStateOf(specValue) }
-        LaunchedEffect(tfv.text, tfv.selection) {
-            val textChanged = tfv.text != lastHandled
-            delay(COMPLETION_DEBOUNCE_MS)
-            lastHandled = tfv.text
-            val text = tfv.text
-            val sel = tfv.selection
-            val collapsed = sel.start == sel.end
-            val prefix = if (collapsed) wordPrefixAt(text, sel.start) else ""
-            // LSP-style trigger characters: right after "." (member access)
-            // or ":" (keywords, paths) completion is wanted with no token.
-            val triggered = collapsed && prefix.isEmpty() && sel.start > 0 &&
-                text[sel.start - 1] in COMPLETION_TRIGGER_CHARS
-            val wantCompletion = textChanged &&
-                (prefix.length >= COMPLETION_MIN_PREFIX || triggered)
-            val req = if (wantCompletion) ++completionReq else completionReq
-            withContext(Dispatchers.IO) {
-                if (wantCompletion) syncEngine.requestCompletions(text, sel.start, req)
-                else if (textChanged) syncEngine.update(text)
-                if (collapsed) syncEngine.caret(text, sel.start)
-            }
+        // and completion but still report the caret. collectLatest restarts
+        // the debounce on every buffer or cursor change, exactly like the
+        // old per-value effect keying — but the full string materializes
+        // only once per pause, not once per keystroke.
+        LaunchedEffect(id) {
+            var lastHandled: CharSequence = state.text
+            snapshotFlow { state.text to state.selection }
+                .collectLatest { (textSeq, sel) ->
+                    val textChanged = !textSeq.contentEquals(lastHandled)
+                    delay(COMPLETION_DEBOUNCE_MS)
+                    val text = textSeq.toString()
+                    lastHandled = text
+                    val collapsed = sel.collapsed
+                    val prefix = if (collapsed) wordPrefixAt(text, sel.start) else ""
+                    // LSP-style trigger characters: right after "." (member
+                    // access) or ":" (keywords, paths) completion is wanted
+                    // with no token.
+                    val triggered = collapsed && prefix.isEmpty() && sel.start > 0 &&
+                        text[sel.start - 1] in COMPLETION_TRIGGER_CHARS
+                    val wantCompletion = textChanged &&
+                        (prefix.length >= COMPLETION_MIN_PREFIX || triggered)
+                    val req = if (wantCompletion) ++completionReq else completionReq
+                    withContext(Dispatchers.IO) {
+                        if (wantCompletion) syncEngine.requestCompletions(text, sel.start, req)
+                        else if (textChanged) syncEngine.update(text)
+                        if (collapsed) syncEngine.caret(text, sel.start)
+                    }
+                }
         }
         // Tear down the Emacs-side session on dispose. The shared push slots
         // (diagnostics/fontify/eldoc) are deliberately NOT cleared: every
@@ -336,52 +356,39 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         }
     }
 
-    // Flymake diagnostics from the synced shadow. Rendered only while the
-    // payload's session/seq match the engine AND the text hasn't moved on —
-    // squiggles are hidden during the debounce gap rather than mis-drawn.
-    val diagPayload by EabpRuntime.editSyncState.diagnostics.collectAsState()
-    val diagRanges = if (completeEnabled)
-        remember(diagPayload, tfv.text) {
-            diagnosticRanges(diagPayload, id, syncEngine, tfv.text)
+    // Diagnostics for the doc line, valid only while the buffer still holds
+    // the exact text they were computed over (contentEquals rejects on
+    // length first, so the per-keystroke cost is trivial). The squiggles
+    // themselves are drawn by [EditorStyles] under the same content gate.
+    val diagRanges by remember(id) {
+        derivedStateOf {
+            val ds = diagSet
+            if (ds != null && state.text.contentEquals(ds.text)) ds.ranges
+            else emptyList()
         }
-    else emptyList()
-    val diagColors = mapOf(
-        "error" to MaterialTheme.colorScheme.error,
-        "warning" to Color(0xFFC08A00),
-        "note" to MaterialTheme.colorScheme.outline,
-    )
+    }
 
-    // Emacs-pushed fontification: when current, it REPLACES the client-side
-    // highlighter (the user's real theme, every mode Emacs knows); while a
-    // keystroke is in flight it goes stale and the client highlighter
-    // bridges the gap. Diagnostics compose on top of either.
-    val fontifyPayload by EabpRuntime.editSyncState.fontify.collectAsState()
-    val fontifyRuns = if (!completeEnabled) emptyList() else
-        remember(fontifyPayload, tfv.text) {
-            fontifyRuns(fontifyPayload, id, syncEngine, tfv.text)
-        }
-    val baseTransformation = if (fontifyRuns.isEmpty()) highlight
-        else remember(fontifyRuns) { FontifyTransformation(fontifyRuns) }
-    val fieldTransformation = if (diagRanges.isEmpty()) baseTransformation
-        else remember(baseTransformation, diagRanges, diagColors) {
-            DiagnosticsTransformation(baseTransformation, diagRanges, diagColors)
-        }
+    // The whole styling pipeline — Emacs runs when current or shiftable,
+    // client-side tokenizer for first paint and big edits, diagnostics on
+    // top — as one transformation, recreated once per Emacs push (not per
+    // keystroke).
+    val outputTx = remember(fontifySet, diagSet, syntax, sc, diagColors) {
+        EditorStyles(fontifySet, diagSet, syntax, sc, diagColors)
+    }
 
     // publish_state: mirror the text into ui-state like a text_input, so
     // button-driven forms (the Eval button) can read it back.
     if (node.optBoolean("publish_state", false)) {
-        var lastPublished by remember(id) { mutableStateOf<String?>(null) }
-        LaunchedEffect(tfv.text) {
-            if (lastPublished == null) {
-                lastPublished = tfv.text
-                return@LaunchedEffect
-            }
-            if (tfv.text == lastPublished) return@LaunchedEffect
-            delay(250)
-            if (tfv.text != lastPublished) {
-                lastPublished = tfv.text
-                dispatchStateChanged(context, id, JSONObject.quote(tfv.text))
-            }
+        LaunchedEffect(id) {
+            var lastPublished: CharSequence = state.text
+            snapshotFlow { state.text }
+                .collectLatest { t ->
+                    if (t.contentEquals(lastPublished)) return@collectLatest
+                    delay(250)
+                    val s = t.toString()
+                    lastPublished = s
+                    dispatchStateChanged(context, id, JSONObject.quote(s))
+                }
         }
     }
 
@@ -421,51 +428,31 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            // Undo / Redo
+            // Undo / Redo — the field's built-in history: the platform
+            // groups IME edits into natural units, and every programmatic
+            // state.edit block (toolbar action, completion acceptance,
+            // revert) records as exactly one step.
             IconButton(
-                onClick = {
-                    if (undoStack.isNotEmpty()) {
-                        undoRedoActive = true
-                        redoStack.add(tfv.text)
-                        val prev = undoStack.removeLast()
-                        tfv = TextFieldValue(prev)
-                        lastSnapshot = prev
-                        canUndo = undoStack.isNotEmpty()
-                        canRedo = true
-                    }
-                },
-                enabled = canUndo && !readOnly
+                onClick = { state.undoState.undo() },
+                enabled = state.undoState.canUndo && !readOnly
             ) { Icon(IconMap.get("undo"), contentDescription = "Undo") }
             IconButton(
-                onClick = {
-                    if (redoStack.isNotEmpty()) {
-                        undoRedoActive = true
-                        undoStack.add(tfv.text)
-                        val next = redoStack.removeLast()
-                        tfv = TextFieldValue(next)
-                        lastSnapshot = next
-                        canUndo = true
-                        canRedo = redoStack.isNotEmpty()
-                    }
-                },
-                enabled = canRedo && !readOnly
+                onClick = { state.undoState.redo() },
+                enabled = state.undoState.canRedo && !readOnly
             ) { Icon(IconMap.get("redo"), contentDescription = "Redo") }
             TextButton(
                 onClick = {
-                    undoStack.add(tfv.text)
-                    canUndo = true
-                    redoStack.clear()
-                    canRedo = false
-                    tfv = TextFieldValue(seed)
-                    lastSnapshot = seed
+                    val s = seed
+                    state.edit { replace(0, length, s) }
                 },
                 enabled = modified && !readOnly
             ) { Text("Revert") }
             Button(
                 onClick = {
                     if (onSave != null) {
-                        dispatchWithValue(dispatch, onSave, tfv.text)
-                        seed = tfv.text
+                        val text = state.text.toString()
+                        dispatchWithValue(dispatch, onSave, text)
+                        seed = text
                     }
                 },
                 enabled = modified && !readOnly && onSave != null
@@ -478,10 +465,9 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
             val sizing = if (chrome) Modifier.weight(1f)
                 else Modifier.heightIn(min = 96.dp, max = 200.dp)
             OutlinedTextField(
-                value = tfv,
-                onValueChange = { if (!readOnly) tfv = it },
+                state = state,
                 readOnly = readOnly,
-                visualTransformation = fieldTransformation,
+                outputTransformation = outputTx,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = FontFamily.Monospace,
                     lineHeight = 1.4.em
@@ -495,36 +481,52 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
             // Gutter mode. BasicTextField exposes onTextLayout, which gives
             // accurate per-logical-line Y positions even when long lines
             // soft-wrap; gutter and field share ONE scroll container so they
-            // can never desynchronize.
-            var textLayout by remember(id) { mutableStateOf<TextLayoutResult?>(null) }
+            // can never desynchronize. The state-based onTextLayout hands
+            // over a getter for the latest layout instead of the result
+            // itself; it reads snapshot state, so readers auto-invalidate.
+            var textLayout by remember(id) {
+                mutableStateOf<(() -> TextLayoutResult?)?>(null)
+            }
             val scrollState = rememberScrollState()
-            val lineStarts = remember(tfv.text) {
-                buildList {
-                    add(0)
-                    tfv.text.forEachIndexed { i, c -> if (c == '\n') add(i + 1) }
+            // derivedStateOf: the O(n) line scan reruns per edit, but the
+            // gutter recomposes only when line starts actually shift.
+            val lineStarts by remember(id) {
+                derivedStateOf {
+                    val t = state.text
+                    buildList {
+                        add(0)
+                        for (i in t.indices) if (t[i] == '\n') add(i + 1)
+                    }
                 }
             }
-            val cursorLine = lineStarts.indexOfLast { it <= tfv.selection.start }
-                .coerceAtLeast(0)
+            val cursorLine by remember(id) {
+                derivedStateOf {
+                    lineStarts.indexOfLast { it <= state.selection.start }
+                        .coerceAtLeast(0)
+                }
+            }
             // Keep the caret visible. BasicTextField inside an EXTERNAL scroll
             // container never scrolls its own cursor into view — so typing
             // below the fold, or the IME opening (which shrinks the viewport
             // via imePadding), left the caret hidden behind the keyboard.
             var viewportHeight by remember(id) { mutableStateOf(0) }
-            LaunchedEffect(tfv.selection, textLayout, viewportHeight) {
-                val lr = textLayout ?: return@LaunchedEffect
-                if (viewportHeight <= 0) return@LaunchedEffect
-                val off = tfv.selection.start.coerceIn(0, lr.layoutInput.text.length)
-                val line = lr.getLineForOffset(off)
-                val top = lr.getLineTop(line).toInt()
-                val bottom = lr.getLineBottom(line).toInt()
-                val margin = (bottom - top).coerceAtLeast(1) * 2 // ≈ two lines
-                when {
-                    bottom + margin > scrollState.value + viewportHeight ->
-                        scrollState.animateScrollTo(
-                            (bottom + margin - viewportHeight).coerceAtLeast(0))
-                    top - margin < scrollState.value ->
-                        scrollState.animateScrollTo((top - margin).coerceAtLeast(0))
+            LaunchedEffect(id) {
+                snapshotFlow {
+                    Triple(state.selection, viewportHeight, textLayout?.invoke())
+                }.collectLatest { (sel, vh, lr) ->
+                    if (lr == null || vh <= 0) return@collectLatest
+                    val off = sel.start.coerceIn(0, lr.layoutInput.text.length)
+                    val line = lr.getLineForOffset(off)
+                    val top = lr.getLineTop(line).toInt()
+                    val bottom = lr.getLineBottom(line).toInt()
+                    val margin = (bottom - top).coerceAtLeast(1) * 2 // ≈ two lines
+                    when {
+                        bottom + margin > scrollState.value + vh ->
+                            scrollState.animateScrollTo(
+                                (bottom + margin - vh).coerceAtLeast(0))
+                        top - margin < scrollState.value ->
+                            scrollState.animateScrollTo((top - margin).coerceAtLeast(0))
+                    }
                 }
             }
             Row(
@@ -539,14 +541,13 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     lineStarts = lineStarts,
                     cursorLine = cursorLine,
                     relative = lineNumbers == "relative",
-                    layout = textLayout
+                    layout = textLayout?.invoke()
                 )
                 BasicTextField(
-                    value = tfv,
-                    onValueChange = { if (!readOnly) tfv = it },
+                    state = state,
                     readOnly = readOnly,
-                    visualTransformation = fieldTransformation,
-                    onTextLayout = { textLayout = it },
+                    outputTransformation = outputTx,
+                    onTextLayout = { getResult -> textLayout = getResult },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
                         lineHeight = 1.4.em,
@@ -560,8 +561,8 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         // The doc line — mobile eldoc: a diagnostic under the cursor takes
         // precedence; otherwise the eldoc content for the caret (an elisp
         // signature, a variable docstring) shows here, above the keyboard.
-        if (completeEnabled && tfv.selection.start == tfv.selection.end) {
-            val cursor = tfv.selection.start
+        if (completeEnabled && state.selection.collapsed) {
+            val cursor = state.selection.start
             val hit = diagRanges.firstOrNull { cursor >= it.start && cursor <= it.end }
             when {
                 hit != null -> Row(
@@ -592,21 +593,20 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         }
         // Completion suggestion strip — the mobile-native "posframe":
         // keyboard-adjacent chips, tap to accept (the phone's TAB).
-        // Insertion is applied locally via the toolbar path so each
-        // acceptance is one undo point; no round trip to Emacs.
+        // Insertion is applied locally as one undoable edit; no round
+        // trip to Emacs.
         if (completeEnabled) {
             CompletionStrip(
                 editorId = id,
                 requestId = completionReq,
-                tfv = tfv,
-                onAccept = onToolbarChange
+                state = state
             )
         }
         // Server-requested formatting toolbar — sits at the bottom of the
         // editor, just above the soft keyboard (keyboard-adjacent, à la
         // Orgro). "org" is the only toolbar this renderer ships today.
         if (toolbar == "org" && !readOnly) {
-            OrgEditToolbar(value = tfv, onValueChange = onToolbarChange)
+            OrgEditToolbar(value = readValue, onValueChange = applyValue)
         }
     }
 }
@@ -622,87 +622,11 @@ private const val COMPLETION_TRIGGER_CHARS = ".:"
 private fun isTokenChar(c: Char) = c.isLetterOrDigit() || c == '-' || c == '_'
 
 /** The word/symbol token ending at CURSOR, or "" when none. */
-internal fun wordPrefixAt(text: String, cursor: Int): String {
+internal fun wordPrefixAt(text: CharSequence, cursor: Int): String {
     val end = cursor.coerceIn(0, text.length)
     var i = end
     while (i > 0 && isTokenChar(text[i - 1])) i--
-    return text.substring(i, end)
-}
-
-/**
- * Convert a `diagnostics.show` payload into renderable ranges against the
- * CURRENT editor text. Returns nothing unless the payload belongs to this
- * editor's session AND the engine confirms the text is exactly what that
- * seq was computed over — stale squiggles are dropped, never mis-drawn.
- * Offsets arrive as code points (Emacs chars) and convert to UTF-16 here.
- */
-private fun diagnosticRanges(
-    payload: JSONObject?,
-    editorId: String,
-    engine: EditorSyncEngine,
-    text: String,
-): List<DiagRange> {
-    val p = payload ?: return emptyList()
-    if (p.optString("id") != editorId) return emptyList()
-    if (!engine.isCurrent(text, p.optInt("session"), p.optInt("seq"))) return emptyList()
-    val arr = p.optJSONArray("diags") ?: return emptyList()
-    val cpTotal = text.codePointCount(0, text.length)
-    return buildList {
-        for (i in 0 until arr.length()) {
-            val d = arr.optJSONObject(i) ?: continue
-            val begCp = d.optInt("beg").coerceIn(0, cpTotal)
-            val endCp = d.optInt("end").coerceIn(begCp, cpTotal)
-            var beg = text.offsetByCodePoints(0, begCp)
-            var end = text.offsetByCodePoints(0, endCp)
-            // Zero-width diagnostics still deserve a visible mark.
-            if (end == beg) {
-                if (end < text.length) end++ else if (beg > 0) beg--
-            }
-            if (end > beg) {
-                add(DiagRange(beg, end,
-                    d.optString("type", "warning"), d.optString("text")))
-            }
-        }
-    }
-}
-
-/**
- * Convert a `fontify.show` payload into renderable runs against the CURRENT
- * editor text — same gating as diagnostics: session/seq/text must all match,
- * so stale colors are dropped (the client highlighter bridges the gap),
- * never smeared across moved text. Offsets arrive as code points.
- */
-private fun fontifyRuns(
-    payload: JSONObject?,
-    editorId: String,
-    engine: EditorSyncEngine,
-    text: String,
-): List<FontifyRun> {
-    val p = payload ?: return emptyList()
-    if (p.optString("id") != editorId) return emptyList()
-    if (!engine.isCurrent(text, p.optInt("session"), p.optInt("seq"))) return emptyList()
-    val arr = p.optJSONArray("runs") ?: return emptyList()
-    val cpTotal = text.codePointCount(0, text.length)
-    return buildList {
-        for (i in 0 until arr.length()) {
-            val r = arr.optJSONObject(i) ?: continue
-            val begCp = r.optInt("b").coerceIn(0, cpTotal)
-            val endCp = r.optInt("e").coerceIn(begCp, cpTotal)
-            val beg = text.offsetByCodePoints(0, begCp)
-            val end = text.offsetByCodePoints(0, endCp)
-            if (end <= beg) continue
-            val color = r.optString("c").takeIf { it.isNotEmpty() }?.let { hex ->
-                runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
-            }
-            add(FontifyRun(
-                start = beg, end = end, color = color,
-                bold = r.optBoolean("bold"),
-                italic = r.optBoolean("italic"),
-                underline = r.optBoolean("underline"),
-                strike = r.optBoolean("strike"),
-            ))
-        }
-    }
+    return text.subSequence(i, end).toString()
 }
 
 /**
@@ -716,27 +640,27 @@ private fun fontifyRuns(
 private fun CompletionStrip(
     editorId: String,
     requestId: Int,
-    tfv: TextFieldValue,
-    onAccept: (TextFieldValue) -> Unit,
+    state: TextFieldState,
 ) {
     val payload by EabpRuntime.completionState.current.collectAsState()
     val p = payload ?: return
     if (p.optString("id") != editorId || p.optInt("request_id") != requestId) return
     val candidates = p.optJSONArray("candidates") ?: return
     if (candidates.length() == 0) return
-    if (tfv.selection.start != tfv.selection.end) return
-    val cursor = tfv.selection.start
+    if (!state.selection.collapsed) return
+    val text = state.text
+    val cursor = state.selection.start
     // base may legitimately be empty: trigger-character completion (right
     // after ".") replaces nothing and inserts at the cursor.
     val base = p.optString("prefix")
-    val word = wordPrefixAt(tfv.text, cursor)
+    val word = wordPrefixAt(text, cursor)
     // The effective prefix to replace: the current token when the user kept
     // typing it, the original when capf chose wider boundaries (e.g. paths),
     // nothing when the token changed — then the reply is stale, show nothing.
     val effective = when {
         word.startsWith(base) -> word
         cursor >= base.length &&
-            tfv.text.regionMatches(cursor - base.length, base, 0, base.length) -> base
+            text.subSequence(cursor - base.length, cursor).toString() == base -> base
         else -> return
     }
     val visible = buildList {
@@ -761,9 +685,10 @@ private fun CompletionStrip(
             AssistChip(
                 onClick = {
                     val start = cursor - effective.length
-                    val newText = tfv.text.substring(0, start) + label +
-                        tfv.text.substring(cursor)
-                    onAccept(TextFieldValue(newText, TextRange(start + label.length)))
+                    state.edit {
+                        replace(start, cursor, label)
+                        selection = TextRange(start + label.length)
+                    }
                     EabpRuntime.completionState.clear()
                 },
                 label = {

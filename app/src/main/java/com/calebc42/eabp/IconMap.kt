@@ -1,6 +1,8 @@
 package com.calebc42.eabp
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -74,8 +76,8 @@ object IconMap {
             "format_indent_decrease" -> Icons.Outlined.FormatIndentDecrease
             "format_indent_increase" -> Icons.Outlined.FormatIndentIncrease
             "arrow_downward" -> Icons.Outlined.ArrowDownward
-            "undo" -> Icons.Outlined.Undo
-            "redo" -> Icons.Outlined.Redo
+            "undo" -> Icons.AutoMirrored.Outlined.Undo
+            "redo" -> Icons.AutoMirrored.Outlined.Redo
             "swap_vert" -> Icons.Outlined.SwapVert
             "drag_handle" -> Icons.Outlined.DragHandle
             else -> Icons.Outlined.HelpOutline

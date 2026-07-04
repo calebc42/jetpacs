@@ -80,13 +80,43 @@ data class SyntaxColors(
 }
 
 /**
- * A [VisualTransformation] that recolours a code field in place. It never
- * changes character count, so the offset mapping is the identity — the cursor,
- * selection, and IME all keep working exactly as on a plain field.
+ * Best-effort client-side span styles for [src] in [language]. The single
+ * tokenizer entry point behind both [SyntaxTransformation] (legacy fields)
+ * and the editor's output transformation.
  *
  * Highlighting is capped at [maxChars]; past that the tail renders plain so a
  * large config file can't lag every keystroke. Any tokeniser hiccup falls back
- * to plain text rather than crashing the editor.
+ * to no styles rather than crashing the field.
+ */
+fun highlightSpans(
+    language: String,
+    src: String,
+    colors: SyntaxColors,
+    maxChars: Int = 20_000,
+): List<AnnotatedString.Range<SpanStyle>> = runCatching {
+    when (language.lowercase()) {
+        "elisp", "emacs-lisp", "lisp" -> highlightElisp(src, colors, maxChars)
+        "org" -> highlightOrg(src, colors, maxChars)
+        "python", "py" -> highlightCode(
+            src, colors, pythonKeywords,
+            lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
+        "rust", "rs" -> highlightCode(
+            src, colors, rustKeywords,
+            lineComment = "//", singleQuoteStrings = false, maxChars = maxChars)
+        "shell", "sh", "bash" -> highlightCode(
+            src, colors, shellKeywords,
+            lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
+        "c", "cpp" -> highlightCode(
+            src, colors, cKeywords,
+            lineComment = "//", singleQuoteStrings = false, maxChars = maxChars)
+        else -> null
+    }?.spanStyles ?: emptyList()
+}.getOrElse { emptyList() }
+
+/**
+ * A [VisualTransformation] that recolours a code field in place. It never
+ * changes character count, so the offset mapping is the identity — the cursor,
+ * selection, and IME all keep working exactly as on a plain field.
  */
 class SyntaxTransformation(
     private val language: String,
@@ -94,25 +124,9 @@ class SyntaxTransformation(
     private val maxChars: Int = 20_000,
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
-        val styled = runCatching {
-            when (language.lowercase()) {
-                "elisp", "emacs-lisp", "lisp" -> highlightElisp(text.text, colors, maxChars)
-                "org" -> highlightOrg(text.text, colors, maxChars)
-                "python", "py" -> highlightCode(
-                    text.text, colors, pythonKeywords,
-                    lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
-                "rust", "rs" -> highlightCode(
-                    text.text, colors, rustKeywords,
-                    lineComment = "//", singleQuoteStrings = false, maxChars = maxChars)
-                "shell", "sh", "bash" -> highlightCode(
-                    text.text, colors, shellKeywords,
-                    lineComment = "#", singleQuoteStrings = true, maxChars = maxChars)
-                "c", "cpp" -> highlightCode(
-                    text.text, colors, cKeywords,
-                    lineComment = "//", singleQuoteStrings = false, maxChars = maxChars)
-                else -> AnnotatedString(text.text)
-            }
-        }.getOrElse { AnnotatedString(text.text) }
+        val spans = highlightSpans(language, text.text, colors, maxChars)
+        val styled = if (spans.isEmpty()) AnnotatedString(text.text)
+            else AnnotatedString(text.text, spanStyles = spans)
         return TransformedText(styled, OffsetMapping.Identity)
     }
 }

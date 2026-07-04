@@ -38,6 +38,7 @@
                      "core/eabp-complete.el"
                      "core/eabp-settings.el"
                      "core/eabp-files.el"
+                     "core/eabp-witheditor.el"
                      "core/eabp-emacs-ui.el"))
        (app-files '("apps/eabp-package-browser.el"
                     "apps/eabp-magit.el"

@@ -17,6 +17,7 @@
 (require 'eabp-buffer)
 (require 'eabp-tablist)
 (require 'eabp-shell)
+(require 'eabp-witheditor)
 (require 'cl-lib)
 
 ;; ─── State ───────────────────────────────────────────────────────────────────

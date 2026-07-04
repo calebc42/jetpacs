@@ -185,6 +185,80 @@ Returns the reply value, or the symbol `cancelled' if dismissed/timed out."
 
 (advice-add 'yes-or-no-p :around #'eabp--yes-or-no-p-advice)
 
+;; ─── Advice: map-y-or-n-p ────────────────────────────────────────────────────
+;;
+;; `map-y-or-n-p' drives `save-some-buffers' and other batch confirmations.
+;; It reads raw events via `read-event', which never arrive over the bridge —
+;; so from the phone it HANGS forever (no dialog is ever shown, so the prompt
+;; timeout can't even fire).  This is the freeze `magit-commit' hits: it runs
+;; save-some-buffers before opening the message buffer.  We reimplement the
+;; loop as one bridged dialog per object instead of feeding it events.
+
+(defun eabp--map-y-or-n-p-advice (orig-fn prompter actor list &rest args)
+  "Around advice for `map-y-or-n-p': one bridged dialog per object.
+Returns the number of objects ACTOR was called on, matching the original.
+LIST may be a list of objects or a generator function; PROMPTER may be a
+format string or a function returning a string (ask), t (act silently)
+or nil (skip silently)."
+  (if (not eabp--in-action-handler)
+      (apply orig-fn prompter actor list args)
+    (let* ((count 0)
+           (all nil)              ; non-nil once "Yes to all" is chosen
+           (done nil)             ; non-nil once "Quit"/dismiss stops the loop
+           (next (if (functionp list)
+                     list
+                   (let ((remaining list))
+                     (lambda () (when remaining (pop remaining))))))
+           obj)
+      (while (and (not done) (setq obj (funcall next)))
+        (let ((p (cond ((functionp prompter) (funcall prompter obj))
+                       ((stringp prompter) (format prompter obj))
+                       (t (format "%s? " obj)))))
+          (cond
+           ;; PROMPTER may resolve to "act, don't ask" (t) or "skip" (nil).
+           ((eq p t) (funcall actor obj) (setq count (1+ count)))
+           ((null p) nil)
+           ;; A prior "Yes to all" acts on every remaining object silently.
+           (all (funcall actor obj) (setq count (1+ count)))
+           (t
+            (let* ((id (eabp--prompt-id))
+                   (title (if (stringp p) (string-trim-right p "[ ?]+")
+                            (format "%s" p)))
+                   (body (eabp-column
+                          (eabp-text title 'title)
+                          (eabp-flow-row
+                           (eabp-button
+                            "Yes"
+                            (eabp-action "prompt.reply"
+                                         :args `((prompt_id . ,id) (value . "y"))))
+                           (eabp-button
+                            "No"
+                            (eabp-action "prompt.reply"
+                                         :args `((prompt_id . ,id) (value . "n")))
+                            :variant "outlined")
+                           (eabp-button
+                            "Yes to all"
+                            (eabp-action "prompt.reply"
+                                         :args `((prompt_id . ,id) (value . "all")))
+                            :variant "outlined")
+                           (eabp-button
+                            "Quit"
+                            (eabp-action "prompt.reply"
+                                         :args `((prompt_id . ,id) (value . "quit")))
+                            :variant "text")))))
+              (eabp--send-prompt-dialog id body)
+              ;; `_' catches "quit", the `cancelled' symbol (dismiss/timeout),
+              ;; and anything unexpected — all stop the loop.
+              (pcase (unwind-protect (eabp--wait-for-prompt id)
+                       (eabp--cleanup-prompt))
+                ("y" (funcall actor obj) (setq count (1+ count)))
+                ("n" nil)
+                ("all" (setq all t) (funcall actor obj) (setq count (1+ count)))
+                (_ (setq done t))))))))
+      count)))
+
+(advice-add 'map-y-or-n-p :around #'eabp--map-y-or-n-p-advice)
+
 ;; ─── Advice: read-from-minibuffer ────────────────────────────────────────────
 
 (defun eabp--read-from-minibuffer-advice (orig-fn prompt &rest args)
@@ -578,6 +652,67 @@ chosen entry is returned as the original would."
             (keyboard-quit))))))
 
 (advice-add 'read-multiple-choice :around #'eabp--read-multiple-choice-advice)
+
+;; ─── Advice: raw event readers ───────────────────────────────────────────────
+;;
+;; `read-event', `read-key', `read-key-sequence' and its -vector sibling read
+;; keyboard events directly, bypassing every prompt bridge above.  From the
+;; phone they HANG.  `query-replace' (via `perform-replace') and any command
+;; that reads a single keystroke land here.  We can't render an arbitrary key
+;; event as a dialog cleanly, so this is deliberately crude: turn the read
+;; into an answerable text prompt (a key description like "y" or "C-c"), and
+;; if it can't be answered, `keyboard-quit' rather than block forever.
+
+(defun eabp--raw-event-should-bridge-p (&optional seconds)
+  "Non-nil when a raw-event read should be bridged rather than run natively.
+Bridges only inside an action handler, and never when events are already
+available — a running keyboard macro (`eabp-keymap--execute-key' drives
+commands through `execute-kbd-macro'), queued `unread-command-events', or a
+timed read (SECONDS non-nil, i.e. `read-event' used as a sleep)."
+  (and eabp--in-action-handler
+       (not executing-kbd-macro)
+       (not unread-command-events)
+       (not seconds)))
+
+(defun eabp--bridge-key-prompt (prompt)
+  "Prompt the phone for a key description and return it parsed, or quit.
+Returns the `kbd' result (a string or vector), or signals `quit' when the
+reply is empty or unparseable."
+  (let ((reply (eabp--read-from-minibuffer-advice
+                #'ignore (or (and (stringp prompt) prompt)
+                             "Key input expected: "))))
+    (if (and (stringp reply) (not (string-empty-p reply)))
+        (let ((keys (ignore-errors (kbd reply))))
+          (if (and keys (> (length keys) 0)) keys (keyboard-quit)))
+      (keyboard-quit))))
+
+(defun eabp--read-event-advice (orig-fn &rest args)
+  "Around advice for `read-event'/`read-key': bridge or degrade, never hang.
+Returns the first event of the parsed key description."
+  ;; read-event: (&optional PROMPT INHERIT-INPUT-METHOD SECONDS).
+  ;; read-key:   (&optional PROMPT) — nth 2 is simply nil.
+  (if (not (eabp--raw-event-should-bridge-p (nth 2 args)))
+      (apply orig-fn args)
+    (aref (eabp--bridge-key-prompt (nth 0 args)) 0)))
+
+(advice-add 'read-event :around #'eabp--read-event-advice)
+(advice-add 'read-key :around #'eabp--read-event-advice)
+
+(defun eabp--read-key-sequence-advice (orig-fn &rest args)
+  "Around advice for `read-key-sequence': return the parsed sequence."
+  (if (not (eabp--raw-event-should-bridge-p))
+      (apply orig-fn args)
+    (eabp--bridge-key-prompt (or (nth 0 args) "Key sequence: "))))
+
+(defun eabp--read-key-sequence-vector-advice (orig-fn &rest args)
+  "Around advice for `read-key-sequence-vector': parsed sequence as a vector."
+  (if (not (eabp--raw-event-should-bridge-p))
+      (apply orig-fn args)
+    (let ((keys (eabp--bridge-key-prompt (or (nth 0 args) "Key sequence: "))))
+      (if (vectorp keys) keys (vconcat keys)))))
+
+(advice-add 'read-key-sequence :around #'eabp--read-key-sequence-advice)
+(advice-add 'read-key-sequence-vector :around #'eabp--read-key-sequence-vector-advice)
 
 (provide 'eabp-minibuffer)
 ;;; eabp-minibuffer.el ends here

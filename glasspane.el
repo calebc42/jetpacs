@@ -6063,6 +6063,85 @@ bespoke translator."
         (eabp-text (format "Buffer '%s' not found." buffer-name) 'body)
       (apply #'eabp-lazy-column (eabp-render-buffer buf)))))
 
+;; ─── Live buffer refresh ─────────────────────────────────────────────────────
+;;
+;; A buffer drilled into on the phone is a one-shot snapshot: it's rendered at
+;; tap time and then frozen.  Self-updating buffers — compilation, grep, async
+;; shell, *Messages* — need to re-push as they change.  While a buffer is being
+;; viewed, a light timer compares `buffer-chars-modified-tick' and re-pushes on
+;; change; the reconcile runs after every push, so the watch tracks
+;; `eabp-emacs-ui--viewing-buffer' however it was set or cleared.
+
+(defcustom eabp-emacs-ui-live-refresh t
+  "When non-nil, a buffer drilled into on the phone refreshes as it changes.
+Self-updating buffers (compilation, grep, async shell, *Messages*) re-push
+while viewed instead of freezing at the snapshot taken when you opened them."
+  :type 'boolean :group 'eabp)
+
+(defcustom eabp-emacs-ui-live-interval 1.0
+  "Seconds between change checks for the buffer being viewed.
+Polls only while a buffer is actively drilled into and the bridge is
+connected; each check is a cheap tick comparison and pushes only on change."
+  :type 'number :group 'eabp)
+
+(defvar eabp-emacs-ui--live-timer nil)
+(defvar eabp-emacs-ui--live-buffer nil
+  "The buffer object currently watched for live refresh, or nil.")
+(defvar eabp-emacs-ui--live-tick nil
+  "`buffer-chars-modified-tick' of the watched buffer at its last push.")
+
+(defun eabp-emacs-ui--live-tick-of (buf)
+  "The `buffer-chars-modified-tick' of BUF, or nil if BUF is dead."
+  (and (buffer-live-p buf)
+       (with-current-buffer buf (buffer-chars-modified-tick))))
+
+(defun eabp-emacs-ui--live-stop ()
+  "Tear down the live-refresh watch."
+  (when (timerp eabp-emacs-ui--live-timer)
+    (cancel-timer eabp-emacs-ui--live-timer))
+  (setq eabp-emacs-ui--live-timer nil
+        eabp-emacs-ui--live-buffer nil
+        eabp-emacs-ui--live-tick nil))
+
+(defun eabp-emacs-ui--live-poll ()
+  "Timer body: re-push when the watched buffer changed since its last push."
+  (let ((buf eabp-emacs-ui--live-buffer))
+    (if (or (not eabp-emacs-ui-live-refresh)
+            (not (eabp-connected-p))
+            (not (buffer-live-p buf))
+            ;; The user navigated away from (or swapped) the viewed buffer.
+            (not (equal (buffer-name buf) eabp-emacs-ui--viewing-buffer)))
+        (eabp-emacs-ui--live-stop)
+      (let ((tick (eabp-emacs-ui--live-tick-of buf)))
+        (unless (equal tick eabp-emacs-ui--live-tick)
+          ;; Safe to push here: a timer, not a change hook.
+          (eabp-shell-push)
+          ;; Re-read the tick AFTER the push so a message the push itself
+          ;; logged (when the viewed buffer *is* *Messages*) can't drive an
+          ;; endless self-refresh — only genuinely new changes re-trigger.
+          (setq eabp-emacs-ui--live-tick (eabp-emacs-ui--live-tick-of buf)))))))
+
+(defun eabp-emacs-ui--reconcile-live-watch ()
+  "Start/stop the live-refresh watch to match the buffer being viewed.
+Runs after every shell push, so the watch follows
+`eabp-emacs-ui--viewing-buffer' no matter which code path changed it."
+  (let* ((name (and eabp-emacs-ui-live-refresh
+                    (eabp-connected-p)
+                    eabp-emacs-ui--viewing-buffer))
+         (buf (and name (get-buffer name))))
+    (cond
+     ((not (buffer-live-p buf)) (eabp-emacs-ui--live-stop))
+     ((eq buf eabp-emacs-ui--live-buffer) nil) ; already watching it
+     (t
+      (eabp-emacs-ui--live-stop)
+      (setq eabp-emacs-ui--live-buffer buf
+            eabp-emacs-ui--live-tick (eabp-emacs-ui--live-tick-of buf)
+            eabp-emacs-ui--live-timer
+            (run-at-time eabp-emacs-ui-live-interval eabp-emacs-ui-live-interval
+                         #'eabp-emacs-ui--live-poll))))))
+
+(add-hook 'eabp-shell-after-push-hook #'eabp-emacs-ui--reconcile-live-watch)
+
 ;; ─── *Messages* Tail ─────────────────────────────────────────────────────────
 
 (defun eabp-emacs-ui--messages-tail ()

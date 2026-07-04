@@ -26,6 +26,7 @@
 (require 'eabp-shell)
 (require 'eabp-witheditor)
 (require 'eabp-buffer)
+(require 'eabp-emacs-ui)
 
 ;; ─── Bridge harness ──────────────────────────────────────────────────────────
 
@@ -364,6 +365,67 @@ sends are captured into `eabp-prim--sent'."
     (should (equal "    b"
                    (eabp-prim--span-text
                     (eabp-prim--all-spans (eabp-buffer-render (current-buffer))))))))
+
+;; ─── P3: liveness ────────────────────────────────────────────────────────────
+
+;; Task 14: live re-push for self-updating buffers
+(ert-deftest eabp-prim-live-refresh-pushes-on-change ()
+  "The watch re-pushes when the viewed buffer changes, and only then; and
+navigating away tears the watch down."
+  (let ((pushes 0)
+        (eabp-emacs-ui-live-refresh t)
+        (eabp-emacs-ui--viewing-buffer nil)
+        (eabp-emacs-ui--live-timer nil)
+        (eabp-emacs-ui--live-buffer nil)
+        (eabp-emacs-ui--live-tick nil))
+    (unwind-protect
+        (with-temp-buffer
+          (rename-buffer "*eabp-live-test*" t)
+          (insert "start\n")
+          (setq eabp-emacs-ui--viewing-buffer (buffer-name))
+          (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+                    ((symbol-function 'eabp-shell-push)
+                     (lambda (&rest _) (setq pushes (1+ pushes)))))
+            (eabp-emacs-ui--reconcile-live-watch)
+            (should (timerp eabp-emacs-ui--live-timer))
+            ;; No change yet: a poll pushes nothing.
+            (eabp-emacs-ui--live-poll)
+            (should (= pushes 0))
+            ;; A change: the next poll pushes exactly once.
+            (insert "more\n")
+            (eabp-emacs-ui--live-poll)
+            (should (= pushes 1))
+            ;; Still no new change: no extra push.
+            (eabp-emacs-ui--live-poll)
+            (should (= pushes 1))
+            ;; Navigating away stops the watch.
+            (setq eabp-emacs-ui--viewing-buffer nil)
+            (eabp-emacs-ui--live-poll)
+            (should-not eabp-emacs-ui--live-timer)))
+      (eabp-emacs-ui--live-stop))))
+
+(ert-deftest eabp-prim-live-refresh-stops-when-disconnected ()
+  "A disconnected poll tears the watch down instead of pushing."
+  (let ((pushes 0)
+        (eabp-emacs-ui-live-refresh t)
+        (eabp-emacs-ui--viewing-buffer "*eabp-live-test2*")
+        (eabp-emacs-ui--live-timer nil)
+        (eabp-emacs-ui--live-buffer nil)
+        (eabp-emacs-ui--live-tick nil))
+    (unwind-protect
+        (with-temp-buffer
+          (rename-buffer "*eabp-live-test2*" t)
+          (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+                    ((symbol-function 'eabp-shell-push)
+                     (lambda (&rest _) (setq pushes (1+ pushes)))))
+            (eabp-emacs-ui--reconcile-live-watch)
+            (should (timerp eabp-emacs-ui--live-timer)))
+          ;; Drop the connection: the next poll stops, pushes nothing.
+          (cl-letf (((symbol-function 'eabp-connected-p) (lambda () nil)))
+            (eabp-emacs-ui--live-poll))
+          (should-not eabp-emacs-ui--live-timer)
+          (should (= pushes 0)))
+      (eabp-emacs-ui--live-stop))))
 
 (provide 'eabp-primitives-test)
 ;;; eabp-primitives-test.el ends here

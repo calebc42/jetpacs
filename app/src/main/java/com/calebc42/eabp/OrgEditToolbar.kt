@@ -258,7 +258,7 @@ fun OrgEditToolbar(
  * A small chip-button for the toolbar.
  */
 @Composable
-private fun ToolbarChip(
+fun ToolbarChip(
     icon: String,
     label: String,
     onClick: () -> Unit

@@ -5,8 +5,11 @@ import android.content.Intent
 import coil.compose.AsyncImage
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,11 +20,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,6 +45,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,9 +54,14 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * The SDUI dispatcher: routes a spec node by its `t` discriminator.
@@ -143,14 +156,82 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         }
         "card" -> {
             val actionJson = node.optJSONObject("on_tap")
-            androidx.compose.material3.ElevatedCard(
-                modifier = baseModifier
-                    .fillMaxWidth()
-                    .clickable(enabled = actionJson != null) { if (actionJson != null) dispatch(actionJson) }
-            ) {
-                Box(modifier = Modifier.padding(16.dp)) {
-                    RenderChildren(node.optJSONArray("children"), surfaceId, revision, dispatch)
+            val swipeJson = node.optJSONObject("on_swipe")
+            val cardContent: @Composable () -> Unit = {
+                androidx.compose.material3.ElevatedCard(
+                    modifier = baseModifier
+                        .fillMaxWidth()
+                        .clickable(enabled = actionJson != null) { if (actionJson != null) dispatch(actionJson) }
+                ) {
+                    Box(modifier = Modifier.padding(16.dp)) {
+                        RenderChildren(node.optJSONArray("children"), surfaceId, revision, dispatch)
+                    }
                 }
+            }
+            if (swipeJson != null) {
+                val density = LocalDensity.current
+                val thresholdPx = with(density) { 80.dp.toPx() }
+                var offsetX by remember { mutableStateOf(0f) }
+                var dispatched by remember { mutableStateOf(false) }
+                val animatedOffset by animateFloatAsState(
+                    targetValue = offsetX,
+                    animationSpec = tween(durationMillis = if (dispatched) 200 else 0),
+                    label = "swipe-offset"
+                )
+                val bgAlpha = (abs(animatedOffset) / thresholdPx).coerceIn(0f, 1f)
+                Box {
+                    // Background hint
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .padding(vertical = 4.dp)
+                            .background(
+                                Color(0xFF4CAF50).copy(alpha = bgAlpha * 0.8f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 20.dp),
+                        contentAlignment = if (animatedOffset >= 0) Alignment.CenterStart else Alignment.CenterEnd
+                    ) {
+                        if (bgAlpha > 0.01f) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Cycle TODO",
+                                tint = Color.White.copy(alpha = bgAlpha)
+                            )
+                        }
+                    }
+                    // Card with drag offset
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+                            .pointerInput(swipeJson) {
+                                detectHorizontalDragGestures(
+                                    onDragEnd = {
+                                        offsetX = 0f
+                                        dispatched = false
+                                    },
+                                    onDragCancel = {
+                                        offsetX = 0f
+                                        dispatched = false
+                                    },
+                                    onHorizontalDrag = { _, dragAmount ->
+                                        if (!dispatched) {
+                                            offsetX += dragAmount
+                                            if (abs(offsetX) > thresholdPx) {
+                                                dispatched = true
+                                                dispatch(swipeJson)
+                                                offsetX = 0f
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                    ) {
+                        cardContent()
+                    }
+                }
+            } else {
+                cardContent()
             }
         }
         "collapsible" -> {

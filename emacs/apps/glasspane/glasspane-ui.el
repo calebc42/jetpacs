@@ -110,45 +110,63 @@
 
 (defun glasspane-ui--detail-view (snackbar)
   "The heading drill-in: reader/editor body under curated heading actions."
-  (eabp-shell-nav-view
-   "Detail" (glasspane-ui--detail-body glasspane-ui--detail-ref)
-   ;; Back is pure navigation: builtin = instant, local, works offline.
-   ;; heading.back stays registered for compatibility but nothing emits
-   ;; it anymore.
-   :actions (delq nil
+  (let* ((ref glasspane-ui--detail-ref)
+         (file (and ref (alist-get 'file ref)))
+         (pos (and ref (alist-get 'pos ref)))
+         (buf (and file (find-buffer-visiting file)))
+         (is-clocked-in (and buf
+                             (bound-and-true-p org-clock-hd-marker)
+                             (marker-buffer org-clock-hd-marker)
+                             (equal buf (marker-buffer org-clock-hd-marker))
+                             (with-current-buffer buf
+                               (= (line-number-at-pos pos)
+                                  (line-number-at-pos org-clock-hd-marker))))))
+    (eabp-shell-nav-view
+     "Detail" (glasspane-ui--detail-body ref)
+     ;; Back is pure navigation: builtin = instant, local, works offline.
+     ;; heading.back stays registered for compatibility but nothing emits
+     ;; it anymore.
+     :actions (delq nil
+                    (list
+                     (when ref
+                       (if is-clocked-in
+                           (eabp-icon-button "timer_off" (eabp-action "org.clock.out")
+                                             :content-description "Clock Out")
+                         (eabp-icon-button "timer" (eabp-action "heading.clock-in" :args ref)
+                                           :content-description "Clock In")))
+                     (eabp-icon-button
+                      (if glasspane-ui--detail-read-mode "edit" "visibility")
+                      (eabp-action "detail.toggle-read")
+                      :content-description
+                      (if glasspane-ui--detail-read-mode "Edit" "Read"))
+                     (when (and ref (glasspane-ui--org-file-p file))
+                       (eabp-icon-button
+                        "tune"
+                        (eabp-action "files.properties.show"
+                                     :args `((file . ,file)))
+                        :content-description "Properties"))))
+   :bottom-bar (when glasspane-ui--detail-read-mode
+                 (eabp-bottom-bar
                   (list
-                   (eabp-icon-button
-                    "note_add"
+                   (eabp-nav-item
+                    "note_add" "New Note"
                     (eabp-action "heading.add-note"
                                  :args glasspane-ui--detail-ref
-                                 :when-offline "drop")
-                    :content-description "Add note")
-                   (eabp-icon-button
-                    "drive_file_move"
-                    (eabp-action "heading.refile"
-                                 :args glasspane-ui--detail-ref
-                                 :when-offline "drop")
-                    :content-description "Refile")
-                   (eabp-icon-button
-                    "archive"
-                    (eabp-action "heading.archive"
-                                 :args glasspane-ui--detail-ref
-                                 :when-offline "drop")
-                    :content-description "Archive")
-                   (eabp-icon-button
-                    (if glasspane-ui--detail-read-mode "edit" "visibility")
-                    (eabp-action "detail.toggle-read")
-                    :content-description
-                    (if glasspane-ui--detail-read-mode "Edit" "Read"))
-                   (when (and glasspane-ui--detail-ref
-                              (glasspane-ui--org-file-p
-                               (alist-get 'file glasspane-ui--detail-ref)))
-                     (eabp-icon-button
-                      "tune"
-                      (eabp-action "files.properties.show"
-                                   :args `((file . ,(alist-get 'file glasspane-ui--detail-ref))))
-                      :content-description "Properties"))))
-   :snackbar snackbar))
+                                 :when-offline "drop")))))
+   :floating-toolbar (when glasspane-ui--detail-read-mode
+                       (vconcat
+                        (list
+                         (eabp-nav-item
+                          "drive_file_move" "Refile"
+                          (eabp-action "heading.refile"
+                                       :args glasspane-ui--detail-ref
+                                       :when-offline "drop"))
+                         (eabp-nav-item
+                          "archive" "Archive"
+                          (eabp-action "heading.archive"
+                                       :args glasspane-ui--detail-ref
+                                       :when-offline "drop")))))
+   :snackbar snackbar)))
 
 (eabp-shell-define-view "agenda" :builder #'glasspane-ui--agenda-view
                         :tab '(:icon "event" :label "Agenda") :order 10)
@@ -259,11 +277,11 @@ month is Feb 28, not an invalid date."
 (defun glasspane-ui--agenda-type-icon (type)
   "Return (ICON . COLOR) for an agenda item TYPE string (color may be nil)."
   (cond
-   ((null type) '("event" . nil))
+   ((null type) nil)
    ((string-match-p "past-scheduled" type) '("history" . "#E53935"))
    ((string-match-p "deadline" type) '("flag" . nil))
    ((string-match-p "scheduled" type) '("schedule" . nil))
-   (t '("event" . nil))))
+   (t nil)))
 
 (defun glasspane-ui--agenda-type-label (type)
   "Short human label for an agenda item TYPE string, or nil to omit."
@@ -330,9 +348,10 @@ and a quick complete button for open todos."
                                         (glasspane-ui--agenda-type-label type))
                                    (and file (file-name-nondirectory file))))
                    "  ·  "))
-         (lead (if (and (stringp time) (not (string-empty-p time)))
-                   (eabp-text time 'label)
-                 (eabp-icon (car icon+color) :size 18 :color (cdr icon+color))))
+         (lead (cond ((and (stringp time) (not (string-empty-p time)))
+                      (eabp-text time 'label))
+                     (icon+color
+                      (eabp-icon (car icon+color) :size 18 :color (cdr icon+color)))))
          (headline-node
           (eabp-rich-text
            (delq nil
@@ -354,24 +373,13 @@ and a quick complete button for open todos."
                           (apply #'eabp-flow-row
                                  (mapcar (lambda (tg)
                                            (eabp-assist-chip (concat "#" tg)))
-                                         tags)))))))
-         (complete-btn
-          (when (and todo (not done))
-            (eabp-icon-button
-             "check"
-             (eabp-action "heading.todo-set"
-                          :args (cons '(state . "DONE") ref)
-                          :dedupe (format "todo-set/%s"
-                                          (or (alist-get 'id ref)
-                                              (alist-get 'headline ref)
-                                              "?")))
-             :content-description "Mark done"))))
+                                         tags))))))))
     (eabp-card
      (list (apply #'eabp-row
                   (delq nil (list lead
-                                  (eabp-box (list middle) :weight 1)
-                                  complete-btn))))
-     :on-tap (eabp-action "heading.tap" :args ref))))
+                                  (eabp-box (list middle) :weight 1)))))
+     :on-tap (eabp-action "heading.tap" :args ref)
+     :on-swipe (eabp-action "heading.todo-cycle" :args ref))))
 
 (defun glasspane-ui--agenda-day-view (items)
   (let ((cards (mapcar #'glasspane-ui--agenda-card items)))
@@ -747,14 +755,14 @@ is the finished state."
             (eabp-settings-sections)))))
 
 (defun glasspane-ui--todo-chips (current keywords ref)
-  "A row of chips for KEYWORDS with CURRENT selected; taps carry REF."
+  "A row of chips for KEYWORDS with CURRENT selected; tapping an active chip removes it."
   (apply #'eabp-flow-row
          (mapcar (lambda (kw)
                    (eabp-chip kw
                               :selected (equal kw current)
                               :on-tap (eabp-action
                                        "heading.todo-set"
-                                       :args (cons (cons 'state kw) ref))))
+                                       :args (cons (cons 'state (if (equal kw current) "" kw)) ref))))
                  keywords)))
 
 (defun glasspane-ui--ts-date (ts)
@@ -777,24 +785,18 @@ The one part of a timestamp the date-stamp chip can't display."
     (match-string 1 ts)))
 
 (defun glasspane-ui--priority-chips (current ref)
-  "A row of priority chips (A..C plus None) with CURRENT selected; taps carry REF."
+  "A row of priority chips (A..C) with CURRENT selected; tapping an active chip removes it."
   (let* ((hi (or (bound-and-true-p org-priority-highest) ?A))
          (lo (or (bound-and-true-p org-priority-lowest) ?C))
          (levels (mapcar #'char-to-string (number-sequence hi lo))))
     (apply #'eabp-flow-row
-           (append
-            (mapcar (lambda (p)
-                      (eabp-chip p
-                                 :selected (equal p current)
-                                 :on-tap (eabp-action
-                                          "heading.priority"
-                                          :args (cons (cons 'value p) ref))))
-                    levels)
-            (list (eabp-chip "None"
-                             :selected (null current)
-                             :on-tap (eabp-action
-                                      "heading.priority"
-                                      :args (cons '(value . "") ref))))))))
+           (mapcar (lambda (p)
+                     (eabp-chip p
+                                :selected (equal p current)
+                                :on-tap (eabp-action
+                                         "heading.priority"
+                                         :args (cons (cons 'value (if (equal p current) "" p)) ref))))
+                   levels))))
 
 (defun glasspane-ui--property-row (key value ref pos)
   "A two-column KEY → editable VALUE row for the detail Properties editor.
@@ -812,6 +814,107 @@ breaks links); every other value is an inline input whose submit runs
                              :on-submit (eabp-action "heading.prop-set"
                                                      :args (cons `(name . ,key) ref)))))
     :weight 3)))
+
+(defun glasspane-org--format-clock-time (start end)
+  (condition-case nil
+      (let ((s-date (substring start 0 10))
+            (s-time (substring start -5))
+            (e-date (substring end 0 10))
+            (e-time (substring end -5)))
+        (if (equal s-date e-date)
+            (format "%s, %s to %s" s-date s-time e-time)
+          (format "%s %s to %s %s" s-date s-time e-date e-time)))
+    (error (format "%s to %s" start end))))
+
+(defun glasspane-org--parse-logbook (text)
+  (let ((lines (split-string text "\n" t "[ \t]+"))
+        entries current-entry)
+    (dolist (line lines)
+      (cond
+       ((string-match "^CLOCK: \\[\\(.*?\\)\\]--\\[\\(.*?\\)\\] =>[ \t]+\\(.*\\)$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'clock :start (match-string 1 line)
+                                  :end (match-string 2 line)
+                                  :duration (match-string 3 line))))
+       ((string-match "^CLOCK: \\[\\(.*?\\)\\]$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'clock :start (match-string 1 line) :active t)))
+       ((string-match "^- Note taken on \\(\\[.*?\\]\\) \\\\\\\\$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'note :timestamp (match-string 1 line) :content "")))
+       ((string-match "^- State \"\\(.*?\\)\"[ \t]+from \"\\(.*?\\)\"[ \t]+\\(\\[.*?\\]\\)\\(\\(?: \\\\\\\\\\)?\\)$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'state :to (match-string 1 line) :from (match-string 2 line)
+                                  :timestamp (match-string 3 line)
+                                  :has-note (not (string-empty-p (match-string 4 line)))
+                                  :content "")))
+       ((string-match "^- State \"\\(.*?\\)\"[ \t]+\\(\\[.*?\\]\\)\\(\\(?: \\\\\\\\\\)?\\)$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'state :to (match-string 1 line)
+                                  :timestamp (match-string 2 line)
+                                  :has-note (not (string-empty-p (match-string 3 line)))
+                                  :content "")))
+       (t
+        ;; Continuation line
+        (when current-entry
+          (let ((content (plist-get current-entry :content)))
+            (setq current-entry (plist-put current-entry :content
+                                           (if (string-empty-p content)
+                                               line
+                                             (concat content "\n" line)))))))))
+    (when current-entry (push current-entry entries))
+    (nreverse entries)))
+
+(defun glasspane-ui--render-logbook-entry (entry)
+  (let ((type (plist-get entry :type)))
+    (cl-case type
+      (clock
+       (eabp-box
+        (list
+         (eabp-row
+          (eabp-icon "timer" :color "primary" :padding [0 12 0 0])
+          (eabp-column
+           (eabp-text (if (plist-get entry :active)
+                          (format "Started %s" (plist-get entry :start))
+                        (glasspane-org--format-clock-time (plist-get entry :start) (plist-get entry :end)))
+                      'body t nil nil nil [0 0 4 0])
+           (eabp-text (plist-get entry :duration) 'caption))))
+        :padding [8 16 8 16]))
+      (note
+       (eabp-box
+        (list
+         (eabp-row
+          (eabp-icon "chat" :color "primary" :padding [0 12 0 0])
+          (eabp-column
+           (eabp-text (format "Note • %s" (plist-get entry :timestamp)) 'caption nil nil nil nil [0 0 4 0])
+           (eabp-text (plist-get entry :content) 'body))))
+        :padding [8 16 8 16]))
+      (state
+       (eabp-box
+        (list
+         (eabp-row
+          (eabp-icon "change_history" :color "primary" :padding [0 12 0 0])
+          (eabp-column
+           (eabp-text (if (plist-get entry :from)
+                          (format "%s → %s" (plist-get entry :from) (plist-get entry :to))
+                        (format "Set to %s" (plist-get entry :to)))
+                      'body t nil nil nil [0 0 4 0])
+           (eabp-text (if (not (string-empty-p (plist-get entry :content)))
+                          (format "%s\n%s" (plist-get entry :timestamp) (plist-get entry :content))
+                        (plist-get entry :timestamp))
+                      'caption))))
+        :padding [8 16 8 16])))))
+
+(defun glasspane-ui--logbook-entries (pos)
+  "Return structured logbook entries for heading at POS, or nil."
+  (save-excursion
+    (goto-char pos)
+    (let ((end (save-excursion (org-end-of-meta-data t) (point))))
+      (goto-char pos)
+      (when (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$" end t)
+        (let ((start (match-end 0)))
+          (when (re-search-forward "^[ \t]*:END:[ \t]*$" end t)
+            (glasspane-org--parse-logbook (buffer-substring-no-properties start (match-beginning 0)))))))))
 
 (defun glasspane-ui--properties-section (props ref pos)
   "The Properties collapsible: KEY → VALUE rows plus an + Add button.
@@ -896,7 +999,11 @@ Always present (even with no properties yet) so + Add is reachable."
                                (with-current-buffer buf
                                  (org-with-wide-buffer
                                   (goto-char pos)
-                                  (org-entry-properties pos 'standard))))))
+                                  (org-entry-properties pos 'standard)))))
+                (logbook-entries (ignore-errors
+                                   (with-current-buffer buf
+                                     (org-with-wide-buffer
+                                      (glasspane-ui--logbook-entries pos))))))
             (apply #'eabp-lazy-column
                    (delq nil
                          (append
@@ -998,16 +1105,44 @@ Always present (even with no properties yet) so + Add is reachable."
                               (eabp-text (if tags (format "Tags (%d)" (length tags)) "Tags") 'label)
                               (list tags-content)
                               :collapsed (null tags)))
-                           ;; ▸ Clock (collapsible)
-                           (eabp-collapsible
-                            (format "detail-clock/%s" pos)
-                            (eabp-text "Clock" 'label)
-                            (list
-                             (if is-clocked-in
-                                 (eabp-button "Clock Out" (eabp-action "org.clock.out"))
-                               (eabp-button "Clock In" (eabp-action "heading.clock-in" :args ref))))
-                            :collapsed (not is-clocked-in))
-                           ;; TODO: Add LOGBOOK collapsible section
+                           ;; ▸ Logbook (collapsible)
+                           (when logbook-entries
+                             (eabp-collapsible
+                              (format "detail-logbook/%s" pos)
+                              (eabp-text (format "Logbook (%d)" (length logbook-entries)) 'label)
+                              (let ((notes (seq-filter (lambda (e) (eq (plist-get e :type) 'note)) logbook-entries))
+                                    (states (seq-filter (lambda (e) (eq (plist-get e :type) 'state)) logbook-entries))
+                                    (clocks (seq-filter (lambda (e) (eq (plist-get e :type) 'clock)) logbook-entries)))
+                                (delq nil
+                                      (list
+                                       (when notes
+                                         (eabp-collapsible
+                                          (format "detail-logbook-notes/%s" pos)
+                                          (eabp-text (format "Notes (%d)" (length notes)) 'label)
+                                          (delq nil (cl-loop for entry in notes
+                                                             for i from 0
+                                                             append (list (glasspane-ui--render-logbook-entry entry)
+                                                                          (when (< i (1- (length notes))) (eabp-divider)))))
+                                          :collapsed nil))
+                                       (when states
+                                         (eabp-collapsible
+                                          (format "detail-logbook-states/%s" pos)
+                                          (eabp-text (format "State Changes (%d)" (length states)) 'label)
+                                          (delq nil (cl-loop for entry in states
+                                                             for i from 0
+                                                             append (list (glasspane-ui--render-logbook-entry entry)
+                                                                          (when (< i (1- (length states))) (eabp-divider)))))
+                                          :collapsed t))
+                                       (when clocks
+                                         (eabp-collapsible
+                                          (format "detail-logbook-clocks/%s" pos)
+                                          (eabp-text (format "Clocks (%d)" (length clocks)) 'label)
+                                          (delq nil (cl-loop for entry in clocks
+                                                             for i from 0
+                                                             append (list (glasspane-ui--render-logbook-entry entry)
+                                                                          (when (< i (1- (length clocks))) (eabp-divider)))))
+                                          :collapsed t)))))
+                              :collapsed t))
                            ;; ▸ Properties (collapsible — collapsed by default)
                            (glasspane-ui--properties-section entry-props ref pos)
                            (eabp-divider))
@@ -1256,10 +1391,27 @@ Returns non-nil on success; messages and returns nil on failure."
 
 (eabp-defaction "heading.todo-set"
   (lambda (args _)
-    (let ((state (alist-get 'state args)))
+    (let* ((state (alist-get 'state args))
+           (clear (equal state "")))
       (when (and state
-                 (glasspane-ui--at-ref args (lambda () (org-todo state)) t))
-        (eabp-shell-notify (format "State → %s" state))
+                 (glasspane-ui--at-ref args (lambda () (org-todo (if clear 'none state))) t))
+        (eabp-shell-notify (if clear "State cleared" (format "State → %s" state)))
+        (eabp-shell-push)))))
+
+(eabp-defaction "heading.todo-cycle"
+  (lambda (args _)
+    (when (glasspane-ui--at-ref args
+                                (lambda ()
+                                  (org-todo)
+                                  (unless (org-get-todo-state)
+                                    (org-todo)))
+                                t)
+      (let* ((marker (glasspane-org--resolve-ref args))
+             (state (with-current-buffer (marker-buffer marker)
+                      (org-with-wide-buffer
+                       (goto-char marker)
+                       (org-get-todo-state)))))
+        (eabp-shell-notify (if state (format "State → %s" state) "State cleared"))
         (eabp-shell-push)))))
 
 (eabp-defaction "heading.schedule"
@@ -1393,11 +1545,12 @@ Returns non-nil on success; messages and returns nil on failure."
         (when (glasspane-ui--at-ref
                args
                (lambda ()
-                 (goto-char (org-log-beginning t))
-                 (insert (format "- Note taken on %s \\\\\n  %s\n"
-                                 (format-time-string
-                                  (org-time-stamp-format t t))
-                                 note)))
+                 (let ((org-log-into-drawer t))
+                   (goto-char (org-log-beginning t))
+                   (insert (format "- Note taken on %s \\\\\n  %s\n"
+                                   (format-time-string
+                                    (org-time-stamp-format t t))
+                                   (replace-regexp-in-string "\n" "\n  " note)))))
                t)
           (eabp-shell-notify "Note added")))
       (eabp-shell-push))))

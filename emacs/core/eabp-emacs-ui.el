@@ -155,8 +155,12 @@ chatter is filtered out so it can never echo back to the phone."
 
 (defun eabp-emacs-ui--message-advice (format-string &rest args)
   "Mirror `message' output to the companion as a toast.
-Runs as :after advice on `message'; never signals, never recurses."
+Runs as :after advice on `message'; never signals, never recurses.
+Honours `inhibit-message': output the caller silenced for the echo area
+\(e.g. the flymake shadow compile's \"Wrote ....elc\") stays silent on
+the phone too."
   (when (and eabp-forward-messages
+             (not inhibit-message)
              (not eabp-emacs-ui--in-toast)
              format-string
              (eabp-connected-p))
@@ -209,6 +213,12 @@ Input line, then the (selectable) result, with copy and re-run buttons."
                                             :args `((value . ,input)))
                                :content-description "Re-run"))
             (eabp-text shown 'mono nil nil t))))))
+
+;; REPL input is one-shot expressions, not a file: tell the sync bridge so
+;; its byte-compile diagnostics run under lexical binding (matching the
+;; `eval' below) instead of warning about a missing lexical-binding cookie.
+(with-eval-after-load 'eabp-sync
+  (add-to-list 'eabp-sync-elisp-repl-files "eval.el"))
 
 (defun eabp-emacs-ui--eval-body ()
   "Build UI for the elisp eval REPL.

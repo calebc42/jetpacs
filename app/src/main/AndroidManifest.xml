@@ -24,9 +24,13 @@
         android:theme="@style/Theme.Eabp">
         <!-- ^ Match your existing theme name from themes.xml if it differs. -->
 
+        <!-- adjustResize: required for IME window insets to be reported on
+             API < 30; the compose side (imePadding in SduiScaffold) does the
+             actual lifting of keyboard-adjacent content. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

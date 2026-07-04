@@ -209,6 +209,8 @@ leading-space name so it stays out of buffer lists."
                       (eabp-sync--mode-for file) (error-message-string err))
              (delay-mode-hooks (fundamental-mode))))
           (when (derived-mode-p 'emacs-lisp-mode)
+            (setq-local eabp-sync--elisp-repl
+                        (and (member file eabp-sync-elisp-repl-files) t))
             ;; The stock backend spawns a second Emacs, which the Android
             ;; port cannot do (Emacs there is a shared library inside an
             ;; app process, not a spawnable executable) — swap in the
@@ -428,6 +430,18 @@ touches the buffer, only strings already handed to it."
 ;; in-process `byte-compile-file' over a temp copy.  Same warnings, no
 ;; subprocess, and instant even on slow devices.
 
+(defvar eabp-sync-elisp-repl-files nil
+  "Editor ids whose elisp shadows hold REPL input rather than a file.
+REPL input is evaluated with lexical binding (`eval' with LEXICAL t),
+so these shadows byte-compile their diagnostics copy with a
+`lexical-binding: t' cookie line prepended: warnings match eval
+semantics, and the no-cookie warning — noise against a one-expression
+REPL line — can never fire.  Views register their editor id here (the
+eval REPL adds \"eval.el\").")
+
+(defvar-local eabp-sync--elisp-repl nil
+  "Non-nil in the session shadow of an `eabp-sync-elisp-repl-files' entry.")
+
 (defun eabp-sync--elisp-paren-diags ()
   "Unbalanced-paren diagnostics for the current buffer, or nil."
   (save-excursion
@@ -445,12 +459,20 @@ touches the buffer, only strings already handed to it."
 
 (defun eabp-sync--elisp-compile-diags ()
   "In-process byte-compile diagnostics for the current buffer.
-Compiles a temp copy so nothing touches the user's files; the copy has
-identical text, so warning positions map straight back to the buffer."
-  (let ((src (buffer-substring-no-properties (point-min) (point-max)))
-        (buf (current-buffer))
-        (tmp (make-temp-file "eabp-flymake" nil ".el"))
-        diags)
+Compiles a temp copy so nothing touches the user's files.  File shadows
+copy the text verbatim, so warning positions map straight back; REPL
+shadows (`eabp-sync--elisp-repl') get a `lexical-binding: t' cookie
+line prepended — matching how the REPL evaluates — and positions are
+shifted back by the cookie's length."
+  (let* ((cookie (if eabp-sync--elisp-repl
+                     ";;; -*- lexical-binding: t; -*-\n"
+                   ""))
+         (shift (length cookie))
+         (src (concat cookie (buffer-substring-no-properties
+                              (point-min) (point-max))))
+         (buf (current-buffer))
+         (tmp (make-temp-file "eabp-flymake" nil ".el"))
+         diags)
     (unwind-protect
         (let ((coding-system-for-write 'utf-8))
           (write-region src nil tmp nil 'silent)
@@ -458,7 +480,8 @@ identical text, so warning positions map straight back to the buffer."
                  (lambda (string &optional position _fill level)
                    (with-current-buffer buf
                      (let* ((beg (min (max (point-min)
-                                           (if (numberp position) position 1))
+                                           (- (if (numberp position) position 1)
+                                              shift))
                                       (point-max)))
                             ;; Underline the whole form at the position.
                             (end (min (or (ignore-errors (scan-sexps beg 1))

@@ -129,11 +129,12 @@ surface to full width (e.g. zebra rows in a list)."
   "A horizontal divider."
   (eabp--node "divider"))
 
-(cl-defun eabp-card (children &key on-tap padding weight)
+(cl-defun eabp-card (children &key on-tap padding weight on-swipe)
   "An elevated card wrapping CHILDREN."
   (eabp--node "card"
               'children (vconcat children)
               'on_tap on-tap
+              'on_swipe on-swipe
               'padding padding
               'weight weight))
 
@@ -390,16 +391,14 @@ stays app-agnostic: the app opts an editor into the affordance."
               'publish_state (and publish-state t)
               'toolbar toolbar))
 
-(cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer on-refresh)
-  "A full-screen scaffold wrapper.
-DRAWER (see `eabp-drawer') adds a hamburger navigation drawer whose
-open/close state is handled entirely companion-side.  ON-REFRESH, when
-given, enables pull-to-refresh on the body, dispatching that action."
+(cl-defun eabp-scaffold (&key top-bar fab body bottom-bar floating-toolbar snackbar drawer on-refresh)
+  "The standard app frame."
   (eabp--node "scaffold"
               'top_bar top-bar
               'fab fab
               'body body
               'bottom_bar bottom-bar
+              'floating_toolbar floating-toolbar
               'snackbar snackbar
               'drawer drawer
               'on_refresh on-refresh))

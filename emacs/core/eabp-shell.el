@@ -215,7 +215,7 @@ explicit nil to render no FAB."
                                             :when-offline "drop"))))))
 
 (cl-defun eabp-shell-nav-view (title body &key back-to nav-action actions
-                                     fab snackbar)
+                                     fab snackbar bottom-bar floating-toolbar)
   "A navigation view: back arrow in the top bar, no tabs or drawer.
 BACK-TO names the view the arrow switches to (default: the current tab)
 as a companion-local switch; NAV-ACTION overrides it with an explicit
@@ -231,7 +231,9 @@ action descriptor.  ACTIONS are trailing top-bar buttons."
                                           :actions actions)
                    :body body
                    :fab fab
-                   :snackbar snackbar)))))
+                   :snackbar snackbar
+                   :bottom-bar bottom-bar
+                   :floating-toolbar floating-toolbar)))))
 
 ;; ─── The push ────────────────────────────────────────────────────────────────
 

@@ -576,11 +576,12 @@ surface to full width (e.g. zebra rows in a list)."
   "A horizontal divider."
   (eabp--node "divider"))
 
-(cl-defun eabp-card (children &key on-tap padding weight)
+(cl-defun eabp-card (children &key on-tap padding weight on-swipe)
   "An elevated card wrapping CHILDREN."
   (eabp--node "card"
               'children (vconcat children)
               'on_tap on-tap
+              'on_swipe on-swipe
               'padding padding
               'weight weight))
 
@@ -837,16 +838,14 @@ stays app-agnostic: the app opts an editor into the affordance."
               'publish_state (and publish-state t)
               'toolbar toolbar))
 
-(cl-defun eabp-scaffold (&key top-bar fab body bottom-bar snackbar drawer on-refresh)
-  "A full-screen scaffold wrapper.
-DRAWER (see `eabp-drawer') adds a hamburger navigation drawer whose
-open/close state is handled entirely companion-side.  ON-REFRESH, when
-given, enables pull-to-refresh on the body, dispatching that action."
+(cl-defun eabp-scaffold (&key top-bar fab body bottom-bar floating-toolbar snackbar drawer on-refresh)
+  "The standard app frame."
   (eabp--node "scaffold"
               'top_bar top-bar
               'fab fab
               'body body
               'bottom_bar bottom-bar
+              'floating_toolbar floating-toolbar
               'snackbar snackbar
               'drawer drawer
               'on_refresh on-refresh))
@@ -2371,7 +2370,7 @@ explicit nil to render no FAB."
                                             :when-offline "drop"))))))
 
 (cl-defun eabp-shell-nav-view (title body &key back-to nav-action actions
-                                     fab snackbar)
+                                     fab snackbar bottom-bar floating-toolbar)
   "A navigation view: back arrow in the top bar, no tabs or drawer.
 BACK-TO names the view the arrow switches to (default: the current tab)
 as a companion-local switch; NAV-ACTION overrides it with an explicit
@@ -2387,7 +2386,9 @@ action descriptor.  ACTIONS are trailing top-bar buttons."
                                           :actions actions)
                    :body body
                    :fab fab
-                   :snackbar snackbar)))))
+                   :snackbar snackbar
+                   :bottom-bar bottom-bar
+                   :floating-toolbar floating-toolbar)))))
 
 ;; ─── The push ────────────────────────────────────────────────────────────────
 
@@ -3827,6 +3828,8 @@ leading-space name so it stays out of buffer lists."
                       (eabp-sync--mode-for file) (error-message-string err))
              (delay-mode-hooks (fundamental-mode))))
           (when (derived-mode-p 'emacs-lisp-mode)
+            (setq-local eabp-sync--elisp-repl
+                        (and (member file eabp-sync-elisp-repl-files) t))
             ;; The stock backend spawns a second Emacs, which the Android
             ;; port cannot do (Emacs there is a shared library inside an
             ;; app process, not a spawnable executable) — swap in the
@@ -4046,6 +4049,18 @@ touches the buffer, only strings already handed to it."
 ;; in-process `byte-compile-file' over a temp copy.  Same warnings, no
 ;; subprocess, and instant even on slow devices.
 
+(defvar eabp-sync-elisp-repl-files nil
+  "Editor ids whose elisp shadows hold REPL input rather than a file.
+REPL input is evaluated with lexical binding (`eval' with LEXICAL t),
+so these shadows byte-compile their diagnostics copy with a
+`lexical-binding: t' cookie line prepended: warnings match eval
+semantics, and the no-cookie warning — noise against a one-expression
+REPL line — can never fire.  Views register their editor id here (the
+eval REPL adds \"eval.el\").")
+
+(defvar-local eabp-sync--elisp-repl nil
+  "Non-nil in the session shadow of an `eabp-sync-elisp-repl-files' entry.")
+
 (defun eabp-sync--elisp-paren-diags ()
   "Unbalanced-paren diagnostics for the current buffer, or nil."
   (save-excursion
@@ -4063,12 +4078,20 @@ touches the buffer, only strings already handed to it."
 
 (defun eabp-sync--elisp-compile-diags ()
   "In-process byte-compile diagnostics for the current buffer.
-Compiles a temp copy so nothing touches the user's files; the copy has
-identical text, so warning positions map straight back to the buffer."
-  (let ((src (buffer-substring-no-properties (point-min) (point-max)))
-        (buf (current-buffer))
-        (tmp (make-temp-file "eabp-flymake" nil ".el"))
-        diags)
+Compiles a temp copy so nothing touches the user's files.  File shadows
+copy the text verbatim, so warning positions map straight back; REPL
+shadows (`eabp-sync--elisp-repl') get a `lexical-binding: t' cookie
+line prepended — matching how the REPL evaluates — and positions are
+shifted back by the cookie's length."
+  (let* ((cookie (if eabp-sync--elisp-repl
+                     ";;; -*- lexical-binding: t; -*-\n"
+                   ""))
+         (shift (length cookie))
+         (src (concat cookie (buffer-substring-no-properties
+                              (point-min) (point-max))))
+         (buf (current-buffer))
+         (tmp (make-temp-file "eabp-flymake" nil ".el"))
+         diags)
     (unwind-protect
         (let ((coding-system-for-write 'utf-8))
           (write-region src nil tmp nil 'silent)
@@ -4076,7 +4099,8 @@ identical text, so warning positions map straight back to the buffer."
                  (lambda (string &optional position _fill level)
                    (with-current-buffer buf
                      (let* ((beg (min (max (point-min)
-                                           (if (numberp position) position 1))
+                                           (- (if (numberp position) position 1)
+                                              shift))
                                       (point-max)))
                             ;; Underline the whole form at the position.
                             (end (min (or (ignore-errors (scan-sexps beg 1))
@@ -5532,8 +5556,12 @@ chatter is filtered out so it can never echo back to the phone."
 
 (defun eabp-emacs-ui--message-advice (format-string &rest args)
   "Mirror `message' output to the companion as a toast.
-Runs as :after advice on `message'; never signals, never recurses."
+Runs as :after advice on `message'; never signals, never recurses.
+Honours `inhibit-message': output the caller silenced for the echo area
+\(e.g. the flymake shadow compile's \"Wrote ....elc\") stays silent on
+the phone too."
   (when (and eabp-forward-messages
+             (not inhibit-message)
              (not eabp-emacs-ui--in-toast)
              format-string
              (eabp-connected-p))
@@ -5586,6 +5614,12 @@ Input line, then the (selectable) result, with copy and re-run buttons."
                                             :args `((value . ,input)))
                                :content-description "Re-run"))
             (eabp-text shown 'mono nil nil t))))))
+
+;; REPL input is one-shot expressions, not a file: tell the sync bridge so
+;; its byte-compile diagnostics run under lexical binding (matching the
+;; `eval' below) instead of warning about a missing lexical-binding cookie.
+(with-eval-after-load 'eabp-sync
+  (add-to-list 'eabp-sync-elisp-repl-files "eval.el"))
 
 (defun eabp-emacs-ui--eval-body ()
   "Build UI for the elisp eval REPL.

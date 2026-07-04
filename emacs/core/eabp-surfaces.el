@@ -116,12 +116,22 @@ BODY is a list of UI-tree nodes."
 (defun eabp--on-action (payload _frame)
   "Dispatch an inbound `event.action' PAYLOAD to its registered handler.
 Binds `eabp--in-action-handler' so minibuffer prompts are intercepted
-and forwarded to the companion as dialogs."
+and forwarded to the companion as dialogs.  Also pins the completion
+redirection variables back to their built-ins for the duration: packages
+like ivy/counsel/consult reroute prompts through `read-file-name-function'
+/ `read-buffer-function' / `completing-read-function' BEFORE the advised
+primitives run, and would otherwise reach a keyboard UI the phone can't
+drive.  `disabled-command-function' is nil'd so a novice.el disabled
+command runs instead of raw-reading a confirmation char (another hang)."
   (let* ((action (alist-get 'action payload))
          (args   (alist-get 'args payload))
          (fn     (gethash action eabp-action-handlers)))
     (if fn
-        (let ((eabp--in-action-handler t))
+        (let ((eabp--in-action-handler t)
+              (completing-read-function #'completing-read-default)
+              (read-file-name-function #'read-file-name-default)
+              (read-buffer-function nil)
+              (disabled-command-function nil))
           (condition-case err
               (funcall fn args payload)
             ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),

@@ -172,5 +172,99 @@ sends are captured into `eabp-prim--sent'."
       (should (= (cdr r) (point-max))))
     (should (equal (eabp-witheditor--current-message) "just a message"))))
 
+;; ─── Node-tree search (for inspecting captured dialog specs) ─────────────────
+
+(defun eabp-prim--find-node (spec type)
+  "Depth-first: the first node in SPEC whose `t' discriminator is TYPE."
+  (cond
+   ((and (consp spec) (equal (alist-get 't spec) type)) spec)
+   ((consp spec)
+    (cl-some (lambda (kv)
+               (let ((v (cdr kv)))
+                 (cond ((vectorp v)
+                        (cl-some (lambda (e) (eabp-prim--find-node e type)) v))
+                       ((consp v) (eabp-prim--find-node v type)))))
+             spec))
+   (t nil)))
+
+;; ─── Task 4/8: prompt-redirection binding in eabp--on-action ─────────────────
+
+(ert-deftest eabp-prim-on-action-binds-redirection ()
+  "Handlers run with completion redirection pinned to the built-ins."
+  (let (seen)
+    (eabp-defaction "eabp-prim-probe"
+      (lambda (_ _)
+        (setq seen (list completing-read-function
+                         read-file-name-function
+                         read-buffer-function
+                         disabled-command-function))))
+    (unwind-protect
+        (progn
+          (eabp--on-action '((action . "eabp-prim-probe")) nil)
+          (should (equal seen (list #'completing-read-default
+                                    #'read-file-name-default
+                                    nil nil))))
+      (remhash "eabp-prim-probe" eabp-action-handlers))))
+
+;; ─── Task 5: completing-read honours INITIAL-INPUT ───────────────────────────
+
+(ert-deftest eabp-prim-completing-read-seeds-initial ()
+  "INITIAL-INPUT seeds the filter field's value on the first render."
+  (eabp-prim--with-bridge (list "reply")
+    (ignore-errors
+      (completing-read "Pick: " '("alpha" "beta") nil nil "al"))
+    (let* ((first (car (last eabp-prim--sent)))
+           (field (eabp-prim--find-node first "text_input")))
+      (should field)
+      (should (equal (alist-get 'value field) "al")))))
+
+(ert-deftest eabp-prim-completing-read-no-seed-when-empty ()
+  "With no INITIAL-INPUT the filter field stays uncontrolled (no value)."
+  (eabp-prim--with-bridge (list "reply")
+    (ignore-errors
+      (completing-read "Pick: " '("alpha" "beta")))
+    (let* ((first (car (last eabp-prim--sent)))
+           (field (eabp-prim--find-node first "text_input")))
+      (should field)
+      (should-not (alist-get 'value field)))))
+
+;; ─── Task 6: read-passwd masks and scrubs ────────────────────────────────────
+
+(ert-deftest eabp-prim-read-passwd-masks-and-scrubs ()
+  "The passphrase field is masked and its id is left in no handler state."
+  (let (field-id)
+    (eabp-prim--with-bridge (list "s3cret")
+      (should (equal "s3cret" (read-passwd "Pass: ")))
+      (let* ((spec (car (last eabp-prim--sent)))
+             (field (eabp-prim--find-node spec "text_input")))
+        (should field)
+        (should (eq t (alist-get 'password field)))
+        (setq field-id (alist-get 'id field))))
+    (should-not (gethash field-id eabp--ui-state))
+    (should-not (gethash field-id eabp--state-handlers))))
+
+(ert-deftest eabp-prim-read-passwd-confirm-mismatch ()
+  "CONFIRM prompts twice; a persistent mismatch degrades to quit, not hang."
+  (eabp-prim--with-bridge (list "a" "b" "a" "b" "a" "b")
+    (should (eq 'quit (condition-case nil
+                          (progn (read-passwd "Pass: " t) 'no-quit)
+                        (quit 'quit))))))
+
+;; ─── Task 7: read-answer / read-char-from-minibuffer ─────────────────────────
+
+(ert-deftest eabp-prim-read-answer-returns-long ()
+  "`read-answer' returns the chosen answer's long string."
+  (skip-unless (fboundp 'read-answer))
+  (eabp-prim--with-bridge (list "yes")
+    (should (equal "yes"
+                   (read-answer "Proceed? "
+                                '(("yes" ?y "do it") ("no" ?n "don't")))))))
+
+(ert-deftest eabp-prim-read-char-from-minibuffer-buttons ()
+  "`read-char-from-minibuffer' with a CHARS allowlist returns the chosen char."
+  (skip-unless (fboundp 'read-char-from-minibuffer))
+  (eabp-prim--with-bridge (list "b")
+    (should (equal ?b (read-char-from-minibuffer "Pick: " '(?a ?b ?c))))))
+
 (provide 'eabp-primitives-test)
 ;;; eabp-primitives-test.el ends here

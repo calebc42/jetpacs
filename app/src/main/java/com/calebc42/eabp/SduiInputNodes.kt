@@ -67,6 +67,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -137,12 +139,18 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
     val minLines = node.optInt("min_lines", 1)
     val maxLines = node.optInt("max_lines", if (singleLine) 1 else Int.MAX_VALUE)
     val syntax = node.optString("syntax")
+    val password = node.optBoolean("password", false)
     val monospace = node.optBoolean("monospace", false) || syntax.isNotEmpty()
-    val highlight = if (syntax.isNotEmpty()) {
-        val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-        val sc = remember(dark) { SyntaxColors.forBackground(dark) }
-        remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
-    } else VisualTransformation.None
+    val highlight = when {
+        // A masked field takes precedence: never highlight (or reveal) a secret.
+        password -> PasswordVisualTransformation()
+        syntax.isNotEmpty() -> {
+            val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+            val sc = remember(dark) { SyntaxColors.forBackground(dark) }
+            remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
+        }
+        else -> VisualTransformation.None
+    }
 
     // Debounced state.changed: a broadcast per keystroke flooded the
     // bridge (one frame — or one queue insert offline — per character,
@@ -179,6 +187,7 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
         // action reads the value back from `eabp--ui-state`.
         modifier = modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(
+            keyboardType = if (password) KeyboardType.Password else KeyboardType.Text,
             imeAction = if (singleLine) ImeAction.Done else ImeAction.Default
         ),
         keyboardActions = KeyboardActions(onDone = {

@@ -226,14 +226,18 @@ ellipsis. Folding/opening is handled entirely on-device."
   (eabp--node nil 'label label 'on_tap action 'icon icon))
 
 (cl-defun eabp-text-input (id &key value hint label on-submit single-line
-                              multi-line min-lines max-lines monospace syntax padding)
+                              multi-line min-lines max-lines monospace syntax
+                              password padding)
   "A text input field.
 ID identifies the field. ON-SUBMIT is an action dispatched when done.
 The client defaults to single-line; pass MULTI-LINE non-nil for a box that
 accepts newlines (Enter inserts a newline rather than submitting, so such a
 field should be paired with a submit button). MIN-LINES/MAX-LINES size the box
 and MONOSPACE renders it in a fixed-width font (handy for code).
-SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting."
+SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting.
+PASSWORD masks the entry (dots) and requests a password keyboard — used by
+the `read-passwd' bridge; such a field's value must not be logged or
+retained beyond the read."
   (eabp--node "text_input"
               'id id
               'value value
@@ -247,6 +251,7 @@ SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting."
               'max_lines max-lines
               'monospace (and monospace t)
               'syntax syntax
+              'password (and password t)
               'padding padding))
 
 (cl-defun eabp-enum-list (id options &key value multi-select allow-add on-change padding)

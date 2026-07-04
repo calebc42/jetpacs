@@ -673,14 +673,18 @@ ellipsis. Folding/opening is handled entirely on-device."
   (eabp--node nil 'label label 'on_tap action 'icon icon))
 
 (cl-defun eabp-text-input (id &key value hint label on-submit single-line
-                              multi-line min-lines max-lines monospace syntax padding)
+                              multi-line min-lines max-lines monospace syntax
+                              password padding)
   "A text input field.
 ID identifies the field. ON-SUBMIT is an action dispatched when done.
 The client defaults to single-line; pass MULTI-LINE non-nil for a box that
 accepts newlines (Enter inserts a newline rather than submitting, so such a
 field should be paired with a submit button). MIN-LINES/MAX-LINES size the box
 and MONOSPACE renders it in a fixed-width font (handy for code).
-SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting."
+SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting.
+PASSWORD masks the entry (dots) and requests a password keyboard — used by
+the `read-passwd' bridge; such a field's value must not be logged or
+retained beyond the read."
   (eabp--node "text_input"
               'id id
               'value value
@@ -694,6 +698,7 @@ SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting."
               'max_lines max-lines
               'monospace (and monospace t)
               'syntax syntax
+              'password (and password t)
               'padding padding))
 
 (cl-defun eabp-enum-list (id options &key value multi-select allow-add on-change padding)
@@ -1015,12 +1020,22 @@ BODY is a list of UI-tree nodes."
 (defun eabp--on-action (payload _frame)
   "Dispatch an inbound `event.action' PAYLOAD to its registered handler.
 Binds `eabp--in-action-handler' so minibuffer prompts are intercepted
-and forwarded to the companion as dialogs."
+and forwarded to the companion as dialogs.  Also pins the completion
+redirection variables back to their built-ins for the duration: packages
+like ivy/counsel/consult reroute prompts through `read-file-name-function'
+/ `read-buffer-function' / `completing-read-function' BEFORE the advised
+primitives run, and would otherwise reach a keyboard UI the phone can't
+drive.  `disabled-command-function' is nil'd so a novice.el disabled
+command runs instead of raw-reading a confirmation char (another hang)."
   (let* ((action (alist-get 'action payload))
          (args   (alist-get 'args payload))
          (fn     (gethash action eabp-action-handlers)))
     (if fn
-        (let ((eabp--in-action-handler t))
+        (let ((eabp--in-action-handler t)
+              (completing-read-function #'completing-read-default)
+              (read-file-name-function #'read-file-name-default)
+              (read-buffer-function nil)
+              (disabled-command-function nil))
           (condition-case err
               (funcall fn args payload)
             ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
@@ -1410,6 +1425,72 @@ or nil (skip silently)."
 
 (advice-add 'read-string :around #'eabp--read-string-advice)
 
+;; ─── Advice: read-passwd ─────────────────────────────────────────────────────
+;;
+;; `read-passwd' (TRAMP, GPG, auth-source) must NOT flow through the plaintext
+;; `read-string' bridge: it needs a masked field, and the secret must not
+;; linger in UI state.  We also intercept before the raw-event advice below,
+;; since stock `read-passwd' reads keys directly.
+
+(defun eabp--read-passwd-once (prompt)
+  "Prompt for one masked secret over the bridge.
+Returns the entered string, or the symbol `cancelled' on dismiss/timeout."
+  (let* ((id (eabp--prompt-id))
+         (input-id (format "prompt-pw-%s" id))
+         (current ""))
+    (eabp-on-state-change input-id (lambda (v) (setq current (or v ""))))
+    ;; NOT `eabp--send-prompt-dialog': that prepends context-buffer cards, and
+    ;; a passphrase prompt must never sit beside buffer contents.
+    (eabp-send-dialog
+     (eabp-column
+      (eabp-text (string-trim-right prompt "[ :]+") 'title)
+      (eabp-text-input input-id
+                       :label "Password"
+                       :single-line t
+                       :password t
+                       :on-submit (eabp-action "prompt.reply"
+                                               :args `((prompt_id . ,id))))
+      (eabp-row
+       (eabp-button "Cancel"
+                    (eabp-action "prompt.dismiss" :args `((prompt_id . ,id)))
+                    :variant "text")
+       (eabp-spacer :width 8)
+       (eabp-button "OK"
+                    (eabp-action "prompt.reply" :args `((prompt_id . ,id)))))))
+    (let ((reply (unwind-protect (eabp--wait-for-prompt id)
+                   ;; Scrub every trace of the secret from handler state.
+                   (remhash input-id eabp--state-handlers)
+                   (remhash input-id eabp--ui-state)
+                   (eabp--cleanup-prompt))))
+      (if (eq reply 'cancelled) 'cancelled (or reply current "")))))
+
+(defun eabp--read-passwd-advice (orig-fn prompt &rest args)
+  "Around advice for `read-passwd': masked entry, secret never retained.
+Honours CONFIRM (ARGS' first element) by prompting twice and comparing,
+retrying up to three times before giving up with `keyboard-quit'."
+  (if (not eabp--in-action-handler)
+      (apply orig-fn prompt args)
+    (let ((confirm (nth 0 args))
+          (tries 0))
+      (catch 'done
+        (while t
+          (let ((first (eabp--read-passwd-once prompt)))
+            (when (eq first 'cancelled) (keyboard-quit))
+            (if (not confirm)
+                (throw 'done first)
+              (let ((again (eabp--read-passwd-once
+                            (if (stringp confirm) confirm "Confirm password: "))))
+                (when (eq again 'cancelled) (keyboard-quit))
+                (cond
+                 ((equal first again) (throw 'done first))
+                 ((>= (setq tries (1+ tries)) 3)
+                  (eabp-send "toast.show" '((text . "Passwords didn't match")))
+                  (keyboard-quit))
+                 (t (eabp-send "toast.show"
+                               '((text . "Passwords didn't match — try again")))))))))))))
+
+(advice-add 'read-passwd :around #'eabp--read-passwd-advice)
+
 ;; ─── Advice: completing-read ─────────────────────────────────────────────────
 
 (defun eabp-minibuffer--filter (candidates query)
@@ -1455,6 +1536,12 @@ the query each keystroke, so typing a path navigates directories."
   (if (not eabp--in-action-handler)
       (apply orig-fn prompt collection args)
     (let* ((predicate (nth 0 args))
+           (initial-arg (nth 2 args))   ; INITIAL-INPUT: STRING or (STRING . POS)
+           ;; `read-file-name' passes its DIR here, so honouring it is what
+           ;; makes a bridged file prompt open in the right directory.
+           (initial (cond ((stringp initial-arg) initial-arg)
+                          ((consp initial-arg) (car initial-arg))
+                          (t "")))
            (def (nth 4 args))   ; (predicate require-match initial hist DEF …)
            (id (eabp--prompt-id))
            (input-id (format "prompt-input-%s" id))
@@ -1485,7 +1572,7 @@ the query each keystroke, so typing a path navigates directories."
                 (cons "" (eabp-minibuffer--filter candidates query)))))
            (max-display 50)
            (render
-            (lambda (query)
+            (lambda (query &optional seed)
               (let* ((pm (funcall matches-for query))
                      (prefix (car pm))
                      (matches (cdr pm))
@@ -1521,12 +1608,17 @@ the query each keystroke, so typing a path navigates directories."
                                        (eabp-action "prompt.dismiss"
                                                     :args `((prompt_id . ,id)))
                                        :variant "text"))
-                         ;; No :value — the field is uncontrolled after seeding
-                         ;; so re-renders never stomp the user's text/cursor.
+                         ;; :value only on the SEED (first) render, and only
+                         ;; when there is initial input — after that the field
+                         ;; is uncontrolled so re-renders never stomp the
+                         ;; user's text/cursor (see the on-state-change below).
                          (eabp-text-input input-id
                                           :label "Filter"
                                           :hint "type to filter…"
                                           :single-line t
+                                          :value (and seed
+                                                      (not (string-empty-p query))
+                                                      query)
                                           :on-submit (eabp-action
                                                       "prompt.reply"
                                                       :args `((prompt_id . ,id))))
@@ -1540,7 +1632,12 @@ the query each keystroke, so typing a path navigates directories."
       (eabp-on-state-change input-id
                             (lambda (val)
                               (eabp--send-prompt-dialog id (funcall render val))))
-      (eabp--send-prompt-dialog id (funcall render ""))
+      ;; Seed the first render with INITIAL-INPUT: the field carries it as its
+      ;; value, so an immediate submit returns it (like RET on initial input at
+      ;; the keyboard) and the list is pre-filtered.  Clearing the field then
+      ;; submitting is an explicit empty → DEF, so the empty branch is left
+      ;; untouched.
+      (eabp--send-prompt-dialog id (funcall render initial t))
       (let ((reply (unwind-protect (eabp--wait-for-prompt id)
                      (remhash input-id eabp--state-handlers)
                      (eabp--cleanup-prompt))))
@@ -1750,6 +1847,57 @@ chosen entry is returned as the original would."
             (keyboard-quit))))))
 
 (advice-add 'read-multiple-choice :around #'eabp--read-multiple-choice-advice)
+
+;; ─── Advice: read-char-from-minibuffer ───────────────────────────────────────
+;;
+;; Modern core reads single-char answers here (it echoes in the minibuffer
+;; and, unlike `read-char', accepts an allowlist).  Without this the fallback
+;; would be a free-text box; with a CHARS allowlist it becomes buttons.
+
+(defun eabp--read-char-from-minibuffer-advice (orig-fn prompt &rest args)
+  "Around advice for `read-char-from-minibuffer'.
+With a CHARS allowlist (ARGS' first element) render each as a button via
+the char-choice bridge; otherwise a single-char text prompt."
+  (if (not eabp--in-action-handler)
+      (apply orig-fn prompt args)
+    (let ((chars (nth 0 args)))
+      (if chars
+          (eabp--read-char-choice-advice #'ignore prompt chars)
+        (eabp--read-char-advice #'ignore prompt)))))
+
+(when (fboundp 'read-char-from-minibuffer)
+  (advice-add 'read-char-from-minibuffer :around
+              #'eabp--read-char-from-minibuffer-advice))
+
+;; ─── Advice: read-answer ─────────────────────────────────────────────────────
+;;
+;; `read-answer' backs the long-form "y, n, or q" prompts an increasing share
+;; of core uses.  ANSWERS is (LONG-ANSWER CHAR HELP …); render a button per
+;; entry and return the chosen LONG-ANSWER string (the function's contract).
+
+(defun eabp--read-answer-advice (orig-fn question answers &rest _)
+  "Around advice for `read-answer': one button per answer."
+  (if (not eabp--in-action-handler)
+      (funcall orig-fn question answers)
+    (let ((id (eabp--prompt-id)))
+      (eabp--char-buttons-dialog
+       id question
+       (mapcar (lambda (a)
+                 (let ((long (car a)))
+                   (eabp-button (capitalize long)
+                                (eabp-action "prompt.reply"
+                                             :args `((prompt_id . ,id)
+                                                     (value . ,long)))
+                                :variant "outlined")))
+               answers))
+      (let ((reply (unwind-protect (eabp--wait-for-prompt id)
+                     (eabp--cleanup-prompt))))
+        (if (and (stringp reply) (assoc reply answers))
+            reply
+          (keyboard-quit))))))
+
+(when (fboundp 'read-answer)
+  (advice-add 'read-answer :around #'eabp--read-answer-advice))
 
 ;; ─── Advice: raw event readers ───────────────────────────────────────────────
 ;;

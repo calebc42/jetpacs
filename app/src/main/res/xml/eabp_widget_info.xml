@@ -10,8 +10,8 @@
     android:targetCellWidth="4"
     android:targetCellHeight="3"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_eabp_actions"
-    android:previewLayout="@layout/widget_eabp_actions"
+    android:initialLayout="@layout/widget_eabp_agenda"
+    android:previewLayout="@layout/widget_eabp_agenda"
     android:description="@string/widget_description"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen" />

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One Orgzly-style agenda row: title line (colored TODO keyword prefix),
+     metadata line (type icon + qualifier/time + file), todo toggle on the
+     right. Flat on the widget background; the row bg is a mask-only ripple. -->
+<!-- blocksDescendants: without it the focusable toggle swallows the ListView
+     row click and the root fill-in never fires (Orgzly does the same). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:descendantFocusability="blocksDescendants"
+    android:paddingVertical="1dp">
+
+    <LinearLayout
+        android:id="@+id/item_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_row_bg"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="5dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/item_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="@color/widget_text_primary" />
+
+            <LinearLayout
+                android:id="@+id/item_meta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/item_meta_icon"
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_meta_scheduled"
+                    android:tint="@color/widget_text_secondary"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/item_meta_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textColor="@color/widget_text_secondary" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- ImageView, not ImageButton: the fill-in intent makes it clickable
+             and a plain view carries no focusable baggage (Orgzly-style). -->
+        <ImageView
+            android:id="@+id/item_toggle"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="8dp"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_todo_open"
+            android:tint="@color/widget_text_secondary"
+            android:contentDescription="@string/widget_toggle_todo"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</FrameLayout>

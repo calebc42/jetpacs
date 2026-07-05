@@ -59,39 +59,105 @@
       (eabp-send "reminders.set" `((reminders . ,(vconcat rems)))))))
 
 (defvar glasspane-ui--last-widget 'unset
-  "Widget items from the previous push, to suppress identical pushes.")
+  "Widget views from the previous push, to suppress identical pushes.")
+
+(defun glasspane-ui--widget-item-meta (it hm)
+  "Compose the widget metadata line for agenda item IT.
+Leads with the time HM or the agenda's own qualifier (\"Sched. 3x\",
+\"In 3 d.\", \"2 d. ago\"), then the file name — the Orgzly-style
+second row. A bare \"Scheduled\"/\"Deadline\" qualifier restates what
+the row's type icon already says, so it is dropped."
+  (let* ((extra (alist-get 'extra it))
+         (extra (and (stringp extra)
+                     (replace-regexp-in-string
+                      "[ \t]+" " "
+                      (string-trim (replace-regexp-in-string
+                                    ":[ \t]*\\'" "" (string-trim extra))))))
+         (extra (and extra (not (member extra '("" "Scheduled" "Deadline")))
+                     extra))
+         (file (alist-get 'file it)))
+    (string-join (delq nil (list (or hm extra)
+                                 (and file (file-name-nondirectory file))))
+                 " · ")))
 
 (defun glasspane-ui--widget-items ()
   "Today's agenda as structured items for the home-screen widget.
-Each item carries the display fields (time/headline/todo/done) plus the
-heading ref, so the widget can jump to and todo-cycle individual rows."
-  (mapcar (lambda (it)
-            (let* ((hm (glasspane-org--item-hm (alist-get 'time it)))
-                   (todo (alist-get 'todo it))
-                   (done (and todo
-                              (member todo (or (default-value 'org-done-keywords)
-                                               '("DONE" "CANCELLED")))
-                              t)))
-              (append
-               (when hm `((time . ,hm)))
-               `((headline . ,(or (alist-get 'headline it) "Untitled")))
-               (when todo `((todo . ,todo)))
-               (when done '((done . t)))
-               `((ref . ,(alist-get 'ref it))))))
-          (seq-take (condition-case nil
-                        (glasspane-org--agenda-items 'day nil)
-                      (error nil))
-                    8)))
+Each item carries the display fields (headline/todo/done/type/meta/
+overdue) plus the heading ref, so the widget can jump to and todo-cycle
+individual rows and group the overdue ones under a divider."
+  (let ((today (org-today)))
+    (mapcar
+     (lambda (it)
+       (let* ((hm (glasspane-org--item-hm (alist-get 'time it)))
+              (todo (alist-get 'todo it))
+              (done (and todo
+                         (member todo (or (default-value 'org-done-keywords)
+                                          '("DONE" "CANCELLED")))
+                         t))
+              (type (alist-get 'type it))
+              (ts (alist-get 'ts-date it))
+              (meta (glasspane-ui--widget-item-meta it hm)))
+         (append
+          `((headline . ,(or (alist-get 'headline it) "Untitled")))
+          (when todo `((todo . ,todo)))
+          (when done '((done . t)))
+          (when (and (stringp type) (not (string-empty-p type)))
+            `((type . ,type)))
+          (unless (string-empty-p meta) `((meta . ,meta)))
+          (when (and (numberp ts) (< ts today)) '((overdue . t)))
+          `((ref . ,(alist-get 'ref it))))))
+     ;; The widget list scrolls, so the cap is just a sanity bound on
+     ;; spec size, not a display limit.
+     (seq-take (condition-case nil
+                   (glasspane-org--agenda-items 'day nil)
+                 (error nil))
+               20))))
+
+(defun glasspane-ui--widget-query-items (query)
+  "Custom-agenda QUERY results as widget items.
+Same shape as `glasspane-ui--widget-items', but search hits carry no
+agenda qualifiers — the metadata line is just the file name.
+`glasspane-org--search' is memoised, so re-pushing is cheap."
+  (mapcar
+   (lambda (it)
+     (let* ((todo (alist-get 'todo it))
+            (done (and todo
+                       (member todo (or (default-value 'org-done-keywords)
+                                        '("DONE" "CANCELLED")))
+                       t))
+            (file (alist-get 'file it)))
+       (append
+        `((headline . ,(or (alist-get 'headline it) "Untitled")))
+        (when todo `((todo . ,todo)))
+        (when done '((done . t)))
+        (when file `((meta . ,(file-name-nondirectory file))))
+        `((ref . ,(alist-get 'ref it))))))
+   (seq-take (condition-case nil (glasspane-org--search query) (error nil))
+             20)))
 
 (defun glasspane-ui--push-widget ()
-  "Push the `widget:agenda' surface backing the home-screen widget."
-  (let ((items (glasspane-ui--widget-items)))
-    (unless (equal items glasspane-ui--last-widget)
-      (setq glasspane-ui--last-widget items)
+  "Push the `widget:agenda' surface backing the home-screen widget.
+A multi-view spec: \"today\" (the day agenda) plus one view per
+`glasspane-org-custom-agendas' entry. The widget's header selector
+switches between them companion-side from cache, so it works offline.
+View keys are interned because `json-serialize' requires symbol keys."
+  (let ((views
+         (cons
+          (cons 'today
+                `((title . ,(format-time-string "Agenda · %a %b %d"))
+                  (items . ,(vconcat (glasspane-ui--widget-items)))))
+          (mapcar (lambda (ca)
+                    (cons (intern (car ca))
+                          `((title . ,(car ca))
+                            (items . ,(vconcat (glasspane-ui--widget-query-items
+                                                (cdr ca)))))))
+                  glasspane-org-custom-agendas))))
+    (unless (equal views glasspane-ui--last-widget)
+      (setq glasspane-ui--last-widget views)
       (eabp-surface-push
        "widget:agenda"
-       `((title . ,(format-time-string "Agenda · %a %b %d"))
-         (items . ,(vconcat items)))))))
+       `((views . ,views)
+         (initial_view . "today"))))))
 
 ;; Both are memo-guarded, so unchanged data sends nothing.
 (add-hook 'eabp-shell-after-push-hook #'glasspane-ui--sync-reminders)

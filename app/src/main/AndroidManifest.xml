@@ -57,6 +57,38 @@
                 android:value="Hosts a local loopback socket bridge so GNU Emacs (a separate on-device app) can post notifications and render widgets through this app. The service must persist to accept connections and respond to notification actions." />
         </service>
 
+        <!-- Adapter behind the agenda widget's scrollable list; the system
+             binds it with BIND_REMOTEVIEWS. -->
+        <service
+            android:name=".AgendaWidgetService"
+            android:permission="android.permission.BIND_REMOTEVIEWS"
+            android:exported="false" />
+
+        <!-- Invisible click router for agenda list rows (see the class doc).
+             NoDisplay + finish-in-onCreate: never visible, never in recents.
+             singleInstance + its own task affinity keep it OUT of the app's
+             task — with the default affinity, launching it yanks the whole
+             app task (MainActivity included) to the foreground. -->
+        <activity
+            android:name=".ActionTrampolineActivity"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="com.calebc42.eabp.trampoline"
+            android:exported="false" />
+
+        <!-- Agenda-widget view selector: a floating chooser over the home
+             screen. Its own task affinity for the same reason as the
+             trampoline — the app task must not come forward. -->
+        <activity
+            android:name=".WidgetViewSelectionActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="com.calebc42.eabp.widgetdialog"
+            android:exported="false" />
+
         <!-- Quick Settings tile: one-tap org capture. exported + the bind
              permission are both required for the system to host the tile. -->
         <service

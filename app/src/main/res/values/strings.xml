@@ -8,6 +8,9 @@
     <string name="widget_synced_at">Synced %1$s</string>
     <string name="widget_toggle_todo">Cycle TODO state</string>
     <string name="widget_refresh">Refresh agenda</string>
+    <string name="widget_overdue">Overdue</string>
+    <string name="widget_today">Today</string>
+    <string name="widget_view_selector_title">Agenda view</string>
     <string name="widget_capture">New capture</string>
     <string name="widget_clock_label">Org Clock</string>
     <string name="widget_clock_description">Quick clock in/out shortcuts for the Org clock. Taps queue when Emacs is offline.</string>

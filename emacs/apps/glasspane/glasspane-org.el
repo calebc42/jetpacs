@@ -155,6 +155,11 @@ Returns a list of alists representing agenda items.  Memoised; see
                    (tags (get-text-property (point) 'tags))
                    (time (get-text-property (point) 'time))
                    (type (get-text-property (point) 'type))
+                   ;; The agenda's own qualifier ("Sched. 3x: ", "In 3 d.: ")
+                   ;; and the item's own date as an absolute day number —
+                   ;; ts-date < (org-today) is the overdue test.
+                   (extra (get-text-property (point) 'extra))
+                   (ts-date (get-text-property (point) 'ts-date))
                    (date-abs (get-text-property (point) 'date))
                    ;; org ≥9.6 stores the gregorian (MONTH DAY YEAR) list
                    ;; directly; older code stored the absolute day number.
@@ -181,6 +186,8 @@ Returns a list of alists representing agenda items.  Memoised; see
                               (time . ,time)
                               (date . ,date-str)
                               (type . ,(when type (format "%s" type)))
+                              (extra . ,extra)
+                              (ts-date . ,ts-date)
                               (ref . ,(glasspane-org--heading-ref)))
                             items))))))
             (forward-line 1)))))

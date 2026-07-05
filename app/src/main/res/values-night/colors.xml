@@ -6,4 +6,5 @@
     <color name="widget_button_container">#FF4A4458</color>
     <color name="widget_button_text">#FFE8DEF8</color>
     <color name="widget_button_ripple">#33FFFFFF</color>
+    <color name="widget_todo">#FFEF9A9A</color>
 </resources>

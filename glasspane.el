@@ -2596,6 +2596,37 @@ Truncated to `eabp-buffer-max-lines'; a caption note is appended if cut."
                            'caption)))
           nodes)))))
 
+(defun eabp-buffer-render-region (buffer beg end)
+  "Render [BEG, END) of BUFFER generically into a list of SDUI nodes.
+The public region variant of `eabp-buffer-render', for callers showing
+a slice instead of the whole buffer (an imenu section, a hit context).
+BEG and END are clamped to the buffer; the line cap still applies."
+  (let ((buf (get-buffer buffer)))
+    (unless buf (error "No such buffer: %s" buffer))
+    (with-current-buffer buf
+      (let* ((beg (max (point-min) (min (or beg (point-min)) (point-max))))
+             (end (max beg (min (or end (point-max)) (point-max)))))
+        (eabp-buffer--render-region beg end (buffer-name buf))))))
+
+(defun eabp-buffer-render-tail (buffer lines)
+  "Render the last LINES lines of BUFFER into a list of SDUI nodes.
+For transcript-shaped buffers (comint REPLs, logs) the interesting end
+is the bottom — `eabp-buffer-render' caps from the top.  A leading
+caption marks elided output."
+  (let ((buf (get-buffer buffer)))
+    (unless buf (error "No such buffer: %s" buffer))
+    (with-current-buffer buf
+      (let ((beg (save-excursion
+                   (goto-char (point-max))
+                   (forward-line (- (max 1 lines)))
+                   (point))))
+        (append
+         (when (> beg (point-min))
+           (list (eabp-text (format "… %d earlier line(s) not shown"
+                                    (count-lines (point-min) beg))
+                            'caption)))
+         (eabp-buffer--render-region beg (point-max) (buffer-name buf)))))))
+
 (defvar eabp-render-buffer-functions nil
   "Alist of (MAJOR-MODE . FUNCTION) Tier-1 renderer skins.
 FUNCTION takes the buffer and returns a list of SDUI nodes.  A mode with no
@@ -3323,6 +3354,135 @@ by its header label instead of a fragile index."
 
 (provide 'eabp-tablist)
 ;;; eabp-tablist.el ends here
+
+;;; ==================================================================
+;;; BEGIN core/eabp-comint.el
+;;; ==================================================================
+
+;;; eabp-comint.el --- Generic comint renderer (Tier 0.5) -*- lexical-binding: t; -*-
+
+;; Tier 0.5: `comint-mode' is the substrate under every process REPL —
+;; M-x shell, ielm, the inferior language shells — so ONE skin covers
+;; them all, the same bet eabp-tablist makes on tabulated-list-mode.
+;; The transcript renders through the Tier 0 walk (fontification and
+;; tappable regions survive), tail-first because a REPL's interesting
+;; end is the bottom; below it sit a status/interrupt row and an input
+;; row whose submit dispatches `comint.send'.
+;;
+;; Boundary (docs/SPEC.md §5): `comint.send' delivers input only to the
+;; live process of an existing comint buffer — a REPL the user already
+;; opened (from the palette, M-x, or a curated entry point).  It never
+;; starts a process, so the wire gains no new execution surface beyond
+;; the sanctioned M-x escape hatch.
+;;
+;; Output arrives asynchronously; while the buffer is drilled into, the
+;; buffer view's live-refresh watch (eabp-emacs-ui) re-pushes as it
+;; lands, so the transcript follows along.  The input's widget id stays
+;; stable across those background pushes — the client's seed guard
+;; preserves half-typed text — and rotates after each send, which is how
+;; a server-driven client clears a field.
+;;
+;; Known gap: a password prompt raised from the process filter
+;; (`comint-watch-for-password-prompt') runs outside any action handler,
+;; so it is NOT bridged to the phone; it blocks in the desktop
+;; minibuffer like any other filter-time prompt.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'comint)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-buffer)
+
+(defcustom eabp-comint-tail-lines 200
+  "Transcript lines rendered from the tail of a comint buffer."
+  :type 'integer :group 'eabp)
+
+(defvar eabp-comint--gen (make-hash-table :test 'equal)
+  "Buffer name -> send counter, spliced into the input's widget id.
+A send bumps it, handing the client a fresh (empty) field; background
+transcript refreshes don't, so the seed guard keeps half-typed input.")
+
+(defun eabp-comint--refresh ()
+  (when (functionp eabp-buffer-refresh-function)
+    (funcall eabp-buffer-refresh-function)))
+
+;; ─── Rendering ───────────────────────────────────────────────────────────────
+
+(defun eabp-comint-render (buf)
+  "Tier-1 skin: comint BUF as status row + transcript tail + input row."
+  (with-current-buffer buf
+    (let* ((name (buffer-name))
+           (proc (get-buffer-process buf))
+           (live (and proc (process-live-p proc))))
+      (append
+       (list (eabp-row
+              (eabp-box (list (eabp-text
+                               (if live
+                                   (format "%s — %s" (process-name proc)
+                                           (process-status proc))
+                                 "no live process")
+                               'caption))
+                        :weight 1)
+              (and live
+                   (eabp-icon-button "stop"
+                                     (eabp-action "comint.interrupt"
+                                                  :args `((buffer . ,name))
+                                                  :when-offline "drop")
+                                     :content-description "Interrupt (C-c C-c)"))))
+       (eabp-buffer-render-tail buf eabp-comint-tail-lines)
+       (when live
+         (list (eabp-text-input
+                (format "comint/%s/%d" name (gethash name eabp-comint--gen 0))
+                :hint "Input — Enter sends"
+                :single-line t :monospace t
+                :on-submit (eabp-action "comint.send"
+                                        :args `((buffer . ,name))))))))))
+
+(eabp-render-buffer-register 'comint-mode #'eabp-comint-render)
+
+;; ─── Actions ─────────────────────────────────────────────────────────────────
+
+(defun eabp-comint--live-buffer (name)
+  "The comint buffer NAME when it has a live process, else nil (messaged).
+The gate for both wire actions: an arbitrary name off the wire can only
+ever reach the process of an already-open comint buffer."
+  (let ((buf (and (stringp name) (get-buffer name))))
+    (cond
+     ((not (and buf (with-current-buffer buf (derived-mode-p 'comint-mode))))
+      (message "%s is not a comint buffer" (or name "?"))
+      nil)
+     ((not (let ((proc (get-buffer-process buf)))
+             (and proc (process-live-p proc))))
+      (message "%s has no live process" name)
+      nil)
+     (t buf))))
+
+(eabp-defaction "comint.send"
+  (lambda (args _)
+    (let ((buf (eabp-comint--live-buffer (alist-get 'buffer args)))
+          (input (alist-get 'value args)))
+      (when (and buf (stringp input))
+        (condition-case err
+            (with-current-buffer buf
+              (goto-char (point-max))
+              (insert input)
+              (comint-send-input))
+          (error (message "Send failed: %s" (error-message-string err))))
+        (cl-incf (gethash (buffer-name buf) eabp-comint--gen 0))
+        (eabp-comint--refresh)))))
+
+(eabp-defaction "comint.interrupt"
+  (lambda (args _)
+    (let ((buf (eabp-comint--live-buffer (alist-get 'buffer args))))
+      (when buf
+        (with-current-buffer buf
+          (ignore-errors (comint-interrupt-subjob)))
+        (eabp-comint--refresh)))))
+
+(provide 'eabp-comint)
+;;; eabp-comint.el ends here
 
 ;;; ==================================================================
 ;;; BEGIN core/eabp-transient.el
@@ -5901,13 +6061,139 @@ turns the Android sandbox's raw stat errors into a graceful nil."
 (defun eabp-files-browser-body ()
   "Build the Files view: the current directory rendered as dired cards.
 There is no separate roots screen — the view always shows a directory
-\(`eabp-files--current-dir'), so it matches the Buffers-tab listing."
-  (let ((buf (eabp-files--dired-buffer (eabp-files--current-dir))))
+\(`eabp-files--current-dir'), so it matches the Buffers-tab listing.
+While content-search results exist, a re-entry card heads the list."
+  (let ((buf (eabp-files--dired-buffer (eabp-files--current-dir)))
+        (results-card (eabp-files--grep-results-card)))
     (if buf
-        (apply #'eabp-lazy-column (eabp-render-buffer buf))
+        (apply #'eabp-lazy-column
+               (append (and results-card (list results-card))
+                       (eabp-render-buffer buf)))
       (eabp-empty-state :icon "info"
                         :title "Can't open folder"
                         :caption "Outside the allowed roots, or unreadable."))))
+
+;; ─── Content search ──────────────────────────────────────────────────────────
+;;
+;; A pure-elisp recursive scan: portable (no external grep needed on the
+;; host) and bounded — capped hits and files, capped file size, VCS/build
+;; directories skipped, binaries (NUL early in the file) skipped.  The
+;; scan starts at the directory being browsed, which is inside
+;; `eabp-files-roots' by construction, so the root guard holds; the query
+;; is matched as a literal string, never a regexp off the wire.
+
+(defcustom eabp-files-grep-max-hits 200
+  "Content search stops after this many matching lines."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-files-grep-max-files 2000
+  "Content search stops after examining this many files.
+Search from a subdirectory rather than the root to keep scans quick."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-files-grep-max-file-bytes (* 1024 1024)
+  "Files larger than this are skipped by the content search."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-files-grep-exclude-dirs
+  '(".git" ".hg" ".svn" "node_modules" ".gradle" "build" "dist" "target")
+  "Directory names the content search never descends into."
+  :type '(repeat string) :group 'eabp)
+
+(defvar eabp-files--grep nil
+  "Latest content search, or nil.
+A plist (:query Q :dir D :hits ((FILE LINE TEXT) ...) :truncated BOOL).")
+
+(defun eabp-files--grep-scan (dir query)
+  "Search QUERY (a literal, case-insensitive) under DIR.
+Returns the plist stored in `eabp-files--grep'; one hit per line."
+  (let ((re (regexp-quote query))
+        (case-fold-search t)
+        (hits-left eabp-files-grep-max-hits)
+        (files-left eabp-files-grep-max-files)
+        hits truncated)
+    (catch 'done
+      (dolist (file (directory-files-recursively
+                     dir "" nil
+                     (lambda (d)
+                       (not (member (file-name-nondirectory
+                                     (directory-file-name d))
+                                    eabp-files-grep-exclude-dirs)))))
+        (when (<= (cl-decf files-left) 0)
+          (setq truncated t)
+          (throw 'done nil))
+        (when (and (file-readable-p file)
+                   (let ((size (file-attribute-size (file-attributes file))))
+                     (and size (<= size eabp-files-grep-max-file-bytes))))
+          (with-temp-buffer
+            (when (ignore-errors (insert-file-contents file) t)
+              (goto-char (point-min))
+              ;; Binary guard: a NUL early in the file means don't line-match.
+              (unless (search-forward "\0" (min 1024 (point-max)) t)
+                (while (re-search-forward re nil t)
+                  (push (list file
+                              (line-number-at-pos)
+                              (buffer-substring-no-properties
+                               (line-beginning-position)
+                               (min (line-end-position)
+                                    (+ (line-beginning-position) 200))))
+                        hits)
+                  (when (<= (cl-decf hits-left) 0)
+                    (setq truncated t)
+                    (throw 'done nil))
+                  (end-of-line))))))))
+    (list :query query :dir dir :hits (nreverse hits) :truncated truncated)))
+
+(defun eabp-files--grep-body ()
+  "The search-results view body: one tappable card per matching line."
+  (let* ((g eabp-files--grep)
+         (dir (plist-get g :dir))
+         (hits (plist-get g :hits)))
+    (if (null hits)
+        (eabp-empty-state :icon "manage_search" :title "No matches"
+                          :caption (format "\"%s\" under %s"
+                                           (plist-get g :query)
+                                           (abbreviate-file-name dir)))
+      (apply #'eabp-lazy-column
+             (cons
+              (eabp-text (format "%d matching line%s under %s%s"
+                                 (length hits)
+                                 (if (= (length hits) 1) "" "s")
+                                 (abbreviate-file-name dir)
+                                 (if (plist-get g :truncated)
+                                     " — stopped early, narrow the search"
+                                   ""))
+                         'caption)
+              (mapcar (lambda (hit)
+                        (pcase-let ((`(,file ,line ,text) hit))
+                          (eabp-card
+                           (list (eabp-column
+                                  (eabp-row
+                                   (eabp-box (list (eabp-text
+                                                    (file-relative-name file dir)
+                                                    'label))
+                                             :weight 1)
+                                   (eabp-text (format "L%d" line) 'caption))
+                                  (eabp-rich-text
+                                   (list (eabp-span (string-trim text) :mono t)))))
+                           :on-tap (eabp-action "files.open"
+                                                :args `((file . ,file))))))
+                      hits))))))
+
+(defun eabp-files--grep-results-card ()
+  "The re-entry card the browser shows while results exist, or nil."
+  (when eabp-files--grep
+    (eabp-card
+     (list (eabp-row
+            (eabp-icon "manage_search")
+            (eabp-box (list (eabp-text
+                             (format "Results: \"%s\" (%d)"
+                                     (plist-get eabp-files--grep :query)
+                                     (length (plist-get eabp-files--grep :hits)))
+                             'body))
+                      :weight 1)
+            (eabp-icon "chevron_right")))
+     :on-tap (eabp-shell-switch-view "grep"))))
 
 ;; ─── Editor view ─────────────────────────────────────────────────────────────
 
@@ -5953,17 +6239,24 @@ otherwise the plain-text editor."
 
 (defun eabp-files--files-view (snackbar)
   "The Files tab: the current directory's cards, back arrow inside subdirs."
-  (eabp-shell-tab-view
-   "files" (eabp-files-browser-body)
-   :top-bar (when eabp-files--dir
-              (eabp-top-bar (abbreviate-file-name eabp-files--dir)
-                            :nav-icon "arrow_back"
-                            :nav-action (eabp-action "files.cd"
-                                                     :args '((dir . :null)))))
-   ;; A create FAB — the view always shows a directory (the landing dir or
-   ;; a subdirectory), so it's always offered.
-   :fab (eabp-fab "add" :label "New" :on-tap (eabp-action "files.new"))
-   :snackbar snackbar))
+  (let ((grep-btn (eabp-icon-button
+                   "manage_search"
+                   (eabp-action "files.grep" :when-offline "drop")
+                   :content-description "Search file contents")))
+    (eabp-shell-tab-view
+     "files" (eabp-files-browser-body)
+     :top-bar (if eabp-files--dir
+                  (eabp-top-bar (abbreviate-file-name eabp-files--dir)
+                                :nav-icon "arrow_back"
+                                :nav-action (eabp-action "files.cd"
+                                                         :args '((dir . :null)))
+                                :actions (list grep-btn))
+                (eabp-shell-default-top-bar "Files"
+                                            :extra-actions (list grep-btn)))
+     ;; A create FAB — the view always shows a directory (the landing dir or
+     ;; a subdirectory), so it's always offered.
+     :fab (eabp-fab "add" :label "New" :on-tap (eabp-action "files.new"))
+     :snackbar snackbar)))
 
 (defun eabp-files--edit-view (snackbar)
   "The editor view for the open file, with app-contributed top-bar actions."
@@ -5989,6 +6282,23 @@ otherwise the plain-text editor."
   :builder #'eabp-files--edit-view
   :when (lambda () (and eabp-files--file t))
   :order 100)
+
+(defun eabp-files--grep-view (snackbar)
+  "The content-search results view; ✕ discards the results."
+  (eabp-shell-nav-view
+   (format "\"%s\"" (plist-get eabp-files--grep :query))
+   (eabp-files--grep-body)
+   :back-to "files"
+   :actions (list (eabp-icon-button
+                   "close"
+                   (eabp-action "files.grep-clear" :when-offline "drop")
+                   :content-description "Discard search results"))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "grep"
+  :builder #'eabp-files--grep-view
+  :when (lambda () (and eabp-files--grep t))
+  :order 101)
 
 ;; Leaving the editor for the files view closes the file (the next push
 ;; drops the edit view). Unsaved companion-side text is discarded with it.
@@ -6018,6 +6328,28 @@ otherwise the plain-text editor."
         (setq eabp-files--file (expand-file-name file))
         (run-hook-with-args 'eabp-files-open-hook eabp-files--file)
         (eabp-shell-push nil :switch-to "edit")))))
+
+(eabp-defaction "files.grep"
+  ;; The query arrives through the bridged minibuffer (this runs inside an
+  ;; action handler), so the search icon needs no input widget of its own.
+  ;; Scope is the directory being browsed — within the roots by
+  ;; construction — and the scan is bounded by the grep defcustoms.
+  (lambda (_ __)
+    (let* ((dir (eabp-files--current-dir))
+           (query (condition-case nil
+                      (string-trim
+                       (read-string (format "Search in %s for: "
+                                            (abbreviate-file-name dir))))
+                    (quit ""))))
+      (if (string-empty-p query)
+          (eabp-shell-push)
+        (setq eabp-files--grep (eabp-files--grep-scan dir query))
+        (eabp-shell-push nil :switch-to "grep")))))
+
+(eabp-defaction "files.grep-clear"
+  (lambda (_ __)
+    (setq eabp-files--grep nil)
+    (eabp-shell-push nil :switch-to "files")))
 
 (eabp-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a
@@ -6427,12 +6759,19 @@ this is the validation the command-dispatch boundary requires."
 (require 'eabp-tablist)
 (require 'eabp-shell)
 (require 'eabp-witheditor)
+(require 'imenu)
 (require 'cl-lib)
 
 ;; ─── State ───────────────────────────────────────────────────────────────────
 
 (defvar eabp-emacs-ui--viewing-buffer nil
   "Name of the buffer currently being viewed, or nil for the buffer list.")
+
+(defvar eabp-emacs-ui--section nil
+  "Active imenu section narrowing for the buffer view, or nil.
+A plist (:buffer NAME :beg POS :end POS :label STRING); while set for
+the viewed buffer, the view renders just that slice.  Set by
+`imenu.show', cleared by `imenu.clear' or leaving the buffer.")
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and
 ;; list buffers this way) is this module's buffer view.
@@ -6490,11 +6829,64 @@ this is the validation the command-dispatch boundary requires."
   "Build UI showing the contents of BUFFER-NAME.
 Rendered through the Tier 0 generic renderer (`eabp-render-buffer'), so the
 buffer's faces and tappable regions survive — any major mode works without a
-bespoke translator."
-  (let ((buf (get-buffer buffer-name)))
-    (if (not buf)
-        (eabp-text (format "Buffer '%s' not found." buffer-name) 'body)
-      (apply #'eabp-lazy-column (eabp-render-buffer buf)))))
+bespoke translator.  With an imenu section active for this buffer, only
+that slice renders, under a dismissible header."
+  (let ((buf (get-buffer buffer-name))
+        (section (and (equal (plist-get eabp-emacs-ui--section :buffer)
+                             buffer-name)
+                      eabp-emacs-ui--section)))
+    (cond
+     ((not buf)
+      (eabp-text (format "Buffer '%s' not found." buffer-name) 'body))
+     (section
+      (apply #'eabp-lazy-column
+             (cons (eabp-row
+                    (eabp-box (list (eabp-text (plist-get section :label)
+                                               'label))
+                              :weight 1)
+                    (eabp-icon-button "close"
+                                      (eabp-action "imenu.clear"
+                                                   :when-offline "drop")
+                                      :content-description "Show whole buffer"))
+                   (eabp-buffer-render-region buf
+                                              (plist-get section :beg)
+                                              (plist-get section :end)))))
+     (t (apply #'eabp-lazy-column (eabp-render-buffer buf))))))
+
+;; ─── imenu sections ──────────────────────────────────────────────────────────
+;;
+;; imenu is the per-buffer index of definitions/sections any major mode
+;; provides declaratively.  The picker is a bridged `completing-read'
+;; (the same vertico-style dialog M-x uses), and the chosen entry
+;; renders as a region slice — the phone has no scroll-to-position, so
+;; "jump" means "show me that section".
+
+(defun eabp-emacs-ui--imenu-flatten (alist prefix)
+  "Flatten an imenu ALIST into ((LABEL . POSITION) ...), in index order.
+Nested submenus join their path with \" / \"; the *Rescan* pseudo-entry
+and unresolvable positions are dropped.  PREFIX is the path so far."
+  (let (out)
+    (dolist (item alist)
+      (when (and (consp item) (car item))
+        (let* ((label (if (string-empty-p prefix)
+                          (format "%s" (car item))
+                        (format "%s / %s" prefix (car item))))
+               (tail (cdr item))
+               ;; (NAME . POS) or the general (NAME POS FUNCTION ...) form.
+               (pos (cond ((number-or-marker-p tail) tail)
+                          ((and (consp tail) (number-or-marker-p (car tail)))
+                           (car tail)))))
+          (cond
+           ((and (listp tail) (not pos))  ; a submenu
+            (setq out (append out (eabp-emacs-ui--imenu-flatten tail label))))
+           ((and pos
+                 (not (equal (format "%s" (car item)) "*Rescan*"))
+                 (>= (if (markerp pos) (or (marker-position pos) 0) pos) 1))
+            (setq out (append out (list (cons label
+                                              (if (markerp pos)
+                                                  (marker-position pos)
+                                                pos))))))))))
+    out))
 
 ;; ─── Live buffer refresh ─────────────────────────────────────────────────────
 ;;
@@ -6750,12 +7142,52 @@ by a long history — the layout bug the old plain-column version had."
 ;; Buffer list / view
 (eabp-defaction "emacs.buffer.view"
   (lambda (args _)
-    (setq eabp-emacs-ui--viewing-buffer (alist-get 'buffer args))
+    (setq eabp-emacs-ui--viewing-buffer (alist-get 'buffer args)
+          eabp-emacs-ui--section nil)
     (eabp-shell-push)))
 
 (eabp-defaction "emacs.buffer.back"
   (lambda (_ _)
-    (setq eabp-emacs-ui--viewing-buffer nil)
+    (setq eabp-emacs-ui--viewing-buffer nil
+          eabp-emacs-ui--section nil)
+    (eabp-shell-push)))
+
+;; imenu sections
+(eabp-defaction "imenu.show"
+  (lambda (args _)
+    (let* ((name (or (alist-get 'buffer args) eabp-emacs-ui--viewing-buffer))
+           (buf (and (stringp name) (get-buffer name))))
+      (if (not buf)
+          (message "No buffer to index")
+        (let ((flat (with-current-buffer buf
+                      (condition-case nil
+                          (eabp-emacs-ui--imenu-flatten
+                           (imenu--make-index-alist t) "")
+                        (error nil)))))
+          (if (null flat)
+              (message "No sections found in %s" name)
+            (let ((choice (condition-case nil
+                              (completing-read "Section: " (mapcar #'car flat)
+                                               nil t)
+                            (quit nil))))
+              (when-let ((pos (cdr (assoc choice flat))))
+                (with-current-buffer buf
+                  ;; The section runs from the entry's line to the next
+                  ;; index position after it (in any submenu), else eob.
+                  (let* ((beg (save-excursion (goto-char (min pos (point-max)))
+                                              (line-beginning-position)))
+                         (after (sort (cl-remove-if (lambda (p) (<= p pos))
+                                                    (mapcar #'cdr flat))
+                                      #'<))
+                         (end (or (car after) (point-max))))
+                    (setq eabp-emacs-ui--section
+                          (list :buffer name :beg beg :end end
+                                :label choice))))
+                (eabp-shell-push)))))))))
+
+(eabp-defaction "imenu.clear"
+  (lambda (_ _)
+    (setq eabp-emacs-ui--section nil)
     (eabp-shell-push)))
 
 (defun eabp-emacs-ui--eval-record (input output)
@@ -6843,6 +7275,12 @@ with a keyboard FAB that opens the buffer's keymap."
        ;; Content swap within the buffers view: stays an Emacs round-trip
        ;; (the list must be rebuilt).
        :nav-action (eabp-action "emacs.buffer.back")
+       :actions (list (eabp-icon-button
+                       "toc"
+                       (eabp-action "imenu.show"
+                                    :args `((buffer . ,eabp-emacs-ui--viewing-buffer))
+                                    :when-offline "drop")
+                       :content-description "Sections (imenu)"))
        :fab (eabp-fab "keyboard"
                       :on-tap (eabp-action "eabp.keymap.show"
                                :args `((buffer . ,eabp-emacs-ui--viewing-buffer))
@@ -6881,11 +7319,13 @@ with a keyboard FAB that opens the buffer's keymap."
 (eabp-shell-define-view "messages" :builder #'eabp-emacs-ui--messages-view
                         :order 90)
 
-;; Landing anywhere but the current tab drops a buffer drill-in.
-(add-hook 'eabp-shell-view-switched-hook
-          (lambda (view)
-            (unless (equal view (eabp-shell-current-tab))
-              (setq eabp-emacs-ui--viewing-buffer nil))))
+;; Landing anywhere but the current tab drops a buffer drill-in (and its
+;; imenu section).  Named so re-evaluating the file doesn't stack lambdas.
+(defun eabp-emacs-ui--on-view-switched (view)
+  (unless (equal view (eabp-shell-current-tab))
+    (setq eabp-emacs-ui--viewing-buffer nil
+          eabp-emacs-ui--section nil)))
+(add-hook 'eabp-shell-view-switched-hook #'eabp-emacs-ui--on-view-switched)
 
 (eabp-shell-add-drawer-item
  10 (lambda () (eabp-drawer-item "view_list" "Buffers"
@@ -7489,6 +7929,213 @@ path when the group is already on it)."
 
 (provide 'eabp-customize)
 ;;; eabp-customize.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/eabp-tools.el
+;;; ==================================================================
+
+;;; eabp-tools.el --- Built-in Emacs tools: bookmarks, kill ring, shell, processes, timers -*- lexical-binding: t; -*-
+
+;; Entry points for screens the substrates already cover.
+;; `bookmark-bmenu-mode', `process-menu-mode' and `timer-list-mode' all
+;; derive from `tabulated-list-mode', so the Tier 0.5 tablist renderer
+;; draws them today — each needs only a semantic action that creates the
+;; buffer and navigates the buffer view to it (the packages.show
+;; pattern).  A shell entry does the same for `M-x shell', rendered by
+;; the comint substrate (eabp-comint.el).  The kill ring is pure data —
+;; no buffer at all — so it renders as its own view of cards, each with
+;; a companion-local copy button (works offline, no round trip).
+;;
+;; One "Tools" drawer item opens a hub view of these; five separate
+;; drawer entries would crowd the drawer.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-tablist)
+(require 'eabp-shell)
+
+(declare-function bookmark-maybe-load-default-file "bookmark")
+(declare-function bookmark-bmenu-list "bookmark")
+(declare-function bookmark-get-bookmark "bookmark")
+(declare-function bookmark-jump "bookmark")
+
+;; ─── Showing a tool buffer ───────────────────────────────────────────────────
+
+(defun eabp-tools--view-buffer-of (fn)
+  "Call FN (returning a buffer or buffer name) and view the result.
+Window excursion contains the pop-to-buffer these commands do; errors
+land in the snackbar instead of dying silently."
+  (condition-case err
+      (let ((buf (save-window-excursion (funcall fn))))
+        (when (bufferp buf) (setq buf (buffer-name buf)))
+        (if (and (stringp buf) (get-buffer buf))
+            (funcall eabp-tablist-view-buffer-function buf)
+          (eabp-shell-notify "Nothing to show")))
+    (error (eabp-shell-notify (error-message-string err)))))
+
+(eabp-defaction "tools.bookmarks"
+  (lambda (_ __)
+    (eabp-tools--view-buffer-of
+     (lambda ()
+       (require 'bookmark)
+       (bookmark-maybe-load-default-file)
+       (bookmark-bmenu-list)
+       "*Bookmark List*"))))
+
+(eabp-defaction "tools.processes"
+  (lambda (_ __)
+    (eabp-tools--view-buffer-of
+     (lambda () (list-processes) "*Process List*"))))
+
+(eabp-defaction "tools.timers"
+  (lambda (_ __)
+    (eabp-tools--view-buffer-of
+     (lambda ()
+       (unless (fboundp 'list-timers) (require 'timer-list))
+       ;; Called as a function, so its `disabled' novice flag (which
+       ;; guards the interactive command loop) does not apply.
+       (list-timers)
+       "*timer-list*"))))
+
+(eabp-defaction "tools.shell"
+  (lambda (_ __)
+    (eabp-tools--view-buffer-of
+     (lambda ()
+       (require 'shell)
+       (shell)))))
+
+;; ─── Bookmark rows: tap = jump ───────────────────────────────────────────────
+
+(defun eabp-tools--bookmark-name (id)
+  "The bookmark name from a bmenu row ID (a name string or a record)."
+  (cond ((stringp id) id)
+        ((and (consp id) (stringp (car id))) (car id))))
+
+(defun eabp-tools--bookmark-row (id entry _pos)
+  "Tablist row skin for bookmark-bmenu: tapping jumps to the bookmark."
+  (let ((name (eabp-tools--bookmark-name id)))
+    (when name
+      (let ((file (or (eabp-tablist-entry-col entry "File") "")))
+        (eabp-card
+         (list (apply #'eabp-column
+                      (delq nil
+                            (list (eabp-text name 'label)
+                                  (unless (string-empty-p file)
+                                    (eabp-text file 'caption))))))
+         :on-tap (eabp-action "tools.bookmark-jump"
+                              :args `((bookmark . ,name))
+                              :when-offline "drop"))))))
+
+(setf (alist-get 'bookmark-bmenu-mode eabp-tablist-row-functions)
+      #'eabp-tools--bookmark-row)
+
+(eabp-defaction "tools.bookmark-jump"
+  ;; Validated against the bookmark alist; the jump runs inside the
+  ;; action handler, so a relocation prompt (file moved) is bridged.
+  ;; The whole flow sits in the condition-case — even loading the
+  ;; bookmark file can signal (a corrupt file must cost a snackbar, not
+  ;; the action dispatcher).
+  (lambda (args _)
+    (let ((name (alist-get 'bookmark args)))
+      (when (stringp name)
+        (condition-case err
+            (progn
+              (require 'bookmark)
+              (bookmark-maybe-load-default-file)
+              (when (bookmark-get-bookmark name t)
+                (let ((target (save-window-excursion
+                                (bookmark-jump name)
+                                (buffer-name (current-buffer)))))
+                  (funcall eabp-tablist-view-buffer-function target))))
+          (error (eabp-shell-notify
+                  (format "Bookmark failed: %s"
+                          (error-message-string err)))))))))
+
+;; ─── Kill ring ───────────────────────────────────────────────────────────────
+
+(defcustom eabp-tools-kill-ring-max 50
+  "Kill-ring entries shown in the Kill ring view."
+  :type 'integer :group 'eabp)
+
+(defun eabp-tools--kill-card (text)
+  "A card for one kill: a trimmed preview plus a copy-to-phone button.
+The copy is the companion-local clipboard builtin, so it works offline
+and carries the full (untrimmed) text."
+  (let* ((clean (substring-no-properties text))
+         (preview (string-trim
+                   (if (> (length clean) 500) (substring clean 0 500) clean))))
+    (eabp-card
+     (list (eabp-row
+            (eabp-box (list (eabp-text (if (string-empty-p preview) " " preview)
+                                       'body nil nil t 4))
+                      :weight 1)
+            (eabp-icon-button "content_copy"
+                              (eabp-clipboard-action clean)
+                              :content-description "Copy to phone clipboard"))))))
+
+(defun eabp-tools--kill-ring-body ()
+  (let ((kills (cl-subseq kill-ring
+                          0 (min (length kill-ring) eabp-tools-kill-ring-max))))
+    (if (null kills)
+        (eabp-empty-state :icon "content_paste" :title "Kill ring is empty"
+                          :caption "Text killed in Emacs shows up here.")
+      (apply #'eabp-lazy-column
+             (cons (eabp-text (format "%d of %d kills, newest first"
+                                      (length kills) (length kill-ring))
+                              'caption)
+                   (mapcar #'eabp-tools--kill-card kills))))))
+
+(defun eabp-tools--kill-ring-view (snackbar)
+  (eabp-shell-nav-view "Kill ring" (eabp-tools--kill-ring-body)
+                       :back-to "tools"
+                       :snackbar snackbar))
+
+;; ─── The hub view and drawer entry ───────────────────────────────────────────
+
+(defun eabp-tools--entry (icon title caption action)
+  (eabp-card
+   (list (eabp-row
+          (eabp-icon icon)
+          (eabp-box (list (eabp-column (eabp-text title 'label)
+                                       (eabp-text caption 'caption)))
+                    :weight 1)
+          (eabp-icon "chevron_right")))
+   :on-tap action))
+
+(defun eabp-tools--view (snackbar)
+  (eabp-shell-nav-view
+   "Tools"
+   (eabp-lazy-column
+    (eabp-tools--entry "bookmark" "Bookmarks"
+                       "Jump to saved places"
+                       (eabp-action "tools.bookmarks" :when-offline "drop"))
+    (eabp-tools--entry "content_paste" "Kill ring"
+                       "Copy recent kills to the phone clipboard"
+                       (eabp-shell-switch-view "kill-ring"))
+    (eabp-tools--entry "terminal" "Shell"
+                       "M-x shell, rendered as a REPL"
+                       (eabp-action "tools.shell" :when-offline "drop"))
+    (eabp-tools--entry "memory" "Processes"
+                       "Subprocesses of this Emacs"
+                       (eabp-action "tools.processes" :when-offline "drop"))
+    (eabp-tools--entry "timer" "Timers"
+                       "Active Emacs timers"
+                       (eabp-action "tools.timers" :when-offline "drop")))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "tools" :builder #'eabp-tools--view :order 86)
+(eabp-shell-define-view "kill-ring" :builder #'eabp-tools--kill-ring-view
+                        :order 87)
+
+(eabp-shell-add-drawer-item
+ 50 (lambda ()
+      (eabp-drawer-item "build" "Tools" (eabp-shell-switch-view "tools"))))
+
+(provide 'eabp-tools)
+;;; eabp-tools.el ends here
 
 ;;; ==================================================================
 ;;; BEGIN apps/eabp-magit.el

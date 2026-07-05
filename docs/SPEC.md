@@ -133,7 +133,8 @@ Actions are dot-namespaced `noun.verb` (`heading.todo-set`,
 registers the handler; the core reserves `eabp.*`, `nav.*`, `view.*`,
 `dialog.*`, `edit.*`, `tablist.*`, `settings.*`, `prompt.*`,
 `dashboard.*`, `files.*`, `emacs.*`, `packages.*`, `customize.*`,
-`transient.*`, `share.*`, `demo.*`, `witheditor.*`.
+`transient.*`, `share.*`, `demo.*`, `witheditor.*`, `comint.*`,
+`imenu.*`, `tools.*`.
 
 - `when_offline` is the queue policy the *spec author* chose for the
   control: `"queue"` (default — persist and replay), `"drop"` (meaningless

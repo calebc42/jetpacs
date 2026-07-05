@@ -498,6 +498,37 @@ Truncated to `eabp-buffer-max-lines'; a caption note is appended if cut."
                            'caption)))
           nodes)))))
 
+(defun eabp-buffer-render-region (buffer beg end)
+  "Render [BEG, END) of BUFFER generically into a list of SDUI nodes.
+The public region variant of `eabp-buffer-render', for callers showing
+a slice instead of the whole buffer (an imenu section, a hit context).
+BEG and END are clamped to the buffer; the line cap still applies."
+  (let ((buf (get-buffer buffer)))
+    (unless buf (error "No such buffer: %s" buffer))
+    (with-current-buffer buf
+      (let* ((beg (max (point-min) (min (or beg (point-min)) (point-max))))
+             (end (max beg (min (or end (point-max)) (point-max)))))
+        (eabp-buffer--render-region beg end (buffer-name buf))))))
+
+(defun eabp-buffer-render-tail (buffer lines)
+  "Render the last LINES lines of BUFFER into a list of SDUI nodes.
+For transcript-shaped buffers (comint REPLs, logs) the interesting end
+is the bottom — `eabp-buffer-render' caps from the top.  A leading
+caption marks elided output."
+  (let ((buf (get-buffer buffer)))
+    (unless buf (error "No such buffer: %s" buffer))
+    (with-current-buffer buf
+      (let ((beg (save-excursion
+                   (goto-char (point-max))
+                   (forward-line (- (max 1 lines)))
+                   (point))))
+        (append
+         (when (> beg (point-min))
+           (list (eabp-text (format "… %d earlier line(s) not shown"
+                                    (count-lines (point-min) beg))
+                            'caption)))
+         (eabp-buffer--render-region beg (point-max) (buffer-name buf)))))))
+
 (defvar eabp-render-buffer-functions nil
   "Alist of (MAJOR-MODE . FUNCTION) Tier-1 renderer skins.
 FUNCTION takes the buffer and returns a list of SDUI nodes.  A mode with no

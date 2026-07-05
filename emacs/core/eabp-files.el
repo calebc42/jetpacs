@@ -194,13 +194,139 @@ turns the Android sandbox's raw stat errors into a graceful nil."
 (defun eabp-files-browser-body ()
   "Build the Files view: the current directory rendered as dired cards.
 There is no separate roots screen — the view always shows a directory
-\(`eabp-files--current-dir'), so it matches the Buffers-tab listing."
-  (let ((buf (eabp-files--dired-buffer (eabp-files--current-dir))))
+\(`eabp-files--current-dir'), so it matches the Buffers-tab listing.
+While content-search results exist, a re-entry card heads the list."
+  (let ((buf (eabp-files--dired-buffer (eabp-files--current-dir)))
+        (results-card (eabp-files--grep-results-card)))
     (if buf
-        (apply #'eabp-lazy-column (eabp-render-buffer buf))
+        (apply #'eabp-lazy-column
+               (append (and results-card (list results-card))
+                       (eabp-render-buffer buf)))
       (eabp-empty-state :icon "info"
                         :title "Can't open folder"
                         :caption "Outside the allowed roots, or unreadable."))))
+
+;; ─── Content search ──────────────────────────────────────────────────────────
+;;
+;; A pure-elisp recursive scan: portable (no external grep needed on the
+;; host) and bounded — capped hits and files, capped file size, VCS/build
+;; directories skipped, binaries (NUL early in the file) skipped.  The
+;; scan starts at the directory being browsed, which is inside
+;; `eabp-files-roots' by construction, so the root guard holds; the query
+;; is matched as a literal string, never a regexp off the wire.
+
+(defcustom eabp-files-grep-max-hits 200
+  "Content search stops after this many matching lines."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-files-grep-max-files 2000
+  "Content search stops after examining this many files.
+Search from a subdirectory rather than the root to keep scans quick."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-files-grep-max-file-bytes (* 1024 1024)
+  "Files larger than this are skipped by the content search."
+  :type 'integer :group 'eabp)
+
+(defcustom eabp-files-grep-exclude-dirs
+  '(".git" ".hg" ".svn" "node_modules" ".gradle" "build" "dist" "target")
+  "Directory names the content search never descends into."
+  :type '(repeat string) :group 'eabp)
+
+(defvar eabp-files--grep nil
+  "Latest content search, or nil.
+A plist (:query Q :dir D :hits ((FILE LINE TEXT) ...) :truncated BOOL).")
+
+(defun eabp-files--grep-scan (dir query)
+  "Search QUERY (a literal, case-insensitive) under DIR.
+Returns the plist stored in `eabp-files--grep'; one hit per line."
+  (let ((re (regexp-quote query))
+        (case-fold-search t)
+        (hits-left eabp-files-grep-max-hits)
+        (files-left eabp-files-grep-max-files)
+        hits truncated)
+    (catch 'done
+      (dolist (file (directory-files-recursively
+                     dir "" nil
+                     (lambda (d)
+                       (not (member (file-name-nondirectory
+                                     (directory-file-name d))
+                                    eabp-files-grep-exclude-dirs)))))
+        (when (<= (cl-decf files-left) 0)
+          (setq truncated t)
+          (throw 'done nil))
+        (when (and (file-readable-p file)
+                   (let ((size (file-attribute-size (file-attributes file))))
+                     (and size (<= size eabp-files-grep-max-file-bytes))))
+          (with-temp-buffer
+            (when (ignore-errors (insert-file-contents file) t)
+              (goto-char (point-min))
+              ;; Binary guard: a NUL early in the file means don't line-match.
+              (unless (search-forward "\0" (min 1024 (point-max)) t)
+                (while (re-search-forward re nil t)
+                  (push (list file
+                              (line-number-at-pos)
+                              (buffer-substring-no-properties
+                               (line-beginning-position)
+                               (min (line-end-position)
+                                    (+ (line-beginning-position) 200))))
+                        hits)
+                  (when (<= (cl-decf hits-left) 0)
+                    (setq truncated t)
+                    (throw 'done nil))
+                  (end-of-line))))))))
+    (list :query query :dir dir :hits (nreverse hits) :truncated truncated)))
+
+(defun eabp-files--grep-body ()
+  "The search-results view body: one tappable card per matching line."
+  (let* ((g eabp-files--grep)
+         (dir (plist-get g :dir))
+         (hits (plist-get g :hits)))
+    (if (null hits)
+        (eabp-empty-state :icon "manage_search" :title "No matches"
+                          :caption (format "\"%s\" under %s"
+                                           (plist-get g :query)
+                                           (abbreviate-file-name dir)))
+      (apply #'eabp-lazy-column
+             (cons
+              (eabp-text (format "%d matching line%s under %s%s"
+                                 (length hits)
+                                 (if (= (length hits) 1) "" "s")
+                                 (abbreviate-file-name dir)
+                                 (if (plist-get g :truncated)
+                                     " — stopped early, narrow the search"
+                                   ""))
+                         'caption)
+              (mapcar (lambda (hit)
+                        (pcase-let ((`(,file ,line ,text) hit))
+                          (eabp-card
+                           (list (eabp-column
+                                  (eabp-row
+                                   (eabp-box (list (eabp-text
+                                                    (file-relative-name file dir)
+                                                    'label))
+                                             :weight 1)
+                                   (eabp-text (format "L%d" line) 'caption))
+                                  (eabp-rich-text
+                                   (list (eabp-span (string-trim text) :mono t)))))
+                           :on-tap (eabp-action "files.open"
+                                                :args `((file . ,file))))))
+                      hits))))))
+
+(defun eabp-files--grep-results-card ()
+  "The re-entry card the browser shows while results exist, or nil."
+  (when eabp-files--grep
+    (eabp-card
+     (list (eabp-row
+            (eabp-icon "manage_search")
+            (eabp-box (list (eabp-text
+                             (format "Results: \"%s\" (%d)"
+                                     (plist-get eabp-files--grep :query)
+                                     (length (plist-get eabp-files--grep :hits)))
+                             'body))
+                      :weight 1)
+            (eabp-icon "chevron_right")))
+     :on-tap (eabp-shell-switch-view "grep"))))
 
 ;; ─── Editor view ─────────────────────────────────────────────────────────────
 
@@ -246,17 +372,24 @@ otherwise the plain-text editor."
 
 (defun eabp-files--files-view (snackbar)
   "The Files tab: the current directory's cards, back arrow inside subdirs."
-  (eabp-shell-tab-view
-   "files" (eabp-files-browser-body)
-   :top-bar (when eabp-files--dir
-              (eabp-top-bar (abbreviate-file-name eabp-files--dir)
-                            :nav-icon "arrow_back"
-                            :nav-action (eabp-action "files.cd"
-                                                     :args '((dir . :null)))))
-   ;; A create FAB — the view always shows a directory (the landing dir or
-   ;; a subdirectory), so it's always offered.
-   :fab (eabp-fab "add" :label "New" :on-tap (eabp-action "files.new"))
-   :snackbar snackbar))
+  (let ((grep-btn (eabp-icon-button
+                   "manage_search"
+                   (eabp-action "files.grep" :when-offline "drop")
+                   :content-description "Search file contents")))
+    (eabp-shell-tab-view
+     "files" (eabp-files-browser-body)
+     :top-bar (if eabp-files--dir
+                  (eabp-top-bar (abbreviate-file-name eabp-files--dir)
+                                :nav-icon "arrow_back"
+                                :nav-action (eabp-action "files.cd"
+                                                         :args '((dir . :null)))
+                                :actions (list grep-btn))
+                (eabp-shell-default-top-bar "Files"
+                                            :extra-actions (list grep-btn)))
+     ;; A create FAB — the view always shows a directory (the landing dir or
+     ;; a subdirectory), so it's always offered.
+     :fab (eabp-fab "add" :label "New" :on-tap (eabp-action "files.new"))
+     :snackbar snackbar)))
 
 (defun eabp-files--edit-view (snackbar)
   "The editor view for the open file, with app-contributed top-bar actions."
@@ -282,6 +415,23 @@ otherwise the plain-text editor."
   :builder #'eabp-files--edit-view
   :when (lambda () (and eabp-files--file t))
   :order 100)
+
+(defun eabp-files--grep-view (snackbar)
+  "The content-search results view; ✕ discards the results."
+  (eabp-shell-nav-view
+   (format "\"%s\"" (plist-get eabp-files--grep :query))
+   (eabp-files--grep-body)
+   :back-to "files"
+   :actions (list (eabp-icon-button
+                   "close"
+                   (eabp-action "files.grep-clear" :when-offline "drop")
+                   :content-description "Discard search results"))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "grep"
+  :builder #'eabp-files--grep-view
+  :when (lambda () (and eabp-files--grep t))
+  :order 101)
 
 ;; Leaving the editor for the files view closes the file (the next push
 ;; drops the edit view). Unsaved companion-side text is discarded with it.
@@ -311,6 +461,28 @@ otherwise the plain-text editor."
         (setq eabp-files--file (expand-file-name file))
         (run-hook-with-args 'eabp-files-open-hook eabp-files--file)
         (eabp-shell-push nil :switch-to "edit")))))
+
+(eabp-defaction "files.grep"
+  ;; The query arrives through the bridged minibuffer (this runs inside an
+  ;; action handler), so the search icon needs no input widget of its own.
+  ;; Scope is the directory being browsed — within the roots by
+  ;; construction — and the scan is bounded by the grep defcustoms.
+  (lambda (_ __)
+    (let* ((dir (eabp-files--current-dir))
+           (query (condition-case nil
+                      (string-trim
+                       (read-string (format "Search in %s for: "
+                                            (abbreviate-file-name dir))))
+                    (quit ""))))
+      (if (string-empty-p query)
+          (eabp-shell-push)
+        (setq eabp-files--grep (eabp-files--grep-scan dir query))
+        (eabp-shell-push nil :switch-to "grep")))))
+
+(eabp-defaction "files.grep-clear"
+  (lambda (_ __)
+    (setq eabp-files--grep nil)
+    (eabp-shell-push nil :switch-to "files")))
 
 (eabp-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a

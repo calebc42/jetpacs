@@ -18,12 +18,19 @@
 (require 'eabp-tablist)
 (require 'eabp-shell)
 (require 'eabp-witheditor)
+(require 'imenu)
 (require 'cl-lib)
 
 ;; ─── State ───────────────────────────────────────────────────────────────────
 
 (defvar eabp-emacs-ui--viewing-buffer nil
   "Name of the buffer currently being viewed, or nil for the buffer list.")
+
+(defvar eabp-emacs-ui--section nil
+  "Active imenu section narrowing for the buffer view, or nil.
+A plist (:buffer NAME :beg POS :end POS :label STRING); while set for
+the viewed buffer, the view renders just that slice.  Set by
+`imenu.show', cleared by `imenu.clear' or leaving the buffer.")
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and
 ;; list buffers this way) is this module's buffer view.
@@ -81,11 +88,64 @@
   "Build UI showing the contents of BUFFER-NAME.
 Rendered through the Tier 0 generic renderer (`eabp-render-buffer'), so the
 buffer's faces and tappable regions survive — any major mode works without a
-bespoke translator."
-  (let ((buf (get-buffer buffer-name)))
-    (if (not buf)
-        (eabp-text (format "Buffer '%s' not found." buffer-name) 'body)
-      (apply #'eabp-lazy-column (eabp-render-buffer buf)))))
+bespoke translator.  With an imenu section active for this buffer, only
+that slice renders, under a dismissible header."
+  (let ((buf (get-buffer buffer-name))
+        (section (and (equal (plist-get eabp-emacs-ui--section :buffer)
+                             buffer-name)
+                      eabp-emacs-ui--section)))
+    (cond
+     ((not buf)
+      (eabp-text (format "Buffer '%s' not found." buffer-name) 'body))
+     (section
+      (apply #'eabp-lazy-column
+             (cons (eabp-row
+                    (eabp-box (list (eabp-text (plist-get section :label)
+                                               'label))
+                              :weight 1)
+                    (eabp-icon-button "close"
+                                      (eabp-action "imenu.clear"
+                                                   :when-offline "drop")
+                                      :content-description "Show whole buffer"))
+                   (eabp-buffer-render-region buf
+                                              (plist-get section :beg)
+                                              (plist-get section :end)))))
+     (t (apply #'eabp-lazy-column (eabp-render-buffer buf))))))
+
+;; ─── imenu sections ──────────────────────────────────────────────────────────
+;;
+;; imenu is the per-buffer index of definitions/sections any major mode
+;; provides declaratively.  The picker is a bridged `completing-read'
+;; (the same vertico-style dialog M-x uses), and the chosen entry
+;; renders as a region slice — the phone has no scroll-to-position, so
+;; "jump" means "show me that section".
+
+(defun eabp-emacs-ui--imenu-flatten (alist prefix)
+  "Flatten an imenu ALIST into ((LABEL . POSITION) ...), in index order.
+Nested submenus join their path with \" / \"; the *Rescan* pseudo-entry
+and unresolvable positions are dropped.  PREFIX is the path so far."
+  (let (out)
+    (dolist (item alist)
+      (when (and (consp item) (car item))
+        (let* ((label (if (string-empty-p prefix)
+                          (format "%s" (car item))
+                        (format "%s / %s" prefix (car item))))
+               (tail (cdr item))
+               ;; (NAME . POS) or the general (NAME POS FUNCTION ...) form.
+               (pos (cond ((number-or-marker-p tail) tail)
+                          ((and (consp tail) (number-or-marker-p (car tail)))
+                           (car tail)))))
+          (cond
+           ((and (listp tail) (not pos))  ; a submenu
+            (setq out (append out (eabp-emacs-ui--imenu-flatten tail label))))
+           ((and pos
+                 (not (equal (format "%s" (car item)) "*Rescan*"))
+                 (>= (if (markerp pos) (or (marker-position pos) 0) pos) 1))
+            (setq out (append out (list (cons label
+                                              (if (markerp pos)
+                                                  (marker-position pos)
+                                                pos))))))))))
+    out))
 
 ;; ─── Live buffer refresh ─────────────────────────────────────────────────────
 ;;
@@ -341,12 +401,52 @@ by a long history — the layout bug the old plain-column version had."
 ;; Buffer list / view
 (eabp-defaction "emacs.buffer.view"
   (lambda (args _)
-    (setq eabp-emacs-ui--viewing-buffer (alist-get 'buffer args))
+    (setq eabp-emacs-ui--viewing-buffer (alist-get 'buffer args)
+          eabp-emacs-ui--section nil)
     (eabp-shell-push)))
 
 (eabp-defaction "emacs.buffer.back"
   (lambda (_ _)
-    (setq eabp-emacs-ui--viewing-buffer nil)
+    (setq eabp-emacs-ui--viewing-buffer nil
+          eabp-emacs-ui--section nil)
+    (eabp-shell-push)))
+
+;; imenu sections
+(eabp-defaction "imenu.show"
+  (lambda (args _)
+    (let* ((name (or (alist-get 'buffer args) eabp-emacs-ui--viewing-buffer))
+           (buf (and (stringp name) (get-buffer name))))
+      (if (not buf)
+          (message "No buffer to index")
+        (let ((flat (with-current-buffer buf
+                      (condition-case nil
+                          (eabp-emacs-ui--imenu-flatten
+                           (imenu--make-index-alist t) "")
+                        (error nil)))))
+          (if (null flat)
+              (message "No sections found in %s" name)
+            (let ((choice (condition-case nil
+                              (completing-read "Section: " (mapcar #'car flat)
+                                               nil t)
+                            (quit nil))))
+              (when-let ((pos (cdr (assoc choice flat))))
+                (with-current-buffer buf
+                  ;; The section runs from the entry's line to the next
+                  ;; index position after it (in any submenu), else eob.
+                  (let* ((beg (save-excursion (goto-char (min pos (point-max)))
+                                              (line-beginning-position)))
+                         (after (sort (cl-remove-if (lambda (p) (<= p pos))
+                                                    (mapcar #'cdr flat))
+                                      #'<))
+                         (end (or (car after) (point-max))))
+                    (setq eabp-emacs-ui--section
+                          (list :buffer name :beg beg :end end
+                                :label choice))))
+                (eabp-shell-push)))))))))
+
+(eabp-defaction "imenu.clear"
+  (lambda (_ _)
+    (setq eabp-emacs-ui--section nil)
     (eabp-shell-push)))
 
 (defun eabp-emacs-ui--eval-record (input output)
@@ -434,6 +534,12 @@ with a keyboard FAB that opens the buffer's keymap."
        ;; Content swap within the buffers view: stays an Emacs round-trip
        ;; (the list must be rebuilt).
        :nav-action (eabp-action "emacs.buffer.back")
+       :actions (list (eabp-icon-button
+                       "toc"
+                       (eabp-action "imenu.show"
+                                    :args `((buffer . ,eabp-emacs-ui--viewing-buffer))
+                                    :when-offline "drop")
+                       :content-description "Sections (imenu)"))
        :fab (eabp-fab "keyboard"
                       :on-tap (eabp-action "eabp.keymap.show"
                                :args `((buffer . ,eabp-emacs-ui--viewing-buffer))
@@ -472,11 +578,13 @@ with a keyboard FAB that opens the buffer's keymap."
 (eabp-shell-define-view "messages" :builder #'eabp-emacs-ui--messages-view
                         :order 90)
 
-;; Landing anywhere but the current tab drops a buffer drill-in.
-(add-hook 'eabp-shell-view-switched-hook
-          (lambda (view)
-            (unless (equal view (eabp-shell-current-tab))
-              (setq eabp-emacs-ui--viewing-buffer nil))))
+;; Landing anywhere but the current tab drops a buffer drill-in (and its
+;; imenu section).  Named so re-evaluating the file doesn't stack lambdas.
+(defun eabp-emacs-ui--on-view-switched (view)
+  (unless (equal view (eabp-shell-current-tab))
+    (setq eabp-emacs-ui--viewing-buffer nil
+          eabp-emacs-ui--section nil)))
+(add-hook 'eabp-shell-view-switched-hook #'eabp-emacs-ui--on-view-switched)
 
 (eabp-shell-add-drawer-item
  10 (lambda () (eabp-drawer-item "view_list" "Buffers"

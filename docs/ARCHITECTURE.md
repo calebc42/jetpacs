@@ -38,13 +38,14 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `eabp-buffer.el` | **Tier 0 renderer**: any buffer → spans + tappable regions; the major-mode→skin registry |
 | `eabp-shell.el` | the app shell: view registry, tab/drawer/top-bar chrome, snackbar, connect/refresh pushes |
 | `eabp-tablist.el` | **Tier 0.5**: generic `tabulated-list-mode` renderer + skin hook alists |
+| `eabp-comint.el` | **Tier 0.5**: generic `comint-mode` renderer — transcript tail + input row, `comint.send` scoped to the buffer's own live process |
 | `eabp-transient.el` | **Tier 0.5**: transient prefixes as touch dialogs (advice on `transient-setup`) |
 | `eabp-keymap.el` | command palette over any buffer's keymap; live-transient pie plumbing |
 | `eabp-sync.el` | editor shadow buffers: delta sync, flymake diagnostics, eldoc, fontify pushes |
 | `eabp-complete.el` | capf bridge: the phone's completion strip, answered from the shadow |
 | `eabp-settings.el` | schema-driven settings from `defcustom` metadata; registry = the allowlist |
-| `eabp-files.el` | file browser (a dired skin) + plain editor, root-confined; app hooks for file types |
-| `eabp-emacs-ui.el` | buffers / eval REPL / *Messages* views, M-x, message→toast mirror |
+| `eabp-files.el` | file browser (a dired skin) + plain editor + content search, root-confined; app hooks for file types |
+| `eabp-emacs-ui.el` | buffers / eval REPL / *Messages* views, M-x, imenu section drill-in, message→toast mirror |
 
 The core is org-free by contract; `test/core-load-test.el` loads only
 this directory and fails if an app feature or org itself sneaks in.
@@ -63,6 +64,7 @@ this directory and fails if an app feature or org itself sneaks in.
 | `eabp-magit.el` | curated magit radial menu (pure data + key dispatch) |
 | `eabp-package-browser.el` | package-menu skin for the tablist renderer — the worked example |
 | `eabp-customize.el` | customize browser: the defgroup tree + `custom-type` schemas as native controls (gate: `custom-variable-p`) |
+| `eabp-tools.el` | tools hub: bookmark/process/timer entry points (free via the tablist renderer), kill-ring browser, `M-x shell` entry |
 
 ### Bundles
 

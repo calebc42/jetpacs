@@ -32,6 +32,7 @@
                      "core/eabp-buffer.el"
                      "core/eabp-shell.el"
                      "core/eabp-tablist.el"
+                     "core/eabp-comint.el"
                      "core/eabp-transient.el"
                      "core/eabp-keymap.el"
                      "core/eabp-sync.el"
@@ -42,6 +43,7 @@
                      "core/eabp-emacs-ui.el"))
        (app-files '("apps/eabp-package-browser.el"
                     "apps/eabp-customize.el"
+                    "apps/eabp-tools.el"
                     "apps/eabp-magit.el"
                     "apps/glasspane/glasspane-org.el"
                     "apps/glasspane/glasspane-org-rich.el"

@@ -2861,8 +2861,8 @@ handlers memo-guarded so unchanged data sends nothing.")
 
 ;; ─── Chrome: drawer, bottom bar, top bar ─────────────────────────────────────
 
-(defvar eabp-shell-drawer-header "EABP"
-  "Header text of the navigation drawer.")
+(defvar eabp-shell-drawer-header "Glasspane"
+  "Text rendered at the top of the app drawer.")
 
 (defvar eabp-shell-drawer-items nil
   "Ordered list of (ORDER . BUILDER) drawer entries.
@@ -5343,6 +5343,9 @@ Returns (PREFIX . CANDIDATE-NODES) or nil."
 ;; The registry is the security boundary: `settings.set' / `settings.reset'
 ;; only touch symbols present in `eabp-settings-registry', never arbitrary
 ;; names off the wire.  Exposing a new setting is one registry entry.
+;; The rendering/apply machinery itself is public and gate-agnostic —
+;; eabp-customize.el reuses it under its own `customize.*' actions with a
+;; `custom-variable-p' gate; the registry rule above binds `settings.*' only.
 ;;
 ;; Widget mapping by type: boolean -> switch (the client switch publishes
 ;; state.changed rather than dispatching an action, so per-id handlers are
@@ -5464,18 +5467,20 @@ a current value outside the consts still displays, printed."
 
 ;; ─── Setting values ──────────────────────────────────────────────────────────
 
-(defun eabp-settings--apply (sym value)
+(defun eabp-settings-apply (sym value &optional after-set)
   "Validate, set, propagate and persist VALUE for SYM.
-Returns non-nil when the value was accepted (even if only applied for
-the session because persisting failed)."
+AFTER-SET, when non-nil, is called with VALUE once the set has run —
+the propagation a caller's gate attaches (a registry entry's
+:after-set); it is the caller's because this function no longer knows
+which gate admitted SYM.  Returns non-nil when the value was accepted
+\(even if only applied for the session because persisting failed)."
   (if (not (eabp-settings--valid-p sym value))
       (progn
         (funcall eabp-settings-notify-function
                  (format "Invalid value for %s" sym))
         nil)
     (customize-set-variable sym value)
-    (let ((fn (plist-get (cdr (eabp-settings--entry sym)) :after-set)))
-      (when fn (funcall fn value)))
+    (when after-set (funcall after-set value))
     ;; App views may memoise data derived from this variable; per the
     ;; cache contract every mutation must reach the registered droppers.
     (run-hook-with-args 'eabp-settings-after-set-hook sym value)
@@ -5509,6 +5514,19 @@ deselection), nil when undecodable."
                (list (car (read-from-string wire)))
              (error nil)))))))
 
+(defun eabp-settings-apply-wire (sym wire &optional after-set)
+  "Decode client-sent WIRE and apply it to SYM; non-nil unless rejected.
+An undecodable payload notifies and returns nil; a no-op (e.g. an enum
+deselection) returns non-nil without touching SYM.  AFTER-SET is passed
+through to `eabp-settings-apply'.  Callers gate SYM before calling —
+this function validates the value, not the symbol."
+  (pcase (eabp-settings--decode sym wire)
+    ('skip t)
+    ('nil (funcall eabp-settings-notify-function
+                   (format "Invalid value for %s" sym))
+          nil)
+    (`(,value) (eabp-settings-apply sym value after-set))))
+
 ;; ─── Standard values / reset ─────────────────────────────────────────────────
 
 (defun eabp-settings--standard-value (sym)
@@ -5516,10 +5534,29 @@ deselection), nil when undecodable."
   (let ((std (get sym 'standard-value)))
     (and std (eval (car std) t))))
 
-(defun eabp-settings--modified-p (sym)
-  "Whether SYM's current global value differs from its standard default."
-  (and (get sym 'standard-value)
-       (not (equal (default-value sym) (eabp-settings--standard-value sym)))))
+(defun eabp-settings-modified-p (sym)
+  "Whether SYM's current global value differs from its standard default.
+Safe on any symbol: unbound means unmodified, and a standard-value form
+that fails to evaluate counts as unmodified rather than erroring (the
+customize browser calls this across arbitrary defcustoms)."
+  (and (boundp sym)
+       (get sym 'standard-value)
+       (not (equal (default-value sym)
+                   (condition-case nil (eabp-settings--standard-value sym)
+                     (error (default-value sym)))))))
+
+(defun eabp-settings-reset (sym &optional after-set)
+  "Reset SYM to its defcustom standard value; non-nil on success.
+Notifies instead of erroring when SYM has no standard value to return
+to.  AFTER-SET is passed through to `eabp-settings-apply'."
+  (if (not (get sym 'standard-value))
+      (progn
+        (funcall eabp-settings-notify-function "Cannot reset this setting")
+        nil)
+    (when (eabp-settings-apply sym (eabp-settings--standard-value sym) after-set)
+      (funcall eabp-settings-notify-function
+               (format "%s reset to default" sym))
+      t)))
 
 ;; ─── Rendering ───────────────────────────────────────────────────────────────
 
@@ -5528,70 +5565,81 @@ deselection), nil when undecodable."
   (let ((doc (documentation-property sym 'variable-documentation)))
     (and doc (car (split-string (substitute-command-keys doc) "\n" t)))))
 
+(cl-defun eabp-settings-item (sym &key label (id-prefix "setting/")
+                                  (set-action "settings.set")
+                                  (reset-action "settings.reset"))
+  "Widget column rendering SYM's control from its `custom-type' schema.
+LABEL defaults to the symbol name.  ID-PREFIX keys the control's widget
+id; a switch under it publishes state.changed, so pair a non-default
+prefix with `eabp-settings-watch-toggle'.  SET-ACTION and RESET-ACTION
+name the wire actions the controls dispatch, each carrying the symbol
+name under `name' — the settings screen uses the registry-gated
+`settings.*', the customize browser the `custom-variable-p'-gated
+`customize.*'."
+  (if (not (boundp sym))
+      (eabp-text (format "%s is not loaded yet" sym) 'caption)
+    (let* ((name (symbol-name sym))
+           (label (or label name))
+           (doc (eabp-settings--doc-line sym))
+           (value (default-value sym))
+           (type (eabp-settings--type sym))
+           (kind (eabp-settings--kind type))
+           (wid-id (concat id-prefix name))
+           (set (eabp-action set-action :args `((name . ,name))))
+           (reset (and (eabp-settings-modified-p sym)
+                       (eabp-icon-button
+                        "history"
+                        (eabp-action reset-action :args `((name . ,name)))
+                        :content-description (format "Reset %s to default" label))))
+           (control
+            (pcase kind
+              ('boolean
+               (eabp-switch wid-id :checked (and value t) :label label))
+              ('choice
+               (let* ((opts (eabp-settings--choice-options type))
+                      (current (car (rassoc value opts)))
+                      (labels (mapcar #'car opts)))
+                 (unless current
+                   ;; Value set outside the const arms (e.g. a custom
+                   ;; drawer name): show it, printed, as the selection.
+                   (setq current (prin1-to-string value)
+                         labels (append labels (list current))))
+                 (eabp-enum-list wid-id labels :value (list current)
+                                 :on-change set)))
+              ('string
+               (eabp-text-input wid-id :value (and (stringp value) value)
+                                :label label :single-line t
+                                :on-submit set))
+              ('number
+               (eabp-text-input wid-id
+                                :value (and (numberp value)
+                                            (number-to-string value))
+                                :label label :single-line t
+                                :on-submit set))
+              (_
+               (eabp-text-input wid-id :value (prin1-to-string value)
+                                :label label :single-line t :monospace t
+                                :hint "Elisp expression"
+                                :on-submit set)))))
+      (apply #'eabp-column
+             (delq nil
+                   (list
+                    ;; Booleans carry their label inside the switch row;
+                    ;; everything else gets a plain label row. The weighted
+                    ;; box keeps the reset button on-screen (columns render
+                    ;; fillMaxWidth and would swallow the row).
+                    (eabp-row
+                     (eabp-box (list (if (eq kind 'boolean)
+                                         control
+                                       (eabp-text label 'label)))
+                               :weight 1)
+                     reset)
+                    (when doc (eabp-text doc 'caption))
+                    (unless (eq kind 'boolean) control)))))))
+
 (defun eabp-settings--item (entry)
   "Widget column for registry ENTRY."
-  (let ((sym (car entry)))
-    (if (not (boundp sym))
-        (eabp-text (format "%s is not loaded yet" sym) 'caption)
-      (let* ((plist (cdr entry))
-             (name (symbol-name sym))
-             (label (or (plist-get plist :label) name))
-             (doc (eabp-settings--doc-line sym))
-             (value (default-value sym))
-             (type (eabp-settings--type sym))
-             (kind (eabp-settings--kind type))
-             (wid-id (concat "setting/" name))
-             (set-action (eabp-action "settings.set" :args `((name . ,name))))
-             (reset (and (eabp-settings--modified-p sym)
-                         (eabp-icon-button
-                          "history"
-                          (eabp-action "settings.reset" :args `((name . ,name)))
-                          :content-description (format "Reset %s to default" label))))
-             (control
-              (pcase kind
-                ('boolean
-                 (eabp-switch wid-id :checked (and value t) :label label))
-                ('choice
-                 (let* ((opts (eabp-settings--choice-options type))
-                        (current (car (rassoc value opts)))
-                        (labels (mapcar #'car opts)))
-                   (unless current
-                     ;; Value set outside the const arms (e.g. a custom
-                     ;; drawer name): show it, printed, as the selection.
-                     (setq current (prin1-to-string value)
-                           labels (append labels (list current))))
-                   (eabp-enum-list wid-id labels :value (list current)
-                                   :on-change set-action)))
-                ('string
-                 (eabp-text-input wid-id :value (and (stringp value) value)
-                                  :label label :single-line t
-                                  :on-submit set-action))
-                ('number
-                 (eabp-text-input wid-id
-                                  :value (and (numberp value)
-                                              (number-to-string value))
-                                  :label label :single-line t
-                                  :on-submit set-action))
-                (_
-                 (eabp-text-input wid-id :value (prin1-to-string value)
-                                  :label label :single-line t :monospace t
-                                  :hint "Elisp expression"
-                                  :on-submit set-action)))))
-        (apply #'eabp-column
-               (delq nil
-                     (list
-                      ;; Booleans carry their label inside the switch row;
-                      ;; everything else gets a plain label row. The weighted
-                      ;; box keeps the reset button on-screen (columns render
-                      ;; fillMaxWidth and would swallow the row).
-                      (eabp-row
-                       (eabp-box (list (if (eq kind 'boolean)
-                                           control
-                                         (eabp-text label 'label)))
-                                 :weight 1)
-                       reset)
-                      (when doc (eabp-text doc 'caption))
-                      (unless (eq kind 'boolean) control))))))))
+  (eabp-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
 (defun eabp-settings-sections ()
   "Flat list of nodes rendering every registry section."
@@ -5607,17 +5655,12 @@ deselection), nil when undecodable."
     (let* ((name (alist-get 'name args))
            (sym (and (stringp name) (intern-soft name)))
            (entry (and sym (eabp-settings--entry sym))))
-      (cond
-       ((not entry)
-        (funcall eabp-settings-notify-function
-                 (format "Setting %s is not editable from the app"
-                         (or name "?"))))
-       (t
-        (pcase (eabp-settings--decode sym (alist-get 'value args))
-          ('skip nil)
-          ('nil (funcall eabp-settings-notify-function
-                         (format "Invalid value for %s" name)))
-          (`(,value) (eabp-settings--apply sym value)))))
+      (if (not entry)
+          (funcall eabp-settings-notify-function
+                   (format "Setting %s is not editable from the app"
+                           (or name "?")))
+        (eabp-settings-apply-wire sym (alist-get 'value args)
+                                  (plist-get (cdr entry) :after-set)))
       (funcall eabp-settings-refresh-function))))
 
 (eabp-defaction "settings.reset"
@@ -5625,30 +5668,35 @@ deselection), nil when undecodable."
     (let* ((name (alist-get 'name args))
            (sym (and (stringp name) (intern-soft name)))
            (entry (and sym (eabp-settings--entry sym))))
-      (if (not (and entry (get sym 'standard-value)))
+      (if (not entry)
           (funcall eabp-settings-notify-function "Cannot reset this setting")
-        (when (eabp-settings--apply sym (eabp-settings--standard-value sym))
-          (funcall eabp-settings-notify-function
-                   (format "%s reset to default" name))))
+        (eabp-settings-reset sym (plist-get (cdr entry) :after-set)))
       (funcall eabp-settings-refresh-function))))
 
-(defun eabp-settings--register-state-handlers (sections)
-  "Register state.changed handlers for every symbol in SECTIONS.
+(defun eabp-settings-watch-toggle (sym id &optional after-set)
+  "Register the state.changed handler applying SYM's switch under widget ID.
 The client's switch widget publishes state.changed instead of
-dispatching an action, and a queued toggle can replay before the
-settings screen has ever rendered this session — so handlers are
-registered when the section is, not at render.  Non-boolean payloads
-under these ids (e.g. a text input's published state) are ignored;
-text inputs save through settings.set on submit."
+dispatching an action, so a boolean setting only works once a handler
+exists for its widget id.  Non-boolean payloads under ID (e.g. a text
+input's published state) are ignored; those save through their submit
+action instead.  AFTER-SET is passed through to `eabp-settings-apply'."
+  (eabp-on-state-change
+   id (lambda (val)
+        (when (memq val '(t :false))
+          (eabp-settings-apply sym (eq val t) after-set)
+          (funcall eabp-settings-refresh-function)))))
+
+(defun eabp-settings--register-state-handlers (sections)
+  "Register the switch handlers for every symbol in SECTIONS.
+A queued toggle can replay before the settings screen has ever rendered
+this session — so handlers are registered when the section is, not at
+render."
   (dolist (section sections)
     (dolist (entry (cdr section))
-      (let ((sym (car entry)))
-        (eabp-on-state-change
-         (concat "setting/" (symbol-name sym))
-         (lambda (val)
-           (when (memq val '(t :false))
-             (eabp-settings--apply sym (eq val t))
-             (funcall eabp-settings-refresh-function))))))))
+      (eabp-settings-watch-toggle
+       (car entry)
+       (concat "setting/" (symbol-name (car entry)))
+       (plist-get (cdr entry) :after-set)))))
 
 (provide 'eabp-settings)
 ;;; eabp-settings.el ends here
@@ -7097,6 +7145,352 @@ with a keyboard FAB that opens the buffer's keymap."
 ;;; eabp-package-browser.el ends here
 
 ;;; ==================================================================
+;;; BEGIN apps/eabp-customize.el
+;;; ==================================================================
+
+;;; eabp-customize.el --- Customize browser over the defcustom group tree -*- lexical-binding: t; -*-
+
+;; The M-x customize counterpart of the tablist story.  For
+;; tabulated-list the printed buffer is itself the declarative source,
+;; so eabp-tablist walks it; a Custom-mode buffer is widget.el *layout*
+;; — positions and markers, not data — and the wrong thing to scrape.
+;; The declarative framework behind Customize is the metadata: the
+;; defgroup tree plus each variable's `custom-type' schema, and
+;; eabp-settings.el already renders those schemas as native controls.
+;; So this app skips Custom-mode entirely: `custom-group-members'
+;; provides the structure, the shared settings item renderer and apply
+;; pipeline provide the leaves, and edits persist through Customize
+;; (`customize-set-variable' + `customize-save-variable') like every
+;; other setting.  A Custom buffer opened by hand still renders through
+;; Tier 0, whose widget support can push its buttons and edit fields.
+;;
+;; Boundary (docs/SPEC.md §5): `customize.set' / `customize.reset'
+;; accept any symbol satisfying `custom-variable-p' — deliberately wider
+;; than the `settings.*' registry gate, and exactly as powerful as
+;; M-x customize itself (which the M-x escape hatch already exposes).
+;; Values remain plain data validated against the variable's declared
+;; type before they are applied; nothing off the wire is funcalled.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'cus-edit)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-settings)
+(require 'eabp-shell)
+
+;; ─── View state ──────────────────────────────────────────────────────────────
+
+(defcustom eabp-customize-max-items 50
+  "Maximum subgroups and maximum variables rendered per customize screen.
+Huge groups (or a broad search) are capped with a trailing note; narrow
+with the search box rather than paging."
+  :type 'integer :group 'eabp)
+
+(defvar eabp-customize--path '(emacs)
+  "Breadcrumb of group symbols from the root to the group being shown.")
+
+(defvar eabp-customize--search ""
+  "Current search string; non-empty switches to the flat variable list.")
+
+(defvar eabp-customize--modified-only nil
+  "Non-nil limits the view to variables changed from their defaults.")
+
+(defun eabp-customize--group ()
+  "The group currently being browsed."
+  (car (last eabp-customize--path)))
+
+(defun eabp-customize--flat-p ()
+  "Non-nil when showing the flat variable list instead of the group tree."
+  (or eabp-customize--modified-only
+      (not (string-empty-p eabp-customize--search))))
+
+;; ─── Reading the group tree ──────────────────────────────────────────────────
+
+(defun eabp-customize--group-p (sym)
+  "Non-nil when SYM names a customization group, loading it if deferred.
+`custom-load-symbol' pulls in members a package declared via
+`custom-autoload' — the same load Customize performs opening a group."
+  (when sym
+    (ignore-errors (custom-load-symbol sym))
+    (and (or (get sym 'custom-group)
+             (get sym 'group-documentation))
+         t)))
+
+(defun eabp-customize--members (group)
+  "GROUP's members as (GROUPS VARIABLES FACES), each a list of symbols."
+  (let (groups vars faces)
+    (dolist (m (custom-group-members group nil))
+      (pcase (cadr m)
+        ('custom-group (push (car m) groups))
+        ('custom-variable (push (car m) vars))
+        ('custom-face (push (car m) faces))))
+    (list (nreverse groups) (nreverse vars) (nreverse faces))))
+
+(defun eabp-customize--flat-vars ()
+  "All customizable variables passing the search and modified filters."
+  (let ((q eabp-customize--search) out)
+    (mapatoms
+     (lambda (sym)
+       (when (and (custom-variable-p sym)
+                  (or (string-empty-p q)
+                      (string-match-p (regexp-quote q) (symbol-name sym)))
+                  (or (not eabp-customize--modified-only)
+                      (eabp-settings-modified-p sym)))
+         (push sym out))))
+    (sort out #'string-lessp)))
+
+;; ─── Rendering ───────────────────────────────────────────────────────────────
+
+(defvar eabp-customize--watched (make-hash-table :test 'eq)
+  "Symbols whose switch state handler has been registered this session.
+The settings registry registers its handlers at load, so queued toggles
+always replay; customize covers arbitrary variables, so handlers are
+registered when a variable first renders.  A toggle queued offline
+against a variable this session has never rendered lands in
+`eabp-ui-state' without applying — the documented cost of not
+enumerating every defcustom up front.")
+
+(defun eabp-customize--watch (sym)
+  "Register SYM's switch handler under custom/SYM once."
+  (unless (gethash sym eabp-customize--watched)
+    (puthash sym t eabp-customize--watched)
+    (eabp-settings-watch-toggle sym (concat "custom/" (symbol-name sym)))))
+
+(defun eabp-customize--var-item (sym)
+  "SYM as a native settings card dispatching customize.* actions."
+  (if (not (boundp sym))
+      ;; Autoloaded defcustom whose library isn't loaded: no type schema
+      ;; to render a control from yet.
+      (eabp-card
+       (list (eabp-text (symbol-name sym) 'label)
+             (eabp-text "Not loaded — tap to load its library" 'caption))
+       :on-tap (eabp-action "customize.load"
+                            :args `((name . ,(symbol-name sym)))
+                            :when-offline "drop"))
+    (eabp-customize--watch sym)
+    (eabp-card (list (eabp-settings-item
+                      sym
+                      :id-prefix "custom/"
+                      :set-action "customize.set"
+                      :reset-action "customize.reset")))))
+
+(defun eabp-customize--group-card (sym)
+  "A tappable card descending into group SYM."
+  (let ((doc (get sym 'group-documentation)))
+    (eabp-card
+     (list (eabp-row
+            (eabp-box
+             (list (apply #'eabp-column
+                          (delq nil
+                                (list (eabp-text (symbol-name sym) 'label)
+                                      (when doc
+                                        (eabp-text (car (split-string doc "\n"))
+                                                   'caption))))))
+             :weight 1)
+            (eabp-icon "chevron_right")))
+     :on-tap (eabp-action "customize.browse"
+                          :args `((group . ,(symbol-name sym)))
+                          :when-offline "drop"))))
+
+(defun eabp-customize--crumbs ()
+  "The breadcrumb path as one line: link-styled ancestors › bold current.
+Tapping an ancestor pops back to it (customize.browse truncates the
+path when the group is already on it)."
+  (let ((current (eabp-customize--group)))
+    (eabp-rich-text
+     (cl-loop for g in eabp-customize--path
+              for i from 0
+              unless (zerop i) collect (eabp-span " › ")
+              collect (if (eq g current)
+                          (eabp-span (capitalize (symbol-name g)) :bold t)
+                        (eabp-span (capitalize (symbol-name g))
+                                   :on-tap (eabp-action
+                                            "customize.browse"
+                                            :args `((group . ,(symbol-name g)))
+                                            :when-offline "drop"))))
+     :style 'body)))
+
+(defun eabp-customize--cap-note (total what)
+  "The trailing truncation note, as a list, when TOTAL exceeds the cap."
+  (when (> total eabp-customize-max-items)
+    (list (eabp-text (format "Showing %d of %d %s — narrow with the search."
+                             eabp-customize-max-items total what)
+                     'caption))))
+
+(defun eabp-customize--group-nodes ()
+  "The browse view: breadcrumbs, subgroup cards, variable items."
+  (pcase-let* ((group (eabp-customize--group))
+               (`(,groups ,vars ,faces) (eabp-customize--members group))
+               (doc (get group 'group-documentation)))
+    (append
+     (list (eabp-customize--crumbs))
+     (when doc (list (eabp-text (car (split-string doc "\n")) 'caption)))
+     (when groups
+       (append
+        (list (eabp-section-header (format "Groups (%d)" (length groups))))
+        (mapcar #'eabp-customize--group-card
+                (cl-subseq groups 0 (min (length groups)
+                                         eabp-customize-max-items)))
+        (eabp-customize--cap-note (length groups) "groups")))
+     (when vars
+       (append
+        (list (eabp-section-header (format "Variables (%d)" (length vars))))
+        (mapcar #'eabp-customize--var-item
+                (cl-subseq vars 0 (min (length vars)
+                                       eabp-customize-max-items)))
+        (eabp-customize--cap-note (length vars) "variables")))
+     (when faces
+       (list (eabp-text (format "%d face%s — edit faces in Emacs"
+                                (length faces)
+                                (if (= (length faces) 1) "" "s"))
+                        'caption)))
+     (unless (or groups vars faces)
+       (list (eabp-empty-state :icon "tune" :title "Nothing here"
+                               :caption "This group declares no members."))))))
+
+(defun eabp-customize--flat-nodes ()
+  "The search/modified view: a flat, capped list of variable items."
+  (let* ((syms (eabp-customize--flat-vars))
+         (total (length syms)))
+    (if (null syms)
+        (list (eabp-empty-state
+               :icon "search" :title "No matching variables"
+               :caption "Search matches customizable variable names."))
+      (append
+       (list (eabp-text (format "%d variable%s" total (if (= total 1) "" "s"))
+                        'caption))
+       (mapcar #'eabp-customize--var-item
+               (cl-subseq syms 0 (min total eabp-customize-max-items)))
+       (eabp-customize--cap-note total "variables")))))
+
+(defun eabp-customize--body ()
+  ;; lazy_column, not column: the scaffold body has no scroll container
+  ;; on the client, so a plain column taller than the screen is simply
+  ;; unreachable below the fold.
+  (apply #'eabp-lazy-column
+         (append
+          (list (eabp-text-input "customize-search"
+                                 :value eabp-customize--search
+                                 :label "Search all variables" :single-line t
+                                 :on-submit (eabp-action "customize.search"))
+                (eabp-flow-row
+                 (eabp-chip "Modified"
+                            :selected eabp-customize--modified-only
+                            :on-tap (eabp-action "customize.modified-filter"
+                                                 :when-offline "drop"))))
+          (if (eabp-customize--flat-p)
+              (eabp-customize--flat-nodes)
+            (eabp-customize--group-nodes)))))
+
+(defun eabp-customize--view (snackbar)
+  "The shell view: back pops one level until the root, then leaves."
+  (eabp-shell-nav-view
+   "Customize" (eabp-customize--body)
+   :nav-action (unless (and (null (cdr eabp-customize--path))
+                            (not (eabp-customize--flat-p)))
+                 (eabp-action "customize.up" :when-offline "drop"))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "customize" :builder #'eabp-customize--view :order 85)
+
+(eabp-shell-add-drawer-item
+ 45 (lambda ()
+      (eabp-drawer-item "tune" "Customize"
+                        (eabp-shell-switch-view "customize"))))
+
+;; ─── Actions ─────────────────────────────────────────────────────────────────
+
+(eabp-defaction "customize.show"
+  ;; Open the browser, optionally at GROUP (for cross-links from other
+  ;; screens); with no group it resumes wherever the user last was.
+  (lambda (args _)
+    (let* ((name (alist-get 'group args))
+           (sym (and (stringp name) (intern-soft name))))
+      (when (eabp-customize--group-p sym)
+        (setq eabp-customize--path (if (eq sym 'emacs) '(emacs)
+                                     (list 'emacs sym))
+              eabp-customize--search ""
+              eabp-customize--modified-only nil)))
+    (eabp-shell-push nil :switch-to "customize")))
+
+(eabp-defaction "customize.browse"
+  (lambda (args _)
+    (let* ((name (alist-get 'group args))
+           (sym (and (stringp name) (intern-soft name))))
+      (if (not (eabp-customize--group-p sym))
+          (eabp-shell-notify (format "%s is not a customization group"
+                                     (or name "?")))
+        (setq eabp-customize--search ""
+              eabp-customize--modified-only nil
+              eabp-customize--path
+              (let ((at (cl-position sym eabp-customize--path)))
+                (if at ; a breadcrumb tap: pop back to that depth
+                    (cl-subseq eabp-customize--path 0 (1+ at))
+                  (append eabp-customize--path (list sym))))))
+      (eabp-shell-push))))
+
+(eabp-defaction "customize.up"
+  ;; The view's back arrow: dismiss the flat list first, then pop one
+  ;; group; the arrow only leaves the view once both are spent (the
+  ;; builder omits the action at the root, restoring the default back).
+  (lambda (_ __)
+    (cond ((eabp-customize--flat-p)
+           (setq eabp-customize--search ""
+                 eabp-customize--modified-only nil))
+          ((cdr eabp-customize--path)
+           (setq eabp-customize--path (butlast eabp-customize--path))))
+    (eabp-shell-push)))
+
+(eabp-defaction "customize.search"
+  (lambda (args _)
+    (let ((q (alist-get 'value args)))
+      (setq eabp-customize--search
+            (downcase (string-trim (or (and (stringp q) q) ""))))
+      (eabp-shell-push))))
+
+(eabp-defaction "customize.modified-filter"
+  (lambda (_ __)
+    (setq eabp-customize--modified-only (not eabp-customize--modified-only))
+    (eabp-shell-push)))
+
+(eabp-defaction "customize.load"
+  (lambda (args _)
+    (let* ((name (alist-get 'name args))
+           (sym (and (stringp name) (intern-soft name))))
+      (when (and sym (custom-variable-p sym))
+        (condition-case err
+            (custom-load-symbol sym)
+          (error (eabp-shell-notify (error-message-string err)))))
+      (eabp-shell-push))))
+
+(eabp-defaction "customize.set"
+  (lambda (args _)
+    (let* ((name (alist-get 'name args))
+           (sym (and (stringp name) (intern-soft name))))
+      (if (not (and sym (custom-variable-p sym)))
+          (eabp-shell-notify
+           (format "%s is not a customizable variable" (or name "?")))
+        ;; A deferred defcustom must load before its type can validate.
+        (ignore-errors (custom-load-symbol sym))
+        (eabp-settings-apply-wire sym (alist-get 'value args)))
+      (eabp-shell-push))))
+
+(eabp-defaction "customize.reset"
+  (lambda (args _)
+    (let* ((name (alist-get 'name args))
+           (sym (and (stringp name) (intern-soft name))))
+      (if (not (and sym (custom-variable-p sym)))
+          (eabp-shell-notify "Cannot reset this setting")
+        (eabp-settings-reset sym))
+      (eabp-shell-push))))
+
+(provide 'eabp-customize)
+;;; eabp-customize.el ends here
+
+;;; ==================================================================
 ;;; BEGIN apps/eabp-magit.el
 ;;; ==================================================================
 
@@ -7469,16 +7863,32 @@ suitable for `glasspane-ui--agenda-card'."
          (nreverse items))))))
 
 (defun glasspane-org--search-substring (query)
-  "Case-insensitive substring search of agenda files for QUERY.
-Matches headline text or any tag. Returns a list of heading items."
-  (let ((q (downcase (string-trim query))) items)
+  "Fallback search of agenda files for QUERY string.
+Supports basic tokenization like todo:TODO tags:work and raw text."
+  (let* ((q (string-trim query))
+         (tokens (split-string q "[ \t]+" t))
+         (todos nil)
+         (tags nil)
+         (texts nil)
+         items)
+    (dolist (tok tokens)
+      (cond
+       ((string-prefix-p "todo:" tok)
+        (push (substring tok 5) todos))
+       ((string-prefix-p "tags:" tok)
+        (push (downcase (substring tok 5)) tags))
+       (t
+        (push (downcase (replace-regexp-in-string "^\"\\(.*\\)\"$" "\\1" tok)) texts))))
     (org-map-entries
      (lambda ()
        (let* ((comps (org-heading-components))
+              (heading-todo (nth 2 comps))
               (headline (downcase (or (nth 4 comps) "")))
-              (tags (org-get-tags)))
-         (when (or (string-search q headline)
-                   (cl-some (lambda (tg) (string-search q (downcase tg))) tags))
+              (heading-tags (mapcar #'downcase (org-get-tags))))
+         (when (and
+                (or (null todos) (member heading-todo todos))
+                (or (null tags) (cl-every (lambda (t-req) (member t-req heading-tags)) tags))
+                (or (null texts) (cl-every (lambda (txt) (string-search txt headline)) texts)))
            (push (glasspane-org--heading-item-at) items))))
      nil 'agenda)
     (nreverse items)))
@@ -8725,18 +9135,15 @@ Returns nil when neither is set."
          (deadline  (alist-get 'deadline it))
          (slabel (glasspane-ui--card-date-label scheduled))
          (dlabel (glasspane-ui--card-date-label deadline))
-         (chips (delq nil
-                      (list
-                       (when slabel
-                         (eabp-row
-                          (eabp-icon "schedule" :size 14 :color "#9E9E9E")
-                          (eabp-text slabel 'caption)))
-                       (when dlabel
-                         (eabp-row
-                          (eabp-icon "flag" :size 14 :color "#EF5350")
-                          (eabp-text dlabel 'caption)))))))
-    (when chips
-      (apply #'eabp-flow-row chips))))
+         (children (delq nil
+                         (list
+                          (when slabel (eabp-icon "schedule" :size 14 :color "#9E9E9E"))
+                          (when slabel (eabp-text (concat " " slabel) 'caption))
+                          (when (and slabel dlabel) (eabp-spacer :width 16))
+                          (when dlabel (eabp-icon "flag" :size 14 :color "#EF5350"))
+                          (when dlabel (eabp-text (concat " " dlabel) 'caption))))))
+    (when children
+      (apply #'eabp-row children))))
 
 (defun glasspane-ui--agenda-card (it)
   "A detail-rich agenda card for item IT.
@@ -10267,16 +10674,16 @@ with the new states.  Returns non-nil when persisting succeeded."
              (text (eabp-ui-state "search-filter-text"))
              (clauses nil))
         (when (and (stringp todo) (not (equal todo "Any")))
-          (push `(todo ,todo) clauses))
+          (push (format "todo:%s" todo) clauses))
         (when (vectorp tags)
           (dolist (tg (append tags nil))
-            (push `(tags ,tg) clauses)))
+            (push (format "tags:%s" tg) clauses)))
         (when (and (stringp text) (not (string-empty-p text)))
-          (push `(regexp ,text) clauses))
+          (if (string-search " " text)
+              (push (format "\"%s\"" text) clauses)
+            (push text clauses)))
         (let ((q (if clauses
-                     (if (= (length clauses) 1)
-                         (format "%S" (car clauses))
-                       (format "%S" `(and ,@(nreverse clauses))))
+                     (mapconcat #'identity (nreverse clauses) " ")
                    "")))
           (setq glasspane-ui--search-query q)
           (eabp-ui-state-put "search-query" q)))

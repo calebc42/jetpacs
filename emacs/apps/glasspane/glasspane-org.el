@@ -282,16 +282,32 @@ suitable for `glasspane-ui--agenda-card'."
          (nreverse items))))))
 
 (defun glasspane-org--search-substring (query)
-  "Case-insensitive substring search of agenda files for QUERY.
-Matches headline text or any tag. Returns a list of heading items."
-  (let ((q (downcase (string-trim query))) items)
+  "Fallback search of agenda files for QUERY string.
+Supports basic tokenization like todo:TODO tags:work and raw text."
+  (let* ((q (string-trim query))
+         (tokens (split-string q "[ \t]+" t))
+         (todos nil)
+         (tags nil)
+         (texts nil)
+         items)
+    (dolist (tok tokens)
+      (cond
+       ((string-prefix-p "todo:" tok)
+        (push (substring tok 5) todos))
+       ((string-prefix-p "tags:" tok)
+        (push (downcase (substring tok 5)) tags))
+       (t
+        (push (downcase (replace-regexp-in-string "^\"\\(.*\\)\"$" "\\1" tok)) texts))))
     (org-map-entries
      (lambda ()
        (let* ((comps (org-heading-components))
+              (heading-todo (nth 2 comps))
               (headline (downcase (or (nth 4 comps) "")))
-              (tags (org-get-tags)))
-         (when (or (string-search q headline)
-                   (cl-some (lambda (tg) (string-search q (downcase tg))) tags))
+              (heading-tags (mapcar #'downcase (org-get-tags))))
+         (when (and
+                (or (null todos) (member heading-todo todos))
+                (or (null tags) (cl-every (lambda (t-req) (member t-req heading-tags)) tags))
+                (or (null texts) (cl-every (lambda (txt) (string-search txt headline)) texts)))
            (push (glasspane-org--heading-item-at) items))))
      nil 'agenda)
     (nreverse items)))

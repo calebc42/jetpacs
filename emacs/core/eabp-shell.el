@@ -132,8 +132,8 @@ handlers memo-guarded so unchanged data sends nothing.")
 
 ;; ─── Chrome: drawer, bottom bar, top bar ─────────────────────────────────────
 
-(defvar eabp-shell-drawer-header "EABP"
-  "Header text of the navigation drawer.")
+(defvar eabp-shell-drawer-header "Glasspane"
+  "Text rendered at the top of the app drawer.")
 
 (defvar eabp-shell-drawer-items nil
   "Ordered list of (ORDER . BUILDER) drawer entries.

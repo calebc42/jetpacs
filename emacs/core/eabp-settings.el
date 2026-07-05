@@ -9,6 +9,9 @@
 ;; The registry is the security boundary: `settings.set' / `settings.reset'
 ;; only touch symbols present in `eabp-settings-registry', never arbitrary
 ;; names off the wire.  Exposing a new setting is one registry entry.
+;; The rendering/apply machinery itself is public and gate-agnostic —
+;; eabp-customize.el reuses it under its own `customize.*' actions with a
+;; `custom-variable-p' gate; the registry rule above binds `settings.*' only.
 ;;
 ;; Widget mapping by type: boolean -> switch (the client switch publishes
 ;; state.changed rather than dispatching an action, so per-id handlers are
@@ -130,18 +133,20 @@ a current value outside the consts still displays, printed."
 
 ;; ─── Setting values ──────────────────────────────────────────────────────────
 
-(defun eabp-settings--apply (sym value)
+(defun eabp-settings-apply (sym value &optional after-set)
   "Validate, set, propagate and persist VALUE for SYM.
-Returns non-nil when the value was accepted (even if only applied for
-the session because persisting failed)."
+AFTER-SET, when non-nil, is called with VALUE once the set has run —
+the propagation a caller's gate attaches (a registry entry's
+:after-set); it is the caller's because this function no longer knows
+which gate admitted SYM.  Returns non-nil when the value was accepted
+\(even if only applied for the session because persisting failed)."
   (if (not (eabp-settings--valid-p sym value))
       (progn
         (funcall eabp-settings-notify-function
                  (format "Invalid value for %s" sym))
         nil)
     (customize-set-variable sym value)
-    (let ((fn (plist-get (cdr (eabp-settings--entry sym)) :after-set)))
-      (when fn (funcall fn value)))
+    (when after-set (funcall after-set value))
     ;; App views may memoise data derived from this variable; per the
     ;; cache contract every mutation must reach the registered droppers.
     (run-hook-with-args 'eabp-settings-after-set-hook sym value)
@@ -175,6 +180,19 @@ deselection), nil when undecodable."
                (list (car (read-from-string wire)))
              (error nil)))))))
 
+(defun eabp-settings-apply-wire (sym wire &optional after-set)
+  "Decode client-sent WIRE and apply it to SYM; non-nil unless rejected.
+An undecodable payload notifies and returns nil; a no-op (e.g. an enum
+deselection) returns non-nil without touching SYM.  AFTER-SET is passed
+through to `eabp-settings-apply'.  Callers gate SYM before calling —
+this function validates the value, not the symbol."
+  (pcase (eabp-settings--decode sym wire)
+    ('skip t)
+    ('nil (funcall eabp-settings-notify-function
+                   (format "Invalid value for %s" sym))
+          nil)
+    (`(,value) (eabp-settings-apply sym value after-set))))
+
 ;; ─── Standard values / reset ─────────────────────────────────────────────────
 
 (defun eabp-settings--standard-value (sym)
@@ -182,10 +200,29 @@ deselection), nil when undecodable."
   (let ((std (get sym 'standard-value)))
     (and std (eval (car std) t))))
 
-(defun eabp-settings--modified-p (sym)
-  "Whether SYM's current global value differs from its standard default."
-  (and (get sym 'standard-value)
-       (not (equal (default-value sym) (eabp-settings--standard-value sym)))))
+(defun eabp-settings-modified-p (sym)
+  "Whether SYM's current global value differs from its standard default.
+Safe on any symbol: unbound means unmodified, and a standard-value form
+that fails to evaluate counts as unmodified rather than erroring (the
+customize browser calls this across arbitrary defcustoms)."
+  (and (boundp sym)
+       (get sym 'standard-value)
+       (not (equal (default-value sym)
+                   (condition-case nil (eabp-settings--standard-value sym)
+                     (error (default-value sym)))))))
+
+(defun eabp-settings-reset (sym &optional after-set)
+  "Reset SYM to its defcustom standard value; non-nil on success.
+Notifies instead of erroring when SYM has no standard value to return
+to.  AFTER-SET is passed through to `eabp-settings-apply'."
+  (if (not (get sym 'standard-value))
+      (progn
+        (funcall eabp-settings-notify-function "Cannot reset this setting")
+        nil)
+    (when (eabp-settings-apply sym (eabp-settings--standard-value sym) after-set)
+      (funcall eabp-settings-notify-function
+               (format "%s reset to default" sym))
+      t)))
 
 ;; ─── Rendering ───────────────────────────────────────────────────────────────
 
@@ -194,70 +231,81 @@ deselection), nil when undecodable."
   (let ((doc (documentation-property sym 'variable-documentation)))
     (and doc (car (split-string (substitute-command-keys doc) "\n" t)))))
 
+(cl-defun eabp-settings-item (sym &key label (id-prefix "setting/")
+                                  (set-action "settings.set")
+                                  (reset-action "settings.reset"))
+  "Widget column rendering SYM's control from its `custom-type' schema.
+LABEL defaults to the symbol name.  ID-PREFIX keys the control's widget
+id; a switch under it publishes state.changed, so pair a non-default
+prefix with `eabp-settings-watch-toggle'.  SET-ACTION and RESET-ACTION
+name the wire actions the controls dispatch, each carrying the symbol
+name under `name' — the settings screen uses the registry-gated
+`settings.*', the customize browser the `custom-variable-p'-gated
+`customize.*'."
+  (if (not (boundp sym))
+      (eabp-text (format "%s is not loaded yet" sym) 'caption)
+    (let* ((name (symbol-name sym))
+           (label (or label name))
+           (doc (eabp-settings--doc-line sym))
+           (value (default-value sym))
+           (type (eabp-settings--type sym))
+           (kind (eabp-settings--kind type))
+           (wid-id (concat id-prefix name))
+           (set (eabp-action set-action :args `((name . ,name))))
+           (reset (and (eabp-settings-modified-p sym)
+                       (eabp-icon-button
+                        "history"
+                        (eabp-action reset-action :args `((name . ,name)))
+                        :content-description (format "Reset %s to default" label))))
+           (control
+            (pcase kind
+              ('boolean
+               (eabp-switch wid-id :checked (and value t) :label label))
+              ('choice
+               (let* ((opts (eabp-settings--choice-options type))
+                      (current (car (rassoc value opts)))
+                      (labels (mapcar #'car opts)))
+                 (unless current
+                   ;; Value set outside the const arms (e.g. a custom
+                   ;; drawer name): show it, printed, as the selection.
+                   (setq current (prin1-to-string value)
+                         labels (append labels (list current))))
+                 (eabp-enum-list wid-id labels :value (list current)
+                                 :on-change set)))
+              ('string
+               (eabp-text-input wid-id :value (and (stringp value) value)
+                                :label label :single-line t
+                                :on-submit set))
+              ('number
+               (eabp-text-input wid-id
+                                :value (and (numberp value)
+                                            (number-to-string value))
+                                :label label :single-line t
+                                :on-submit set))
+              (_
+               (eabp-text-input wid-id :value (prin1-to-string value)
+                                :label label :single-line t :monospace t
+                                :hint "Elisp expression"
+                                :on-submit set)))))
+      (apply #'eabp-column
+             (delq nil
+                   (list
+                    ;; Booleans carry their label inside the switch row;
+                    ;; everything else gets a plain label row. The weighted
+                    ;; box keeps the reset button on-screen (columns render
+                    ;; fillMaxWidth and would swallow the row).
+                    (eabp-row
+                     (eabp-box (list (if (eq kind 'boolean)
+                                         control
+                                       (eabp-text label 'label)))
+                               :weight 1)
+                     reset)
+                    (when doc (eabp-text doc 'caption))
+                    (unless (eq kind 'boolean) control)))))))
+
 (defun eabp-settings--item (entry)
   "Widget column for registry ENTRY."
-  (let ((sym (car entry)))
-    (if (not (boundp sym))
-        (eabp-text (format "%s is not loaded yet" sym) 'caption)
-      (let* ((plist (cdr entry))
-             (name (symbol-name sym))
-             (label (or (plist-get plist :label) name))
-             (doc (eabp-settings--doc-line sym))
-             (value (default-value sym))
-             (type (eabp-settings--type sym))
-             (kind (eabp-settings--kind type))
-             (wid-id (concat "setting/" name))
-             (set-action (eabp-action "settings.set" :args `((name . ,name))))
-             (reset (and (eabp-settings--modified-p sym)
-                         (eabp-icon-button
-                          "history"
-                          (eabp-action "settings.reset" :args `((name . ,name)))
-                          :content-description (format "Reset %s to default" label))))
-             (control
-              (pcase kind
-                ('boolean
-                 (eabp-switch wid-id :checked (and value t) :label label))
-                ('choice
-                 (let* ((opts (eabp-settings--choice-options type))
-                        (current (car (rassoc value opts)))
-                        (labels (mapcar #'car opts)))
-                   (unless current
-                     ;; Value set outside the const arms (e.g. a custom
-                     ;; drawer name): show it, printed, as the selection.
-                     (setq current (prin1-to-string value)
-                           labels (append labels (list current))))
-                   (eabp-enum-list wid-id labels :value (list current)
-                                   :on-change set-action)))
-                ('string
-                 (eabp-text-input wid-id :value (and (stringp value) value)
-                                  :label label :single-line t
-                                  :on-submit set-action))
-                ('number
-                 (eabp-text-input wid-id
-                                  :value (and (numberp value)
-                                              (number-to-string value))
-                                  :label label :single-line t
-                                  :on-submit set-action))
-                (_
-                 (eabp-text-input wid-id :value (prin1-to-string value)
-                                  :label label :single-line t :monospace t
-                                  :hint "Elisp expression"
-                                  :on-submit set-action)))))
-        (apply #'eabp-column
-               (delq nil
-                     (list
-                      ;; Booleans carry their label inside the switch row;
-                      ;; everything else gets a plain label row. The weighted
-                      ;; box keeps the reset button on-screen (columns render
-                      ;; fillMaxWidth and would swallow the row).
-                      (eabp-row
-                       (eabp-box (list (if (eq kind 'boolean)
-                                           control
-                                         (eabp-text label 'label)))
-                                 :weight 1)
-                       reset)
-                      (when doc (eabp-text doc 'caption))
-                      (unless (eq kind 'boolean) control))))))))
+  (eabp-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
 (defun eabp-settings-sections ()
   "Flat list of nodes rendering every registry section."
@@ -273,17 +321,12 @@ deselection), nil when undecodable."
     (let* ((name (alist-get 'name args))
            (sym (and (stringp name) (intern-soft name)))
            (entry (and sym (eabp-settings--entry sym))))
-      (cond
-       ((not entry)
-        (funcall eabp-settings-notify-function
-                 (format "Setting %s is not editable from the app"
-                         (or name "?"))))
-       (t
-        (pcase (eabp-settings--decode sym (alist-get 'value args))
-          ('skip nil)
-          ('nil (funcall eabp-settings-notify-function
-                         (format "Invalid value for %s" name)))
-          (`(,value) (eabp-settings--apply sym value)))))
+      (if (not entry)
+          (funcall eabp-settings-notify-function
+                   (format "Setting %s is not editable from the app"
+                           (or name "?")))
+        (eabp-settings-apply-wire sym (alist-get 'value args)
+                                  (plist-get (cdr entry) :after-set)))
       (funcall eabp-settings-refresh-function))))
 
 (eabp-defaction "settings.reset"
@@ -291,30 +334,35 @@ deselection), nil when undecodable."
     (let* ((name (alist-get 'name args))
            (sym (and (stringp name) (intern-soft name)))
            (entry (and sym (eabp-settings--entry sym))))
-      (if (not (and entry (get sym 'standard-value)))
+      (if (not entry)
           (funcall eabp-settings-notify-function "Cannot reset this setting")
-        (when (eabp-settings--apply sym (eabp-settings--standard-value sym))
-          (funcall eabp-settings-notify-function
-                   (format "%s reset to default" name))))
+        (eabp-settings-reset sym (plist-get (cdr entry) :after-set)))
       (funcall eabp-settings-refresh-function))))
 
-(defun eabp-settings--register-state-handlers (sections)
-  "Register state.changed handlers for every symbol in SECTIONS.
+(defun eabp-settings-watch-toggle (sym id &optional after-set)
+  "Register the state.changed handler applying SYM's switch under widget ID.
 The client's switch widget publishes state.changed instead of
-dispatching an action, and a queued toggle can replay before the
-settings screen has ever rendered this session — so handlers are
-registered when the section is, not at render.  Non-boolean payloads
-under these ids (e.g. a text input's published state) are ignored;
-text inputs save through settings.set on submit."
+dispatching an action, so a boolean setting only works once a handler
+exists for its widget id.  Non-boolean payloads under ID (e.g. a text
+input's published state) are ignored; those save through their submit
+action instead.  AFTER-SET is passed through to `eabp-settings-apply'."
+  (eabp-on-state-change
+   id (lambda (val)
+        (when (memq val '(t :false))
+          (eabp-settings-apply sym (eq val t) after-set)
+          (funcall eabp-settings-refresh-function)))))
+
+(defun eabp-settings--register-state-handlers (sections)
+  "Register the switch handlers for every symbol in SECTIONS.
+A queued toggle can replay before the settings screen has ever rendered
+this session — so handlers are registered when the section is, not at
+render."
   (dolist (section sections)
     (dolist (entry (cdr section))
-      (let ((sym (car entry)))
-        (eabp-on-state-change
-         (concat "setting/" (symbol-name sym))
-         (lambda (val)
-           (when (memq val '(t :false))
-             (eabp-settings--apply sym (eq val t))
-             (funcall eabp-settings-refresh-function))))))))
+      (eabp-settings-watch-toggle
+       (car entry)
+       (concat "setting/" (symbol-name (car entry)))
+       (plist-get (cdr entry) :after-set)))))
 
 (provide 'eabp-settings)
 ;;; eabp-settings.el ends here

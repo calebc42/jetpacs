@@ -422,18 +422,15 @@ Returns nil when neither is set."
          (deadline  (alist-get 'deadline it))
          (slabel (glasspane-ui--card-date-label scheduled))
          (dlabel (glasspane-ui--card-date-label deadline))
-         (chips (delq nil
-                      (list
-                       (when slabel
-                         (eabp-row
-                          (eabp-icon "schedule" :size 14 :color "#9E9E9E")
-                          (eabp-text slabel 'caption)))
-                       (when dlabel
-                         (eabp-row
-                          (eabp-icon "flag" :size 14 :color "#EF5350")
-                          (eabp-text dlabel 'caption)))))))
-    (when chips
-      (apply #'eabp-flow-row chips))))
+         (children (delq nil
+                         (list
+                          (when slabel (eabp-icon "schedule" :size 14 :color "#9E9E9E"))
+                          (when slabel (eabp-text (concat " " slabel) 'caption))
+                          (when (and slabel dlabel) (eabp-spacer :width 16))
+                          (when dlabel (eabp-icon "flag" :size 14 :color "#EF5350"))
+                          (when dlabel (eabp-text (concat " " dlabel) 'caption))))))
+    (when children
+      (apply #'eabp-row children))))
 
 (defun glasspane-ui--agenda-card (it)
   "A detail-rich agenda card for item IT.
@@ -1964,16 +1961,16 @@ with the new states.  Returns non-nil when persisting succeeded."
              (text (eabp-ui-state "search-filter-text"))
              (clauses nil))
         (when (and (stringp todo) (not (equal todo "Any")))
-          (push `(todo ,todo) clauses))
+          (push (format "todo:%s" todo) clauses))
         (when (vectorp tags)
           (dolist (tg (append tags nil))
-            (push `(tags ,tg) clauses)))
+            (push (format "tags:%s" tg) clauses)))
         (when (and (stringp text) (not (string-empty-p text)))
-          (push `(regexp ,text) clauses))
+          (if (string-search " " text)
+              (push (format "\"%s\"" text) clauses)
+            (push text clauses)))
         (let ((q (if clauses
-                     (if (= (length clauses) 1)
-                         (format "%S" (car clauses))
-                       (format "%S" `(and ,@(nreverse clauses))))
+                     (mapconcat #'identity (nreverse clauses) " ")
                    "")))
           (setq glasspane-ui--search-query q)
           (eabp-ui-state-put "search-query" q)))

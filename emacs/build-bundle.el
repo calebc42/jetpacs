@@ -12,7 +12,7 @@
 ;;                   party Tier 1 depends on.
 ;;   glasspane.el  — the core plus the reference apps (emacs/apps/):
 ;;                   the Glasspane org app, the magit pie, the package
-;;                   browser, the demo tour.
+;;                   browser, the customize browser, the demo tour.
 ;;
 ;; The files are emitted in dependency order. Because every source ends with
 ;; a `(provide 'FEATURE)', the inter-file `(require ...)' forms become no-ops
@@ -41,6 +41,7 @@
                      "core/eabp-witheditor.el"
                      "core/eabp-emacs-ui.el"))
        (app-files '("apps/eabp-package-browser.el"
+                    "apps/eabp-customize.el"
                     "apps/eabp-magit.el"
                     "apps/glasspane/glasspane-org.el"
                     "apps/glasspane/glasspane-org-rich.el"

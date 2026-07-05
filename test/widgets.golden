@@ -43,3 +43,5 @@
 42 {"extended":true,"icon":"add","label":"l","on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"}}
 43 {"items":[{"icon":"i","label":"l","on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"selected":true}]}
 44 {"body":{"t":"text","text":"leaf"},"bottom_bar":{"items":[]},"drawer":{"header":"h","items":[]},"fab":{"icon":"add"},"on_refresh":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"snackbar":"s","t":"scaffold","top_bar":{"title":"t"}}
+45 {"aligns":["start","end"],"on_add_col":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"on_add_row":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"padding":2,"rows":[{"cells":[{"spans":[{"bold":true,"text":"Item"}]},{"spans":[{"text":"Qty"}]}],"header":true},{"rule":true},{"cells":[{"on_long_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"spans":[{"text":"apples"}]},{"spans":[{"text":"4"}]}]}],"t":"table"}
+46 {"rows":[{"cells":[{"spans":[{"text":"a"}]}]}],"t":"table"}

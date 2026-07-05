@@ -2117,6 +2117,104 @@ with the new states.  Returns non-nil when persisting succeeded."
         (glasspane-org-cache-invalidate)
         (eabp-shell-push nil :switch-to "edit")))))
 
+;; ─── Table actions ───────────────────────────────────────────────────────────
+;; The rich renderer emits native `table' nodes whose cells and "+"
+;; affordances carry these actions with real-file positions baked in.
+
+(defun glasspane-ui--table-mutate (file pos fn)
+  "Run FN with point at POS inside FILE's table, then align, save, repush.
+FN performs one table mutation.  Afterwards the table is realigned,
+recalculated when a #+TBLFM line follows it (formulas live Emacs-side —
+the phone never computes), saved, and every view repushed."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer
+     (goto-char pos)
+     (unless (org-at-table-p) (error "No table at position %s" pos))
+     (funcall fn)
+     (org-table-align)
+     (when (save-excursion
+             (goto-char (org-table-end))
+             (looking-at-p "[ \t]*#\\+TBLFM:"))
+       (org-table-recalculate t)))
+    (let ((glasspane-org--inhibit-save-refresh t)
+          (save-silently t))
+      (save-buffer)))
+  (glasspane-org-cache-invalidate)
+  (eabp-shell-push))
+
+(eabp-defaction "org.table.edit"
+  ;; Tap a table cell in the reader: a native dialog (bridged
+  ;; `read-string') prefilled with the current field, written back
+  ;; through the org table machinery so formulas recalculate.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (let (current)
+              (with-current-buffer (find-file-noselect file)
+                (org-with-wide-buffer
+                 (goto-char pos)
+                 (unless (org-at-table-p) (error "No table cell here"))
+                 (setq current (string-trim (org-table-get-field)))))
+              (let* ((input (read-string "Cell: " current))
+                     ;; A field is one line between pipes — keep it that way.
+                     (new (string-replace
+                           "|" "\\vert{}"
+                           (string-replace "\n" " " input))))
+                (glasspane-ui--table-mutate file pos
+                  (lambda () (org-table-get-field nil new)))))
+          (error
+           (eabp-shell-notify
+            (format "Edit failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+(eabp-defaction "org.table.add-row"
+  ;; The "+" strip under the table: append an empty row at the bottom,
+  ;; then tap-to-edit fills it in.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (glasspane-ui--table-mutate file pos
+              (lambda ()
+                (goto-char (org-table-end))
+                (forward-line -1)       ; last table line
+                (org-table-insert-row t)))
+          (error
+           (eabp-shell-notify
+            (format "Add row failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+(eabp-defaction "org.table.add-col"
+  ;; The "+" gutter at the right edge: append an empty column.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (glasspane-ui--table-mutate file pos
+              (lambda ()
+                ;; Force-create a field one past the last column on the
+                ;; first data line (pipe count is authoritative — \vert
+                ;; never appears raw); the helper's realign squares every
+                ;; other row off to match.  `org-table-insert-column'
+                ;; inserts to the LEFT of point's column, so it can't
+                ;; append at the right edge directly.
+                (goto-char (org-table-begin))
+                (while (and (org-at-table-hline-p)
+                            (< (point) (org-table-end)))
+                  (forward-line 1))
+                (let ((ncols (1- (cl-count ?| (buffer-substring-no-properties
+                                               (line-beginning-position)
+                                               (line-end-position))))))
+                  (org-table-goto-column (1+ (max 1 ncols)) nil 'force))))
+          (error
+           (eabp-shell-notify
+            (format "Add column failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
 (eabp-defaction "file.view"
   ;; Legacy (old cached UIs): now routes into the eabp-files editor.
   (lambda (args _)

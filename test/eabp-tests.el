@@ -852,6 +852,105 @@ the text it tells the user to type."
       (should result)
       (should (equal (car result) "buffer-sub")))))
 
+;; ─── Org tables: emitter and actions ────────────────────────────────────────
+
+(ert-deftest glasspane-org-rich-table-node ()
+  "Org tables emit native table nodes: header, rule, aligns, cell taps."
+  (let* ((body (concat "| Item | Qty |\n"
+                       "|------+-----|\n"
+                       "| a    |   1 |\n"
+                       "| bb   |   2 |\n"))
+         (table (car (glasspane-org-rich-body body nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't table) "table"))
+    (let* ((rows (append (alist-get 'rows table) nil))
+           (r0 (nth 0 rows)) (r1 (nth 1 rows)) (r2 (nth 2 rows)))
+      (should (= (length rows) 4))
+      (should (eq (alist-get 'header r0) t))
+      (should (eq (alist-get 'rule r1) t))
+      ;; The numeric column right-aligns (org's own heuristic).
+      (should (equal (append (alist-get 'aligns table) nil) '("start" "end")))
+      ;; Cells carry edit actions with real-file positions baked in.
+      (let* ((cell (aref (alist-get 'cells r2) 0))
+             (tap (alist-get 'on_tap cell)))
+        (should (equal (alist-get 'action tap) "org.table.edit"))
+        (should (equal (alist-get 'file (alist-get 'args tap)) "/tmp/t.org"))
+        (should (integerp (alist-get 'pos (alist-get 'args tap))))))
+    ;; Add affordances point back at the table.
+    (should (equal (alist-get 'action (alist-get 'on_add_row table))
+                   "org.table.add-row"))
+    (should (equal (alist-get 'action (alist-get 'on_add_col table))
+                   "org.table.add-col"))))
+
+(ert-deftest glasspane-org-rich-table-readonly-without-context ()
+  "Without file context the table renders, but nothing is tappable."
+  (let ((table (car (glasspane-org-rich-body "| a | b |\n" nil))))
+    (should (equal (alist-get 't table) "table"))
+    (should-not (alist-get 'on_add_row table))
+    (should-not (alist-get 'on_add_col table))
+    (let ((cell (aref (alist-get 'cells (aref (alist-get 'rows table) 0)) 0)))
+      (should-not (alist-get 'on_tap cell)))
+    ;; A lone row group is not a header.
+    (should-not (alist-get 'header (aref (alist-get 'rows table) 0)))))
+
+(ert-deftest glasspane-org-rich-table-cookie-alignment ()
+  "Cookie rows configure column alignment and drop out of display."
+  (let ((table (car (glasspane-org-rich-body "| <c> | <r> |\n| a | b |\n" nil))))
+    (should (equal (append (alist-get 'aligns table) nil) '("center" "end")))
+    (should (= (length (alist-get 'rows table)) 1))))
+
+(ert-deftest glasspane-ui-table-edit-recalculates ()
+  "The org.table.edit handler writes the field and recalculates #+TBLFM."
+  (let ((file (make-temp-file "eabp-table-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "| Item   | Qty | Cost |\n"
+                    "|--------+-----+------|\n"
+                    "| apples |   2 |    4 |\n"
+                    "#+TBLFM: $3=$2*2\n"))
+          (let (pos)
+            (with-temp-buffer
+              (insert-file-contents file)
+              (goto-char (point-min))
+              (search-forward "| apples |")
+              (setq pos (point)))     ; inside the Qty field
+            (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "5"))
+                      ((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                      ((symbol-function 'eabp-shell-notify)
+                       (lambda (text) (ert-fail text))))
+              (funcall (gethash "org.table.edit" eabp-action-handlers)
+                       `((file . ,file) (pos . ,pos)) nil)))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            ;; Qty written, Cost recalculated by the formula.
+            (should (string-match-p "| apples | +5 | +10 |" content))))
+      (delete-file file))))
+
+(ert-deftest glasspane-ui-table-add-row-and-column ()
+  "add-row appends an empty row; add-col appends an empty column at the right."
+  (let ((file (make-temp-file "eabp-table-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "| a | b |\n| c | d |\n"))
+          (cl-letf (((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                    ((symbol-function 'eabp-shell-notify)
+                     (lambda (text) (ert-fail text))))
+            (funcall (gethash "org.table.add-row" eabp-action-handlers)
+                     `((file . ,file) (pos . 1)) nil)
+            (funcall (gethash "org.table.add-col" eabp-action-handlers)
+                     `((file . ,file) (pos . 1)) nil))
+          (let* ((content (with-temp-buffer
+                            (insert-file-contents file) (buffer-string)))
+                 (lines (cl-remove-if-not
+                         (lambda (l) (string-prefix-p "|" l))
+                         (split-string content "\n" t))))
+            (should (= (length lines) 3))           ; one row appended
+            (dolist (l lines)
+              (should (= (cl-count ?| l) 4)))       ; one column appended
+            ;; The new column landed at the right edge, not the left.
+            (should (string-match-p "\\`| a | b |" (car lines)))))
+      (delete-file file))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst eabp-tests--golden-file
@@ -927,7 +1026,20 @@ the text it tells the user to type."
      (eabp-scaffold :top-bar (eabp-top-bar "t") :fab (eabp-fab "add")
                     :body leaf :bottom-bar (eabp-bottom-bar nil)
                     :snackbar "s" :drawer (eabp-drawer nil :header "h")
-                    :on-refresh act))))
+                    :on-refresh act)
+     (eabp-table
+      (list (eabp-table-row
+             (list (eabp-table-cell (list (eabp-span "Item" :bold t)))
+                   (eabp-table-cell (list (eabp-span "Qty"))))
+             :header t)
+            (eabp-table-rule)
+            (eabp-table-row
+             (list (eabp-table-cell (list (eabp-span "apples"))
+                                    :on-tap act :on-long-tap act)
+                   (eabp-table-cell (list (eabp-span "4"))))))
+      :aligns '("start" "end") :on-add-row act :on-add-col act :padding 2)
+     (eabp-table
+      (list (eabp-table-row (list (eabp-table-cell (list (eabp-span "a"))))))))))
 
 (defun eabp-tests--widget-lines ()
   (let ((i -1))

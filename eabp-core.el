@@ -621,6 +621,45 @@ or demotes."
               'items (vconcat items)
               'on_reorder on-reorder))
 
+(cl-defun eabp-table (rows &key aligns on-add-row on-add-col padding)
+  "A grid of cells with org-table semantics.
+ROWS is a list from `eabp-table-row' and `eabp-table-rule'.  Columns
+size to their widest cell and the grid pans horizontally on-device
+when it overflows the screen — the whole table ships once.
+ALIGNS is a list of per-column alignments (\"start\", \"center\",
+\"end\"); columns beyond its length default to start.
+ON-ADD-ROW / ON-ADD-COL, when non-nil, make the client render slim
+\"+\" append affordances (a strip below the last row / a gutter after
+the last column) that dispatch those actions.  The actions carry no
+client-added args — embed the table's location when building them."
+  (eabp--node "table"
+              'rows (vconcat rows)
+              'aligns (and aligns (vconcat aligns))
+              'on_add_row on-add-row
+              'on_add_col on-add-col
+              'padding padding))
+
+(cl-defun eabp-table-row (cells &key header)
+  "A table row of CELLS (from `eabp-table-cell').
+HEADER marks the row as part of the header group: the client renders
+it emphasized, with a heavier rule under the group."
+  (eabp--node nil
+              'cells (vconcat cells)
+              'header (and header t)))
+
+(defun eabp-table-rule ()
+  "A horizontal rule row (an org hline) — a divider line inside the grid."
+  (eabp--node nil 'rule t))
+
+(cl-defun eabp-table-cell (spans &key on-tap on-long-tap)
+  "A table cell rendering SPANS (a list from `eabp-span').
+ON-TAP / ON-LONG-TAP dispatch as-is — embed the cell's file/pos in the
+action args when building it (the client adds nothing)."
+  (eabp--node nil
+              'spans (vconcat spans)
+              'on_tap on-tap
+              'on_long_tap on-long-tap))
+
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
 (cl-defun eabp-action (action &key args (when-offline "queue") dedupe)

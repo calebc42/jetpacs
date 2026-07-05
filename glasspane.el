@@ -621,6 +621,45 @@ or demotes."
               'items (vconcat items)
               'on_reorder on-reorder))
 
+(cl-defun eabp-table (rows &key aligns on-add-row on-add-col padding)
+  "A grid of cells with org-table semantics.
+ROWS is a list from `eabp-table-row' and `eabp-table-rule'.  Columns
+size to their widest cell and the grid pans horizontally on-device
+when it overflows the screen — the whole table ships once.
+ALIGNS is a list of per-column alignments (\"start\", \"center\",
+\"end\"); columns beyond its length default to start.
+ON-ADD-ROW / ON-ADD-COL, when non-nil, make the client render slim
+\"+\" append affordances (a strip below the last row / a gutter after
+the last column) that dispatch those actions.  The actions carry no
+client-added args — embed the table's location when building them."
+  (eabp--node "table"
+              'rows (vconcat rows)
+              'aligns (and aligns (vconcat aligns))
+              'on_add_row on-add-row
+              'on_add_col on-add-col
+              'padding padding))
+
+(cl-defun eabp-table-row (cells &key header)
+  "A table row of CELLS (from `eabp-table-cell').
+HEADER marks the row as part of the header group: the client renders
+it emphasized, with a heavier rule under the group."
+  (eabp--node nil
+              'cells (vconcat cells)
+              'header (and header t)))
+
+(defun eabp-table-rule ()
+  "A horizontal rule row (an org hline) — a divider line inside the grid."
+  (eabp--node nil 'rule t))
+
+(cl-defun eabp-table-cell (spans &key on-tap on-long-tap)
+  "A table cell rendering SPANS (a list from `eabp-span').
+ON-TAP / ON-LONG-TAP dispatch as-is — embed the cell's file/pos in the
+action args when building it (the client adds nothing)."
+  (eabp--node nil
+              'spans (vconcat spans)
+              'on_tap on-tap
+              'on_long_tap on-long-tap))
+
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
 (cl-defun eabp-action (action &key args (when-offline "queue") dedupe)
@@ -8913,8 +8952,10 @@ ready for the companion's `reminders.set' frame."
 ;; links (tappable), timestamps, and #hashtags all map to native styling.
 ;;
 ;; Block-level content that doesn't fit a single styled paragraph — source
-;; blocks, tables, example blocks — falls back to `eabp-markup' so code keeps
-;; its highlighted, fixed-width look.
+;; blocks, example blocks — falls back to `eabp-markup' so code keeps its
+;; highlighted, fixed-width look.  Org tables render as native `table' grids
+;; (tap-to-edit and add-row/add-column when file context is supplied);
+;; table.el tables keep the markup fallback.
 ;;
 ;; Entry point: `glasspane-org-rich-body' (an org body string -> a list of nodes).
 
@@ -8922,6 +8963,7 @@ ready for the companion's `reminders.set' frame."
 
 (require 'org)
 (require 'org-element)
+(require 'org-table)
 (require 'cl-lib)
 (require 'eabp-widgets)
 
@@ -9154,6 +9196,135 @@ toggles the checkbox via Emacs without entering edit mode."
                              (org-element-contents el)))))
     (when items (apply #'eabp-column items))))
 
+;; ─── Tables ──────────────────────────────────────────────────────────────────
+
+(defconst glasspane-org-rich--cookie-re "\\`<[lcr]?[0-9]*>\\'"
+  "Matches alignment/width cookie cells: <l>, <r>, <c>, <10>, <r20>, …")
+
+(defun glasspane-org-rich--cell-text (cell)
+  "Trimmed plain text of table CELL (nil-safe: nil CELL gives \"\")."
+  (if (null cell) ""
+    (string-trim
+     (or (ignore-errors
+           (org-element-interpret-data (org-element-contents cell)))
+         ""))))
+
+(defun glasspane-org-rich--cookie-row-p (cells)
+  "Non-nil when CELLS form a cookie row (alignment config, not data).
+Every non-empty cell is a cookie and at least one is non-empty."
+  (let ((texts (mapcar #'glasspane-org-rich--cell-text cells)))
+    (and (cl-some (lambda (s) (not (string-empty-p s))) texts)
+         (cl-every (lambda (s)
+                     (or (string-empty-p s)
+                         (string-match-p glasspane-org-rich--cookie-re s)))
+                   texts))))
+
+(defun glasspane-org-rich--table-aligns (cookie-rows data-rows ncols)
+  "Alignment strings (start/center/end) for NCOLS columns.
+A cookie in COOKIE-ROWS wins; otherwise a column whose DATA-ROWS cells
+are mostly numbers right-aligns, mirroring org's own aligner.  Returns
+nil when every column would be \"start\" (no wire noise)."
+  (let (aligns)
+    (dotimes (c ncols)
+      (let ((cookie
+             (cl-loop for row in cookie-rows
+                      for text = (glasspane-org-rich--cell-text (nth c row))
+                      when (string-match "\\`<\\([lcr]\\)" text)
+                      return (match-string 1 text))))
+        (push
+         (pcase cookie
+           ("l" "start") ("c" "center") ("r" "end")
+           (_ (let ((total 0) (numbers 0))
+                (dolist (row data-rows)
+                  (let ((text (glasspane-org-rich--cell-text (nth c row))))
+                    (unless (string-empty-p text)
+                      (cl-incf total)
+                      (when (string-match-p org-table-number-regexp text)
+                        (cl-incf numbers)))))
+                (if (and (> total 0)
+                         (>= (/ (float numbers) total)
+                             org-table-number-fraction))
+                    "end" "start"))))
+         aligns)))
+    (setq aligns (nreverse aligns))
+    (and (cl-some (lambda (a) (not (equal a "start"))) aligns)
+         aligns)))
+
+(defun glasspane-org-rich--table-cell (cell)
+  "Build a cell node for table CELL.
+When file context is present (the reader passes it), the cell taps
+through to `org.table.edit' at its real-file position."
+  (let ((spans (or (glasspane-org-rich--inline (org-element-contents cell) nil)
+                   (list (eabp-span ""))))
+        (pos (and glasspane-org-rich--file glasspane-org-rich--body-offset
+                  (+ glasspane-org-rich--body-offset
+                     (or (org-element-property :contents-begin cell)
+                         (org-element-property :begin cell))))))
+    (eabp-table-cell
+     spans
+     :on-tap (when pos
+               (eabp-action "org.table.edit"
+                            :args `((file . ,glasspane-org-rich--file)
+                                    (pos . ,pos)))))))
+
+(defun glasspane-org-rich--table (el)
+  "Render an org table EL to a native `eabp-table' node, or nil when empty.
+Cookie-only rows configure column alignment and drop out of display;
+alignment otherwise follows org's numeric-majority rule.  Header rows
+are the first row group when a rule separates it from more groups
+\(decorative border rules don't create one).  With file context, cells
+tap-edit and the client offers add-row/add-column affordances."
+  (let* ((file glasspane-org-rich--file)
+         (offset glasspane-org-rich--body-offset)
+         (cookie-rows nil)
+         ;; Ordered display shapes: `rule' or a list of cell elements.
+         (shapes
+          (delq nil
+                (mapcar
+                 (lambda (row)
+                   (when (eq (org-element-type row) 'table-row)
+                     (if (eq (org-element-property :type row) 'rule)
+                         'rule
+                       (let ((cells (org-element-contents row)))
+                         (if (glasspane-org-rich--cookie-row-p cells)
+                             (progn (push cells cookie-rows) nil)
+                           cells)))))
+                 (org-element-contents el))))
+         (data-rows (cl-remove 'rule shapes))
+         (ncols (cl-loop for s in data-rows maximize (length s))))
+    (when (and ncols (> ncols 0))
+      ;; Header = the first row group, when a rule separates it from
+      ;; further groups; leading border rules don't open a group.
+      (let ((groups 0) (prev-rule t) header-rows)
+        (dolist (shape shapes)
+          (if (eq shape 'rule)
+              (setq prev-rule t)
+            (when prev-rule (cl-incf groups))
+            (setq prev-rule nil)
+            (when (= groups 1) (push shape header-rows))))
+        (unless (> groups 1) (setq header-rows nil))
+        (let ((table-pos (and file offset
+                              (+ offset
+                                 (org-element-property :post-affiliated el)))))
+          (eabp-table
+           (mapcar (lambda (shape)
+                     (if (eq shape 'rule)
+                         (eabp-table-rule)
+                       (eabp-table-row
+                        (mapcar #'glasspane-org-rich--table-cell shape)
+                        :header (and (memq shape header-rows) t))))
+                   shapes)
+           :aligns (glasspane-org-rich--table-aligns
+                    (nreverse cookie-rows) data-rows ncols)
+           :on-add-row (when table-pos
+                         (eabp-action "org.table.add-row"
+                                      :args `((file . ,file)
+                                              (pos . ,table-pos))))
+           :on-add-col (when table-pos
+                         (eabp-action "org.table.add-col"
+                                      :args `((file . ,file)
+                                              (pos . ,table-pos))))))))))
+
 (defun glasspane-org-rich--paragraph-image (el)
   "If paragraph EL is just a single image link, return an `eabp-image' node."
   (let* ((contents (org-element-contents el))
@@ -9185,7 +9356,11 @@ toggles the checkbox via Emacs without entering edit mode."
                                     (org-element-contents el)))))
        (when inner (apply #'eabp-column inner))))
     ('table
-     (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org"))
+     ;; table.el tables keep the monospace fallback; org tables go native.
+     (if (eq (org-element-property :type el) 'table.el)
+         (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org")
+       (or (glasspane-org-rich--table el)
+           (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org"))))
     ('horizontal-rule (eabp-divider))
     ;; Structural noise the reader handles elsewhere (properties drawer) or
     ;; that carries no display value on its own.
@@ -11622,6 +11797,104 @@ with the new states.  Returns non-nil when persisting succeeded."
             (save-buffer)))
         (glasspane-org-cache-invalidate)
         (eabp-shell-push nil :switch-to "edit")))))
+
+;; ─── Table actions ───────────────────────────────────────────────────────────
+;; The rich renderer emits native `table' nodes whose cells and "+"
+;; affordances carry these actions with real-file positions baked in.
+
+(defun glasspane-ui--table-mutate (file pos fn)
+  "Run FN with point at POS inside FILE's table, then align, save, repush.
+FN performs one table mutation.  Afterwards the table is realigned,
+recalculated when a #+TBLFM line follows it (formulas live Emacs-side —
+the phone never computes), saved, and every view repushed."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer
+     (goto-char pos)
+     (unless (org-at-table-p) (error "No table at position %s" pos))
+     (funcall fn)
+     (org-table-align)
+     (when (save-excursion
+             (goto-char (org-table-end))
+             (looking-at-p "[ \t]*#\\+TBLFM:"))
+       (org-table-recalculate t)))
+    (let ((glasspane-org--inhibit-save-refresh t)
+          (save-silently t))
+      (save-buffer)))
+  (glasspane-org-cache-invalidate)
+  (eabp-shell-push))
+
+(eabp-defaction "org.table.edit"
+  ;; Tap a table cell in the reader: a native dialog (bridged
+  ;; `read-string') prefilled with the current field, written back
+  ;; through the org table machinery so formulas recalculate.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (let (current)
+              (with-current-buffer (find-file-noselect file)
+                (org-with-wide-buffer
+                 (goto-char pos)
+                 (unless (org-at-table-p) (error "No table cell here"))
+                 (setq current (string-trim (org-table-get-field)))))
+              (let* ((input (read-string "Cell: " current))
+                     ;; A field is one line between pipes — keep it that way.
+                     (new (string-replace
+                           "|" "\\vert{}"
+                           (string-replace "\n" " " input))))
+                (glasspane-ui--table-mutate file pos
+                  (lambda () (org-table-get-field nil new)))))
+          (error
+           (eabp-shell-notify
+            (format "Edit failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+(eabp-defaction "org.table.add-row"
+  ;; The "+" strip under the table: append an empty row at the bottom,
+  ;; then tap-to-edit fills it in.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (glasspane-ui--table-mutate file pos
+              (lambda ()
+                (goto-char (org-table-end))
+                (forward-line -1)       ; last table line
+                (org-table-insert-row t)))
+          (error
+           (eabp-shell-notify
+            (format "Add row failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+(eabp-defaction "org.table.add-col"
+  ;; The "+" gutter at the right edge: append an empty column.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (glasspane-ui--table-mutate file pos
+              (lambda ()
+                ;; Force-create a field one past the last column on the
+                ;; first data line (pipe count is authoritative — \vert
+                ;; never appears raw); the helper's realign squares every
+                ;; other row off to match.  `org-table-insert-column'
+                ;; inserts to the LEFT of point's column, so it can't
+                ;; append at the right edge directly.
+                (goto-char (org-table-begin))
+                (while (and (org-at-table-hline-p)
+                            (< (point) (org-table-end)))
+                  (forward-line 1))
+                (let ((ncols (1- (cl-count ?| (buffer-substring-no-properties
+                                               (line-beginning-position)
+                                               (line-end-position))))))
+                  (org-table-goto-column (1+ (max 1 ncols)) nil 'force))))
+          (error
+           (eabp-shell-notify
+            (format "Add column failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
 
 (eabp-defaction "file.view"
   ;; Legacy (old cached UIs): now routes into the eabp-files editor.

@@ -299,6 +299,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         "reorderable_list" -> {
             ReorderableList(node = node, dispatch = dispatch, modifier = baseModifier)
         }
+        "table" -> SduiTable(node, baseModifier, dispatch)
 
         // ── Content nodes (SduiContentNodes.kt) ─────────────────────────
         "text" -> SduiText(node, baseModifier)

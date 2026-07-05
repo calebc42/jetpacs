@@ -241,7 +241,15 @@ constructor, kept honest by the ERT suite. Summary by family:
   output; an update that leaves the index unchanged never disturbs the
   user's scroll position), `box` (weight / alignment / tap), `surface`
   (tonal container), `card`, `spacer`, `collapsible` (folds on-device),
-  `reorderable_list` (drag to reorder, reports via `on_reorder`).
+  `reorderable_list` (drag to reorder, reports via `on_reorder`),
+  `table` (org-table grid: `rows` of span-bearing `cells`, plus `rule`
+  rows for hlines and `header` rows rendered emphasized; per-column
+  `aligns` of `start`/`center`/`end`; columns size to their widest cell
+  and a wide grid pans horizontally on-device. Cells may carry
+  `on_tap`/`on_long_tap`; `on_add_row`/`on_add_col` on the node make
+  the client draw slim "+" append affordances below the last row /
+  after the last column. All embedded actions dispatch verbatim — the
+  server bakes file/position into the args, the client adds nothing).
 - **Input**: `button`, `icon_button`, `chip`, `assist_chip`, `menu`,
   `checkbox`, `switch`, `text_input` (optional `password` masks entry and
   requests a password keyboard; such values must not be logged or

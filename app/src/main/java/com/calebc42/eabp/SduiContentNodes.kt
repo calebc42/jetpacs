@@ -45,6 +45,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -108,68 +109,81 @@ internal fun SduiText(node: JSONObject, modifier: Modifier) {
 @Composable
 internal fun SduiRichText(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Unit) {
     val style = textStyleForName(node.optString("style", "body"))
-    val spans = node.optJSONArray("spans")
-    val linkColor = MaterialTheme.colorScheme.primary
-    val tagColor = MaterialTheme.colorScheme.tertiary
-    // Built per-composition (bodies are small): the click lambdas close
-    // over `dispatch`, so memoizing risks a stale dispatcher.
-    val annotated = buildAnnotatedString {
-        if (spans != null) {
-            for (i in 0 until spans.length()) {
-                val s = spans.optJSONObject(i) ?: continue
-                val text = s.optString("text")
-                if (text.isEmpty()) continue
+    val annotated = buildSpanString(
+        node.optJSONArray("spans"),
+        MaterialTheme.colorScheme.primary,
+        MaterialTheme.colorScheme.tertiary,
+        dispatch
+    )
+    Text(text = annotated, style = style, modifier = modifier)
+}
 
-                val decorations = buildList {
-                    if (s.optBoolean("underline")) add(TextDecoration.Underline)
-                    if (s.optBoolean("strike")) add(TextDecoration.LineThrough)
-                }
-                val isTag = s.optBoolean("tag")
-                val colorHex = s.optString("color")
-                val explicitColor = if (colorHex.isNotEmpty()) parseHexColor(colorHex) else Color.Unspecified
-                val bgHex = s.optString("bg")
-                val bgColor = if (bgHex.isNotEmpty()) parseHexColor(bgHex) else Color.Unspecified
-                val baseline = s.optString("baseline")
-                val span = SpanStyle(
-                    fontWeight = if (s.optBoolean("bold") || isTag) FontWeight.Bold else null,
-                    fontStyle = if (s.optBoolean("italic")) FontStyle.Italic else null,
-                    // `code` carries inline-code semantics; `mono` is a plain
-                    // monospace run (generic buffer renderer) — both just set
-                    // the font family here.
-                    fontFamily = if (s.optBoolean("code") || s.optBoolean("mono")) FontFamily.Monospace else null,
-                    textDecoration = if (decorations.isNotEmpty()) TextDecoration.combine(decorations) else null,
-                    baselineShift = when (baseline) {
-                        "super" -> BaselineShift.Superscript
-                        "sub" -> BaselineShift.Subscript
-                        else -> null
-                    },
-                    fontSize = if (baseline.isNotEmpty()) 0.8.em else TextUnit.Unspecified,
-                    // `bg` carries a face background (diff shading, hl-line,
-                    // region, isearch) so semantic backgrounds survive.
-                    background = bgColor,
-                    color = when {
-                        explicitColor != Color.Unspecified -> explicitColor
-                        isTag -> tagColor
-                        else -> Color.Unspecified
-                    }
-                )
+/**
+ * Build an [AnnotatedString] from a `spans` array — the shared span
+ * vocabulary of `rich_text` and `table` cells. Build per-composition
+ * (bodies are small): the click lambdas close over [dispatch], so
+ * memoizing risks a stale dispatcher.
+ */
+internal fun buildSpanString(
+    spans: JSONArray?,
+    linkColor: Color,
+    tagColor: Color,
+    dispatch: (JSONObject) -> Unit,
+): AnnotatedString = buildAnnotatedString {
+    if (spans != null) {
+        for (i in 0 until spans.length()) {
+            val s = spans.optJSONObject(i) ?: continue
+            val text = s.optString("text")
+            if (text.isEmpty()) continue
 
-                val onTap = s.optJSONObject("on_tap")
-                if (onTap != null) {
-                    val linkSpan = if (span.color == Color.Unspecified) span.copy(color = linkColor) else span
-                    withLink(
-                        LinkAnnotation.Clickable(
-                            tag = "span$i",
-                            styles = TextLinkStyles(style = linkSpan)
-                        ) { dispatch(onTap) }
-                    ) { append(text) }
-                } else {
-                    withStyle(span) { append(text) }
+            val decorations = buildList {
+                if (s.optBoolean("underline")) add(TextDecoration.Underline)
+                if (s.optBoolean("strike")) add(TextDecoration.LineThrough)
+            }
+            val isTag = s.optBoolean("tag")
+            val colorHex = s.optString("color")
+            val explicitColor = if (colorHex.isNotEmpty()) parseHexColor(colorHex) else Color.Unspecified
+            val bgHex = s.optString("bg")
+            val bgColor = if (bgHex.isNotEmpty()) parseHexColor(bgHex) else Color.Unspecified
+            val baseline = s.optString("baseline")
+            val span = SpanStyle(
+                fontWeight = if (s.optBoolean("bold") || isTag) FontWeight.Bold else null,
+                fontStyle = if (s.optBoolean("italic")) FontStyle.Italic else null,
+                // `code` carries inline-code semantics; `mono` is a plain
+                // monospace run (generic buffer renderer) — both just set
+                // the font family here.
+                fontFamily = if (s.optBoolean("code") || s.optBoolean("mono")) FontFamily.Monospace else null,
+                textDecoration = if (decorations.isNotEmpty()) TextDecoration.combine(decorations) else null,
+                baselineShift = when (baseline) {
+                    "super" -> BaselineShift.Superscript
+                    "sub" -> BaselineShift.Subscript
+                    else -> null
+                },
+                fontSize = if (baseline.isNotEmpty()) 0.8.em else TextUnit.Unspecified,
+                // `bg` carries a face background (diff shading, hl-line,
+                // region, isearch) so semantic backgrounds survive.
+                background = bgColor,
+                color = when {
+                    explicitColor != Color.Unspecified -> explicitColor
+                    isTag -> tagColor
+                    else -> Color.Unspecified
                 }
+            )
+
+            val onTap = s.optJSONObject("on_tap")
+            if (onTap != null) {
+                val linkSpan = if (span.color == Color.Unspecified) span.copy(color = linkColor) else span
+                withLink(
+                    LinkAnnotation.Clickable(
+                        tag = "span$i",
+                        styles = TextLinkStyles(style = linkSpan)
+                    ) { dispatch(onTap) }
+                ) { append(text) }
+            } else {
+                withStyle(span) { append(text) }
             }
         }
     }
-    Text(text = annotated, style = style, modifier = modifier)
 }
 
 @Composable

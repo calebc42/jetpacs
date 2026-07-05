@@ -237,6 +237,13 @@ Search from a subdirectory rather than the root to keep scans quick."
   "Latest content search, or nil.
 A plist (:query Q :dir D :hits ((FILE LINE TEXT) ...) :truncated BOOL).")
 
+(defvar eabp-files-view-region-function
+  (lambda (name &rest _) (message "EABP: no host to view %s" name))
+  "Function of (BUFFER-NAME BEG END LABEL &optional POINT) showing a
+buffer slice with POINT's line as the scroll target.  Set by
+eabp-emacs-ui (its buffer view); kept as a seam so this module never
+depends on the buffer-view host.")
+
 (defun eabp-files--grep-scan (dir query)
   "Search QUERY (a literal, case-insensitive) under DIR.
 Returns the plist stored in `eabp-files--grep'; one hit per line."
@@ -256,6 +263,11 @@ Returns the plist stored in `eabp-files--grep'; one hit per line."
           (setq truncated t)
           (throw 'done nil))
         (when (and (file-readable-p file)
+                   ;; Backups and auto-saves are stale copies: they double
+                   ;; every hit, and centralized backups carry the full
+                   ;; path slash-encoded as "!" in their names.
+                   (not (backup-file-name-p file))
+                   (not (auto-save-file-name-p (file-name-nondirectory file)))
                    (let ((size (file-attribute-size (file-attributes file))))
                      (and size (<= size eabp-files-grep-max-file-bytes))))
           (with-temp-buffer
@@ -298,19 +310,36 @@ Returns the plist stored in `eabp-files--grep'; one hit per line."
                                    ""))
                          'caption)
               (mapcar (lambda (hit)
-                        (pcase-let ((`(,file ,line ,text) hit))
+                        (pcase-let* ((`(,file ,line ,text) hit)
+                                     (rel (file-relative-name file dir))
+                                     (subdir (file-name-directory rel)))
                           (eabp-card
                            (list (eabp-column
                                   (eabp-row
-                                   (eabp-box (list (eabp-text
-                                                    (file-relative-name file dir)
-                                                    'label))
-                                             :weight 1)
-                                   (eabp-text (format "L%d" line) 'caption))
+                                   (eabp-box
+                                    (list (apply #'eabp-column
+                                                 (delq nil
+                                                       (list
+                                                        (eabp-text (file-name-nondirectory file)
+                                                                   'label)
+                                                        (when subdir
+                                                          (eabp-text subdir 'caption
+                                                                     nil nil nil 1))))))
+                                    :weight 1)
+                                   (eabp-text (format "L%d" line) 'caption)
+                                   (eabp-icon-button
+                                    "edit"
+                                    (eabp-action "files.open"
+                                                 :args `((file . ,file)))
+                                    :content-description "Open in editor"))
                                   (eabp-rich-text
                                    (list (eabp-span (string-trim text) :mono t)))))
-                           :on-tap (eabp-action "files.open"
-                                                :args `((file . ,file))))))
+                           ;; Tap = read the hit in context (scrolled to the
+                           ;; line); the pencil opens the editor.
+                           :on-tap (eabp-action "files.grep-visit"
+                                                :args `((file . ,file)
+                                                        (line . ,line))
+                                                :when-offline "drop"))))
                       hits))))))
 
 (defun eabp-files--grep-results-card ()
@@ -483,6 +512,33 @@ otherwise the plain-text editor."
   (lambda (_ __)
     (setq eabp-files--grep nil)
     (eabp-shell-push nil :switch-to "files")))
+
+(eabp-defaction "files.grep-visit"
+  ;; Show a hit in context: the file's buffer in the buffer view,
+  ;; narrowed around the line with the hit marked as the scroll target.
+  ;; Region render dodges the buffer view's from-the-top line cap, so
+  ;; hits deep in big files are reachable.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (line (alist-get 'line args)))
+      (when (and (stringp file) (numberp line)
+                 (eabp-files--within-root-p file)
+                 (file-readable-p file))
+        (condition-case err
+            (let ((buf (find-file-noselect file)))
+              (with-current-buffer buf
+                (save-excursion
+                  (goto-char (point-min))
+                  (forward-line (1- (max 1 (truncate line))))
+                  (let ((target (point))
+                        (beg (save-excursion (forward-line -30) (point)))
+                        (end (save-excursion (forward-line 170) (point))))
+                    (funcall eabp-files-view-region-function
+                             (buffer-name buf) beg end
+                             (format "%s:%d" (file-name-nondirectory file)
+                                     (truncate line))
+                             target)))))
+          (error (eabp-shell-notify (error-message-string err))))))))
 
 (eabp-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a

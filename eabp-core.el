@@ -570,6 +570,15 @@ surface to full width (e.g. zebra rows in a list)."
   "A scrollable column of CHILDREN."
   (eabp--node "lazy_column" 'children (vconcat children)))
 
+(defun eabp-scroll-here (node)
+  "Mark NODE as the scroll target of its enclosing `eabp-lazy-column'.
+The client scrolls the list to this child on first show and whenever
+the child's index changes (e.g. new transcript output shifting a REPL's
+input row down); a re-push that leaves the index unchanged never
+disturbs the user's scroll position.  One target per lazy column — the
+first flagged child wins."
+  (append node '((scroll_here . t))))
+
 (cl-defun eabp-spacer (&key height width weight)
   "A spacer of HEIGHT and WIDTH (in dp), or WEIGHT (for flex)."
   (eabp--node "spacer" 'height height 'width width 'weight weight))
@@ -2514,12 +2523,14 @@ except on point's own line, which shows its absolute number undimmed
                :mono t
                :color (unless current eabp-buffer--line-number-color))))
 
-(defun eabp-buffer--render-region (beg end buffer-name)
+(defun eabp-buffer--render-region (beg end buffer-name &optional mark-pos)
   "Return a list of `rich_text' nodes for [BEG, END) of the current buffer.
 One node per line; blank lines keep their vertical space.  Capped at
 `eabp-buffer-max-lines'.  When `eabp-line-numbers' is enabled each line
 is prefixed with a dim gutter span carrying its (absolute or relative)
-number — real buffer lines, so folded regions skip numbers faithfully."
+number — real buffer lines, so folded regions skip numbers faithfully.
+MARK-POS, when non-nil, flags the line containing that position as the
+enclosing lazy column's scroll target (see `eabp-scroll-here')."
   (let* ((eabp-buffer--default-fg-hex
           (eabp-buffer--color-hex (face-attribute 'default :foreground nil t)))
          (eabp-buffer--default-bg-hex
@@ -2570,7 +2581,10 @@ number — real buffer lines, so folded regions skip numbers faithfully."
                 (when ln
                   (setq spans (cons (eabp-buffer--line-number-span ln pt-line num-fmt)
                                     spans)))
-                (push (eabp-rich-text spans) nodes)
+                (push (if (and mark-pos (>= mark-pos bol) (<= mark-pos eol))
+                          (eabp-scroll-here (eabp-rich-text spans))
+                        (eabp-rich-text spans))
+                      nodes)
                 (setq count (1+ count)))))))
         (when ln (setq ln (1+ ln)))
         (forward-line 1)))
@@ -2596,17 +2610,18 @@ Truncated to `eabp-buffer-max-lines'; a caption note is appended if cut."
                            'caption)))
           nodes)))))
 
-(defun eabp-buffer-render-region (buffer beg end)
+(defun eabp-buffer-render-region (buffer beg end &optional mark-pos)
   "Render [BEG, END) of BUFFER generically into a list of SDUI nodes.
 The public region variant of `eabp-buffer-render', for callers showing
 a slice instead of the whole buffer (an imenu section, a hit context).
-BEG and END are clamped to the buffer; the line cap still applies."
+BEG and END are clamped to the buffer; the line cap still applies.
+MARK-POS, when non-nil, flags its line as the scroll target."
   (let ((buf (get-buffer buffer)))
     (unless buf (error "No such buffer: %s" buffer))
     (with-current-buffer buf
       (let* ((beg (max (point-min) (min (or beg (point-min)) (point-max))))
              (end (max beg (min (or end (point-max)) (point-max)))))
-        (eabp-buffer--render-region beg end (buffer-name buf))))))
+        (eabp-buffer--render-region beg end (buffer-name buf) mark-pos)))))
 
 (defun eabp-buffer-render-tail (buffer lines)
   "Render the last LINES lines of BUFFER into a list of SDUI nodes.
@@ -3433,12 +3448,16 @@ transcript refreshes don't, so the seed guard keeps half-typed input.")
                                      :content-description "Interrupt (C-c C-c)"))))
        (eabp-buffer-render-tail buf eabp-comint-tail-lines)
        (when live
-         (list (eabp-text-input
-                (format "comint/%s/%d" name (gethash name eabp-comint--gen 0))
-                :hint "Input — Enter sends"
-                :single-line t :monospace t
-                :on-submit (eabp-action "comint.send"
-                                        :args `((buffer . ,name))))))))))
+         ;; The input row is the scroll target: it sits at the bottom, and
+         ;; every output line shifts its index, so the view follows the
+         ;; transcript — the terminal "tail -f" feel.
+         (list (eabp-scroll-here
+                (eabp-text-input
+                 (format "comint/%s/%d" name (gethash name eabp-comint--gen 0))
+                 :hint "Input — Enter sends"
+                 :single-line t :monospace t
+                 :on-submit (eabp-action "comint.send"
+                                         :args `((buffer . ,name)))))))))))
 
 (eabp-render-buffer-register 'comint-mode #'eabp-comint-render)
 
@@ -6122,6 +6141,13 @@ Search from a subdirectory rather than the root to keep scans quick."
   "Latest content search, or nil.
 A plist (:query Q :dir D :hits ((FILE LINE TEXT) ...) :truncated BOOL).")
 
+(defvar eabp-files-view-region-function
+  (lambda (name &rest _) (message "EABP: no host to view %s" name))
+  "Function of (BUFFER-NAME BEG END LABEL &optional POINT) showing a
+buffer slice with POINT's line as the scroll target.  Set by
+eabp-emacs-ui (its buffer view); kept as a seam so this module never
+depends on the buffer-view host.")
+
 (defun eabp-files--grep-scan (dir query)
   "Search QUERY (a literal, case-insensitive) under DIR.
 Returns the plist stored in `eabp-files--grep'; one hit per line."
@@ -6141,6 +6167,11 @@ Returns the plist stored in `eabp-files--grep'; one hit per line."
           (setq truncated t)
           (throw 'done nil))
         (when (and (file-readable-p file)
+                   ;; Backups and auto-saves are stale copies: they double
+                   ;; every hit, and centralized backups carry the full
+                   ;; path slash-encoded as "!" in their names.
+                   (not (backup-file-name-p file))
+                   (not (auto-save-file-name-p (file-name-nondirectory file)))
                    (let ((size (file-attribute-size (file-attributes file))))
                      (and size (<= size eabp-files-grep-max-file-bytes))))
           (with-temp-buffer
@@ -6183,19 +6214,36 @@ Returns the plist stored in `eabp-files--grep'; one hit per line."
                                    ""))
                          'caption)
               (mapcar (lambda (hit)
-                        (pcase-let ((`(,file ,line ,text) hit))
+                        (pcase-let* ((`(,file ,line ,text) hit)
+                                     (rel (file-relative-name file dir))
+                                     (subdir (file-name-directory rel)))
                           (eabp-card
                            (list (eabp-column
                                   (eabp-row
-                                   (eabp-box (list (eabp-text
-                                                    (file-relative-name file dir)
-                                                    'label))
-                                             :weight 1)
-                                   (eabp-text (format "L%d" line) 'caption))
+                                   (eabp-box
+                                    (list (apply #'eabp-column
+                                                 (delq nil
+                                                       (list
+                                                        (eabp-text (file-name-nondirectory file)
+                                                                   'label)
+                                                        (when subdir
+                                                          (eabp-text subdir 'caption
+                                                                     nil nil nil 1))))))
+                                    :weight 1)
+                                   (eabp-text (format "L%d" line) 'caption)
+                                   (eabp-icon-button
+                                    "edit"
+                                    (eabp-action "files.open"
+                                                 :args `((file . ,file)))
+                                    :content-description "Open in editor"))
                                   (eabp-rich-text
                                    (list (eabp-span (string-trim text) :mono t)))))
-                           :on-tap (eabp-action "files.open"
-                                                :args `((file . ,file))))))
+                           ;; Tap = read the hit in context (scrolled to the
+                           ;; line); the pencil opens the editor.
+                           :on-tap (eabp-action "files.grep-visit"
+                                                :args `((file . ,file)
+                                                        (line . ,line))
+                                                :when-offline "drop"))))
                       hits))))))
 
 (defun eabp-files--grep-results-card ()
@@ -6368,6 +6416,33 @@ otherwise the plain-text editor."
   (lambda (_ __)
     (setq eabp-files--grep nil)
     (eabp-shell-push nil :switch-to "files")))
+
+(eabp-defaction "files.grep-visit"
+  ;; Show a hit in context: the file's buffer in the buffer view,
+  ;; narrowed around the line with the hit marked as the scroll target.
+  ;; Region render dodges the buffer view's from-the-top line cap, so
+  ;; hits deep in big files are reachable.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (line (alist-get 'line args)))
+      (when (and (stringp file) (numberp line)
+                 (eabp-files--within-root-p file)
+                 (file-readable-p file))
+        (condition-case err
+            (let ((buf (find-file-noselect file)))
+              (with-current-buffer buf
+                (save-excursion
+                  (goto-char (point-min))
+                  (forward-line (1- (max 1 (truncate line))))
+                  (let ((target (point))
+                        (beg (save-excursion (forward-line -30) (point)))
+                        (end (save-excursion (forward-line 170) (point))))
+                    (funcall eabp-files-view-region-function
+                             (buffer-name buf) beg end
+                             (format "%s:%d" (file-name-nondirectory file)
+                                     (truncate line))
+                             target)))))
+          (error (eabp-shell-notify (error-message-string err))))))))
 
 (eabp-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a
@@ -6783,10 +6858,28 @@ this is the validation the command-dispatch boundary requires."
   "Name of the buffer currently being viewed, or nil for the buffer list.")
 
 (defvar eabp-emacs-ui--section nil
-  "Active imenu section narrowing for the buffer view, or nil.
-A plist (:buffer NAME :beg POS :end POS :label STRING); while set for
-the viewed buffer, the view renders just that slice.  Set by
-`imenu.show', cleared by `imenu.clear' or leaving the buffer.")
+  "Active section narrowing for the buffer view, or nil.
+A plist (:buffer NAME :beg POS :end POS :label STRING :point POS);
+while set for the viewed buffer, the view renders just that slice,
+with :point (when non-nil) marked as the scroll target.  Set by
+`imenu.show' or `eabp-emacs-ui-view-region', cleared by `imenu.clear'
+or leaving the buffer.")
+
+(defun eabp-emacs-ui-view-region (buffer-name beg end label &optional point)
+  "Open the buffer view on BUFFER-NAME narrowed to [BEG, END).
+LABEL heads the slice; POINT, when non-nil, marks the scroll-target
+line.  The navigation entry other modules use to show \"this spot in
+that buffer\" — grep hits, and any future jump affordance."
+  (setq eabp-emacs-ui--viewing-buffer buffer-name
+        eabp-emacs-ui--section (list :buffer buffer-name :beg beg :end end
+                                     :label label :point point))
+  (eabp-shell-push nil :switch-to "buffers"))
+
+;; eabp-files stays independent of this module (it loads first); its
+;; grep hits navigate here through the seam.
+(defvar eabp-files-view-region-function)
+(with-eval-after-load 'eabp-files
+  (setq eabp-files-view-region-function #'eabp-emacs-ui-view-region))
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and
 ;; list buffers this way) is this module's buffer view.
@@ -6865,7 +6958,8 @@ that slice renders, under a dismissible header."
                                       :content-description "Show whole buffer"))
                    (eabp-buffer-render-region buf
                                               (plist-get section :beg)
-                                              (plist-get section :end)))))
+                                              (plist-get section :end)
+                                              (plist-get section :point)))))
      (t (apply #'eabp-lazy-column (eabp-render-buffer buf))))))
 
 ;; ─── imenu sections ──────────────────────────────────────────────────────────

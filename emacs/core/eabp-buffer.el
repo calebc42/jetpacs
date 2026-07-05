@@ -416,12 +416,14 @@ except on point's own line, which shows its absolute number undimmed
                :mono t
                :color (unless current eabp-buffer--line-number-color))))
 
-(defun eabp-buffer--render-region (beg end buffer-name)
+(defun eabp-buffer--render-region (beg end buffer-name &optional mark-pos)
   "Return a list of `rich_text' nodes for [BEG, END) of the current buffer.
 One node per line; blank lines keep their vertical space.  Capped at
 `eabp-buffer-max-lines'.  When `eabp-line-numbers' is enabled each line
 is prefixed with a dim gutter span carrying its (absolute or relative)
-number — real buffer lines, so folded regions skip numbers faithfully."
+number — real buffer lines, so folded regions skip numbers faithfully.
+MARK-POS, when non-nil, flags the line containing that position as the
+enclosing lazy column's scroll target (see `eabp-scroll-here')."
   (let* ((eabp-buffer--default-fg-hex
           (eabp-buffer--color-hex (face-attribute 'default :foreground nil t)))
          (eabp-buffer--default-bg-hex
@@ -472,7 +474,10 @@ number — real buffer lines, so folded regions skip numbers faithfully."
                 (when ln
                   (setq spans (cons (eabp-buffer--line-number-span ln pt-line num-fmt)
                                     spans)))
-                (push (eabp-rich-text spans) nodes)
+                (push (if (and mark-pos (>= mark-pos bol) (<= mark-pos eol))
+                          (eabp-scroll-here (eabp-rich-text spans))
+                        (eabp-rich-text spans))
+                      nodes)
                 (setq count (1+ count)))))))
         (when ln (setq ln (1+ ln)))
         (forward-line 1)))
@@ -498,17 +503,18 @@ Truncated to `eabp-buffer-max-lines'; a caption note is appended if cut."
                            'caption)))
           nodes)))))
 
-(defun eabp-buffer-render-region (buffer beg end)
+(defun eabp-buffer-render-region (buffer beg end &optional mark-pos)
   "Render [BEG, END) of BUFFER generically into a list of SDUI nodes.
 The public region variant of `eabp-buffer-render', for callers showing
 a slice instead of the whole buffer (an imenu section, a hit context).
-BEG and END are clamped to the buffer; the line cap still applies."
+BEG and END are clamped to the buffer; the line cap still applies.
+MARK-POS, when non-nil, flags its line as the scroll target."
   (let ((buf (get-buffer buffer)))
     (unless buf (error "No such buffer: %s" buffer))
     (with-current-buffer buf
       (let* ((beg (max (point-min) (min (or beg (point-min)) (point-max))))
              (end (max beg (min (or end (point-max)) (point-max)))))
-        (eabp-buffer--render-region beg end (buffer-name buf))))))
+        (eabp-buffer--render-region beg end (buffer-name buf) mark-pos)))))
 
 (defun eabp-buffer-render-tail (buffer lines)
   "Render the last LINES lines of BUFFER into a list of SDUI nodes.

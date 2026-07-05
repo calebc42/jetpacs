@@ -72,12 +72,16 @@ transcript refreshes don't, so the seed guard keeps half-typed input.")
                                      :content-description "Interrupt (C-c C-c)"))))
        (eabp-buffer-render-tail buf eabp-comint-tail-lines)
        (when live
-         (list (eabp-text-input
-                (format "comint/%s/%d" name (gethash name eabp-comint--gen 0))
-                :hint "Input — Enter sends"
-                :single-line t :monospace t
-                :on-submit (eabp-action "comint.send"
-                                        :args `((buffer . ,name))))))))))
+         ;; The input row is the scroll target: it sits at the bottom, and
+         ;; every output line shifts its index, so the view follows the
+         ;; transcript — the terminal "tail -f" feel.
+         (list (eabp-scroll-here
+                (eabp-text-input
+                 (format "comint/%s/%d" name (gethash name eabp-comint--gen 0))
+                 :hint "Input — Enter sends"
+                 :single-line t :monospace t
+                 :on-submit (eabp-action "comint.send"
+                                         :args `((buffer . ,name)))))))))))
 
 (eabp-render-buffer-register 'comint-mode #'eabp-comint-render)
 

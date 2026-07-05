@@ -27,10 +27,28 @@
   "Name of the buffer currently being viewed, or nil for the buffer list.")
 
 (defvar eabp-emacs-ui--section nil
-  "Active imenu section narrowing for the buffer view, or nil.
-A plist (:buffer NAME :beg POS :end POS :label STRING); while set for
-the viewed buffer, the view renders just that slice.  Set by
-`imenu.show', cleared by `imenu.clear' or leaving the buffer.")
+  "Active section narrowing for the buffer view, or nil.
+A plist (:buffer NAME :beg POS :end POS :label STRING :point POS);
+while set for the viewed buffer, the view renders just that slice,
+with :point (when non-nil) marked as the scroll target.  Set by
+`imenu.show' or `eabp-emacs-ui-view-region', cleared by `imenu.clear'
+or leaving the buffer.")
+
+(defun eabp-emacs-ui-view-region (buffer-name beg end label &optional point)
+  "Open the buffer view on BUFFER-NAME narrowed to [BEG, END).
+LABEL heads the slice; POINT, when non-nil, marks the scroll-target
+line.  The navigation entry other modules use to show \"this spot in
+that buffer\" — grep hits, and any future jump affordance."
+  (setq eabp-emacs-ui--viewing-buffer buffer-name
+        eabp-emacs-ui--section (list :buffer buffer-name :beg beg :end end
+                                     :label label :point point))
+  (eabp-shell-push nil :switch-to "buffers"))
+
+;; eabp-files stays independent of this module (it loads first); its
+;; grep hits navigate here through the seam.
+(defvar eabp-files-view-region-function)
+(with-eval-after-load 'eabp-files
+  (setq eabp-files-view-region-function #'eabp-emacs-ui-view-region))
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and
 ;; list buffers this way) is this module's buffer view.
@@ -109,7 +127,8 @@ that slice renders, under a dismissible header."
                                       :content-description "Show whole buffer"))
                    (eabp-buffer-render-region buf
                                               (plist-get section :beg)
-                                              (plist-get section :end)))))
+                                              (plist-get section :end)
+                                              (plist-get section :point)))))
      (t (apply #'eabp-lazy-column (eabp-render-buffer buf))))))
 
 ;; ─── imenu sections ──────────────────────────────────────────────────────────

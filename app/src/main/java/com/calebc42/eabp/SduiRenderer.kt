@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -240,7 +242,26 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         "lazy_column" -> {
             val children = node.optJSONArray("children")
             if (children != null) {
-                LazyColumn(modifier = baseModifier.fillMaxSize()) {
+                // scroll_here: the server marks one child as the scroll
+                // target (a REPL's input row, a search hit's line). The
+                // list scrolls there on first show and whenever the
+                // target's index changes (new transcript output shifting
+                // the input row down); a re-push that leaves the index
+                // unchanged never disturbs the user's scroll position.
+                var scrollTarget = -1
+                for (i in 0 until children.length()) {
+                    if (children.optJSONObject(i)?.optBoolean("scroll_here") == true) {
+                        scrollTarget = i
+                        break
+                    }
+                }
+                val listState = rememberLazyListState()
+                if (scrollTarget >= 0) {
+                    LaunchedEffect(scrollTarget) {
+                        listState.scrollToItem(scrollTarget)
+                    }
+                }
+                LazyColumn(state = listState, modifier = baseModifier.fillMaxSize()) {
                     items(children.length()) { i ->
                         val child = children.optJSONObject(i)
                         if (child != null) SduiNode(child, surfaceId, revision, Modifier, dispatch)

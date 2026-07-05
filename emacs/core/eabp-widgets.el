@@ -123,6 +123,15 @@ surface to full width (e.g. zebra rows in a list)."
   "A scrollable column of CHILDREN."
   (eabp--node "lazy_column" 'children (vconcat children)))
 
+(defun eabp-scroll-here (node)
+  "Mark NODE as the scroll target of its enclosing `eabp-lazy-column'.
+The client scrolls the list to this child on first show and whenever
+the child's index changes (e.g. new transcript output shifting a REPL's
+input row down); a re-push that leaves the index unchanged never
+disturbs the user's scroll position.  One target per lazy column — the
+first flagged child wins."
+  (append node '((scroll_here . t))))
+
 (cl-defun eabp-spacer (&key height width weight)
   "A spacer of HEIGHT and WIDTH (in dp), or WEIGHT (for flex)."
   (eabp--node "spacer" 'height height 'width width 'weight weight))

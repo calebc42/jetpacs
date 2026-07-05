@@ -235,10 +235,13 @@ constructor, kept honest by the ERT suite. Summary by family:
   styled `spans` (emphasis, `color`/`bg` hex overrides, `mono`, tap
   links), `icon`, `image`, `date_stamp`, `divider`, `section_header`,
   `empty_state`, `progress`.
-- **Layout**: `row`, `column`, `flow_row`, `lazy_column`, `box` (weight /
-  alignment / tap), `surface` (tonal container), `card`, `spacer`,
-  `collapsible` (folds on-device), `reorderable_list` (drag to reorder,
-  reports via `on_reorder`).
+- **Layout**: `row`, `column`, `flow_row`, `lazy_column` (a child may
+  carry `scroll_here: true` — the list scrolls to it on first show and
+  whenever its index changes, e.g. a REPL input row pushed down by new
+  output; an update that leaves the index unchanged never disturbs the
+  user's scroll position), `box` (weight / alignment / tap), `surface`
+  (tonal container), `card`, `spacer`, `collapsible` (folds on-device),
+  `reorderable_list` (drag to reorder, reports via `on_reorder`).
 - **Input**: `button`, `icon_button`, `chip`, `assist_chip`, `menu`,
   `checkbox`, `switch`, `text_input` (optional `password` masks entry and
   requests a password keyboard; such values must not be logged or

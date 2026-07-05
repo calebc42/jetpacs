@@ -395,9 +395,26 @@ triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
   that does not implement it ignores it (the `trigger.fired` event
   still queues and delivers).
 
-**Trigger-type catalog:** populated as types ship — none yet; this
-section currently specifies the frame contract only. Each shipped type
-documents its `params` and its `data` shape in a table here.
+### Trigger-type catalog
+
+An empty or absent `params` field means "match every event of the
+type". Registering an unknown type is refused (the whole set is
+rejected with an error, so the client never half-arms).
+
+| type | params | data | notes |
+|---|---|---|---|
+| `time` | `{at_ms}` one-shot, or `{every_s}` repeating | `{}` | exact alarms (inexact when the exact-alarm permission is revoked); `every_s` clamps to ≥ 60 and re-arms after each fire; survives reboots |
+| `power` | `{state?}` — `connected` \| `disconnected` | `{state, plug?}` | `plug` = `ac` \| `usb` \| `wireless` on connect |
+| `battery.level` | `{above: pct}` or `{below: pct}` | `{level}` | host-side hysteresis: fires only when the level **crosses into** the configured side, never per raw reading |
+| `screen` | `{state?}` — `on` \| `off` \| `unlocked` | `{state}` | `unlocked` = ACTION_USER_PRESENT |
+| `headset` | `{state?}` — `plugged` \| `unplugged` | `{state, name?}` | wired audio (ACTION_HEADSET_PLUG); Bluetooth devices are the connectivity batch |
+| `airplane` | `{state?}` — `on` \| `off` | `{state}` | |
+| `boot` | — | `{}` | fires once per boot from the boot receiver; typically `policy: "queue"` or `"wake"` |
+| `timezone.changed` | — | `{tz}` | the new zone id |
+| `package` | `{event?, package?}` — `added` \| `removed` | `{event, package}` | update-replacing broadcasts are filtered out |
+
+Connectivity types (`network`, `wifi.ssid`, `bluetooth.device`) are the
+next batch; each will document its runtime-permission behavior here.
 
 ## 12. Conformance
 

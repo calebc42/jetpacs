@@ -25,6 +25,10 @@ object EabpRuntime {
         set(value) { _surfaceManager.value = value }
 
     var database: EabpDatabase? = null
+
+    /** The device-trigger host (SPEC §11), alive with [BridgeService]. */
+    var triggerHost: TriggerHost? = null
+
     val dialogState = EabpDialogState()
     val pieMenuState = EabpPieMenuState()
     val completionState = EabpCompletionState()

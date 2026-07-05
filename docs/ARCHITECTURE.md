@@ -90,10 +90,13 @@ needs short of its own identity: `EabpServer` / `EabpConnection` /
 / `SduiScaffold` (spec → Compose), `SyntaxHighlight`, `EditorSync` /
 `EabpCompletionState` / `EabpDialogState`, `NotificationRenderer`,
 `Reminders`, `DeviceCapabilities` (the `capability.invoke` effector
-dispatch + device-permission report, SPEC §10), the widget providers +
-tile slots, `RadialMenu` / `EabpPieMenuState`, `ActionReceiver`,
-`BridgeService`, `EmacsWaker` — plus their manifest entries,
-permissions, and widget resources, which merge into any host app.
+dispatch + device-permission report, SPEC §10), `TriggerHost` +
+`BootReceiver` (the persisted device-trigger table, context-registered
+listeners riding the FGS, exact `time` alarms, and reboot re-arming,
+SPEC §11), the widget providers + tile slots, `RadialMenu` /
+`EabpPieMenuState`, `ActionReceiver`, `BridgeService`, `EmacsWaker` —
+plus their manifest entries, permissions, and widget resources, which
+merge into any host app.
 
 **`app/` — the Glasspane shell**: `MainActivity` (pairing screen,
 dashboard host, share/widget trampoline), `CaptureTileService`,

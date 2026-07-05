@@ -36,13 +36,21 @@ class BridgeService : Service() {
         EabpRuntime.surfaceManager = surfaces
         EabpRuntime.server = server
 
+        // Trigger listening rides this always-on process — the FGS cost is
+        // already paid; receivers arm from the persisted table below.
+        val triggers = TriggerHost(applicationContext)
+        EabpRuntime.triggerHost = triggers
+
         startForeground(NOTIF_ID, buildNotification())
 
         // Render anything we already hold BEFORE Emacs connects — principle #1.
         surfaces.renderAllCached()
 
-        // Seed the queued-events badge (off-main: Room forbids main thread).
-        Thread { EabpRuntime.refreshQueuedCount() }.start()
+        // Off-main: Room forbids the main thread for both of these.
+        Thread {
+            EabpRuntime.refreshQueuedCount()
+            triggers.armFromDatabase()
+        }.start()
 
         server.start()
     }
@@ -54,6 +62,9 @@ class BridgeService : Service() {
     override fun onDestroy() {
         server.stop()
         EabpRuntime.server = null
+        // Receivers must not leak past the process's trigger-hosting span.
+        EabpRuntime.triggerHost?.shutdown()
+        EabpRuntime.triggerHost = null
         super.onDestroy()
     }
 

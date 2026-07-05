@@ -40,6 +40,45 @@ data class QueuedEvent(
     val queuedAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * One registered device trigger (SPEC §11), persisted so the set
+ * survives process death and reboots. Wire fields only — the client
+ * keeps its handlers; `params` and `onFire` are stored as JSON text.
+ */
+@Entity(tableName = "triggers")
+data class TriggerRow(
+    @PrimaryKey val id: String,
+    val type: String,
+    val params: String = "{}",
+    val policy: String = "queue",
+    val dedupe: String? = null,
+    val throttleS: Long? = null,
+    /** Reserved (SPEC §11 on_fire, automation plan Task 10). */
+    val onFire: String? = null,
+)
+
+@Dao
+interface TriggerDao {
+    @Query("SELECT * FROM triggers")
+    fun getAll(): List<TriggerRow>
+
+    @Query("SELECT * FROM triggers WHERE id = :id")
+    fun byId(id: String): TriggerRow?
+
+    @Query("DELETE FROM triggers")
+    fun deleteAll()
+
+    @Insert
+    fun insertAll(rows: List<TriggerRow>)
+
+    /** SPEC §11 replace-set: the new set replaces the old in one step. */
+    @Transaction
+    fun replaceAll(rows: List<TriggerRow>) {
+        deleteAll()
+        insertAll(rows)
+    }
+}
+
 @Dao
 interface EventDao {
     @Insert
@@ -68,9 +107,14 @@ interface EventDao {
     fun count(): Int
 }
 
-@Database(entities = [QueuedEvent::class], version = 2, exportSchema = false)
+@Database(
+    entities = [QueuedEvent::class, TriggerRow::class],
+    version = 3,
+    exportSchema = false,
+)
 abstract class EabpDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
+    abstract fun triggerDao(): TriggerDao
 
     companion object {
         @Volatile
@@ -85,13 +129,25 @@ abstract class EabpDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `triggers` (" +
+                        "`id` TEXT NOT NULL, `type` TEXT NOT NULL, " +
+                        "`params` TEXT NOT NULL, `policy` TEXT NOT NULL, " +
+                        "`dedupe` TEXT, `throttleS` INTEGER, `onFire` TEXT, " +
+                        "PRIMARY KEY(`id`))",
+                )
+            }
+        }
+
         fun getDatabase(context: Context): EabpDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     EabpDatabase::class.java,
                     "eabp_queue.db"
-                ).addMigrations(MIGRATION_1_2).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
                 INSTANCE = instance
                 instance
             }

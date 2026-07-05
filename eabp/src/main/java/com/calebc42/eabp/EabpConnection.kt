@@ -36,12 +36,9 @@ class EabpConnection(
 
     // What the companion can offer in v0. Anything Emacs `wants` that isn't here
     // is simply not granted — the forward-compat mechanism from the spec.
-    // `triggers` stays ungranted until the trigger host exists (automation
-    // plan Task 6): granting it would invite triggers.set frames nothing
-    // here can honor yet, and the client gates its pushes on the grant.
     private val supported = setOf(
         "surfaces.widget", "surfaces.notification", "surfaces.dialog",
-        "capabilities", "queue.replay",
+        "capabilities", "triggers", "queue.replay",
     )
 
     fun start() {
@@ -174,8 +171,20 @@ class EabpConnection(
             // The Emacs → device effector channel (SPEC §10).
             Kind.CAPABILITY_INVOKE -> handleCapabilityInvoke(frame)
 
-            // triggers.set handling lands with the trigger host (automation
-            // plan Task 6); until then `triggers` is not granted above.
+            // The device → Emacs event-source channel (SPEC §11): persist
+            // the replace-set and re-arm listeners. Already off-main (the
+            // read thread), so the Room writes are legal here.
+            Kind.TRIGGERS_SET -> {
+                val host = EabpRuntime.triggerHost
+                if (host == null) {
+                    send(error(frame.id, "spec-invalid", "trigger host not running"))
+                } else {
+                    val err = host.replaceSet(frame.payload.optJSONArray("triggers"))
+                    if (err == null) send(Frame(kind = Kind.ACK, replyTo = frame.id))
+                    else send(error(frame.id, "spec-invalid", err))
+                }
+            }
+
             else -> send(error(frame.id, "spec-invalid", "unhandled kind '${frame.kind}'"))
         }
     }

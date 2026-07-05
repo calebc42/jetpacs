@@ -23,6 +23,9 @@
     <!-- The `vibrate` effector (SPEC §10). Install-time, not runtime. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Reboot persistence (SPEC §11): rearm triggers, reschedule reminders. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- Android 11 package visibility: without these, `apps.list` returns
          nothing and TTS finds no engine. -->
     <queries>
@@ -161,6 +164,22 @@
         <receiver
             android:name="com.calebc42.eabp.ReminderReceiver"
             android:exported="false" />
+
+        <!-- Fires `time` triggers (SPEC §11); alarm PendingIntents only. -->
+        <receiver
+            android:name="com.calebc42.eabp.TriggerAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Reboot persistence: rearm triggers + reminders, restart the
+             bridge (BOOT_COMPLETED is FGS-start exempt). Protected system
+             broadcast, so exported=false still receives it. -->
+        <receiver
+            android:name="com.calebc42.eabp.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name="com.calebc42.eabp.EabpWidgetProvider"

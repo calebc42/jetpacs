@@ -18,16 +18,30 @@ import org.json.JSONArray
  * on every dashboard push (deduplicated Emacs-side); each set REPLACES
  * the previous one, so cancelled/rescheduled items never fire stale.
  *
- * Known limitation: alarms don't survive a reboot — they re-arm on the
- * next Emacs connection. A BOOT_COMPLETED receiver can close that gap
- * later if it matters.
+ * The set is persisted so [BootReceiver] can reschedule after a reboot
+ * (alarms don't survive one); the next Emacs connection replaces it
+ * again anyway.
  */
 object ReminderScheduler {
     private const val TAG = "EabpReminders"
     private const val PREFS = "eabp_reminders"
     private const val KEY_CODES = "codes"
+    private const val KEY_SET = "set"
 
     fun replaceAll(context: Context, reminders: JSONArray?) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_SET, reminders?.toString() ?: "[]").apply()
+        arm(context, reminders)
+    }
+
+    /** Re-arm the persisted set ([BootReceiver]); past items just drop. */
+    fun rescheduleAfterBoot(context: Context) {
+        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_SET, null) ?: return
+        arm(context, runCatching { JSONArray(stored) }.getOrNull())
+    }
+
+    private fun arm(context: Context, reminders: JSONArray?) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 

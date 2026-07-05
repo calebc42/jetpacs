@@ -313,7 +313,19 @@ perm map refreshed on reconnect).
 
 ## Phase A2 — the trigger host (the heart of Tasker parity)
 
-### Task 6: companion trigger table + firing pipeline
+### Task 6: companion trigger table + firing pipeline ✅ (2026-07-05)
+
+**Landed:** `triggers` Room table (schema v3) + `TriggerHost.kt`
+(replace-set persist → re-arm; one context-registered receiver per
+armed type; fire path mirrors `ActionReceiver` — live send else
+queue/drop/wake with dedupe; per-trigger `throttle_s`; battery
+edge-crossing hysteresis into the configured side only);
+`TriggerAlarmReceiver` reads the table at fire time so stale alarms
+die with the set; `BootReceiver` fires `boot` triggers, re-arms `time`
+alarms, reschedules the now-persisted reminder set (the reboot gap),
+and restarts the bridge. `EabpConnection` handles `triggers.set` and
+grants `triggers` again. On-device acceptance (screen toggle, kill
+Emacs + replay, reboot rearm) pending.
 
 **Goal:** triggers persist, survive reboots, and fire into the
 existing event queue.
@@ -347,7 +359,17 @@ against the device; toggle screen; `trigger.fired` arrives; kill
 Emacs, toggle again, reconnect ⇒ replayed. Reboot ⇒ triggers rearm
 (log-verified).
 
-### Task 7: trigger catalog, batch 1 (permission-free)
+### Task 7: trigger catalog, batch 1 (permission-free) ✅ (2026-07-05)
+
+**Landed with Task 6** (same arming mechanism): `time` ({at_ms} |
+{every_s ≥ 60, re-armed per fire}), `power` (+plug type), `battery.level`
+(above/below edges), `screen` (on/off/unlocked), `headset` (sticky
+replay guarded), `airplane`, `boot`, `timezone.changed`, `package`
+(update-replacing filtered). SPEC §11 catalog table documents every
+type's params + data. Deviation from plan: no cron-ish `{at, window}`
+grammar — `at_ms`/`every_s` covers the need until org-defined
+automations (Task 13) want richer schedules. Per-type on-device checks
+(adb broadcast injection) pending.
 
 **Goal:** the workhorse contexts.
 

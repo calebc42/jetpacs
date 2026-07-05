@@ -71,8 +71,8 @@ inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 
 | order | item | why |
 |---|---|---|
-| 1 | **AUTO 6** — trigger host, persistence, boot receiver | The heart; also fixes the live reminders-die-on-reboot gap |
-| 2 | **AUTO 7** — trigger batch 1 (time/power/battery/screen/…) | The workhorse contexts |
+| 1 ✅ | **AUTO 6** — trigger host, persistence, boot receiver | Landed 2026-07-05 (TriggerHost.kt, boot rearm, reminder reboot fix); on-device acceptance pending |
+| 2 ✅ | **AUTO 7** — trigger batch 1 (time/power/battery/screen/…) | Landed 2026-07-05 with AUTO 6 (9 types, SPEC §11 catalog); on-device checks pending |
 | 3 | **AUTO 12** ⚠ — `eabp-deftrigger` + Automations view | **Override:** pulled ahead of its plan-internal A4 slot. Without authoring UX the trigger host isn't usable day-to-day, and daily use is what the battery gate below needs to measure |
 | 4 | **AUTO 10** — companion-local `on_fire` | The Emacs-dead story for the common cases |
 | any | **AUTO 11** — wake spike (timeboxed) | Informs how much weight `on_fire` must carry; also feeds PKM 15 later |

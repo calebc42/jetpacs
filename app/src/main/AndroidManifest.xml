@@ -57,10 +57,10 @@
                 android:value="Hosts a local loopback socket bridge so GNU Emacs (a separate on-device app) can post notifications and render widgets through this app. The service must persist to accept connections and respond to notification actions." />
         </service>
 
-        <!-- Adapter behind the agenda widget's scrollable list; the system
-             binds it with BIND_REMOTEVIEWS. -->
+        <!-- Adapter behind every scrollable widget list (agenda + custom
+             slots); the system binds it with BIND_REMOTEVIEWS. -->
         <service
-            android:name=".AgendaWidgetService"
+            android:name=".EabpWidgetListService"
             android:permission="android.permission.BIND_REMOTEVIEWS"
             android:exported="false" />
 
@@ -102,6 +102,75 @@
             </intent-filter>
         </service>
 
+        <!-- Blank Elisp-composed tile slots (tile:custom1..5). ACTIVE_TILE:
+             the system refreshes them only on requestListeningState, which
+             SurfaceManager fires on each tile surface push. -->
+        <service
+            android:name=".EabpTile1"
+            android:exported="true"
+            android:icon="@drawable/ic_widget_add"
+            android:label="@string/widget_custom_label_1"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+        <service
+            android:name=".EabpTile2"
+            android:exported="true"
+            android:icon="@drawable/ic_widget_add"
+            android:label="@string/widget_custom_label_2"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+        <service
+            android:name=".EabpTile3"
+            android:exported="true"
+            android:icon="@drawable/ic_widget_add"
+            android:label="@string/widget_custom_label_3"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+        <service
+            android:name=".EabpTile4"
+            android:exported="true"
+            android:icon="@drawable/ic_widget_add"
+            android:label="@string/widget_custom_label_4"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+        <service
+            android:name=".EabpTile5"
+            android:exported="true"
+            android:icon="@drawable/ic_widget_add"
+            android:label="@string/widget_custom_label_5"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+
         <!-- Internal only: notification action PendingIntents target it directly. -->
         <receiver
             android:name=".ActionReceiver"
@@ -122,6 +191,64 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/eabp_widget_info" />
+        </receiver>
+
+        <!-- Blank Elisp-composed widget slots (Tasker-style): five identical
+             receivers, each bound to its widget:customN surface. -->
+        <receiver
+            android:name=".EabpCustomWidget1"
+            android:label="@string/widget_custom_label_1"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/eabp_custom_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".EabpCustomWidget2"
+            android:label="@string/widget_custom_label_2"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/eabp_custom_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".EabpCustomWidget3"
+            android:label="@string/widget_custom_label_3"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/eabp_custom_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".EabpCustomWidget4"
+            android:label="@string/widget_custom_label_4"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/eabp_custom_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".EabpCustomWidget5"
+            android:label="@string/widget_custom_label_5"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/eabp_custom_widget_info" />
         </receiver>
 
         <receiver

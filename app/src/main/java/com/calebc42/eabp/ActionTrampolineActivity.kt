@@ -21,12 +21,14 @@ class ActionTrampolineActivity : Activity() {
         super.onCreate(savedInstanceState)
         val actionJson = intent.getStringExtra(EXTRA_ACTION)
         val revision = intent.getIntExtra(EXTRA_REVISION, -1)
+        val surface = intent.getStringExtra(EXTRA_SURFACE)
+            ?: EabpWidgetProvider.SURFACE
         if (actionJson != null) {
             when (intent.getStringExtra(EXTRA_TYPE)) {
                 TYPE_BROADCAST -> sendBroadcast(
                     Intent(this, ActionReceiver::class.java).apply {
                         action = ActionReceiver.ACTION_TAP
-                        putExtra(ActionReceiver.EXTRA_SURFACE, EabpWidgetProvider.SURFACE)
+                        putExtra(ActionReceiver.EXTRA_SURFACE, surface)
                         putExtra(ActionReceiver.EXTRA_REVISION, revision)
                         putExtra(ActionReceiver.EXTRA_ACTION, actionJson)
                     })
@@ -46,6 +48,7 @@ class ActionTrampolineActivity : Activity() {
     companion object {
         const val EXTRA_TYPE = "trampoline_type"
         const val EXTRA_ACTION = "trampoline_action"
+        const val EXTRA_SURFACE = "trampoline_surface"
         const val EXTRA_REVISION = "trampoline_revision"
         const val TYPE_BROADCAST = "broadcast"
         const val TYPE_OPEN_APP = "open_app"

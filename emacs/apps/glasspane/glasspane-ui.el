@@ -80,44 +80,63 @@ the row's type icon already says, so it is dropped."
                                  (and file (file-name-nondirectory file))))
                  " · ")))
 
+(defun glasspane-ui--widget-agenda-icon (type)
+  "Map an org agenda TYPE to a widget metadata icon name."
+  (cond ((not (stringp type)) "event")
+        ((string-match-p "deadline" type) "deadline")
+        ((string-match-p "scheduled" type) "scheduled")
+        (t "event")))
+
+(defun glasspane-ui--widget-row (it)
+  "Build one generic widget row from agenda item IT.
+All semantics live here: the row tap opens the heading in the app, the
+trailing circle todo-cycles silently — the companion just renders."
+  (let* ((hm (glasspane-org--item-hm (alist-get 'time it)))
+         (todo (alist-get 'todo it))
+         (done (and todo
+                    (member todo (or (default-value 'org-done-keywords)
+                                     '("DONE" "CANCELLED")))
+                    t))
+         (ref (alist-get 'ref it))
+         (meta (glasspane-ui--widget-item-meta it hm))
+         (meta (unless (string-empty-p meta) meta)))
+    (eabp-widget-item
+     (or (alist-get 'headline it) "Untitled")
+     :todo todo :done done
+     :meta meta
+     :icon (and meta (glasspane-ui--widget-agenda-icon (alist-get 'type it)))
+     :on-tap (eabp-action "heading.tap" :args ref) :in-app t
+     :button (and todo (if done "todo_done" "todo_open"))
+     :on-button (and todo (eabp-action "heading.todo-cycle" :args ref)))))
+
 (defun glasspane-ui--widget-items ()
-  "Today's agenda as structured items for the home-screen widget.
-Each item carries the display fields (headline/todo/done/type/meta/
-overdue) plus the heading ref, so the widget can jump to and todo-cycle
-individual rows and group the overdue ones under a divider."
-  (let ((today (org-today)))
-    (mapcar
-     (lambda (it)
-       (let* ((hm (glasspane-org--item-hm (alist-get 'time it)))
-              (todo (alist-get 'todo it))
-              (done (and todo
-                         (member todo (or (default-value 'org-done-keywords)
-                                          '("DONE" "CANCELLED")))
-                         t))
-              (type (alist-get 'type it))
-              (ts (alist-get 'ts-date it))
-              (meta (glasspane-ui--widget-item-meta it hm)))
-         (append
-          `((headline . ,(or (alist-get 'headline it) "Untitled")))
-          (when todo `((todo . ,todo)))
-          (when done '((done . t)))
-          (when (and (stringp type) (not (string-empty-p type)))
-            `((type . ,type)))
-          (unless (string-empty-p meta) `((meta . ,meta)))
-          (when (and (numberp ts) (< ts today)) '((overdue . t)))
-          `((ref . ,(alist-get 'ref it))))))
-     ;; The widget list scrolls, so the cap is just a sanity bound on
-     ;; spec size, not a display limit.
-     (seq-take (condition-case nil
-                   (glasspane-org--agenda-items 'day nil)
-                 (error nil))
-               20))))
+  "Today's agenda as widget rows, overdue grouped under dividers."
+  (let* ((today (org-today))
+         ;; The widget list scrolls, so the cap is just a sanity bound on
+         ;; spec size, not a display limit.
+         (raw (seq-take (condition-case nil
+                            (glasspane-org--agenda-items 'day nil)
+                          (error nil))
+                        20))
+         (overdue-p (lambda (it)
+                      (let ((ts (alist-get 'ts-date it)))
+                        (and (numberp ts) (< ts today)))))
+         (overdue (seq-filter overdue-p raw))
+         (current (seq-remove overdue-p raw)))
+    (if (null overdue)
+        (mapcar #'glasspane-ui--widget-row raw)
+      (append
+       (cons (eabp-widget-divider "Overdue")
+             (mapcar #'glasspane-ui--widget-row overdue))
+       (when current
+         (cons (eabp-widget-divider "Today")
+               (mapcar #'glasspane-ui--widget-row current)))))))
 
 (defun glasspane-ui--widget-query-items (query)
-  "Custom-agenda QUERY results as widget items.
-Same shape as `glasspane-ui--widget-items', but search hits carry no
-agenda qualifiers — the metadata line is just the file name.
-`glasspane-org--search' is memoised, so re-pushing is cheap."
+  "Custom-agenda QUERY results as widget rows.
+Search hits carry no agenda qualifiers — the metadata line is the file
+name under a folder icon. `glasspane-org--search' is memoised, so
+re-pushing is cheap."
   (mapcar
    (lambda (it)
      (let* ((todo (alist-get 'todo it))
@@ -125,13 +144,16 @@ agenda qualifiers — the metadata line is just the file name.
                        (member todo (or (default-value 'org-done-keywords)
                                         '("DONE" "CANCELLED")))
                        t))
-            (file (alist-get 'file it)))
-       (append
-        `((headline . ,(or (alist-get 'headline it) "Untitled")))
-        (when todo `((todo . ,todo)))
-        (when done '((done . t)))
-        (when file `((meta . ,(file-name-nondirectory file))))
-        `((ref . ,(alist-get 'ref it))))))
+            (file (alist-get 'file it))
+            (ref (alist-get 'ref it)))
+       (eabp-widget-item
+        (or (alist-get 'headline it) "Untitled")
+        :todo todo :done done
+        :meta (and file (file-name-nondirectory file))
+        :icon (and file "folder")
+        :on-tap (eabp-action "heading.tap" :args ref) :in-app t
+        :button (and todo (if done "todo_done" "todo_open"))
+        :on-button (and todo (eabp-action "heading.todo-cycle" :args ref)))))
    (seq-take (condition-case nil (glasspane-org--search query) (error nil))
              20)))
 

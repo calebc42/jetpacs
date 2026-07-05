@@ -10,7 +10,13 @@
     <string name="widget_refresh">Refresh agenda</string>
     <string name="widget_overdue">Overdue</string>
     <string name="widget_today">Today</string>
-    <string name="widget_view_selector_title">Agenda view</string>
+    <string name="widget_view_selector_title">Widget view</string>
+    <string name="widget_custom_description">A blank Glasspane widget slot. Compose its contents from Emacs Lisp by pushing the matching widget:customN surface.</string>
+    <string name="widget_custom_label_1">Glasspane 1</string>
+    <string name="widget_custom_label_2">Glasspane 2</string>
+    <string name="widget_custom_label_3">Glasspane 3</string>
+    <string name="widget_custom_label_4">Glasspane 4</string>
+    <string name="widget_custom_label_5">Glasspane 5</string>
     <string name="widget_capture">New capture</string>
     <string name="widget_clock_label">Org Clock</string>
     <string name="widget_clock_description">Quick clock in/out shortcuts for the Org clock. Taps queue when Emacs is offline.</string>

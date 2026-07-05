@@ -811,6 +811,57 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
               'time time
               'padding padding))
 
+;; ─── Home-screen widgets ─────────────────────────────────────────────────────
+;;
+;; Rows for `widget:*' surfaces (the home-screen list widgets, including
+;; the blank `widget:customN' slots). The companion renders these with
+;; RemoteViews, so the vocabulary is deliberately small: two-line rows
+;; with an optional trailing icon button, plus bold section dividers.
+
+(cl-defun eabp-widget-item (text &key todo done meta icon on-tap in-app
+                                 button on-button)
+  "A row in a home-screen widget list.
+TEXT is the title line. TODO is a state keyword rendered as a colored
+prefix while open; DONE strikes the title through. META is the
+secondary line and ICON its glyph: \"scheduled\", \"deadline\",
+\"event\", or \"folder\". ON-TAP is dispatched when the row is tapped;
+IN-APP routes it through the opened companion app (navigation),
+otherwise the tap is silent. BUTTON (\"todo_open\", \"todo_done\",
+\"add\") shows a trailing icon button that dispatches ON-BUTTON
+silently — it never opens the app."
+  (eabp--node nil
+              'text text
+              'todo todo
+              'done (and done t)
+              'meta meta
+              'icon icon
+              'on_tap on-tap
+              'tap_in_app (and in-app t)
+              'button button
+              'on_button on-button))
+
+(defun eabp-widget-divider (label)
+  "A bold section divider row (\"Overdue\", \"Today\") in a widget list."
+  (eabp--node nil 'divider label))
+
+(cl-defun eabp-tile (label &key subtitle icon state on-tap in-app)
+  "A Quick Settings tile spec for a `tile:customN' slot surface.
+LABEL and SUBTITLE are the tile texts (the subtitle shows on Android
+10+). ICON names a glyph: \"todo_open\", \"todo_done\", \"add\",
+\"refresh\", \"scheduled\", \"deadline\", \"event\", or \"folder\".
+STATE is \"active\", \"inactive\" (the default), or \"unavailable\".
+ON-TAP is dispatched when the tile is tapped; IN-APP opens the
+companion app and routes the action through it, otherwise the tap
+fires silently from the shade (no unlock required — compose
+accordingly). An un-pushed slot shows as a grayed-out tile."
+  (eabp--node nil
+              'label label
+              'subtitle subtitle
+              'icon icon
+              'state (and state (format "%s" state))
+              'on_tap on-tap
+              'tap_in_app (and in-app t)))
+
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
 (cl-defun eabp-editor (id value &key on-save read-only syntax line-numbers

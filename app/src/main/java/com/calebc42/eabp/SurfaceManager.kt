@@ -87,12 +87,10 @@ class SurfaceManager(private val context: Context) {
         when (record.type) {
             "notification" -> notifications.render(record)
             "app", "dialog" -> { /* Polled/Observed by MainActivity */ }
-            "widget" -> when (record.surface) {
-                EabpWidgetProvider.SURFACE ->
-                    EabpWidgetProvider.renderAll(context, record)
-                else -> Log.w(TAG, "No renderer for surface '${record.surface}'")
-            }
-            // "tile" lands in its own phase.
+            "widget" -> renderWidgetSurface(context, record)
+            // Tiles pull from cache when the system binds them; this just
+            // pokes the system to rebind (ACTIVE_TILE contract).
+            "tile" -> EabpTileSlots.requestUpdate(context, record.surface)
             else -> Log.w(TAG, "No renderer for surface type '${record.type}'")
         }
     }
@@ -100,6 +98,8 @@ class SurfaceManager(private val context: Context) {
     private fun clear(record: SurfaceRecord) {
         when (record.type) {
             "notification" -> notifications.clear(record.surface)
+            // Rebind → getRecord returns null → the slot parks as grayed.
+            "tile" -> EabpTileSlots.requestUpdate(context, record.surface)
             else -> {}
         }
     }

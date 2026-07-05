@@ -17,8 +17,9 @@ class WidgetViewSelectionActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val manager = EabpRuntime.surfaceManager ?: SurfaceManager(applicationContext)
-        val record = manager.getRecord(EabpWidgetProvider.SURFACE)
+        val surface = intent.getStringExtra(EXTRA_SURFACE) ?: EabpWidgetProvider.SURFACE
+        val manager = widgetManager(applicationContext)
+        val record = manager.getRecord(surface)
         val views = record?.spec?.optJSONObject("views")
         if (views == null || views.length() == 0) {
             finish()
@@ -41,11 +42,15 @@ class WidgetViewSelectionActivity : Activity() {
         AlertDialog.Builder(themed)
             .setTitle(R.string.widget_view_selector_title)
             .setItems(labels) { _, which ->
-                manager.setCurrentView(EabpWidgetProvider.SURFACE, names[which])
-                EabpWidgetProvider.renderAll(this, record)
+                manager.setCurrentView(surface, names[which])
+                renderWidgetSurface(this, record)
                 finish()
             }
             .setOnCancelListener { finish() }
             .show()
+    }
+
+    companion object {
+        const val EXTRA_SURFACE = "surface"
     }
 }

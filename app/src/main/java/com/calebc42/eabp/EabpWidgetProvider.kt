@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.text.format.DateFormat
 import android.view.View
 import android.widget.RemoteViews
@@ -50,16 +51,6 @@ class EabpWidgetProvider : AppWidgetProvider() {
         private const val REQUEST_VIEW_SELECT = 2005
         private const val REQUEST_LIST_TEMPLATE = 2300
 
-        /**
-         * The spec view currently selected on the widget, resolved the same
-         * way everywhere (provider header and list factory): the runtime
-         * manager when the service lives, else a fresh cache read.
-         */
-        fun resolvedSpec(context: Context, record: SurfaceRecord?): JSONObject? =
-            record?.resolveSpec(
-                (EabpRuntime.surfaceManager ?: SurfaceManager(context))
-                    .currentView(SURFACE))
-
         /** Re-render every widget instance from RECORD (surface.update path). */
         fun renderAll(context: Context, record: SurfaceRecord?) {
             val mgr = AppWidgetManager.getInstance(context)
@@ -75,7 +66,7 @@ class EabpWidgetProvider : AppWidgetProvider() {
 
         private fun buildViews(context: Context, record: SurfaceRecord?): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.widget_eabp_agenda)
-            val spec = resolvedSpec(context, record)
+            val spec = widgetResolvedSpec(context, SURFACE, record)
             val revision = record?.revision ?: -1
 
             views.setTextViewText(
@@ -92,7 +83,10 @@ class EabpWidgetProvider : AppWidgetProvider() {
                     R.id.widget_title_area,
                     PendingIntent.getActivity(
                         context, REQUEST_VIEW_SELECT,
-                        Intent(context, WidgetViewSelectionActivity::class.java),
+                        Intent(context, WidgetViewSelectionActivity::class.java).apply {
+                            data = Uri.fromParts("eabpwidget", SURFACE, "select")
+                            putExtra(WidgetViewSelectionActivity.EXTRA_SURFACE, SURFACE)
+                        },
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             } else {
                 views.setViewVisibility(R.id.widget_title_arrow, View.GONE)
@@ -102,7 +96,10 @@ class EabpWidgetProvider : AppWidgetProvider() {
             // routes row/toggle taps through the trampoline.
             @Suppress("DEPRECATION")
             views.setRemoteAdapter(
-                R.id.widget_list, Intent(context, AgendaWidgetService::class.java))
+                R.id.widget_list,
+                Intent(context, EabpWidgetListService::class.java).apply {
+                    data = Uri.fromParts("eabpwidget", SURFACE, null)
+                })
             views.setPendingIntentTemplate(
                 R.id.widget_list,
                 PendingIntent.getActivity(

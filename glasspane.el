@@ -12425,7 +12425,11 @@ wedging the bridge forever."
                  (goto-char pos)
                  (let ((info (org-babel-get-src-block-info)))
                    (unless info (error "No source block here"))
-                   (org-babel-confirm-evaluate info) ; user-errors on decline
+                   ;; `org-babel-confirm-evaluate' RETURNS nil on decline (it
+                   ;; does not signal) — gate on that, or a declined prompt
+                   ;; would fall through and evaluate anyway.
+                   (unless (org-babel-confirm-evaluate info)
+                     (user-error "Evaluation declined"))
                    (let ((org-confirm-babel-evaluate nil))
                      (with-timeout ((max 1 glasspane-babel-timeout)
                                     (error "Timed out after %ss"

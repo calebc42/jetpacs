@@ -1220,18 +1220,21 @@ the next recalculation would overwrite."
       (delete-file file))))
 
 (ert-deftest glasspane-ui-babel-execute-honors-confirm ()
-  "Declining the evaluation prompt aborts: no results, an error snackbar."
+  "Declining the evaluation prompt aborts: no results, an error snackbar.
+Uses org's own non-interactive decline hook
+`org-babel-confirm-evaluate-answer-no' so the prompt resolves to \"no\"
+deterministically — no stdin, no mocked `yes-or-no-p' (batch Emacs would
+otherwise block on the real prompt)."
   (require 'ob-emacs-lisp)
   (let ((file (make-temp-file "eabp-babel-test" nil ".org"))
         (org-confirm-babel-evaluate t)
+        (org-babel-confirm-evaluate-answer-no t)
         notified)
     (unwind-protect
         (progn
           (with-temp-file file
             (insert "#+begin_src emacs-lisp\n(+ 1 2)\n#+end_src\n"))
-          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
-                    ((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
-                    ((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+          (cl-letf (((symbol-function 'eabp-shell-push) (lambda (&rest _)))
                     ((symbol-function 'eabp-shell-notify)
                      (lambda (text) (setq notified text))))
             (funcall (gethash "org.babel.execute" eabp-action-handlers)

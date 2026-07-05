@@ -450,23 +450,51 @@ ARGS matches mere presence of the stamp."
      nil 'agenda)
     (nreverse items)))
 
+(defun glasspane-org--query (tree)
+  "Run parsed query sexp TREE over the agenda files; heading items.
+The engine behind search and every saved/derived view: `org-ql' when
+installed, the built-in interpreter otherwise.  Signals `user-error'
+on unsupported terms.  Memoised; see `glasspane-org-cache-invalidate'."
+  (when tree
+    (glasspane-org--with-cache
+        (glasspane-org--cache-key 'query (format "%S" tree))
+      (if (fboundp 'org-ql-select)
+          (condition-case err
+              (org-ql-select (org-agenda-files) tree
+                             :action #'glasspane-org--heading-item-at)
+            (user-error (signal (car err) (cdr err)))
+            (error (user-error "Query failed: %s" (error-message-string err))))
+        (glasspane-org--search-fallback tree)))))
+
 (defun glasspane-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
 QUERY may be an org-ql sexp, filter tokens, or free text — see
-`glasspane-org--parse-query'.  Runs through `org-ql' when installed,
-otherwise the built-in interpreter.  Signals `user-error' on queries
-that don't parse or use unsupported terms, so callers can surface the
-problem.  Memoised; see `glasspane-org-cache-invalidate'."
+`glasspane-org--parse-query'.  Signals `user-error' on queries that
+don't parse or use unsupported terms, so callers can surface the
+problem."
+  (glasspane-org--query (glasspane-org--parse-query query)))
+
+(defun glasspane-org--filter-items (items query)
+  "ITEMS whose headings match QUERY — the sparse filter.
+QUERY takes the standard search syntax; matching runs the built-in
+matcher at each item's own heading, so it works on any file, agenda
+or not.  Signals `user-error' on queries that don't parse or use
+unsupported terms."
   (let ((tree (glasspane-org--parse-query query)))
-    (when tree
-      (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
-        (if (fboundp 'org-ql-select)
-            (condition-case err
-                (org-ql-select (org-agenda-files) tree
-                               :action #'glasspane-org--heading-item-at)
-              (user-error (signal (car err) (cdr err)))
-              (error (user-error "Query failed: %s" (error-message-string err))))
-          (glasspane-org--search-fallback tree))))))
+    (if (null tree)
+        items
+      (cl-remove-if-not
+       (lambda (item)
+         (let ((file (alist-get 'file item))
+               (pos (alist-get 'pos item)))
+           (and file pos
+                (with-current-buffer (find-file-noselect file)
+                  (org-with-wide-buffer
+                   (goto-char (min pos (point-max)))
+                   (unless (org-at-heading-p)
+                     (ignore-errors (org-back-to-heading t)))
+                   (glasspane-org--query-match-p tree))))))
+       items))))
 
 (defun glasspane-org--all-tags ()
   "Sorted tags for the query builder.

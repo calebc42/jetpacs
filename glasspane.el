@@ -9564,23 +9564,51 @@ ARGS matches mere presence of the stamp."
      nil 'agenda)
     (nreverse items)))
 
+(defun glasspane-org--query (tree)
+  "Run parsed query sexp TREE over the agenda files; heading items.
+The engine behind search and every saved/derived view: `org-ql' when
+installed, the built-in interpreter otherwise.  Signals `user-error'
+on unsupported terms.  Memoised; see `glasspane-org-cache-invalidate'."
+  (when tree
+    (glasspane-org--with-cache
+        (glasspane-org--cache-key 'query (format "%S" tree))
+      (if (fboundp 'org-ql-select)
+          (condition-case err
+              (org-ql-select (org-agenda-files) tree
+                             :action #'glasspane-org--heading-item-at)
+            (user-error (signal (car err) (cdr err)))
+            (error (user-error "Query failed: %s" (error-message-string err))))
+        (glasspane-org--search-fallback tree)))))
+
 (defun glasspane-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
 QUERY may be an org-ql sexp, filter tokens, or free text — see
-`glasspane-org--parse-query'.  Runs through `org-ql' when installed,
-otherwise the built-in interpreter.  Signals `user-error' on queries
-that don't parse or use unsupported terms, so callers can surface the
-problem.  Memoised; see `glasspane-org-cache-invalidate'."
+`glasspane-org--parse-query'.  Signals `user-error' on queries that
+don't parse or use unsupported terms, so callers can surface the
+problem."
+  (glasspane-org--query (glasspane-org--parse-query query)))
+
+(defun glasspane-org--filter-items (items query)
+  "ITEMS whose headings match QUERY — the sparse filter.
+QUERY takes the standard search syntax; matching runs the built-in
+matcher at each item's own heading, so it works on any file, agenda
+or not.  Signals `user-error' on queries that don't parse or use
+unsupported terms."
   (let ((tree (glasspane-org--parse-query query)))
-    (when tree
-      (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
-        (if (fboundp 'org-ql-select)
-            (condition-case err
-                (org-ql-select (org-agenda-files) tree
-                               :action #'glasspane-org--heading-item-at)
-              (user-error (signal (car err) (cdr err)))
-              (error (user-error "Query failed: %s" (error-message-string err))))
-          (glasspane-org--search-fallback tree))))))
+    (if (null tree)
+        items
+      (cl-remove-if-not
+       (lambda (item)
+         (let ((file (alist-get 'file item))
+               (pos (alist-get 'pos item)))
+           (and file pos
+                (with-current-buffer (find-file-noselect file)
+                  (org-with-wide-buffer
+                   (goto-char (min pos (point-max)))
+                   (unless (org-at-heading-p)
+                     (ignore-errors (org-back-to-heading t)))
+                   (glasspane-org--query-match-p tree))))))
+       items))))
 
 (defun glasspane-org--all-tags ()
   "Sorted tags for the query builder.
@@ -10939,7 +10967,8 @@ suppressed identical push would leave it frozen."
 ;; the only app; load a second app (eabp-hello.el) and the launcher home
 ;; appears with these views grouped as Glasspane's own.
 (eabp-defapp "glasspane" :label "Glasspane" :icon "event"
-             :views '("agenda" "tasks" "clock" "search" "settings" "detail")
+             :views '("agenda" "journal" "tasks" "clock" "search" "views"
+                      "settings" "detail")
              :order 10)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
@@ -13168,19 +13197,66 @@ wedging the bridge forever."
   "Non-nil when FILE is an org file."
   (and file (string-match-p "\\.org\\'" file)))
 
+(defvar glasspane-ui--files-filter ""
+  "Sparse-filter query for the org read-mode body; empty = everything.
+Reset when a different file opens.")
+
 (defun glasspane-ui--org-editor-body (file)
-  "Reader body for org FILE while read mode is on; nil = plain editor."
+  "Reader body for org FILE while read mode is on; nil = plain editor.
+A filter row narrows the headings by the standard query syntax — the
+orgro sparse-filter parity item."
   (when (and glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))
     (if glasspane-ui--files-refile-mode
         (or (glasspane-org-reader-refile-list file)
             (eabp-text "No headings to show." 'caption))
-      (let ((items (glasspane-org--file-heading-items file)))
-        (if items
-            (apply #'eabp-lazy-column
-                   (mapcar #'glasspane-ui--agenda-card items))
-          (eabp-empty-state :icon "description"
-                            :title "Empty file"
-                            :caption "No headings found."))))))
+      (let* ((items (glasspane-org--file-heading-items file))
+             (query (string-trim glasspane-ui--files-filter))
+             (active (not (string-empty-p query)))
+             (filtered (if (not active) items
+                         (condition-case err
+                             (glasspane-org--filter-items items query)
+                           (user-error
+                            (list 'error (error-message-string err))))))
+             (broken (eq (car-safe filtered) 'error)))
+        (apply #'eabp-lazy-column
+               (append
+                (list (eabp-text-input "files-filter"
+                                       :value glasspane-ui--files-filter
+                                       :hint "Filter: todo:TODO tags:work text…"
+                                       :single-line t
+                                       :on-submit
+                                       (eabp-action "files.filter"
+                                                    :when-offline "drop")))
+                (when (and active (not broken))
+                  (list (eabp-row
+                         (eabp-box
+                          (list (eabp-text
+                                 (format "%d of %d headings"
+                                         (length filtered) (length items))
+                                 'caption))
+                          :weight 1)
+                         (eabp-chip "Clear"
+                                    :on-tap (eabp-action
+                                             "files.filter"
+                                             :args '((value . ""))
+                                             :when-offline "drop")))))
+                (cond
+                 (broken (list (eabp-text (cadr filtered) 'caption)))
+                 ((null filtered)
+                  (list (eabp-empty-state
+                         :icon "description"
+                         :title (if active "No matches" "Empty file")
+                         :caption (if active query "No headings found."))))
+                 (t (mapcar #'glasspane-ui--agenda-card filtered)))))))))
+
+(eabp-defaction "files.filter"
+  ;; The sparse filter for the open org file: VALUE is the submitted
+  ;; query ("" clears). State only — matching happens at render.
+  (lambda (args _)
+    (let ((value (alist-get 'value args)))
+      (when (stringp value)
+        (setq glasspane-ui--files-filter value)
+        (eabp-shell-push nil :switch-to "edit")))))
 
 (defun glasspane-ui--org-editor-actions (file)
   "Reader/refile toggles and the properties dialog for org FILE."
@@ -13212,9 +13288,11 @@ wedging the bridge forever."
       (lambda (file) (when (glasspane-ui--org-file-p file) "org")))
 
 ;; Org files open reader-first; everything else lands in the editor.
+;; A fresh file starts unfiltered.
 (add-hook 'eabp-files-open-hook
           (lambda (file)
-            (setq glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))))
+            (setq glasspane-ui--files-read-mode (glasspane-ui--org-file-p file)
+                  glasspane-ui--files-filter "")))
 
 ;; A phone-side save may have changed org data the views memoise.
 (add-hook 'eabp-files-after-save-hook
@@ -13349,6 +13427,845 @@ org buffer without necessarily saving it."
 
 (provide 'glasspane-ui)
 ;;; glasspane-ui.el ends here
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-journal.el
+;;; ==================================================================
+
+;;; glasspane-journal.el --- Daily-note landing surface -*- lexical-binding: t; -*-
+
+;; The Logseq bootstrapping habit, org-native (PKM plan Task 5): open
+;; the app → today's page, ready to type.  A `journal' tab renders one
+;; datetree day at a time — capture row on top, the day's content
+;; through the foldable reader, and (on today) a "Carried over" section
+;; of unfinished TODOs scheduled before today with one-tap reschedule.
+;;
+;; Engine decision: plain `org-datetree' (builtin, standard, importable
+;; — the file layout every journal tool understands).  vulpea-journal
+;; gets evaluated when the vulpea spike runs on device (PKM Task 1);
+;; the seam is `glasspane-journal--append' / `--day-pos', one code path
+;; either way.
+;;
+;; The journal file defaults to journal.org in `org-directory' — no new
+;; layout invented, nothing seeded until the first capture creates the
+;; datetree.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'org)
+(require 'org-datetree)
+(require 'eabp)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-shell)
+(require 'eabp-settings)
+(require 'glasspane-org)
+(require 'glasspane-org-reader)
+(require 'glasspane-ui)                ; date helpers + the glasspane defapp
+
+(defcustom glasspane-journal-file nil
+  "The journal file holding the datetree.
+nil means journal.org inside `org-directory'."
+  :type '(choice (const :tag "journal.org in org-directory" nil) file)
+  :group 'eabp)
+
+(defcustom glasspane-journal-landing nil
+  "When non-nil the app opens on the Journal view instead of Agenda."
+  :type 'boolean :group 'eabp)
+
+(defvar glasspane-journal--date nil
+  "The day being viewed (\"YYYY-MM-DD\"), or nil for today.")
+
+(defvar glasspane-journal--capture-gen 0
+  "Generation counter for the capture row's widget id.
+Bumped after each append: rotating the id is the server-driven way to
+clear the input field.")
+
+(defun glasspane-journal--file ()
+  "The journal file path."
+  (or glasspane-journal-file
+      (expand-file-name "journal.org" org-directory)))
+
+(defun glasspane-journal--today ()
+  (format-time-string "%Y-%m-%d"))
+
+(defun glasspane-journal--current ()
+  "The date the view shows."
+  (or glasspane-journal--date (glasspane-journal--today)))
+
+;; ─── The datetree seam ───────────────────────────────────────────────────────
+
+(defun glasspane-journal--day-pos (date)
+  "Position of DATE's day heading in the journal file, or nil.
+Datetree day headings read \"*** 2026-07-05 Saturday\"; the full
+Y-m-d makes the match unambiguous against month/year levels."
+  (let ((file (glasspane-journal--file)))
+    (when (file-readable-p file)
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (goto-char (point-min))
+         (when (re-search-forward
+                (format "^\\*+[ \t]+%s\\(?:[ \t]\\|$\\)" (regexp-quote date))
+                nil t)
+           (line-beginning-position)))))))
+
+(defvar glasspane-org--inhibit-save-refresh)
+
+(defun glasspane-journal--append (text &optional date)
+  "Append TEXT as a plain list item under DATE's (default today) day.
+Creates the datetree levels (and the file) on first use."
+  (let ((date (or date (glasspane-journal--today)))
+        (file (glasspane-journal--file)))
+    (pcase-let ((`(,y ,m ,d) (mapcar #'string-to-number
+                                     (split-string date "-"))))
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (org-datetree-find-date-create (list m d y))
+         (org-back-to-heading t)
+         (org-end-of-subtree t t)
+         (unless (bolp) (insert "\n"))
+         (insert "- " text "\n"))
+        (let ((glasspane-org--inhibit-save-refresh t)
+              (save-silently t))
+          (save-buffer))))
+    (glasspane-org-cache-invalidate)))
+
+(defun glasspane-journal--carried-over ()
+  "Unfinished TODOs scheduled before today — the carry-over list."
+  (glasspane-org--query '(and (todo) (scheduled :to -1))))
+
+;; ─── The view ────────────────────────────────────────────────────────────────
+
+(defun glasspane-journal--nav-row (date today-p)
+  "‹ yesterday | the day (a native date picker) | tomorrow › chrome."
+  (apply #'eabp-row
+         (delq nil
+               (list
+                (eabp-icon-button
+                 "chevron_left"
+                 (eabp-action "journal.nav" :args '((delta . -1))
+                              :when-offline "drop")
+                 :content-description "Previous day")
+                (eabp-box
+                 (list (eabp-date-button
+                        (glasspane-ui--format-date
+                         date (if today-p "Today · %a, %b %e" "%a, %b %e, %Y"))
+                        (eabp-action "journal.goto" :when-offline "drop")
+                        :value date))
+                 :weight 1 :alignment "center")
+                (unless today-p
+                  (eabp-chip "Today"
+                             :on-tap (eabp-action "journal.today"
+                                                  :when-offline "drop")))
+                (eabp-icon-button
+                 "chevron_right"
+                 (eabp-action "journal.nav" :args '((delta . 1))
+                              :when-offline "drop")
+                 :content-description "Next day")))))
+
+(defun glasspane-journal--capture-row (date)
+  "The always-on-top quick-capture input for DATE."
+  (eabp-text-input
+   (format "journal-capture-%d" glasspane-journal--capture-gen)
+   :hint "Add to this day…"
+   :single-line t
+   :on-submit (eabp-action "journal.capture"
+                           :args `((date . ,date))
+                           :when-offline "queue")))
+
+(defun glasspane-journal--day-nodes (date)
+  "DATE's datetree content through the foldable reader, or a placeholder."
+  (or (when-let ((pos (glasspane-journal--day-pos date)))
+        (glasspane-org-reader-subtree (glasspane-journal--file) pos t))
+      (list (eabp-text "Nothing here yet — the row above starts the day."
+                       'caption))))
+
+(defun glasspane-journal--carried-card (item)
+  "One carried-over TODO with one-tap reschedule.
+The buttons ride the existing allowlisted `heading.schedule' — the
+orgro timestamp-tap-edit item folds in here."
+  (let ((ref (alist-get 'ref item)))
+    (eabp-card
+     (list
+      (eabp-column
+       (eabp-text (or (alist-get 'headline item) "") 'body)
+       (eabp-text (format "%s · %s"
+                          (or (alist-get 'todo item) "TODO")
+                          (or (alist-get 'scheduled item) ""))
+                  'caption)
+       (eabp-row
+        (eabp-spacer :weight 1)
+        (eabp-button "Today"
+                     (eabp-action "heading.schedule"
+                                  :args (append ref '((when . "+0d")))
+                                  :when-offline "queue")
+                     :variant "text")
+        (eabp-date-button "Pick"
+                          (eabp-action "heading.schedule"
+                                       :args ref
+                                       :when-offline "queue"))))))))
+
+(defun glasspane-journal--view (snackbar)
+  "The journal screen for the current date."
+  (let* ((date (glasspane-journal--current))
+         (today-p (equal date (glasspane-journal--today)))
+         ;; A broken query must cost the section, not the day.
+         (carried (and today-p
+                       (condition-case nil
+                           (glasspane-journal--carried-over)
+                         (error nil)))))
+    (eabp-shell-tab-view
+     "journal"
+     (apply #'eabp-lazy-column
+            (append
+             (list (glasspane-journal--nav-row date today-p)
+                   (glasspane-journal--capture-row date)
+                   (eabp-spacer :height 4))
+             (glasspane-journal--day-nodes date)
+             (when carried
+               (append
+                (list (eabp-divider)
+                      (eabp-section-header
+                       (format "Carried over (%d)" (length carried))))
+                (mapcar #'glasspane-journal--carried-card carried)))))
+     :snackbar snackbar)))
+
+(eabp-shell-define-view "journal"
+                        :builder #'glasspane-journal--view
+                        :tab '(:icon "today" :label "Journal")
+                        :order 15)
+
+;; ─── Landing & state resets ──────────────────────────────────────────────────
+
+(defun glasspane-journal--apply-landing (_welcome)
+  "Land on the journal when configured and no tab was chosen this session.
+Depth 5: before the shell's on-connect push (10) builds the surface."
+  (when (and glasspane-journal-landing (null eabp-shell--current-tab))
+    (setq eabp-shell--current-tab "journal")))
+
+(add-hook 'eabp-connected-hook #'glasspane-journal--apply-landing 5)
+
+(defun glasspane-journal--on-view-switched (view)
+  "Leaving the journal resets it to today — returning starts fresh."
+  (unless (equal view "journal")
+    (setq glasspane-journal--date nil)))
+
+(add-hook 'eabp-shell-view-switched-hook #'glasspane-journal--on-view-switched)
+
+(eabp-settings-register-section
+ "Journal"
+ '((glasspane-journal-landing :label "Open on the journal")))
+
+;; ─── Actions ─────────────────────────────────────────────────────────────────
+
+(eabp-defaction "journal.nav"
+  (lambda (args _)
+    (let ((delta (alist-get 'delta args)))
+      (when (integerp delta)
+        (setq glasspane-journal--date
+              (glasspane-ui--shift-date (glasspane-journal--current)
+                                        delta 'day))
+        (eabp-shell-push)))))
+
+(eabp-defaction "journal.goto"
+  (lambda (args _)
+    (let ((date (alist-get 'value args)))
+      (when (and (stringp date)
+                 (string-match-p
+                  "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" date))
+        (setq glasspane-journal--date date)
+        (eabp-shell-push)))))
+
+(eabp-defaction "journal.today"
+  (lambda (_args _)
+    (setq glasspane-journal--date nil)
+    (eabp-shell-push)))
+
+(eabp-defaction "journal.capture"
+  (lambda (args _)
+    (let ((text (string-trim (or (alist-get 'value args) "")))
+          (date (alist-get 'date args)))
+      (unless (string-empty-p text)
+        (glasspane-journal--append
+         text (and (stringp date) (not (string-empty-p date)) date))
+        ;; Rotate the input id: the re-render clears the field.
+        (cl-incf glasspane-journal--capture-gen)
+        (eabp-shell-notify "Added to journal")
+        (eabp-shell-push)))))
+
+(provide 'glasspane-journal)
+;;; glasspane-journal.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-views.el
+;;; ==================================================================
+
+;;; glasspane-views.el --- Saved queries as views -*- lexical-binding: t; -*-
+
+;; PKM plan Task 11 — the Dataview / Notion-database story: a named
+;; org-ql query rendered three ways over the same result set — list
+;; (table with property columns), board (kanban by TODO state), and
+;; calendar (grouped by scheduled date).  Definitions persist through
+;; Customize; rendering switches per view and persists too.
+;;
+;; Everything rides existing machinery: `glasspane-org--query' (memoised,
+;; org-ql-or-fallback), the §9 table node, `heading.tap' for drill-in,
+;; and `heading.todo-set' for moving a board card between columns (a
+;; menu on the card — plain columns don't drag; a drag wire node is a
+;; later decision, noted in the plan).
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'eabp)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-shell)
+(require 'eabp-settings)
+(require 'glasspane-org)
+(require 'glasspane-ui)
+
+(defcustom glasspane-saved-views nil
+  "Saved query views: a list of alists with `name', `query', `rendering'.
+`query' is anything `glasspane-org--parse-query' accepts (org-ql sexp,
+filter tokens, or free text); `rendering' is \"list\" | \"board\" |
+\"calendar\".  Managed from the phone; persisted through Customize."
+  :type '(repeat sexp) :group 'eabp)
+
+(defvar glasspane-views--current nil
+  "Name of the saved view being shown, or nil for the hub.")
+
+(defvar glasspane-views--form-gen 0
+  "Generation counter for the new-view form's widget ids (field clear).")
+
+(defconst glasspane-views--renderings '("list" "board" "calendar"))
+
+(defun glasspane-views--get (name)
+  (cl-find name glasspane-saved-views
+           :key (lambda (v) (alist-get 'name v)) :test #'equal))
+
+(defun glasspane-views--persist ()
+  (eabp-settings-save-variable 'glasspane-saved-views glasspane-saved-views))
+
+(defun glasspane-views--items (view)
+  "Run VIEW's query; heading items, or signal `user-error'."
+  (glasspane-org--query
+   (glasspane-org--parse-query (alist-get 'query view))))
+
+;; ─── Renderings ──────────────────────────────────────────────────────────────
+
+(defun glasspane-views--tap (item)
+  "The drill-in action for ITEM's heading."
+  (eabp-action "heading.tap" :args (alist-get 'ref item)
+               :when-offline "drop"))
+
+(defun glasspane-views--table-node (items)
+  "The list rendering: one table row per item, tappable cells."
+  (eabp-table
+   (cons
+    (eabp-table-row
+     (list (eabp-table-cell (list (eabp-span "Heading" :bold t)))
+           (eabp-table-cell (list (eabp-span "State" :bold t)))
+           (eabp-table-cell (list (eabp-span "Scheduled" :bold t)))
+           (eabp-table-cell (list (eabp-span "Tags" :bold t))))
+     :header t)
+    (mapcar
+     (lambda (item)
+       (let ((tap (glasspane-views--tap item)))
+         (eabp-table-row
+          (list (eabp-table-cell
+                 (list (eabp-span (or (alist-get 'headline item) "")))
+                 :on-tap tap)
+                (eabp-table-cell
+                 (list (eabp-span (or (alist-get 'todo item) ""))))
+                (eabp-table-cell
+                 (list (eabp-span (or (glasspane-ui--ts-date
+                                       (alist-get 'scheduled item))
+                                      ""))))
+                (eabp-table-cell
+                 (list (eabp-span (mapconcat #'identity
+                                             (append (alist-get 'tags item) nil)
+                                             " "))))))))
+     items))
+   :aligns '("start" "start" "start" "start")))
+
+(defun glasspane-views--board-columns (items)
+  "Distinct TODO states across ITEMS, keyword order preserved."
+  (let ((present (delete-dups (mapcar (lambda (i)
+                                        (or (alist-get 'todo i) ""))
+                                      items))))
+    (append (cl-remove-if-not (lambda (kw) (member kw present))
+                              org-todo-keywords-1)
+            (and (member "" present) '("")))))
+
+(defun glasspane-views--board-card (item columns)
+  "A board card: tap opens the heading; the menu moves it to a column."
+  (let ((ref (alist-get 'ref item))
+        (state (or (alist-get 'todo item) "")))
+    (eabp-card
+     (list
+      (eabp-row
+       (eabp-box (list (eabp-text (or (alist-get 'headline item) "") 'body))
+                 :weight 1)
+       (eabp-menu
+        (mapcar (lambda (target)
+                  (eabp-menu-item
+                   (if (string-empty-p target) "No state" target)
+                   (eabp-action "heading.todo-set"
+                                :args (append ref `((state . ,target)))
+                                :when-offline "queue")))
+                (remove state columns))
+        :icon "more_vert")))
+     :on-tap (glasspane-views--tap item))))
+
+(defun glasspane-views--board-node (items)
+  "The kanban rendering: one column per TODO state, panning sideways."
+  (let ((columns (glasspane-views--board-columns items)))
+    (apply #'eabp-scroll-row
+           (mapcar
+            (lambda (col)
+              (let ((in-col (cl-remove-if-not
+                             (lambda (i) (equal (or (alist-get 'todo i) "")
+                                                col))
+                             items)))
+                (eabp-box
+                 (list (apply #'eabp-column
+                              (cons (eabp-section-header
+                                     (format "%s (%d)"
+                                             (if (string-empty-p col)
+                                                 "No state" col)
+                                             (length in-col)))
+                                    (mapcar (lambda (i)
+                                              (glasspane-views--board-card
+                                               i columns))
+                                            in-col))))
+                 :padding 4)))
+            columns))))
+
+(defun glasspane-views--calendar-nodes (items)
+  "The agenda rendering: items grouped by scheduled date, ascending."
+  (let ((buckets (make-hash-table :test 'equal)))
+    (dolist (item items)
+      (let ((date (or (glasspane-ui--ts-date (alist-get 'scheduled item))
+                     "")))
+        (puthash date (cons item (gethash date buckets)) buckets)))
+    (let ((dates (sort (hash-table-keys buckets)
+                       (lambda (a b)
+                         ;; Unscheduled ("" sorts first) goes last.
+                         (cond ((string-empty-p a) nil)
+                               ((string-empty-p b) t)
+                               (t (string< a b)))))))
+      (cl-loop for date in dates
+               append
+               (cons (eabp-section-header
+                      (if (string-empty-p date) "Unscheduled"
+                        (glasspane-ui--format-date date "%a, %b %e")))
+                     (mapcar (lambda (item)
+                               (eabp-card
+                                (list (eabp-text
+                                       (format "%s%s"
+                                               (if-let ((todo (alist-get 'todo item)))
+                                                   (concat todo " ") "")
+                                               (or (alist-get 'headline item) ""))
+                                       'body))
+                                :on-tap (glasspane-views--tap item)))
+                             (nreverse (gethash date buckets))))))))
+
+;; ─── The two screens (one shell view) ────────────────────────────────────────
+
+(defun glasspane-views--rendering-chips (view)
+  "The List | Board | Calendar switcher for VIEW."
+  (apply #'eabp-row
+         (mapcar (lambda (r)
+                   (eabp-chip (capitalize r)
+                              :selected (equal r (alist-get 'rendering view))
+                              :on-tap (eabp-action
+                                       "views.rendering"
+                                       :args `((name . ,(alist-get 'name view))
+                                               (rendering . ,r))
+                                       :when-offline "drop")))
+                 glasspane-views--renderings)))
+
+(defun glasspane-views--open-view (view snackbar)
+  "The screen for one saved VIEW."
+  (let* ((items (condition-case err
+                    (glasspane-views--items view)
+                  (user-error (list 'error (error-message-string err)))))
+         (broken (eq (car-safe items) 'error)))
+    (eabp-shell-nav-view
+     (alist-get 'name view)
+     (apply #'eabp-lazy-column
+            (append
+             (list (glasspane-views--rendering-chips view)
+                   (eabp-spacer :height 4))
+             (cond
+              (broken
+               (list (eabp-text (cadr items) 'body)))
+              ((null items)
+               (list (eabp-empty-state :icon "manage_search"
+                                       :title "No matches"
+                                       :caption (alist-get 'query view))))
+              (t (pcase (alist-get 'rendering view)
+                   ("board" (list (glasspane-views--board-node items)))
+                   ("calendar" (glasspane-views--calendar-nodes items))
+                   (_ (list (glasspane-views--table-node items))))))))
+     :nav-action (eabp-action "views.back" :when-offline "drop")
+     :snackbar snackbar)))
+
+(defun glasspane-views--new-form ()
+  "The collapsed new-view form at the hub's foot.
+Field values mirror through the UI-state store; views.save reads them."
+  (let ((gen glasspane-views--form-gen))
+    (eabp-collapsible
+     "views-new"
+     (eabp-section-header "New view")
+     (list
+      (eabp-text-input (format "views-new-name-%d" gen)
+                       :label "Name" :single-line t)
+      (eabp-text-input (format "views-new-query-%d" gen)
+                       :label "Query"
+                       :hint "todo:TODO tags:work — or an org-ql sexp"
+                       :single-line t)
+      (eabp-enum-list (format "views-new-rendering-%d" gen)
+                      glasspane-views--renderings
+                      :value '("list"))
+      (eabp-button "Save view"
+                   (eabp-action "views.save" :when-offline "drop")
+                   :icon "add"))
+     :collapsed t)))
+
+(defun glasspane-views--hub (snackbar)
+  "The hub: every saved view as a card, plus the new-view form."
+  (eabp-shell-nav-view
+   "Saved views"
+   (apply #'eabp-lazy-column
+          (append
+           (if glasspane-saved-views
+               (mapcar
+                (lambda (view)
+                  (let ((name (alist-get 'name view)))
+                    (eabp-card
+                     (list
+                      (eabp-row
+                       (eabp-box
+                        (list (eabp-column
+                               (eabp-text name 'label)
+                               (eabp-text (format "%s · %s"
+                                                  (alist-get 'rendering view)
+                                                  (alist-get 'query view))
+                                          'caption)))
+                        :weight 1)
+                       (eabp-icon-button
+                        "delete"
+                        (eabp-action "views.delete" :args `((name . ,name))
+                                     :when-offline "queue")
+                        :content-description "Delete view")))
+                     :on-tap (eabp-action "views.open" :args `((name . ,name))
+                                          :when-offline "drop"))))
+                glasspane-saved-views)
+             (list (eabp-empty-state
+                    :icon "manage_search" :title "No saved views"
+                    :caption "Name a query below and it becomes a view")))
+           (list (eabp-divider) (glasspane-views--new-form))))
+   :snackbar snackbar))
+
+(defun glasspane-views--view (snackbar)
+  (if-let ((view (and glasspane-views--current
+                      (glasspane-views--get glasspane-views--current))))
+      (glasspane-views--open-view view snackbar)
+    (glasspane-views--hub snackbar)))
+
+(eabp-shell-define-view "views" :builder #'glasspane-views--view :order 75)
+
+;; Everyday nav: saved views are a daily destination, so they ride the
+;; drawer (the contract: drawer = everyday nav, satellites = settings).
+(eabp-shell-add-drawer-item
+ 40 (lambda ()
+      (eabp-drawer-item "manage_search" "Saved views"
+                        (eabp-shell-switch-view "views"))))
+
+;; ─── Actions ─────────────────────────────────────────────────────────────────
+
+(eabp-defaction "views.open"
+  (lambda (args _)
+    (let ((name (alist-get 'name args)))
+      (when (glasspane-views--get name)
+        (setq glasspane-views--current name)
+        (eabp-shell-push nil :switch-to "views")))))
+
+(eabp-defaction "views.back"
+  (lambda (_args _)
+    (setq glasspane-views--current nil)
+    (eabp-shell-push nil :switch-to "views")))
+
+(eabp-defaction "views.rendering"
+  (lambda (args _)
+    (let ((view (glasspane-views--get (alist-get 'name args)))
+          (rendering (alist-get 'rendering args)))
+      (when (and view (member rendering glasspane-views--renderings))
+        (setcdr (assq 'rendering view) rendering)
+        (glasspane-views--persist)
+        (eabp-shell-push)))))
+
+(eabp-defaction "views.save"
+  (lambda (_args _)
+    (let* ((gen glasspane-views--form-gen)
+           (name (string-trim
+                  (or (eabp-ui-state (format "views-new-name-%d" gen)) "")))
+           (query (string-trim
+                   (or (eabp-ui-state (format "views-new-query-%d" gen)) "")))
+           (rendering (let ((r (eabp-ui-state
+                                (format "views-new-rendering-%d" gen))))
+                        (cond ((stringp r) r)
+                              ((consp r) (car r))
+                              ((vectorp r) (aref r 0))
+                              (t "list")))))
+      (cond
+       ((string-empty-p name) (eabp-shell-notify "The view needs a name"))
+       ((string-empty-p query) (eabp-shell-notify "The view needs a query"))
+       (t
+        (condition-case err
+            (progn
+              ;; Parse now so a broken query fails at save, not render.
+              (glasspane-org--parse-query query)
+              (setq glasspane-saved-views
+                    (append (cl-remove name glasspane-saved-views
+                                       :key (lambda (v) (alist-get 'name v))
+                                       :test #'equal)
+                            (list `((name . ,name)
+                                    (query . ,query)
+                                    (rendering . ,(if (member rendering
+                                                              glasspane-views--renderings)
+                                                      rendering "list"))))))
+              (glasspane-views--persist)
+              (eabp-ui-state-clear "views-new")
+              (cl-incf glasspane-views--form-gen)
+              (eabp-shell-notify (format "Saved view %s" name)))
+          (user-error (eabp-shell-notify (error-message-string err))))))
+      (eabp-shell-push))))
+
+(eabp-defaction "views.delete"
+  (lambda (args _)
+    (let ((name (alist-get 'name args)))
+      (when (glasspane-views--get name)
+        (setq glasspane-saved-views
+              (cl-remove name glasspane-saved-views
+                         :key (lambda (v) (alist-get 'name v)) :test #'equal))
+        (glasspane-views--persist)
+        (when (equal glasspane-views--current name)
+          (setq glasspane-views--current nil))
+        (eabp-shell-notify (format "Deleted view %s" name))
+        (eabp-shell-push)))))
+
+(provide 'glasspane-views)
+;;; glasspane-views.el ends here
+
+;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-automations.el
+;;; ==================================================================
+
+;;; glasspane-automations.el --- Automations as literate org -*- lexical-binding: t; -*-
+
+;; Automation plan Task 13: rules live in an org file — readable,
+;; editable on the phone with the org editor that already exists,
+;; version-controllable.  One heading per rule:
+;;
+;;   * Charge sync
+;;   :PROPERTIES:
+;;   :TRIGGER: power connected
+;;   :POLICY: wake
+;;   :THROTTLE: 300
+;;   :END:
+;;   #+begin_src elisp
+;;   (my/org-sync)
+;;   #+end_src
+;;
+;; The drawer holds the wire fields (a shorthand `:TRIGGER:', raw
+;; `:PARAMS:'/`:ON_FIRE:' for anything richer); the body's first elisp
+;; src block is the handler, evaluated with `data' and `args' in scope.
+;; Marking the heading DONE removes the rule from the pushed set — org
+;; semantics as the enable switch.
+;;
+;; TRUST BOUNDARY: the src blocks are user-authored code from the
+;; user's own file, the same trust as init.el.  This file must only
+;; ever be loaded from the local `org-directory' — never from anything
+;; that arrived over the wire or the share sheet.
+;;
+;; Property drawers are case-insensitive per the org case conventions
+;; (org-element normalizes keys; the ERT suite pins a lowercase
+;; drawer).  TODO keywords stay case-sensitive.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'org)
+(require 'org-element)
+(require 'eabp)
+(require 'eabp-triggers)
+(require 'eabp-shell)
+(require 'glasspane-org)
+
+(defcustom glasspane-automations-file nil
+  "The org file holding trigger rules.
+nil means automations.org inside `org-directory'."
+  :type '(choice (const :tag "automations.org in org-directory" nil) file)
+  :group 'eabp)
+
+(defvar glasspane-automations--ids nil
+  "Trigger ids registered from the org file (replaced on each reload).")
+
+(defun glasspane-automations--file ()
+  (or glasspane-automations-file
+      (expand-file-name "automations.org" org-directory)))
+
+;; ─── Parsing ─────────────────────────────────────────────────────────────────
+
+(defconst glasspane-automations--types
+  '("time" "power" "battery.level" "screen" "headset" "airplane"
+    "boot" "timezone.changed" "package" "network" "wifi.ssid"
+    "bluetooth.device")
+  "Trigger types rules may use (mirrors the SPEC §11 catalog).
+An unknown type would make the companion reject the whole replace-set,
+so unknown rules are skipped with a message instead of registered.")
+
+(defun glasspane-automations--parse-trigger (str)
+  "Parse the `:TRIGGER:' shorthand STR into (TYPE . PARAMS).
+Grammar: the first token names the type; the rest is per-type sugar —
+\"power connected\", \"screen off\", \"battery.level below 20\",
+\"time every 3600\", \"package added com.example\".  Anything richer
+goes in `:PARAMS:'.  Returns nil for an empty or unknown-type string."
+  (pcase-let* ((tokens (split-string (or str "") "[ \t]+" t))
+               (`(,type . ,rest) tokens))
+    (when (and type (member type glasspane-automations--types))
+      (cons type
+            (pcase type
+              ((or "power" "screen" "headset" "airplane")
+               (when (car rest) `((state . ,(car rest)))))
+              ("battery.level"
+               (pcase rest
+                 (`("below" ,n) `((below . ,(string-to-number n))))
+                 (`("above" ,n) `((above . ,(string-to-number n))))))
+              ("time"
+               (pcase rest
+                 (`("every" ,s) `((every_s . ,(string-to-number s))))
+                 (`("at" ,ms) `((at_ms . ,(string-to-number ms))))))
+              ("package"
+               (append (when (car rest) `((event . ,(car rest))))
+                       (when (cadr rest) `((package . ,(cadr rest))))))
+              (_ nil))))))
+
+(defun glasspane-automations--read (str)
+  "Read STR as one elisp datum, or nil when STR is nil/empty.
+For `:PARAMS:' / `:ON_FIRE:' — data from the user's own file."
+  (when (and (stringp str) (not (string-empty-p (string-trim str))))
+    (car (read-from-string str))))
+
+(defun glasspane-automations--handler (src headline)
+  "Build the rule handler from SRC, the elisp block body.
+The forms run with `data' and `args' bound to the fire payload.  Same
+trust as init.el — see the file header."
+  (condition-case err
+      (eval `(lambda (data args)
+               (ignore data args)
+               ,(car (read-from-string (format "(progn %s)" src))))
+            t)
+    (error
+     (message "EABP automations: bad handler in %S: %s"
+              headline (error-message-string err))
+     nil)))
+
+(defun glasspane-automations--rules ()
+  "Parse the automations file into registration plists.
+A rule = a headline with a `:TRIGGER:' property that is not DONE."
+  (let ((file (glasspane-automations--file))
+        rules)
+    (when (file-readable-p file)
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (org-element-map (org-element-parse-buffer) 'headline
+           (lambda (hl)
+             (when-let ((trigger (org-element-property :TRIGGER hl)))
+               (let* ((headline (org-element-property :raw-value hl))
+                      (done (eq (org-element-property :todo-type hl) 'done))
+                      (parsed (glasspane-automations--parse-trigger trigger)))
+                 (cond
+                  (done nil)            ; org semantics as the enable switch
+                  ((null parsed)
+                   (message "EABP automations: skipping %S — unknown trigger %S"
+                            headline trigger))
+                  (t
+                   (let* ((src (car (org-element-map hl 'src-block
+                                      (lambda (blk)
+                                        (when (member (downcase
+                                                       (or (org-element-property
+                                                            :language blk)
+                                                           ""))
+                                                      '("elisp" "emacs-lisp"))
+                                          (org-element-property :value blk))))))
+                          (params (or (glasspane-automations--read
+                                       (org-element-property :PARAMS hl))
+                                      (cdr parsed))))
+                     (push (list :id (format "org/%s" headline)
+                                 :type (car parsed)
+                                 :params params
+                                 :policy (org-element-property :POLICY hl)
+                                 :dedupe (org-element-property :DEDUPE hl)
+                                 :throttle-s
+                                 (when-let ((th (org-element-property
+                                                 :THROTTLE hl)))
+                                   (string-to-number th))
+                                 :on-fire (glasspane-automations--read
+                                           (org-element-property :ON_FIRE hl))
+                                 :handler (when src
+                                            (glasspane-automations--handler
+                                             src headline)))
+                           rules)))))))))))
+    (nreverse rules)))
+
+;; ─── Loading ─────────────────────────────────────────────────────────────────
+
+(defun glasspane-automations-reload ()
+  "Re-read the automations file and replace the org-defined triggers.
+Previously org-defined ids not in the file anymore are unregistered —
+the file is the source of truth for the `org/' id namespace."
+  (interactive)
+  (let* ((rules (glasspane-automations--rules))
+         (ids (mapcar (lambda (r) (plist-get r :id)) rules)))
+    ;; Unregister leavers first, then (re)register — each call pushes,
+    ;; and replace-set makes the intermediate states harmless.
+    (dolist (stale (cl-set-difference glasspane-automations--ids ids
+                                      :test #'equal))
+      (eabp-trigger-unregister stale))
+    (dolist (r rules)
+      (apply #'eabp-trigger-register (plist-get r :id)
+             (cl-loop for (k v) on r by #'cddr
+                      unless (eq k :id) append (list k v))))
+    (setq glasspane-automations--ids ids)
+    (when (called-interactively-p 'interactive)
+      (message "EABP automations: %d rule(s) active" (length ids)))
+    ids))
+
+(defvar eabp-files-after-save-hook)
+
+(defun glasspane-automations--after-save (file)
+  "Reload when the phone saves the automations FILE."
+  (when (equal (expand-file-name file)
+               (expand-file-name (glasspane-automations--file)))
+    (glasspane-automations-reload)))
+
+(with-eval-after-load 'eabp-files
+  (add-hook 'eabp-files-after-save-hook #'glasspane-automations--after-save))
+
+;; Load rules when the file exists; a missing file is simply zero rules.
+(when (file-readable-p (glasspane-automations--file))
+  (glasspane-automations-reload))
+
+(provide 'glasspane-automations)
+;;; glasspane-automations.el ends here
+
 ;;; ==================================================================
 ;;; BEGIN apps/glasspane/glasspane-demo.el
 ;;; ==================================================================

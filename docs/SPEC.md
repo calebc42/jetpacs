@@ -424,9 +424,12 @@ rejected with an error, so the client never half-arms).
 | `boot` | — | `{}` | fires once per boot from the boot receiver; typically `policy: "queue"` or `"wake"` |
 | `timezone.changed` | — | `{tz}` | the new zone id |
 | `package` | `{event?, package?}` — `added` \| `removed` | `{event, package}` | update-replacing broadcasts are filtered out |
+| `network` | `{event?, transport?}` — `available` \| `lost`; `wifi` \| `cellular` \| `ethernet` \| `vpn` \| `bluetooth` | `{event, transport?}` | the default-network callback (permission-free); fires once per network gain/loss |
 
-Connectivity types (`network`, `wifi.ssid`, `bluetooth.device`) are the
-next batch; each will document its runtime-permission behavior here.
+`wifi.ssid` and `bluetooth.device` are the remaining connectivity
+batch; each will document its runtime-permission behavior here
+(SSID needs fine location — degrade to `network`'s transport-only
+matching when ungranted, never fire garbage).
 
 ## 12. Conformance
 

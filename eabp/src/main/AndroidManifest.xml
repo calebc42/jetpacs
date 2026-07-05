@@ -26,6 +26,9 @@
     <!-- Reboot persistence (SPEC §11): rearm triggers, reschedule reminders. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- `network` triggers (SPEC §11): the default-network callback. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Android 11 package visibility: without these, `apps.list` returns
          nothing and TTS finds no engine. -->
     <queries>

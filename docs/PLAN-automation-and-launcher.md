@@ -385,7 +385,15 @@ injected via `adb shell am broadcast` where possible) and one
 end-to-end elisp test; SPEC §11 table lists every shipped type + its
 `data` shape.
 
-### Task 8: trigger catalog, batch 2 (runtime-permissioned)
+### Task 8: trigger catalog, batch 2 (runtime-permissioned) 🟡 (network landed 2026-07-05)
+
+**Landed:** the permission-free half — `network {event, transport?}`
+via `registerDefaultNetworkCallback` (transport remembered per network
+so `lost` can carry it; fires once per gain/loss). **Still open,
+deliberately hardware-gated:** `wifi.ssid` and `bluetooth.device` —
+their value IS the permission-degrade flow (fine location /
+BLUETOOTH_CONNECT grant loops), which can't be iterated without a
+device.
 
 **Goal:** connectivity contexts — the classic "at home / at work"
 profiles.
@@ -536,7 +544,19 @@ and a "fire now" test button per trigger.
 **Acceptance:** define, disable, re-enable, test-fire from the phone;
 restart Emacs and the set re-pushes identically.
 
-### Task 13: org-defined automations
+### Task 13: org-defined automations ✅ (2026-07-05)
+
+**Landed:** `emacs/apps/glasspane/glasspane-automations.el` —
+automations.org (in `org-directory`) parsed with org-element: one
+heading per rule, `:TRIGGER:` shorthand ("power connected",
+"battery.level below 20") + raw `:PARAMS:`/`:ON_FIRE:` for anything
+richer, `:POLICY:`/`:DEDUPE:`/`:THROTTLE:`, first elisp src block =
+handler with `data`/`args` in scope (init.el trust, never
+wire-sourced), DONE = removed from the set. Reloads on phone-side
+save (`eabp-files-after-save-hook`) and via
+`M-x glasspane-automations-reload`; unknown trigger types are skipped
+with a message (the companion rejects whole sets). Case test pins a
+lowercase drawer. On-device pass pending.
 
 **Goal:** automations as literate org — readable, editable on the
 phone with the org editor that already exists, version-controllable.

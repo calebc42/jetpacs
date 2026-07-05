@@ -38,6 +38,9 @@
 (require 'eabp-sync)
 (require 'glasspane-demo)
 (require 'glasspane-config)
+(require 'glasspane-journal)
+(require 'glasspane-views)
+(require 'glasspane-automations)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -1966,6 +1969,338 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
                     (insert-file-contents eabp-tests--frames-golden-file)
                     (buffer-string))
                   "\n" t))))
+
+;; ─── Journal (PKM Task 5) ────────────────────────────────────────────────────
+
+(ert-deftest glasspane-journal-append-creates-datetree ()
+  "First append creates the datetree levels; entries land as list items."
+  (let* ((file (make-temp-file "eabp-journal" nil ".org"))
+         (glasspane-journal-file file)
+         (today (glasspane-journal--today)))
+    (unwind-protect
+        (progn
+          (should-not (glasspane-journal--day-pos today))
+          (glasspane-journal--append "first thought")
+          (glasspane-journal--append "second thought")
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            (should (string-match-p
+                     (format "^\\*+[ \t]+%s" (regexp-quote today)) content))
+            (should (string-search "- first thought" content))
+            (should (string-search "- second thought" content)))
+          (should (glasspane-journal--day-pos today))
+          ;; The reader renders the day without erroring.
+          (should (glasspane-journal--day-nodes today)))
+      (delete-file file))))
+
+(ert-deftest glasspane-journal-carried-over ()
+  "Unfinished TODOs scheduled before today carry over; done/future don't."
+  (let* ((file (make-temp-file "eabp-carried" nil ".org"))
+         (today (glasspane-journal--today))
+         (yesterday (glasspane-ui--shift-date today -1 'day))
+         (tomorrow (glasspane-ui--shift-date today 1 'day)))
+    (with-temp-file file
+      (insert (format "* TODO Old task\nSCHEDULED: <%s>\n" yesterday)
+              (format "* DONE Done task\nSCHEDULED: <%s>\n" yesterday)
+              (format "* TODO Future task\nSCHEDULED: <%s>\n" tomorrow)))
+    (unwind-protect
+        (let ((org-agenda-files (list file)))
+          (glasspane-org-cache-invalidate)
+          (let ((items (glasspane-journal--carried-over)))
+            (should (= (length items) 1))
+            (should (equal (alist-get 'headline (car items)) "Old task"))
+            (should (alist-get 'ref (car items)))))
+      (delete-file file))))
+
+(ert-deftest glasspane-journal-actions-drive-state ()
+  "nav/goto/today move the viewed date; capture appends and rotates the
+input id (the server-driven field clear)."
+  (let* ((file (make-temp-file "eabp-journal-act" nil ".org"))
+         (glasspane-journal-file file)
+         (glasspane-journal--date nil)
+         (glasspane-journal--capture-gen 0)
+         (today (glasspane-journal--today))
+         (yesterday (glasspane-ui--shift-date today -1 'day)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-shell-push)
+                   (cl-function (lambda (&optional _tab &key _switch-to)))))
+          (eabp--on-action '((action . "journal.nav")
+                             (args . ((delta . -1)))) nil)
+          (should (equal (glasspane-journal--current) yesterday))
+          (eabp--on-action '((action . "journal.today")) nil)
+          (should (equal (glasspane-journal--current) today))
+          (eabp--on-action '((action . "journal.goto")
+                             (args . ((value . "2026-01-15")))) nil)
+          (should (equal (glasspane-journal--current) "2026-01-15"))
+          ;; Malformed picker values are ignored.
+          (eabp--on-action '((action . "journal.goto")
+                             (args . ((value . "not-a-date")))) nil)
+          (should (equal (glasspane-journal--current) "2026-01-15"))
+          ;; Capture with an explicit date lands under that day, trimmed.
+          (eabp--on-action '((action . "journal.capture")
+                             (args . ((value . "  typed on phone  ")
+                                      (date . "2026-01-15")))) nil)
+          (should (= glasspane-journal--capture-gen 1))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            (should (string-search "- typed on phone" content))
+            (should (string-match-p "^\\*+[ \t]+2026-01-15" content)))
+          ;; Leaving the journal resets the viewed date to today.
+          (glasspane-journal--on-view-switched "agenda")
+          (should (equal (glasspane-journal--current) today)))
+      (delete-file file))))
+
+(ert-deftest glasspane-journal-view-renders ()
+  "The journal view builds with day content + the carried-over section."
+  (let* ((file (make-temp-file "eabp-journal-view" nil ".org"))
+         (agenda (make-temp-file "eabp-journal-agenda" nil ".org"))
+         (glasspane-journal-file file)
+         (glasspane-journal--date nil)
+         (today (glasspane-journal--today))
+         (yesterday (glasspane-ui--shift-date today -1 'day)))
+    (with-temp-file agenda
+      (insert (format "* TODO Carry me\nSCHEDULED: <%s>\n" yesterday)))
+    (unwind-protect
+        (let ((org-agenda-files (list agenda)))
+          (glasspane-org-cache-invalidate)
+          (glasspane-journal--append "a journal line")
+          (let ((json (json-serialize
+                       (eabp-tests--canon (glasspane-journal--view nil))
+                       :null-object :null :false-object :false)))
+            (should (string-search "journal-capture-" json))
+            (should (string-search "a journal line" json))
+            (should (string-search "Carried over (1)" json))
+            (should (string-search "Carry me" json))
+            (should (string-search "heading.schedule" json))
+            (should (string-search "journal.capture" json))))
+      (delete-file file)
+      (delete-file agenda))))
+
+;; ─── Saved views (PKM Task 11) ───────────────────────────────────────────────
+
+(defun eabp-tests--views-items ()
+  "Synthetic heading items exercising all three renderings."
+  '(((headline . "Write spec") (todo . "TODO") (tags . ["work"])
+     (scheduled . "<2026-07-04 Sat>")
+     (ref . ((file . "/tmp/a.org") (pos . 1) (headline . "Write spec"))))
+    ((headline . "Ship it") (todo . "NEXT") (tags . [])
+     (scheduled . nil)
+     (ref . ((file . "/tmp/a.org") (pos . 50) (headline . "Ship it"))))))
+
+(ert-deftest glasspane-views-renderings-build ()
+  "Table, board, and calendar renderings build from the same items."
+  (let ((items (eabp-tests--views-items))
+        (org-todo-keywords-1 '("TODO" "NEXT" "DONE")))
+    (let ((json (json-serialize (eabp-tests--canon
+                                 (glasspane-views--table-node items))
+                                :null-object :null :false-object :false)))
+      (should (string-search "Write spec" json))
+      (should (string-search "2026-07-04" json))
+      (should (string-search "heading.tap" json)))
+    (let ((json (json-serialize (eabp-tests--canon
+                                 (glasspane-views--board-node items))
+                                :null-object :null :false-object :false)))
+      ;; Column per present state, keyword order; menu moves between them.
+      (should (string-search "TODO (1)" json))
+      (should (string-search "NEXT (1)" json))
+      (should (string-search "heading.todo-set" json)))
+    (let ((json (json-serialize (eabp-tests--canon
+                                 (apply #'eabp-column
+                                        (glasspane-views--calendar-nodes items)))
+                                :null-object :null :false-object :false)))
+      (should (string-search "Unscheduled" json))
+      (should (string-search "Ship it" json)))))
+
+(ert-deftest glasspane-views-save-open-delete ()
+  "The save/open/rendering/delete lifecycle over the UI-state store."
+  (let ((glasspane-saved-views nil)
+        (glasspane-views--current nil)
+        (glasspane-views--form-gen 0)
+        (eabp--ui-state (make-hash-table :test 'equal))
+        (persisted 0))
+    (cl-letf (((symbol-function 'eabp-settings-save-variable)
+               (lambda (_sym _val) (cl-incf persisted) t))
+              ((symbol-function 'eabp-shell-push)
+               (cl-function (lambda (&optional _tab &key _switch-to)))))
+      ;; Save from the form fields.
+      (eabp-ui-state-put "views-new-name-0" "Work")
+      (eabp-ui-state-put "views-new-query-0" "todo:TODO tags:work")
+      (eabp-ui-state-put "views-new-rendering-0" "board")
+      (eabp--on-action '((action . "views.save")) nil)
+      (should (= (length glasspane-saved-views) 1))
+      (should (= glasspane-views--form-gen 1))   ; field-clearing id rotation
+      (should (= persisted 1))
+      (let ((view (glasspane-views--get "Work")))
+        (should (equal (alist-get 'query view) "todo:TODO tags:work"))
+        (should (equal (alist-get 'rendering view) "board")))
+      ;; A malformed query is refused at save time.
+      (eabp-ui-state-put "views-new-name-1" "Broken")
+      (eabp-ui-state-put "views-new-query-1" "(todo \"TODO\"")
+      (eabp--on-action '((action . "views.save")) nil)
+      (should (= (length glasspane-saved-views) 1))
+      ;; Open / switch rendering / delete.
+      (eabp--on-action '((action . "views.open") (args . ((name . "Work")))) nil)
+      (should (equal glasspane-views--current "Work"))
+      (eabp--on-action '((action . "views.rendering")
+                         (args . ((name . "Work") (rendering . "calendar")))) nil)
+      (should (equal (alist-get 'rendering (glasspane-views--get "Work"))
+                     "calendar"))
+      (eabp--on-action '((action . "views.delete") (args . ((name . "Work")))) nil)
+      (should-not glasspane-saved-views)
+      (should-not glasspane-views--current))))
+
+(ert-deftest glasspane-views-end-to-end-render ()
+  "A saved view renders real query results from an agenda file."
+  (let* ((agenda (make-temp-file "eabp-views" nil ".org"))
+         (glasspane-saved-views
+          '(((name . "Work") (query . "todo:TODO") (rendering . "list"))))
+         (glasspane-views--current "Work"))
+    (with-temp-file agenda
+      (insert "* TODO Alpha :work:\nSCHEDULED: <2026-07-04 Sat>\n"
+              "* DONE Omega\n"))
+    (unwind-protect
+        (let ((org-agenda-files (list agenda)))
+          (glasspane-org-cache-invalidate)
+          (let ((json (json-serialize
+                       (eabp-tests--canon (glasspane-views--view nil))
+                       :null-object :null :false-object :false)))
+            (should (string-search "Alpha" json))
+            (should-not (string-search "Omega" json))
+            (should (string-search "views.rendering" json))
+            (should (string-search "views.back" json))))
+      (delete-file agenda))))
+
+;; ─── Org-defined automations (AUTO Task 13) ──────────────────────────────────
+
+(defmacro eabp-tests--with-automations-file (content &rest body)
+  "Run BODY with a temp automations file holding CONTENT."
+  (declare (indent 1))
+  `(let* ((file (make-temp-file "eabp-autom" nil ".org"))
+          (glasspane-automations-file file)
+          (glasspane-automations--ids nil)
+          (eabp-triggers--table (make-hash-table :test 'equal))
+          (eabp-triggers-changed-hook nil))
+     (unwind-protect
+         (progn (with-temp-file file (insert ,content))
+                ,@body)
+       (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+       (delete-file file))))
+
+(ert-deftest glasspane-automations-parses-rules ()
+  "Headings with :TRIGGER: become registrations; DONE disables; the
+lowercase drawer parses (org case conventions)."
+  (eabp-tests--with-automations-file
+      (concat "* Charge sync\n"
+              ":PROPERTIES:\n:TRIGGER: power connected\n:POLICY: wake\n"
+              ":THROTTLE: 300\n:END:\n"
+              "#+begin_src elisp\n(setq eabp-tests--autom-fired data)\n#+end_src\n"
+              ;; Case conventions: lowercase drawer + property + block.
+              "* Low battery\n"
+              ":properties:\n:trigger: battery.level below 20\n:end:\n"
+              "#+begin_src emacs-lisp\n(ignore)\n#+end_src\n"
+              "* DONE Old rule\n"
+              ":PROPERTIES:\n:TRIGGER: screen off\n:END:\n"
+              "* Not a rule\nJust some notes.\n"
+              "* Bad type\n"
+              ":PROPERTIES:\n:TRIGGER: warp.drive on\n:END:\n")
+    (let ((ids (glasspane-automations-reload)))
+      (should (equal (sort (copy-sequence ids) #'string<)
+                     '("org/Charge sync" "org/Low battery")))
+      (let ((reg (gethash "org/Charge sync" eabp-triggers--table)))
+        (should (equal (plist-get reg :type) "power"))
+        (should (equal (plist-get reg :params) '((state . "connected"))))
+        (should (equal (plist-get reg :policy) "wake"))
+        (should (= (plist-get reg :throttle-s) 300))
+        (should (functionp (plist-get reg :handler))))
+      (let ((reg (gethash "org/Low battery" eabp-triggers--table)))
+        (should (equal (plist-get reg :type) "battery.level"))
+        (should (equal (plist-get reg :params) '((below . 20)))))
+      ;; DONE and unknown-type rules never registered.
+      (should-not (gethash "org/Old rule" eabp-triggers--table))
+      (should-not (gethash "org/Bad type" eabp-triggers--table)))))
+
+(ert-deftest glasspane-automations-handler-runs-and-reload-replaces ()
+  "The src-block handler fires with `data' in scope; a reload drops
+rules that left the file."
+  (defvar eabp-tests--autom-fired nil)
+  (eabp-tests--with-automations-file
+      (concat "* Charge sync\n"
+              ":PROPERTIES:\n:TRIGGER: power connected\n:END:\n"
+              "#+begin_src elisp\n(setq eabp-tests--autom-fired data)\n#+end_src\n")
+    (glasspane-automations-reload)
+    (setq eabp-tests--autom-fired nil)
+    (eabp-trigger-test-fire "org/Charge sync")
+    ;; Test fires carry no data payload; args reached the handler.
+    (should (gethash "org/Charge sync" eabp-triggers--last-fired))
+    ;; Simulate a real fire with data.
+    (eabp-triggers--on-fired
+     '((id . "org/Charge sync") (type . "power")
+       (data . ((state . "connected"))) (at_ms . 1))
+     nil)
+    (should (equal (alist-get 'state eabp-tests--autom-fired) "connected"))
+    ;; Rewrite the file without the rule: reload unregisters it.
+    (with-temp-file file (insert "* Nothing here\n"))
+    (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+    (should-not (glasspane-automations-reload))
+    (should-not (gethash "org/Charge sync" eabp-triggers--table))))
+
+;; ─── Sparse filter (orgro parity) ────────────────────────────────────────────
+
+(ert-deftest glasspane-sparse-filter-narrows-headings ()
+  "The read-mode filter narrows by query; clearing restores; bad
+queries surface instead of blanking the file."
+  (let* ((file (make-temp-file "eabp-sparse" nil ".org"))
+         (glasspane-ui--files-read-mode t)
+         (glasspane-ui--files-refile-mode nil)
+         (glasspane-ui--files-filter ""))
+    (with-temp-file file
+      (insert "* TODO Pay taxes :money:\n"
+              "* TODO Water plants :home:\n"
+              "* Reference notes\nSome body text about taxes.\n"))
+    (unwind-protect
+        (progn
+          ;; Unfiltered: all three headings render.
+          (let ((json (json-serialize
+                       (eabp-tests--canon (glasspane-ui--org-editor-body file))
+                       :null-object :null :false-object :false)))
+            (should (string-search "Pay taxes" json))
+            (should (string-search "Water plants" json))
+            (should (string-search "files.filter" json)))
+          ;; Tag filter.
+          (let* ((glasspane-ui--files-filter "tags:money")
+                 (json (json-serialize
+                        (eabp-tests--canon (glasspane-ui--org-editor-body file))
+                        :null-object :null :false-object :false)))
+            (should (string-search "Pay taxes" json))
+            (should-not (string-search "Water plants" json))
+            (should (string-search "1 of 3 headings" json)))
+          ;; Free text matches bodies too.
+          (let* ((glasspane-ui--files-filter "taxes")
+                 (json (json-serialize
+                        (eabp-tests--canon (glasspane-ui--org-editor-body file))
+                        :null-object :null :false-object :false)))
+            (should (string-search "Pay taxes" json))
+            (should (string-search "Reference notes" json))
+            (should-not (string-search "Water plants" json)))
+          ;; A query with unbalanced parens degrades to a message.
+          (let* ((glasspane-ui--files-filter "(todo \"TODO\"")
+                 (json (json-serialize
+                        (eabp-tests--canon (glasspane-ui--org-editor-body file))
+                        :null-object :null :false-object :false)))
+            (should (string-search "unbalanced" json))))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest glasspane-sparse-filter-action-sets-state ()
+  "files.filter stores the query; opening another file resets it."
+  (let ((glasspane-ui--files-filter ""))
+    (cl-letf (((symbol-function 'eabp-shell-push)
+               (cl-function (lambda (&optional _tab &key _switch-to)))))
+      (eabp--on-action '((action . "files.filter")
+                         (args . ((value . "todo:TODO")))) nil)
+      (should (equal glasspane-ui--files-filter "todo:TODO"))
+      (run-hook-with-args 'eabp-files-open-hook "/tmp/other.org")
+      (should (equal glasspane-ui--files-filter "")))))
 
 (provide 'eabp-tests)
 ;;; eabp-tests.el ends here

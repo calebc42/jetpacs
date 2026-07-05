@@ -299,7 +299,8 @@ suppressed identical push would leave it frozen."
 ;; the only app; load a second app (eabp-hello.el) and the launcher home
 ;; appears with these views grouped as Glasspane's own.
 (eabp-defapp "glasspane" :label "Glasspane" :icon "event"
-             :views '("agenda" "tasks" "clock" "search" "settings" "detail")
+             :views '("agenda" "journal" "tasks" "clock" "search" "views"
+                      "settings" "detail")
              :order 10)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
@@ -2528,19 +2529,66 @@ wedging the bridge forever."
   "Non-nil when FILE is an org file."
   (and file (string-match-p "\\.org\\'" file)))
 
+(defvar glasspane-ui--files-filter ""
+  "Sparse-filter query for the org read-mode body; empty = everything.
+Reset when a different file opens.")
+
 (defun glasspane-ui--org-editor-body (file)
-  "Reader body for org FILE while read mode is on; nil = plain editor."
+  "Reader body for org FILE while read mode is on; nil = plain editor.
+A filter row narrows the headings by the standard query syntax — the
+orgro sparse-filter parity item."
   (when (and glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))
     (if glasspane-ui--files-refile-mode
         (or (glasspane-org-reader-refile-list file)
             (eabp-text "No headings to show." 'caption))
-      (let ((items (glasspane-org--file-heading-items file)))
-        (if items
-            (apply #'eabp-lazy-column
-                   (mapcar #'glasspane-ui--agenda-card items))
-          (eabp-empty-state :icon "description"
-                            :title "Empty file"
-                            :caption "No headings found."))))))
+      (let* ((items (glasspane-org--file-heading-items file))
+             (query (string-trim glasspane-ui--files-filter))
+             (active (not (string-empty-p query)))
+             (filtered (if (not active) items
+                         (condition-case err
+                             (glasspane-org--filter-items items query)
+                           (user-error
+                            (list 'error (error-message-string err))))))
+             (broken (eq (car-safe filtered) 'error)))
+        (apply #'eabp-lazy-column
+               (append
+                (list (eabp-text-input "files-filter"
+                                       :value glasspane-ui--files-filter
+                                       :hint "Filter: todo:TODO tags:work text…"
+                                       :single-line t
+                                       :on-submit
+                                       (eabp-action "files.filter"
+                                                    :when-offline "drop")))
+                (when (and active (not broken))
+                  (list (eabp-row
+                         (eabp-box
+                          (list (eabp-text
+                                 (format "%d of %d headings"
+                                         (length filtered) (length items))
+                                 'caption))
+                          :weight 1)
+                         (eabp-chip "Clear"
+                                    :on-tap (eabp-action
+                                             "files.filter"
+                                             :args '((value . ""))
+                                             :when-offline "drop")))))
+                (cond
+                 (broken (list (eabp-text (cadr filtered) 'caption)))
+                 ((null filtered)
+                  (list (eabp-empty-state
+                         :icon "description"
+                         :title (if active "No matches" "Empty file")
+                         :caption (if active query "No headings found."))))
+                 (t (mapcar #'glasspane-ui--agenda-card filtered)))))))))
+
+(eabp-defaction "files.filter"
+  ;; The sparse filter for the open org file: VALUE is the submitted
+  ;; query ("" clears). State only — matching happens at render.
+  (lambda (args _)
+    (let ((value (alist-get 'value args)))
+      (when (stringp value)
+        (setq glasspane-ui--files-filter value)
+        (eabp-shell-push nil :switch-to "edit")))))
 
 (defun glasspane-ui--org-editor-actions (file)
   "Reader/refile toggles and the properties dialog for org FILE."
@@ -2572,9 +2620,11 @@ wedging the bridge forever."
       (lambda (file) (when (glasspane-ui--org-file-p file) "org")))
 
 ;; Org files open reader-first; everything else lands in the editor.
+;; A fresh file starts unfiltered.
 (add-hook 'eabp-files-open-hook
           (lambda (file)
-            (setq glasspane-ui--files-read-mode (glasspane-ui--org-file-p file))))
+            (setq glasspane-ui--files-read-mode (glasspane-ui--org-file-p file)
+                  glasspane-ui--files-filter "")))
 
 ;; A phone-side save may have changed org data the views memoise.
 (add-hook 'eabp-files-after-save-hook

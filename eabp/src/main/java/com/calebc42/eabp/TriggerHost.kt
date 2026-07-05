@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
@@ -88,6 +91,7 @@ class TriggerHost(private val context: Context) {
     /** Unregister everything (service teardown — receivers must not leak). */
     fun shutdown() {
         disarmReceivers()
+        armNetworkCallback(false)
         rows = emptyList()
     }
 
@@ -133,8 +137,69 @@ class TriggerHost(private val context: Context) {
             addAction(Intent.ACTION_PACKAGE_REMOVED)
             addDataScheme("package")
         })
+        armNetworkCallback("network" in types)
         // `boot` triggers arm nothing here — BootReceiver fires them.
         armTimeAlarms(context, newRows.filter { it.type == "time" })
+    }
+
+    // ── Connectivity (callback API, permission-free) ─────────────────────────
+
+    /** Last-known transport per network id: onLost gives a bare [Network],
+     * so the transport is remembered from its onCapabilitiesChanged. */
+    private val networkTransports = ConcurrentHashMap<Network, String>()
+    private var networkCallbackArmed = false
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            // Transport arrives via onCapabilitiesChanged just after;
+            // fire from there so `data` can carry it.
+        }
+
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            val transport = transportName(caps)
+            val first = networkTransports.put(network, transport) == null
+            if (first) fireNetwork("available", transport)
+        }
+
+        override fun onLost(network: Network) {
+            fireNetwork("lost", networkTransports.remove(network))
+        }
+    }
+
+    private fun transportName(caps: NetworkCapabilities): String = when {
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bluetooth"
+        else -> "other"
+    }
+
+    private fun fireNetwork(event: String, transport: String?) {
+        val data = JSONObject().put("event", event)
+        transport?.let { data.put("transport", it) }
+        for (row in rowsOf("network")) {
+            val p = row.param()
+            val wantEvent = p.optString("event")
+            val wantTransport = p.optString("transport")
+            if ((wantEvent.isEmpty() || wantEvent == event) &&
+                (wantTransport.isEmpty() || wantTransport == transport)
+            ) fireRow(context, row, data)
+        }
+    }
+
+    private fun armNetworkCallback(wanted: Boolean) {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as ConnectivityManager
+        if (wanted && !networkCallbackArmed) {
+            networkTransports.clear()
+            runCatching { cm.registerDefaultNetworkCallback(networkCallback) }
+                .onSuccess { networkCallbackArmed = true }
+                .onFailure { Log.w(TAG, "network callback failed: ${it.message}") }
+        } else if (!wanted && networkCallbackArmed) {
+            runCatching { cm.unregisterNetworkCallback(networkCallback) }
+            networkCallbackArmed = false
+        }
     }
 
     // ── Matching helpers ─────────────────────────────────────────────────────
@@ -272,7 +337,7 @@ class TriggerHost(private val context: Context) {
 
         val SUPPORTED_TYPES = setOf(
             "time", "power", "battery.level", "screen", "headset",
-            "airplane", "boot", "timezone.changed", "package",
+            "airplane", "boot", "timezone.changed", "package", "network",
         )
 
         /** Per-trigger last-fire clock for `throttle_s` (process-lifetime;

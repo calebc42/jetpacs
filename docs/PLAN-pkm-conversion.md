@@ -278,7 +278,20 @@ case-sensitive in paths, titles matched case-insensitively).
 
 ## Phase C2 — the landing surface
 
-### Task 5: Daily note as home
+### Task 5: Daily note as home ✅ (2026-07-05)
+
+**Landed:** `emacs/apps/glasspane/glasspane-journal.el` — Journal tab
+(datetree; vulpea-journal evaluation deferred to the on-device vulpea
+spike, one code path either way), ‹ day | native date picker | day ›
+nav, capture row (id rotation clears the field), day content through
+the foldable reader, carried-over section (`(and (todo) (scheduled
+:to -1))` via the new `glasspane-org--query`) with one-tap "Today" +
+date-picker reschedule riding `heading.schedule` (the orgro
+timestamp-tap-edit absorb). `glasspane-journal-landing` defcustom
+flips the landing view (existing users keep Agenda). No config-dir
+seeding needed — the file defaults to journal.org in `org-directory`
+and nothing is created until the first capture. On-device pass pending
+(TESTING-ON-DEVICE.md).
 
 **Goal:** open app → today's page, ready to type; calendar back-nav;
 yesterday's unfinished tasks surfaced. The Logseq bootstrapping habit,
@@ -442,7 +455,18 @@ exactly; case-insensitive drawer recognition + case tests.
 a form; edits produce clean drawer diffs; date property opens the
 native picker.
 
-### Task 11: Saved queries as views (Dataview / Notion databases)
+### Task 11: Saved queries as views (Dataview / Notion databases) ✅ (2026-07-05)
+
+**Landed:** `emacs/apps/glasspane/glasspane-views.el` — saved views
+(name + query + rendering) persisted via Customize; hub behind a
+drawer entry with an in-place new-view form (fields via the UI-state
+store, queries validated at save); three renderings over
+`glasspane-org--query` (memoised): table (§9 table node, tappable
+rows), board (scroll-row of TODO-state columns; moving a card =
+`heading.todo-set` from a card menu — plain columns don't drag, a drag
+wire node is a later decision), calendar (grouped by scheduled date).
+Deviation: "save as view" lives in the hub form, not the search view,
+for now. On-device pass pending.
 
 **Goal:** the org-ql query builder's output becomes persistent, named
 views with three renderings — **list/table** (property columns),

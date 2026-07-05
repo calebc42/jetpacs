@@ -54,6 +54,9 @@
                     "apps/glasspane/glasspane-org-reader.el"
                     "apps/glasspane/glasspane-clock.el"
                     "apps/glasspane/glasspane-ui.el"
+                    "apps/glasspane/glasspane-journal.el"
+                    "apps/glasspane/glasspane-views.el"
+                    "apps/glasspane/glasspane-automations.el"
                     "apps/glasspane/glasspane-demo.el"
                     "apps/glasspane/glasspane-config.el"
                     "apps/glasspane/glasspane.el"))

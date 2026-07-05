@@ -61,7 +61,10 @@ this directory and fails if an app feature or org itself sneaks in.
 | `glasspane/glasspane-org-rich.el` | org → styled `rich_text` spans via `org-element` |
 | `glasspane/glasspane-org-reader.el` | foldable org outline → `collapsible` trees |
 | `glasspane/glasspane-clock.el` | org-clock chronometer notification |
-| `glasspane/glasspane-ui.el` | the org app: agenda/tasks/clock/search/detail/settings views + heading actions + capture |
+| `glasspane/glasspane-ui.el` | the org app: agenda/tasks/clock/search/detail/settings views + heading actions + capture + the read-mode sparse filter |
+| `glasspane/glasspane-journal.el` | daily-note landing surface: datetree journal tab, capture row, carried-over reschedule |
+| `glasspane/glasspane-views.el` | saved org-ql queries as views: table/board/calendar renderings over `glasspane-org--query` |
+| `glasspane/glasspane-automations.el` | automations as literate org: automations.org headings → trigger registrations (DONE = disabled) |
 | `glasspane/glasspane-demo.el` | the mobile-IDE tour files |
 | `glasspane/glasspane.el` | aggregate entry point: `(require 'glasspane)` |
 | `eabp-magit.el` | curated magit radial menu (pure data + key dispatch) |

@@ -78,21 +78,25 @@ inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 | any 🟡 | **AUTO 11** — wake spike (timeboxed) | Docs half landed 2026-07-05 (ARCHITECTURE "Execution model"); Termux silent-start spike needs hardware |
 | after Kotlin lands ✅ | **PKM 16** — contract-discipline audit | Done 2026-07-05: conformance checklist in ARCHITECTURE.md; one divergence found (on_change `value` injection) and spec'd into §9 |
 
-**⛔ GATE before Horizon 3:** battery profile of a normal day with a
-real trigger set (screen + power + a time trigger) active. Expectation
-is ≈0 delta over the existing FGS; the rule is measure, don't assume.
+**⛔ GATE (deferred to the H3→H4 boundary, decided 2026-07-05):**
+battery profile of a normal day with a real trigger set (screen +
+power + a time trigger) active; expectation is ≈0 delta over the
+existing FGS. H3 landed ahead of the measurement because the user was
+away from hardware and H3 is elisp-side value; the gate still blocks
+H4's heavier device integration. Protocol + the full pending
+acceptance list: [TESTING-ON-DEVICE.md](TESTING-ON-DEVICE.md).
 
 ## Horizon 3 — daily-driver org value (self-serving PKM + orgro absorption)
 
 | item | why |
 |---|---|
-| **PKM 5** — daily-note landing surface (absorbs ORGRO: timestamp tap-edit via carried-over reschedule) | Cheap, high daily value for the current user; sets the convert-facing tone for free |
-| **PKM 1** — backlink-engine spike/decision (absorbs the foundation of ORGRO: link nav) | The linking bet; everything in C1 layers on it |
-| **PKM 3 → PKM 4** — wikilink autocomplete; backlinks panel + unlinked mentions | The user's own vault gets the Obsidian-grade linking loop |
-| **PKM 11** — saved org-ql queries as table/board/calendar views | Strike while the query-builder refactor is fresh; serves the user's agenda workflows now, and is the Dataview/Notion-database story later |
-| **AUTO 8** — connectivity triggers (network/SSID/BT) | The "at home / in car" profiles — cheap now that the H2 host exists |
-| **AUTO 13** — org-defined automations | The org-parser tie-in, once `eabp-deftrigger` is proven by H2 daily use |
-| **ORGRO: sparse filter** | Standalone parity item, no dependencies |
+| ✅ **PKM 5** — daily-note landing surface (absorbs ORGRO: timestamp tap-edit via carried-over reschedule) | Landed 2026-07-05: glasspane-journal.el (datetree, carried-over reschedule, landing setting) |
+| ⏸ **PKM 1** — backlink-engine spike/decision (vulpea v2 decided; spike = on-device validation) | Hardware-gated: cold-index/incremental/memory numbers need the phone |
+| ⏸ **PKM 3 → PKM 4** — wikilink autocomplete; backlinks panel + unlinked mentions | Layer on PKM 1's validated vulpea; after the spike |
+| ✅ **PKM 11** — saved org-ql queries as table/board/calendar views | Landed 2026-07-05: glasspane-views.el (hub + 3 renderings over glasspane-org--query) |
+| 🟡 **AUTO 8** — connectivity triggers (network/SSID/BT) | `network` landed 2026-07-05; SSID/BT hardware-gated (their value is the permission-degrade flow) |
+| ✅ **AUTO 13** — org-defined automations | Landed 2026-07-05: glasspane-automations.el (automations.org, DONE = disabled, case test) |
+| ✅ **ORGRO: sparse filter** | Landed 2026-07-05: files.filter row over the org read-mode heading list |
 
 ## Horizon 4 — launcher maturity + heavier device integration
 

@@ -40,7 +40,10 @@ elements (checkboxes)."
            (body-info
             (progn
               (goto-char pos)
-              (ignore-errors (org-end-of-meta-data t))
+              ;; No FULL arg: skip only planning + PROPERTIES (shown as
+              ;; their own section).  LOGBOOK and other drawers stay in
+              ;; the body, where the rich renderer folds them.
+              (ignore-errors (org-end-of-meta-data))
               (let* ((b (min (point) next))
                      (raw (buffer-substring-no-properties b next))
                      (trimmed (string-trim-left raw "\\(?:[ \t]*[\n\r]\\)+"))
@@ -111,9 +114,13 @@ detail view already shows properties in its own section)."
            (when (and body (not (string-empty-p body)))
              ;; Native rich text (emphasis, links, #tags) instead of the
              ;; monospace org highlighter; code/tables still fall back to it.
-             ;; file + offset enable interactive checkboxes.
-             (glasspane-org-rich-body body (and file (file-name-directory file))
-                                file (when body-start (1- body-start))))
+             ;; file + offset enable interactive checkboxes.  SKIP-PROPS
+             ;; marks the detail view, which shows LOGBOOK as its own
+             ;; structured section — suppress the raw drawer there.
+             (let ((glasspane-org-rich--skip-drawers
+                    (and skip-props '("LOGBOOK"))))
+               (glasspane-org-rich-body body (and file (file-name-directory file))
+                                        file (when body-start (1- body-start)))))
            (mapcar (lambda (c) (glasspane-org-reader--heading-node c file)) children)))))
 
 (defun glasspane-org-reader--heading-node (n file)

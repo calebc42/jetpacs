@@ -8977,6 +8977,12 @@ ready for the companion's `reminders.set' frame."
 real-pos = offset + temp-pos.  Set by `glasspane-org-rich-body' when
 FILE and OFFSET are supplied.")
 
+(defvar glasspane-org-rich--skip-drawers nil
+  "Drawer names (upcased) the current render should omit.
+Bound by callers that present a drawer's content in their own way —
+the heading detail view parses LOGBOOK into a structured section, so
+rendering the raw drawer too would double it.")
+
 ;; ─── Inline spans ────────────────────────────────────────────────────────────
 
 (defun glasspane-org-rich--flag (style key)
@@ -9196,6 +9202,37 @@ toggles the checkbox via Emacs without entering edit mode."
                              (org-element-contents el)))))
     (when items (apply #'eabp-column items))))
 
+;; ─── Source blocks ───────────────────────────────────────────────────────────
+
+(defun glasspane-org-rich--src-block (el)
+  "Render src-block EL: highlighted code, plus a run header when executable.
+The header (language label + play button dispatching `org.babel.execute')
+appears only when file context is present *and* this Emacs has an
+`org-babel-execute:LANG' function — the same test execution would make,
+so the button never promises more than `org-babel-load-languages'
+delivers.  The action carries the block's real-file position; the code
+itself never crosses the wire."
+  (let* ((lang (org-element-property :language el))
+         (code (eabp-markup (or (org-element-property :value el) "")
+                            :syntax (or lang "text")))
+         (pos (and glasspane-org-rich--file glasspane-org-rich--body-offset
+                   lang
+                   (fboundp (intern (concat "org-babel-execute:" lang)))
+                   (+ glasspane-org-rich--body-offset
+                      (org-element-property :post-affiliated el)))))
+    (if (not pos)
+        code
+      (eabp-column
+       (eabp-row
+        (eabp-text lang 'label)
+        (eabp-spacer :weight 1)
+        (eabp-icon-button "play_arrow"
+                          (eabp-action "org.babel.execute"
+                                       :args `((file . ,glasspane-org-rich--file)
+                                               (pos . ,pos)))
+                          :content-description "Run block"))
+       code))))
+
 ;; ─── Tables ──────────────────────────────────────────────────────────────────
 
 (defconst glasspane-org-rich--cookie-re "\\`<[lcr]?[0-9]*>\\'"
@@ -9325,6 +9362,24 @@ tap-edit and the client offers add-row/add-column affordances."
                                       :args `((file . ,file)
                                               (pos . ,table-pos))))))))))
 
+(defun glasspane-org-rich--drawer (el)
+  "Render drawer EL as a folded section, like desktop org.
+Returns nil for drawers named in `glasspane-org-rich--skip-drawers'
+and for drawers whose content renders to nothing."
+  (let ((name (or (org-element-property :drawer-name el) "DRAWER")))
+    (unless (member (upcase name) glasspane-org-rich--skip-drawers)
+      (let ((inner (delq nil (mapcar #'glasspane-org-rich--element
+                                     (org-element-contents el)))))
+        (when inner
+          (eabp-collapsible
+           (format "drawer/%s/%s"
+                   (or glasspane-org-rich--file "")
+                   (+ (or glasspane-org-rich--body-offset 0)
+                      (org-element-property :begin el)))
+           (eabp-text name 'label)
+           inner
+           :collapsed t))))))
+
 (defun glasspane-org-rich--paragraph-image (el)
   "If paragraph EL is just a single image link, return an `eabp-image' node."
   (let* ((contents (org-element-contents el))
@@ -9346,9 +9401,7 @@ tap-edit and the client offers add-row/add-column affordances."
          (let ((spans (glasspane-org-rich--inline (org-element-contents el) nil)))
            (when spans (eabp-rich-text spans)))))
     ('plain-list (glasspane-org-rich--list el))
-    ('src-block
-     (eabp-markup (or (org-element-property :value el) "")
-                  :syntax (or (org-element-property :language el) "text")))
+    ('src-block (glasspane-org-rich--src-block el))
     ((or 'example-block 'fixed-width)
      (eabp-markup (or (org-element-property :value el) "")))
     ('quote-block
@@ -9362,10 +9415,11 @@ tap-edit and the client offers add-row/add-column affordances."
        (or (glasspane-org-rich--table el)
            (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org"))))
     ('horizontal-rule (eabp-divider))
+    ('drawer (glasspane-org-rich--drawer el))
     ;; Structural noise the reader handles elsewhere (properties drawer) or
     ;; that carries no display value on its own.
     ((or 'keyword 'comment 'comment-block 'planning
-         'property-drawer 'drawer 'node-property)
+         'property-drawer 'node-property)
      nil)
     (_
      (let ((txt (ignore-errors (string-trim (org-element-interpret-data el)))))
@@ -9455,7 +9509,10 @@ elements (checkboxes)."
            (body-info
             (progn
               (goto-char pos)
-              (ignore-errors (org-end-of-meta-data t))
+              ;; No FULL arg: skip only planning + PROPERTIES (shown as
+              ;; their own section).  LOGBOOK and other drawers stay in
+              ;; the body, where the rich renderer folds them.
+              (ignore-errors (org-end-of-meta-data))
               (let* ((b (min (point) next))
                      (raw (buffer-substring-no-properties b next))
                      (trimmed (string-trim-left raw "\\(?:[ \t]*[\n\r]\\)+"))
@@ -9526,9 +9583,13 @@ detail view already shows properties in its own section)."
            (when (and body (not (string-empty-p body)))
              ;; Native rich text (emphasis, links, #tags) instead of the
              ;; monospace org highlighter; code/tables still fall back to it.
-             ;; file + offset enable interactive checkboxes.
-             (glasspane-org-rich-body body (and file (file-name-directory file))
-                                file (when body-start (1- body-start))))
+             ;; file + offset enable interactive checkboxes.  SKIP-PROPS
+             ;; marks the detail view, which shows LOGBOOK as its own
+             ;; structured section — suppress the raw drawer there.
+             (let ((glasspane-org-rich--skip-drawers
+                    (and skip-props '("LOGBOOK"))))
+               (glasspane-org-rich-body body (and file (file-name-directory file))
+                                        file (when body-start (1- body-start)))))
            (mapcar (lambda (c) (glasspane-org-reader--heading-node c file)) children)))))
 
 (defun glasspane-org-reader--heading-node (n file)
@@ -11474,7 +11535,8 @@ Returns non-nil on success; messages and returns nil on failure."
  '((org-startup-folded :label "Initial folding")
    (org-startup-indented :label "Indent to outline level")
    (org-hide-emphasis-markers :label "Hide emphasis markers")
-   (org-return-follows-link :label "Enter follows links")))
+   (org-return-follows-link :label "Enter follows links")
+   (glasspane-babel-timeout :label "Babel run timeout (s)")))
 
 ;; Org-derived views are memoised; per the cache contract every mutation
 ;; must drop the memo or the phone keeps rendering stale data.
@@ -11894,6 +11956,50 @@ the phone never computes), saved, and every view repushed."
           (error
            (eabp-shell-notify
             (format "Add column failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+;; ─── Babel ───────────────────────────────────────────────────────────────────
+
+(defcustom glasspane-babel-timeout 30
+  "Seconds before a phone-triggered babel execution is abandoned.
+Best-effort: the timer can't interrupt a synchronous subprocess mid-call,
+but it fires between process reads and stops a runaway block from
+wedging the bridge forever."
+  :type 'integer :group 'eabp)
+
+(eabp-defaction "org.babel.execute"
+  ;; The play button on a src-block header.  The wire names only a
+  ;; location — the code that runs lives in the user's own file, so the
+  ;; semantic-action boundary holds.  `org-confirm-babel-evaluate' is
+  ;; honored: the yes/no prompt bridges to a native dialog, and it runs
+  ;; BEFORE the timeout starts so a slow answer never counts against the
+  ;; execution budget.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (progn
+              (with-current-buffer (find-file-noselect file)
+                (org-with-wide-buffer
+                 (goto-char pos)
+                 (let ((info (org-babel-get-src-block-info)))
+                   (unless info (error "No source block here"))
+                   (org-babel-confirm-evaluate info) ; user-errors on decline
+                   (let ((org-confirm-babel-evaluate nil))
+                     (with-timeout ((max 1 glasspane-babel-timeout)
+                                    (error "Timed out after %ss"
+                                           glasspane-babel-timeout))
+                       (org-babel-execute-src-block nil info)))))
+                (let ((glasspane-org--inhibit-save-refresh t)
+                      (save-silently t))
+                  (save-buffer)))
+              (glasspane-org-cache-invalidate)
+              (eabp-shell-notify "Block executed")
+              (eabp-shell-push))
+          (error
+           (eabp-shell-notify
+            (format "Run failed: %s" (error-message-string err)))
            (eabp-shell-push)))))))
 
 (eabp-defaction "file.view"

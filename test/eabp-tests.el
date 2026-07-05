@@ -951,6 +951,133 @@ the text it tells the user to type."
             (should (string-match-p "\\`| a | b |" (car lines)))))
       (delete-file file))))
 
+;; ─── Org babel: emitter and action ──────────────────────────────────────────
+
+(ert-deftest glasspane-org-rich-src-block-run-header ()
+  "Executable src blocks with file context grow a run header; others don't."
+  (require 'ob-emacs-lisp)
+  (let ((body "#+begin_src emacs-lisp\n(+ 1 2)\n#+end_src\n"))
+    ;; With context and a loaded language: column of header row + code.
+    (let* ((node (car (glasspane-org-rich-body body nil "/tmp/t.org" 10)))
+           (kids (alist-get 'children node)))
+      (should (equal (alist-get 't node) "column"))
+      (let* ((row-kids (alist-get 'children (aref kids 0)))
+             (tap (alist-get 'on_tap (aref row-kids 2))))
+        (should (equal (alist-get 'text (aref row-kids 0)) "emacs-lisp"))
+        (should (equal (alist-get 'action tap) "org.babel.execute"))
+        (should (integerp (alist-get 'pos (alist-get 'args tap)))))
+      (should (equal (alist-get 't (aref kids 1)) "text")))
+    ;; Without file context: plain highlighted code, no affordance.
+    (should (equal (alist-get 't (car (glasspane-org-rich-body body nil)))
+                   "text"))
+    ;; A language this Emacs can't execute: plain code even with context.
+    (should (equal (alist-get
+                    't (car (glasspane-org-rich-body
+                             "#+begin_src nosuchlang\nx\n#+end_src\n"
+                             nil "/tmp/t.org" 10)))
+                   "text"))))
+
+(ert-deftest glasspane-ui-babel-execute-inserts-results ()
+  "The org.babel.execute handler runs the block and saves its RESULTS."
+  (require 'ob-emacs-lisp)
+  (let ((file (make-temp-file "eabp-babel-test" nil ".org"))
+        (org-confirm-babel-evaluate nil)
+        notified)
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* Code\n#+begin_src emacs-lisp\n(+ 1 2)\n#+end_src\n"))
+          (let (pos)
+            (with-temp-buffer
+              (insert-file-contents file)
+              (goto-char (point-min))
+              (search-forward "#+begin_src")
+              (setq pos (line-beginning-position)))
+            (cl-letf (((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                      ((symbol-function 'eabp-shell-notify)
+                       (lambda (text) (setq notified text))))
+              (funcall (gethash "org.babel.execute" eabp-action-handlers)
+                       `((file . ,file) (pos . ,pos)) nil)))
+          (should (equal notified "Block executed"))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            (should (string-match-p "#\\+RESULTS:" content))
+            (should (string-match-p "^: 3$" content))))
+      (delete-file file))))
+
+(ert-deftest glasspane-ui-babel-execute-honors-confirm ()
+  "Declining the evaluation prompt aborts: no results, an error snackbar."
+  (require 'ob-emacs-lisp)
+  (let ((file (make-temp-file "eabp-babel-test" nil ".org"))
+        (org-confirm-babel-evaluate t)
+        notified)
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "#+begin_src emacs-lisp\n(+ 1 2)\n#+end_src\n"))
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
+                    ((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+                    ((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                    ((symbol-function 'eabp-shell-notify)
+                     (lambda (text) (setq notified text))))
+            (funcall (gethash "org.babel.execute" eabp-action-handlers)
+                     `((file . ,file) (pos . 1)) nil))
+          (should (string-prefix-p "Run failed:" (or notified "")))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            (should-not (string-match-p "#\\+RESULTS:" content))))
+      (delete-file file))))
+
+;; ─── Org drawers ─────────────────────────────────────────────────────────────
+
+(defun eabp-tests--find-node (tree pred)
+  "Depth-first search of widget TREE for a node satisfying PRED.
+TREE may be a node (alist), a list of nodes, or a vector of nodes."
+  (cond
+   ((vectorp tree)
+    (cl-some (lambda (x) (eabp-tests--find-node x pred)) tree))
+   ((and (consp tree) (consp (car tree)) (symbolp (caar tree)))
+    (if (funcall pred tree) tree
+      (cl-some (lambda (kv) (and (consp kv)
+                                 (eabp-tests--find-node (cdr kv) pred)))
+               tree)))
+   ((consp tree)
+    (cl-some (lambda (x) (eabp-tests--find-node x pred)) tree))))
+
+(ert-deftest glasspane-org-rich-drawer-renders-folded ()
+  "Drawers render as collapsed sections instead of disappearing."
+  (let* ((nodes (glasspane-org-rich-body
+                 ":LOGBOOK:\n- Note taken\n:END:\nBody\n" nil))
+         (drawer (car nodes)))
+    (should (= (length nodes) 2))       ; drawer + body paragraph
+    (should (equal (alist-get 't drawer) "collapsible"))
+    (should (eq (alist-get 'collapsed drawer) t))
+    (should (equal (alist-get 'text (alist-get 'header drawer)) "LOGBOOK"))
+    (should (> (length (alist-get 'children drawer)) 0))))
+
+(ert-deftest glasspane-org-reader-drawer-visibility ()
+  "The reader shows heading drawers folded; the detail view (skip-props
+path) suppresses the raw LOGBOOK drawer its structured section replaces."
+  (let ((file (make-temp-file "eabp-drawer-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* Task\n"
+                    ":LOGBOOK:\n"
+                    "CLOCK: [2026-07-03 Fri 10:00]--[2026-07-03 Fri 11:00] =>  1:00\n"
+                    ":END:\n"
+                    "Body text\n"))
+          (let ((logbook-p (lambda (n)
+                             (and (equal (alist-get 't n) "collapsible")
+                                  (equal (alist-get 'text (alist-get 'header n))
+                                         "LOGBOOK")))))
+            (should (eabp-tests--find-node
+                     (glasspane-org-reader-file file) logbook-p))
+            (should-not (eabp-tests--find-node
+                         (glasspane-org-reader-subtree file 1 t) logbook-p))))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst eabp-tests--golden-file

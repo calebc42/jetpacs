@@ -1793,7 +1793,8 @@ Returns non-nil on success; messages and returns nil on failure."
  '((org-startup-folded :label "Initial folding")
    (org-startup-indented :label "Indent to outline level")
    (org-hide-emphasis-markers :label "Hide emphasis markers")
-   (org-return-follows-link :label "Enter follows links")))
+   (org-return-follows-link :label "Enter follows links")
+   (glasspane-babel-timeout :label "Babel run timeout (s)")))
 
 ;; Org-derived views are memoised; per the cache contract every mutation
 ;; must drop the memo or the phone keeps rendering stale data.
@@ -2213,6 +2214,50 @@ the phone never computes), saved, and every view repushed."
           (error
            (eabp-shell-notify
             (format "Add column failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+;; ─── Babel ───────────────────────────────────────────────────────────────────
+
+(defcustom glasspane-babel-timeout 30
+  "Seconds before a phone-triggered babel execution is abandoned.
+Best-effort: the timer can't interrupt a synchronous subprocess mid-call,
+but it fires between process reads and stops a runaway block from
+wedging the bridge forever."
+  :type 'integer :group 'eabp)
+
+(eabp-defaction "org.babel.execute"
+  ;; The play button on a src-block header.  The wire names only a
+  ;; location — the code that runs lives in the user's own file, so the
+  ;; semantic-action boundary holds.  `org-confirm-babel-evaluate' is
+  ;; honored: the yes/no prompt bridges to a native dialog, and it runs
+  ;; BEFORE the timeout starts so a slow answer never counts against the
+  ;; execution budget.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (progn
+              (with-current-buffer (find-file-noselect file)
+                (org-with-wide-buffer
+                 (goto-char pos)
+                 (let ((info (org-babel-get-src-block-info)))
+                   (unless info (error "No source block here"))
+                   (org-babel-confirm-evaluate info) ; user-errors on decline
+                   (let ((org-confirm-babel-evaluate nil))
+                     (with-timeout ((max 1 glasspane-babel-timeout)
+                                    (error "Timed out after %ss"
+                                           glasspane-babel-timeout))
+                       (org-babel-execute-src-block nil info)))))
+                (let ((glasspane-org--inhibit-save-refresh t)
+                      (save-silently t))
+                  (save-buffer)))
+              (glasspane-org-cache-invalidate)
+              (eabp-shell-notify "Block executed")
+              (eabp-shell-push))
+          (error
+           (eabp-shell-notify
+            (format "Run failed: %s" (error-message-string err)))
            (eabp-shell-push)))))))
 
 (eabp-defaction "file.view"

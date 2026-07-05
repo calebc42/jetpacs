@@ -32,6 +32,12 @@
 real-pos = offset + temp-pos.  Set by `glasspane-org-rich-body' when
 FILE and OFFSET are supplied.")
 
+(defvar glasspane-org-rich--skip-drawers nil
+  "Drawer names (upcased) the current render should omit.
+Bound by callers that present a drawer's content in their own way —
+the heading detail view parses LOGBOOK into a structured section, so
+rendering the raw drawer too would double it.")
+
 ;; ─── Inline spans ────────────────────────────────────────────────────────────
 
 (defun glasspane-org-rich--flag (style key)
@@ -251,6 +257,37 @@ toggles the checkbox via Emacs without entering edit mode."
                              (org-element-contents el)))))
     (when items (apply #'eabp-column items))))
 
+;; ─── Source blocks ───────────────────────────────────────────────────────────
+
+(defun glasspane-org-rich--src-block (el)
+  "Render src-block EL: highlighted code, plus a run header when executable.
+The header (language label + play button dispatching `org.babel.execute')
+appears only when file context is present *and* this Emacs has an
+`org-babel-execute:LANG' function — the same test execution would make,
+so the button never promises more than `org-babel-load-languages'
+delivers.  The action carries the block's real-file position; the code
+itself never crosses the wire."
+  (let* ((lang (org-element-property :language el))
+         (code (eabp-markup (or (org-element-property :value el) "")
+                            :syntax (or lang "text")))
+         (pos (and glasspane-org-rich--file glasspane-org-rich--body-offset
+                   lang
+                   (fboundp (intern (concat "org-babel-execute:" lang)))
+                   (+ glasspane-org-rich--body-offset
+                      (org-element-property :post-affiliated el)))))
+    (if (not pos)
+        code
+      (eabp-column
+       (eabp-row
+        (eabp-text lang 'label)
+        (eabp-spacer :weight 1)
+        (eabp-icon-button "play_arrow"
+                          (eabp-action "org.babel.execute"
+                                       :args `((file . ,glasspane-org-rich--file)
+                                               (pos . ,pos)))
+                          :content-description "Run block"))
+       code))))
+
 ;; ─── Tables ──────────────────────────────────────────────────────────────────
 
 (defconst glasspane-org-rich--cookie-re "\\`<[lcr]?[0-9]*>\\'"
@@ -380,6 +417,24 @@ tap-edit and the client offers add-row/add-column affordances."
                                       :args `((file . ,file)
                                               (pos . ,table-pos))))))))))
 
+(defun glasspane-org-rich--drawer (el)
+  "Render drawer EL as a folded section, like desktop org.
+Returns nil for drawers named in `glasspane-org-rich--skip-drawers'
+and for drawers whose content renders to nothing."
+  (let ((name (or (org-element-property :drawer-name el) "DRAWER")))
+    (unless (member (upcase name) glasspane-org-rich--skip-drawers)
+      (let ((inner (delq nil (mapcar #'glasspane-org-rich--element
+                                     (org-element-contents el)))))
+        (when inner
+          (eabp-collapsible
+           (format "drawer/%s/%s"
+                   (or glasspane-org-rich--file "")
+                   (+ (or glasspane-org-rich--body-offset 0)
+                      (org-element-property :begin el)))
+           (eabp-text name 'label)
+           inner
+           :collapsed t))))))
+
 (defun glasspane-org-rich--paragraph-image (el)
   "If paragraph EL is just a single image link, return an `eabp-image' node."
   (let* ((contents (org-element-contents el))
@@ -401,9 +456,7 @@ tap-edit and the client offers add-row/add-column affordances."
          (let ((spans (glasspane-org-rich--inline (org-element-contents el) nil)))
            (when spans (eabp-rich-text spans)))))
     ('plain-list (glasspane-org-rich--list el))
-    ('src-block
-     (eabp-markup (or (org-element-property :value el) "")
-                  :syntax (or (org-element-property :language el) "text")))
+    ('src-block (glasspane-org-rich--src-block el))
     ((or 'example-block 'fixed-width)
      (eabp-markup (or (org-element-property :value el) "")))
     ('quote-block
@@ -417,10 +470,11 @@ tap-edit and the client offers add-row/add-column affordances."
        (or (glasspane-org-rich--table el)
            (eabp-markup (string-trim (org-element-interpret-data el)) :syntax "org"))))
     ('horizontal-rule (eabp-divider))
+    ('drawer (glasspane-org-rich--drawer el))
     ;; Structural noise the reader handles elsewhere (properties drawer) or
     ;; that carries no display value on its own.
     ((or 'keyword 'comment 'comment-block 'planning
-         'property-drawer 'drawer 'node-property)
+         'property-drawer 'node-property)
      nil)
     (_
      (let ((txt (ignore-errors (string-trim (org-element-interpret-data el)))))

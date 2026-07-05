@@ -403,7 +403,9 @@ by a long history — the layout bug the old plain-column version had."
                 (apply #'eabp-lazy-column history-cards)
               (eabp-empty-state :icon "code"
                                 :title "Elisp REPL"
-                                :caption "Results appear here, newest first.")))
+                                :caption (concat "Results appear here, newest "
+                                                 "first. * ** and *** hold the "
+                                                 "last three results."))))
       :weight 1)
      (eabp-divider)
      (eabp-box
@@ -476,6 +478,14 @@ by a long history — the layout bug the old plain-column version had."
                     eabp-emacs-ui--eval-history)
             nil)))
 
+;; The REPL result-variable convention: `*' holds the last result, `**'
+;; and `***' the two before it, referable from the next expression.
+;; These are the same special variables ielm defines, so the Eval tab
+;; and an ielm session share recent results when both are in play.
+(defvar * nil "Most recent Eval-tab result (the ielm convention).")
+(defvar ** nil "Second most recent Eval-tab result.")
+(defvar *** nil "Third most recent Eval-tab result.")
+
 ;; Eval REPL
 (eabp-defaction "emacs.eval.submit"
   (lambda (args _)
@@ -493,6 +503,8 @@ by a long history — the layout bug the old plain-column version had."
                        (let ((val (eval (car (read-from-string
                                               (format "(progn %s\n)" expr)))
                                         t)))
+                         ;; ielm's rotation, verbatim: *** ← ** ← * ← VAL.
+                         (setq *** ** ** * * val)
                          (format "%S" val))
                      (error (format "ERROR: %s" (error-message-string err))))))
       (unless (string-empty-p (string-trim expr))

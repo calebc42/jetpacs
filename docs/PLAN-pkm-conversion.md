@@ -53,7 +53,7 @@ requires new storage concepts — the delta is UX abstraction.
 | Templates | org-capture templates (+ config-dir merge) | ✅ engine, ❌ friendly UI |
 | Block refs / transclusion (Logseq) | org-id + org-transclusion | ✅ engine, ❌ UX |
 | Daily notes / journals | datetree / roam-dailies | ✅ engine, ❌ landing surface |
-| Flashcards (Logseq), PDF annotation | org-fc / org-noter | ✅ engines exist, deferred |
+| Flashcards (Logseq), PDF annotation | org-srs (FSRS-native; decided 2026-07-05 over org-fc; upstream recently added Android-host support) / org-noter | ✅ engines exist, deferred |
 | Web clipper | share sheet (Android) — already better | ✅ |
 | Quick capture, widgets, automation | capture tile/widgets + automation track | ✅ **ahead of all three** |
 
@@ -132,11 +132,39 @@ Kotlin can't land in the same pass.
 
 ### Task 1: Backlink-engine decision + spike
 
-**Goal:** pick the engine every linking feature builds on: **org-roam**
-(sqlite via Emacs 29+ builtin, mature schema, dailies for free, heavier
-and opinionated) vs **a lightweight org-id + own index** (pure elisp,
-event-driven rebuild behind the cache-invalidate seam, exactly as much
-as we need).
+**DECIDED 2026-07-05: vulpea v2** (same-day revision of an earlier
+org-roam note, after auditing the local vulpea checkout at
+`~/pkb/resources/emacs/vulpea` — v2 is a standalone async note
+database, no longer an org-roam layer). Chosen for architecture fit:
+file watchers + async batched indexing keep index updates **off the
+wire-action save path** and catch **external changes** (the Task 14
+git/Syncthing world; watcher events can also feed
+`glasspane-org-cache-invalidate`), a library-first API (`vulpea-note`
+structs + query functions, no raw SQL), and native coverage of
+downstream tasks — Task 3 candidates (titles + aliases) from the
+vulpea db, Task 4 mentions via `vulpea-note-unlinked-mentions-async`,
+Task 10 / Logseq-audit P8 schemas via `vulpea-schema-define` with
+flymake surfacing that rides the existing diagnostics push.
+**org-roam is the named fallback**, not the contestant.
+
+The spike below is therefore **on-device validation of vulpea**: cold
+index time, incremental update cost, memory on a realistic vault —
+plus two vulpea-specific questions: does `filenotify` fire inside the
+Termux-signed Emacs APK (if not, vulpea's sync dual-mode is the
+degraded path), and what the watcher + idle-queue drain costs in
+battery (the standing no-timers rule wants this measured, not
+assumed). Dailies (Task 5): datetree vs the young `vulpea-journal`
+sibling — decided in Task 5, not here. Metadata convention flag for
+Task 10: vulpea metadata is **description lists**, not property
+drawers (deliberate — org-element cannot see links inside drawers,
+and note-typed fields need links); Task 10 must make the vault
+convention explicit.
+
+**Original framing (for context):** pick the engine every linking
+feature builds on: **org-roam** (sqlite via Emacs 29+ builtin, mature
+schema, dailies for free, heavier and opinionated) vs **a lightweight
+org-id + own index** (pure elisp, event-driven rebuild behind the
+cache-invalidate seam, exactly as much as we need).
 
 **Files:** spike in `emacs/apps/glasspane/` (throwaway), outcome
 recorded in this doc + ARCHITECTURE.md.
@@ -225,7 +253,9 @@ title; ERT covers the candidate function and prefix math.
 mentions listed below with one-tap "link it".
 
 **Files:** `emacs/apps/glasspane/glasspane-ui.el` (detail view),
-engine from Task 1, `files.grep` for unlinked mentions.
+engine from Task 1 (vulpea: `vulpea-note-unlinked-mentions-async`
+replaces the hand-rolled `files.grep` pass sketched below; the grep
+fallback stands only if the engine falls back to org-roam).
 
 **Implementation:** collapsible "Linked references (n)" under the note
 body: source heading + context snippet, tap → navigate (reuses the
@@ -259,8 +289,10 @@ org-native.
 shell view registration.
 
 **Implementation:** a `journal` view registered as the initial view
-(a Customize setting — existing users keep Agenda). Datetree (or roam
-dailies if Task 1 chose roam — one code path, decided there). Body =
+(a Customize setting — existing users keep Agenda). Datetree or the
+young `vulpea-journal` sibling package (Task 1 chose vulpea; this task
+evaluates whether vulpea-journal is mature enough or datetree wins —
+one code path either way). Body =
 today's subtree via the foldable reader + an always-focused capture
 row; header chips for ‹ yesterday | calendar | tomorrow ›. "Carried
 over" section = org-ql for yesterday's unfinished TODOs with one-tap
@@ -387,6 +419,15 @@ vault list views stay smooth.
 **Goal:** property drawers render and edit as native forms (text,
 number, date, select, checkbox), never as drawer syntax — Notion
 properties on org data.
+
+**Engine note (2026-07-05):** the schema registry is
+`vulpea-schema-define` (Task 1 decision) — tag predicates + typed
+fields give the Logseq-audit P8 behavior for free, including
+note-typed relation fields (`:target-tags`) and in-buffer flymake
+surfacing over the existing diagnostics push. Open convention call
+owned by this task: vulpea metadata lives in **description lists**,
+not drawers — decide what Glasspane reads/writes (or both) before
+building the forms.
 
 **Files:** `emacs/apps/glasspane/` (detail view section + a property-
 schema registry: per-key type/options, defcustom'd), actions
@@ -534,7 +575,14 @@ instructions only, and never sees an Emacs frame afterward.
 
 ## Phase K — the KMP horizon (prep only; no migration work now)
 
-### Task 16: Contract discipline audit (cheap, do anytime)
+### Task 16: Contract discipline audit (cheap, do anytime) ✅ (2026-07-05)
+
+**Landed:** "Kotlin conformance checklist" section in ARCHITECTURE.md,
+audited after the automation wave (AUTO 6–10). One divergence found —
+the `value` injection on change callbacks had no SPEC home — and
+spec'd into §9. Org knowledge outside `:app` remains none;
+`OrgEditToolbar` is still the single org-aware Kotlin class. Re-run
+the table whenever a Kotlin wave lands.
 
 **Goal:** keep the companion portable by construction: verify no
 app logic has crept into Kotlin beyond SPEC (the renderer's only

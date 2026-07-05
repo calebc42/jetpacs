@@ -100,6 +100,14 @@ protocol constraint). Commit messages follow the existing log:
 `feat:` / `refactor:` / short imperative subject, body only when the
 diff doesn't speak for itself.
 
+## License
+
+The project is licensed **GPL-3.0-or-later** (see [LICENSE](LICENSE)).
+By submitting a contribution you agree it is licensed under those same
+terms (inbound = outbound) — no separate CLA. Don't paste in code under
+an incompatible license; Apache-2.0 / MIT / BSD sources are fine
+(GPLv3 can absorb them), but keep their notices intact.
+
 ## Security
 
 The pairing handshake (mutual HMAC over a never-transmitted token) is

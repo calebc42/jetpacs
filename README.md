@@ -1,6 +1,7 @@
 # EABP — Emacs–Android Bridge Protocol
 
 [![CI](https://github.com/calebc42/glasspane/actions/workflows/ci.yml/badge.svg)](https://github.com/calebc42/glasspane/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 **Don't approximate Emacs — connect to it.**
 
@@ -247,3 +248,17 @@ right now: a second companion (desktop? e-ink?) written against the spec,
 the signed-socket transport, the offline/hybrid fallback layer, and more
 worked Tier 1 examples. If you build on the seams and something is
 missing or leaky, that's a bug in the foundation — file it as one.
+
+## License
+
+EABP and Glasspane are free software, licensed under the **GNU General
+Public License, version 3 or later** ([GPL-3.0-or-later](LICENSE)).
+Copyright (C) 2026 calebc42 and contributors.
+
+GPLv3 is the natural home for this project: the Emacs side is built on
+GNU Emacs and org-mode (themselves GPLv3+), and the Android side combines
+cleanly with it (its libraries are Apache-2.0, which GPLv3 permits). The
+license covers the *code* in this repository; the **wire protocol itself**
+([docs/SPEC.md](docs/SPEC.md)) is an interface anyone may implement — a
+clean-room companion or client written against the spec carries no
+obligation from this repo's license.

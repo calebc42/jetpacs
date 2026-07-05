@@ -963,7 +963,11 @@ breaks links); every other value is an inline input whose submit runs
     (error (format "%s to %s" start end))))
 
 (defun glasspane-org--parse-logbook (text)
-  (let ((lines (split-string text "\n" t "[ \t]+"))
+  ;; Keywords may be written lowercase in org files ("clock:" is as valid
+  ;; as "CLOCK:"), so match case-insensitively — explicitly, like
+  ;; org-element does, never relying on the ambient `case-fold-search'.
+  (let ((case-fold-search t)
+        (lines (split-string text "\n" t "[ \t]+"))
         entries current-entry)
     (dolist (line lines)
       (cond
@@ -1042,10 +1046,13 @@ breaks links); every other value is an inline input whose submit runs
         :padding [8 16 8 16])))))
 
 (defun glasspane-ui--logbook-entries (pos)
-  "Return structured logbook entries for heading at POS, or nil."
+  "Return structured logbook entries for heading at POS, or nil.
+Drawer delimiters are matched case-insensitively (\":logbook:\" is
+valid org), explicitly rather than via ambient `case-fold-search'."
   (save-excursion
     (goto-char pos)
-    (let ((end (save-excursion (org-end-of-meta-data t) (point))))
+    (let ((case-fold-search t)
+          (end (save-excursion (org-end-of-meta-data t) (point))))
       (goto-char pos)
       (when (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$" end t)
         (let ((start (match-end 0)))
@@ -2135,7 +2142,9 @@ the phone never computes), saved, and every view repushed."
      (org-table-align)
      (when (save-excursion
              (goto-char (org-table-end))
-             (looking-at-p "[ \t]*#\\+TBLFM:"))
+             ;; "#+tblfm:" is valid org — match case-insensitively.
+             (let ((case-fold-search t))
+               (looking-at-p "[ \t]*#\\+TBLFM:")))
        (org-table-recalculate t)))
     (let ((glasspane-org--inhibit-save-refresh t)
           (save-silently t))

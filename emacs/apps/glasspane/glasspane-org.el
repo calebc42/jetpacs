@@ -295,7 +295,10 @@ Supports basic tokenization like todo:TODO tags:work and raw text."
        ((string-prefix-p "todo:" tok)
         (push (substring tok 5) todos))
        ((string-prefix-p "tags:" tok)
-        (push (downcase (substring tok 5)) tags))
+        ;; Tags (like TODO keywords) are case-sensitive org data —
+        ;; "boss" and "Boss" are different tags, so no case folding.
+        ;; Free-text matching below stays case-insensitive (search UX).
+        (push (substring tok 5) tags))
        (t
         (push (downcase (replace-regexp-in-string "^\"\\(.*\\)\"$" "\\1" tok)) texts))))
     (org-map-entries
@@ -303,7 +306,7 @@ Supports basic tokenization like todo:TODO tags:work and raw text."
        (let* ((comps (org-heading-components))
               (heading-todo (nth 2 comps))
               (headline (downcase (or (nth 4 comps) "")))
-              (heading-tags (mapcar #'downcase (org-get-tags))))
+              (heading-tags (org-get-tags)))
          (when (and
                 (or (null todos) (member heading-todo todos))
                 (or (null tags) (cl-every (lambda (t-req) (member t-req heading-tags)) tags))

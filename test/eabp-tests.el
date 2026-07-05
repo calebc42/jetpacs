@@ -1078,6 +1078,96 @@ path) suppresses the raw LOGBOOK drawer its structured section replaces."
       (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
       (delete-file file))))
 
+;; ─── Org case conventions ────────────────────────────────────────────────────
+;; Keywords, blocks, and drawer delimiters may be lowercase in org files;
+;; TODO keywords and tags are case-sensitive.  Recognition must not depend
+;; on the ambient `case-fold-search'.
+
+(ert-deftest glasspane-ui-table-edit-recalculates-lowercase-tblfm ()
+  "A lowercase #+tblfm: line is as valid as #+TBLFM: for recalculation."
+  (let ((file (make-temp-file "eabp-table-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "| Item   | Qty | Cost |\n"
+                    "|--------+-----+------|\n"
+                    "| apples |   2 |    4 |\n"
+                    "#+tblfm: $3=$2*2\n"))
+          (let (pos)
+            (with-temp-buffer
+              (insert-file-contents file)
+              (goto-char (point-min))
+              (search-forward "| apples |")
+              (setq pos (point)))
+            (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "5"))
+                      ((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                      ((symbol-function 'eabp-shell-notify)
+                       (lambda (text) (ert-fail text))))
+              (funcall (gethash "org.table.edit" eabp-action-handlers)
+                       `((file . ,file) (pos . ,pos)) nil)))
+          (should (string-match-p
+                   "| apples | +5 | +10 |"
+                   (with-temp-buffer (insert-file-contents file) (buffer-string)))))
+      (delete-file file))))
+
+(ert-deftest glasspane-org-lowercase-drawer-and-clock ()
+  "Lowercase :logbook:/:end:/clock: parse structurally and render folded."
+  ;; Structured logbook parsing (detail view path).
+  (with-temp-buffer
+    (insert "* Task\n"
+            ":logbook:\n"
+            "clock: [2026-07-03 Fri 10:00]--[2026-07-03 Fri 11:00] =>  1:00\n"
+            ":end:\n")
+    (delay-mode-hooks (org-mode))
+    (let ((entries (glasspane-ui--logbook-entries 1)))
+      (should (= (length entries) 1))
+      (should (eq (plist-get (car entries) :type) 'clock))))
+  ;; Reader/detail rendering: folded in the reader, suppressed in detail.
+  (let ((file (make-temp-file "eabp-drawer-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* Task\n:logbook:\n- Note taken\n:end:\nBody\n"))
+          (let ((logbook-p (lambda (n)
+                             (and (equal (alist-get 't n) "collapsible")
+                                  (equal (alist-get 'text (alist-get 'header n))
+                                         "logbook")))))
+            (should (eabp-tests--find-node
+                     (glasspane-org-reader-file file) logbook-p))
+            (should-not (eabp-tests--find-node
+                         (glasspane-org-reader-subtree file 1 t) logbook-p))))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
+
+;; ─── Demo org corpus ─────────────────────────────────────────────────────────
+
+(ert-deftest glasspane-demo-org-corpus-is-valid ()
+  "The demo org corpus writes, re-writes, parses, and exercises the
+rich renderers (native table, babel run button)."
+  (require 'ob-emacs-lisp)
+  (let ((dir (make-temp-file "glasspane-demo-org" t)))
+    (unwind-protect
+        (progn
+          (glasspane-demo-setup-org dir)
+          (glasspane-demo-setup-org dir)  ; overwrite must not error
+          (should (= (length glasspane-demo--org-files) 6))
+          (dolist (spec glasspane-demo--org-files)
+            (should (glasspane-org-reader-file
+                     (expand-file-name (car spec) dir))))
+          (should (eabp-tests--find-node
+                   (glasspane-org-reader-file (expand-file-name "health.org" dir))
+                   (lambda (n) (equal (alist-get 't n) "table"))))
+          (should (eabp-tests--find-node
+                   (glasspane-org-reader-file (expand-file-name "notes.org" dir))
+                   (lambda (n)
+                     (equal (alist-get 'action (alist-get 'on_tap n))
+                            "org.babel.execute")))))
+      (dolist (spec glasspane-demo--org-files)
+        (when-let ((buf (find-buffer-visiting
+                         (expand-file-name (car spec) dir))))
+          (kill-buffer buf)))
+      (delete-directory dir t))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst eabp-tests--golden-file

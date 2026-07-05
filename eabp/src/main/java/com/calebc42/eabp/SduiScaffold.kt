@@ -58,6 +58,15 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
+    // The screen.keep_on effector (SPEC §10): a window flag, held only
+    // while this scaffold is composed — leaving EABP UI clears it.
+    val keepScreenOn by EabpRuntime.keepScreenOn.collectAsState()
+    val hostView = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(keepScreenOn, hostView) {
+        hostView.keepScreenOn = keepScreenOn
+        onDispose { hostView.keepScreenOn = false }
+    }
+
     LaunchedEffect(snackbar) {
         if (snackbar.isNotEmpty()) {
             snackbarHostState.showSnackbar(snackbar)

@@ -20,6 +20,21 @@
          the handshake already reports canScheduleExactAlarms to Emacs). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <!-- The `vibrate` effector (SPEC §10). Install-time, not runtime. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Android 11 package visibility: without these, `apps.list` returns
+         nothing and TTS finds no engine. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application>
 
         <!--

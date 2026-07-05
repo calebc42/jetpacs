@@ -13,6 +13,7 @@
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
 (require 'eabp-shell)
+(require 'eabp-apps)
 (require 'glasspane-org)
 (require 'glasspane-clock)
 (require 'glasspane-org-reader)
@@ -293,6 +294,13 @@ suppressed identical push would leave it frozen."
                         :when (lambda () (and glasspane-ui--detail-ref t))
                         :overlay (lambda () (and glasspane-ui--detail-ref t))
                         :order 110)
+
+;; Glasspane is the first `eabp-defapp'. Zero visible change while it is
+;; the only app; load a second app (eabp-hello.el) and the launcher home
+;; appears with these views grouped as Glasspane's own.
+(eabp-defapp "glasspane" :label "Glasspane" :icon "event"
+             :views '("agenda" "tasks" "clock" "search" "settings" "detail")
+             :order 10)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
 (add-hook 'eabp-shell-view-switched-hook

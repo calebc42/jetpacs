@@ -64,14 +64,29 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
   (setq eabp-shell-views (assoc-delete-all name eabp-shell-views))
   (eabp-shell--schedule-repush))
 
+(defvar eabp-shell-view-filter-function nil
+  "When non-nil, a predicate on a view NAME gating inclusion per push.
+The app layer (eabp-apps.el) installs the current-app filter here; nil
+means every registered view shows — the single-app default.")
+
+(defun eabp-shell--view-filtered-p (name)
+  "Non-nil when NAME passes `eabp-shell-view-filter-function'.
+A filter that signals passes the view — a broken app layer must not
+blank the phone."
+  (or (null eabp-shell-view-filter-function)
+      (condition-case nil (funcall eabp-shell-view-filter-function name)
+        (error t))))
+
 (defun eabp-shell--visible-views ()
-  "The registry entries included in this push (:when honoured).
+  "The registry entries included in this push (:when + app filter honoured).
 A pred that signals counts as nil — a broken predicate must cost its
 view, not the push."
   (cl-remove-if-not (lambda (entry)
                       (let ((pred (plist-get (cdr entry) :when)))
-                        (or (null pred)
-                            (condition-case nil (funcall pred) (error nil)))))
+                        (and (eabp-shell--view-filtered-p (car entry))
+                             (or (null pred)
+                                 (condition-case nil (funcall pred)
+                                   (error nil))))))
                     eabp-shell-views))
 
 (defun eabp-shell--tab-p (name)
@@ -91,9 +106,11 @@ view, not the push."
   "Text queued by `eabp-shell-notify' for the next push, or nil.")
 
 (defun eabp-shell-current-tab ()
-  "The current tab name (the first registered tab when none is set)."
+  "The current tab name (the first included tab when none is set)."
   (or eabp-shell--current-tab
-      (car (cl-find-if (lambda (e) (plist-get (cdr e) :tab))
+      (car (cl-find-if (lambda (e)
+                         (and (plist-get (cdr e) :tab)
+                              (eabp-shell--view-filtered-p (car e))))
                        eabp-shell-views))))
 
 (defun eabp-shell--active-view ()
@@ -101,6 +118,7 @@ view, not the push."
   (or (car (cl-find-if (lambda (e)
                          (let ((pred (plist-get (cdr e) :overlay)))
                            (and pred
+                                (eabp-shell--view-filtered-p (car e))
                                 (condition-case nil (funcall pred)
                                   (error nil)))))
                        eabp-shell-views))
@@ -172,16 +190,20 @@ views that don't define their own.")
   `((builtin . "view.switch") (view . ,view)))
 
 (defun eabp-shell-drawer ()
-  "The navigation drawer built from `eabp-shell-drawer-items'."
-  (eabp-drawer (mapcar (lambda (e) (funcall (cdr e))) eabp-shell-drawer-items)
+  "The navigation drawer built from `eabp-shell-drawer-items'.
+A builder returning nil contributes nothing — conditional entries
+\(e.g. the multi-app \"Apps\" item) just return nil when hidden."
+  (eabp-drawer (delq nil (mapcar (lambda (e) (funcall (cdr e)))
+                                 eabp-shell-drawer-items))
                :header eabp-shell-drawer-header))
 
 (defun eabp-shell-bottom-bar (selected)
-  "The bottom bar of all :tab views, with SELECTED highlighted."
+  "The bottom bar of the included :tab views, with SELECTED highlighted.
+Honours the app filter, so each app shows its own tabs."
   (eabp-bottom-bar
    (cl-loop for (name . plist) in eabp-shell-views
             for tab = (plist-get plist :tab)
-            when tab
+            when (and tab (eabp-shell--view-filtered-p name))
             collect (eabp-nav-item (plist-get tab :icon)
                                    (plist-get tab :label)
                                    (eabp-shell-switch-view name)

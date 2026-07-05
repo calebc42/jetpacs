@@ -1395,6 +1395,158 @@ ARGS carries {id, type, data, at_ms} per SPEC §11."
 ;;; eabp-triggers.el ends here
 
 ;;; ==================================================================
+;;; BEGIN core/eabp-device.el
+;;; ==================================================================
+
+;;; eabp-device.el --- Device effectors via capability.invoke -*- lexical-binding: t; -*-
+
+;; The Emacs face of SPEC §10's capability catalog: one thin defun per
+;; device capability, all funneling through `eabp-device--invoke'.  The
+;; companion is the validator — these wrappers only shape plain-data
+;; args; unknown or refused capabilities come back as typed errors
+;; (`cap-unsupported' / `cap-permission' / `cap-failed') which the
+;; default callback surfaces in *Messages*.
+;;
+;; Check `eabp-device-cap-p' / `eabp-device-can-p' (eabp.el) to degrade
+;; gracefully in UI; from the REPL just call and read the echo area.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'eabp)
+
+(defun eabp-device--invoke (cap args &optional callback)
+  "Invoke device capability CAP with plain-data alist ARGS.
+CALLBACK as in `eabp-capability-invoke'; when nil, failures surface
+in *Messages* with their typed code."
+  (eabp-capability-invoke
+   cap args
+   (or callback
+       (lambda (ok payload)
+         (unless ok
+           (message "EABP device %s: %s [%s]" cap
+                    (alist-get 'detail payload)
+                    (alist-get 'code payload)))))))
+
+;; ─── Intents: the universal escape hatch ─────────────────────────────────────
+
+(cl-defun eabp-device-intent (&key action data package class-name mime
+                                   extras (mode "activity"))
+  "Fire an Android Intent on the companion (SPEC §10 `intent.start').
+ACTION is an intent action string; DATA a URI; PACKAGE / CLASS-NAME
+target an explicit component; MIME sets the type; EXTRAS is an alist
+of plain data (strings, numbers, booleans — pass :false for false).
+MODE is \"activity\" (default), \"broadcast\", or \"service\".
+Activity launches are best-effort while the companion is backgrounded.
+
+Example, from the eval REPL:
+  (eabp-device-intent :action \"android.intent.action.VIEW\"
+                      :data \"https://example.com\")"
+  (eabp-device--invoke
+   "intent.start"
+   (append (when action `((action . ,action)))
+           (when data `((data . ,data)))
+           (when package `((package . ,package)))
+           (when class-name `((class_name . ,class-name)))
+           (when mime `((mime . ,mime)))
+           (when extras `((extras . ,extras)))
+           `((mode . ,mode)))))
+
+(defun eabp-device-app-launch (package)
+  "Launch PACKAGE's main activity on the companion."
+  (eabp-device--invoke "app.launch" `((package . ,package))))
+
+(defun eabp-device-apps-list (callback)
+  "Fetch the launchable apps and call CALLBACK with ((LABEL . PACKAGE) ...)."
+  (eabp-device--invoke
+   "apps.list" nil
+   (lambda (ok payload)
+     (if (not ok)
+         (message "EABP device apps.list: %s [%s]"
+                  (alist-get 'detail payload) (alist-get 'code payload))
+       (funcall callback
+                (mapcar (lambda (app)
+                          (cons (alist-get 'label app)
+                                (alist-get 'package app)))
+                        (alist-get 'apps (alist-get 'result payload))))))))
+
+(defun eabp-device-launch-app ()
+  "Pick an installed companion-side app with completion and launch it."
+  (interactive)
+  (eabp-device-apps-list
+   (lambda (apps)
+     (let ((choice (completing-read "Launch on phone: " apps nil t)))
+       (when-let ((pkg (cdr (assoc choice apps))))
+         (eabp-device-app-launch pkg))))))
+
+;; ─── Permission-free effectors ───────────────────────────────────────────────
+
+(defun eabp-device-vibrate (&optional ms pattern)
+  "Vibrate for MS milliseconds (default 200), or by PATTERN.
+PATTERN is a list of durations (off, on, off, on, … ms) and wins over MS."
+  (eabp-device--invoke
+   "vibrate"
+   (if pattern
+       `((pattern . ,(vconcat pattern)))
+     `((ms . ,(or ms 200))))))
+
+(cl-defun eabp-device-tts (text &key pitch rate)
+  "Speak TEXT on the companion. PITCH and RATE are floats around 1.0.
+Best-effort and asynchronous: the engine lazy-inits on first use."
+  (eabp-device--invoke
+   "tts.speak"
+   (append `((text . ,text))
+           (when pitch `((pitch . ,pitch)))
+           (when rate `((rate . ,rate))))))
+
+(defun eabp-device-volume-set (stream level)
+  "Set STREAM volume to LEVEL (0..max, clamped device-side).
+STREAM is music, ring, alarm, notification, call, or system."
+  (eabp-device--invoke "volume.set" `((stream . ,stream) (level . ,level))))
+
+(defun eabp-device-ringer-mode (mode)
+  "Set the ringer MODE: \"normal\", \"vibrate\", or \"silent\".
+Silent needs Do Not Disturb access — a cap-permission error carries
+the settings deep-link to grant it."
+  (eabp-device--invoke "ringer.mode" `((mode . ,mode))))
+
+(defun eabp-device-flashlight (on)
+  "Switch the torch ON (non-nil) or off."
+  (eabp-device--invoke "flashlight" `((on . ,(if on t :false)))))
+
+(defun eabp-device-media-key (key)
+  "Send media KEY: play_pause, play, pause, next, previous, stop,
+fast_forward, or rewind."
+  (eabp-device--invoke "media.key" `((key . ,key))))
+
+(defun eabp-device-clipboard-read (callback)
+  "Read the companion clipboard and call CALLBACK with its text, or nil.
+Android 10+ exposes the clipboard only while the companion is
+foregrounded; elsewhere this yields nil (a cap-permission error).
+Never log or persist what arrives here."
+  (eabp-device--invoke
+   "clipboard.read" nil
+   (lambda (ok payload)
+     (funcall callback
+              (and ok (alist-get 'text (alist-get 'result payload)))))))
+
+(defun eabp-device-settings-open (panel)
+  "Open the companion's settings PANEL.
+PANEL is wifi, internet, bluetooth, volume, nfc, or any
+android.settings.* action string — the compliant \"toggle\" for
+radios Android won't let apps flip."
+  (eabp-device--invoke "settings.open" `((panel . ,panel))))
+
+(defun eabp-device-keep-screen-on (on)
+  "Keep the companion screen on while EABP UI is showing (ON non-nil).
+A window flag, not a wakelock: it clears when EABP UI leaves the
+screen, so it cannot pin the device awake in the background."
+  (eabp-device--invoke "screen.keep_on" `((on . ,(if on t :false)))))
+
+(provide 'eabp-device)
+;;; eabp-device.el ends here
+
+;;; ==================================================================
 ;;; BEGIN core/eabp-minibuffer.el
 ;;; ==================================================================
 
@@ -3056,14 +3208,29 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
   (setq eabp-shell-views (assoc-delete-all name eabp-shell-views))
   (eabp-shell--schedule-repush))
 
+(defvar eabp-shell-view-filter-function nil
+  "When non-nil, a predicate on a view NAME gating inclusion per push.
+The app layer (eabp-apps.el) installs the current-app filter here; nil
+means every registered view shows — the single-app default.")
+
+(defun eabp-shell--view-filtered-p (name)
+  "Non-nil when NAME passes `eabp-shell-view-filter-function'.
+A filter that signals passes the view — a broken app layer must not
+blank the phone."
+  (or (null eabp-shell-view-filter-function)
+      (condition-case nil (funcall eabp-shell-view-filter-function name)
+        (error t))))
+
 (defun eabp-shell--visible-views ()
-  "The registry entries included in this push (:when honoured).
+  "The registry entries included in this push (:when + app filter honoured).
 A pred that signals counts as nil — a broken predicate must cost its
 view, not the push."
   (cl-remove-if-not (lambda (entry)
                       (let ((pred (plist-get (cdr entry) :when)))
-                        (or (null pred)
-                            (condition-case nil (funcall pred) (error nil)))))
+                        (and (eabp-shell--view-filtered-p (car entry))
+                             (or (null pred)
+                                 (condition-case nil (funcall pred)
+                                   (error nil))))))
                     eabp-shell-views))
 
 (defun eabp-shell--tab-p (name)
@@ -3083,9 +3250,11 @@ view, not the push."
   "Text queued by `eabp-shell-notify' for the next push, or nil.")
 
 (defun eabp-shell-current-tab ()
-  "The current tab name (the first registered tab when none is set)."
+  "The current tab name (the first included tab when none is set)."
   (or eabp-shell--current-tab
-      (car (cl-find-if (lambda (e) (plist-get (cdr e) :tab))
+      (car (cl-find-if (lambda (e)
+                         (and (plist-get (cdr e) :tab)
+                              (eabp-shell--view-filtered-p (car e))))
                        eabp-shell-views))))
 
 (defun eabp-shell--active-view ()
@@ -3093,6 +3262,7 @@ view, not the push."
   (or (car (cl-find-if (lambda (e)
                          (let ((pred (plist-get (cdr e) :overlay)))
                            (and pred
+                                (eabp-shell--view-filtered-p (car e))
                                 (condition-case nil (funcall pred)
                                   (error nil)))))
                        eabp-shell-views))
@@ -3164,16 +3334,20 @@ views that don't define their own.")
   `((builtin . "view.switch") (view . ,view)))
 
 (defun eabp-shell-drawer ()
-  "The navigation drawer built from `eabp-shell-drawer-items'."
-  (eabp-drawer (mapcar (lambda (e) (funcall (cdr e))) eabp-shell-drawer-items)
+  "The navigation drawer built from `eabp-shell-drawer-items'.
+A builder returning nil contributes nothing — conditional entries
+\(e.g. the multi-app \"Apps\" item) just return nil when hidden."
+  (eabp-drawer (delq nil (mapcar (lambda (e) (funcall (cdr e)))
+                                 eabp-shell-drawer-items))
                :header eabp-shell-drawer-header))
 
 (defun eabp-shell-bottom-bar (selected)
-  "The bottom bar of all :tab views, with SELECTED highlighted."
+  "The bottom bar of the included :tab views, with SELECTED highlighted.
+Honours the app filter, so each app shows its own tabs."
   (eabp-bottom-bar
    (cl-loop for (name . plist) in eabp-shell-views
             for tab = (plist-get plist :tab)
-            when tab
+            when (and tab (eabp-shell--view-filtered-p name))
             collect (eabp-nav-item (plist-get tab :icon)
                                    (plist-get tab :label)
                                    (eabp-shell-switch-view name)
@@ -3377,6 +3551,153 @@ Safe on any hook: extra arguments are ignored."
 
 (provide 'eabp-shell)
 ;;; eabp-shell.el ends here
+
+;;; ==================================================================
+;;; BEGIN core/eabp-apps.el
+;;; ==================================================================
+
+;;; eabp-apps.el --- App identity over the shell: eabp-defapp + launcher home -*- lexical-binding: t; -*-
+
+;; Groups shell views into named apps, AppSheet-style: a launcher home
+;; grid of app cards, one app's tabs in the bottom bar at a time, and an
+;; `app.open' action that switches between them.  Pure shell logic — no
+;; wire changes beyond the `app.*' action namespace reserved in SPEC §5.
+;;
+;; The single-app contract: with zero or one `eabp-defapp' registered,
+;; NOTHING changes — every view shows, no home screen, no drawer entry.
+;; The launcher machinery appears with the second app (AppSheet boots
+;; straight into a lone app the same way).
+;;
+;; Views not claimed by any app (the core Files / Eval / Tools tabs)
+;; show in every app.  To contain them instead, claim them in an
+;; explicit app of their own:
+;;   (eabp-defapp "system" :label "Emacs" :icon "terminal"
+;;                :views '("files" "eval" "tools") :order 900)
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'eabp)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
+(require 'eabp-shell)
+
+;; ─── Registry ────────────────────────────────────────────────────────────────
+
+(defvar eabp-apps--registry nil
+  "Ordered list of (ID . PLIST) registered apps.
+PLIST keys: :label :icon :views (list of shell view names) :order.")
+
+(defvar eabp-apps--current nil
+  "Id of the app whose views are currently shown, or nil for the first.")
+
+(cl-defun eabp-defapp (id &key label icon views (order 100))
+  "Register (or replace) app ID grouping VIEWS (shell view names).
+LABEL and ICON draw the app's launcher-home card; the first :tab view
+in VIEWS is the app's landing tab.  ORDER sorts home cards; equal
+orders keep registration order."
+  (dolist (v views)
+    (let ((owner (eabp-apps--owner v)))
+      (when (and owner (not (equal owner id)))
+        (message "EABP apps: view %s is claimed by both %s and %s"
+                 v owner id))))
+  (setq eabp-apps--registry
+        (sort (append (assoc-delete-all id eabp-apps--registry)
+                      (list (cons id (list :label (or label (capitalize id))
+                                           :icon (or icon "apps")
+                                           :views views :order order))))
+              (lambda (a b) (< (plist-get (cdr a) :order)
+                               (plist-get (cdr b) :order)))))
+  (eabp-shell--schedule-repush)
+  id)
+
+(defun eabp-apps-remove (id)
+  "Unregister app ID (its views fall back to showing everywhere)."
+  (setq eabp-apps--registry (assoc-delete-all id eabp-apps--registry))
+  (eabp-shell--schedule-repush))
+
+(defun eabp-apps--owner (view-name)
+  "The id of the app claiming VIEW-NAME, or nil when unclaimed."
+  (car (cl-find-if (lambda (e) (member view-name (plist-get (cdr e) :views)))
+                   eabp-apps--registry)))
+
+(defun eabp-apps--multi-p ()
+  "Non-nil once a second app is registered — the launcher trigger."
+  (> (length eabp-apps--registry) 1))
+
+(defun eabp-apps-current ()
+  "The current app id, defaulting to the first registered app."
+  (if (assoc eabp-apps--current eabp-apps--registry)
+      eabp-apps--current
+    (caar eabp-apps--registry)))
+
+(defun eabp-apps--landing-tab (id)
+  "The view app ID lands on: its first :tab view, else its first view."
+  (let ((views (plist-get (cdr (assoc id eabp-apps--registry)) :views)))
+    (or (cl-find-if #'eabp-shell--tab-p views) (car views))))
+
+;; ─── The shell filter (the whole gating mechanism) ───────────────────────────
+
+(defun eabp-apps--view-visible-p (name)
+  "Single-app: everything shows.  Multi-app: the current app's views
+plus every unclaimed view (core tabs, the home grid itself)."
+  (or (not (eabp-apps--multi-p))
+      (let ((owner (eabp-apps--owner name)))
+        (or (null owner)
+            (equal owner (eabp-apps-current))))))
+
+(setq eabp-shell-view-filter-function #'eabp-apps--view-visible-p)
+
+;; ─── The launcher home ───────────────────────────────────────────────────────
+
+(defun eabp-apps--card (id plist)
+  "The home-grid card for app ID."
+  (eabp-card
+   (list (eabp-box
+          (list (eabp-column
+                 (eabp-icon (plist-get plist :icon) :size 40)
+                 (eabp-spacer :height 8)
+                 (eabp-text (plist-get plist :label) 'title)))
+          :alignment "center" :padding 16))
+   :on-tap (eabp-action "app.open" :args `((app . ,id))
+                        :when-offline "drop")))
+
+(defun eabp-apps--home-view (snackbar)
+  "The launcher home: a grid of app cards."
+  (eabp-shell-nav-view
+   "Apps"
+   (apply #'eabp-flow-row
+          (mapcar (lambda (e) (eabp-apps--card (car e) (cdr e)))
+                  eabp-apps--registry))
+   :snackbar snackbar))
+
+(eabp-shell-define-view "home"
+  :builder #'eabp-apps--home-view
+  :when #'eabp-apps--multi-p
+  :order 1)
+
+;; Everyday nav: the Apps entry rides the drawer, but only exists once
+;; there is more than one app (the drawer contract: no dead entries).
+(eabp-shell-add-drawer-item
+ 5 (lambda ()
+     (when (eabp-apps--multi-p)
+       (eabp-drawer-item "apps" "Apps" (eabp-shell-switch-view "home")))))
+
+;; ─── Wire action ─────────────────────────────────────────────────────────────
+
+(eabp-defaction "app.open"
+  (lambda (args _)
+    (let ((app (alist-get 'app args)))
+      (if (not (assoc app eabp-apps--registry))
+          (message "EABP apps: unknown app %s" app)
+        (setq eabp-apps--current app)
+        (let ((tab (eabp-apps--landing-tab app)))
+          (if tab
+              (eabp-shell-push tab :switch-to tab)
+            (eabp-shell-push)))))))
+
+(provide 'eabp-apps)
+;;; eabp-apps.el ends here
 
 ;;; ==================================================================
 ;;; BEGIN core/eabp-tablist.el
@@ -10130,6 +10451,7 @@ Returns a single `eabp-reorderable-list' node for refile mode."
 (require 'eabp-surfaces)
 (require 'eabp-widgets)
 (require 'eabp-shell)
+(require 'eabp-apps)
 (require 'glasspane-org)
 (require 'glasspane-clock)
 (require 'glasspane-org-reader)
@@ -10410,6 +10732,13 @@ suppressed identical push would leave it frozen."
                         :when (lambda () (and glasspane-ui--detail-ref t))
                         :overlay (lambda () (and glasspane-ui--detail-ref t))
                         :order 110)
+
+;; Glasspane is the first `eabp-defapp'. Zero visible change while it is
+;; the only app; load a second app (eabp-hello.el) and the launcher home
+;; appears with these views grouped as Glasspane's own.
+(eabp-defapp "glasspane" :label "Glasspane" :icon "event"
+             :views '("agenda" "tasks" "clock" "search" "settings" "detail")
+             :order 10)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
 (add-hook 'eabp-shell-view-switched-hook

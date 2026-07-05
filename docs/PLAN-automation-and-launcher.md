@@ -232,7 +232,15 @@ Elisp counterpart `eabp-device.el`: one thin defun per cap
 (`eabp-device-intent`, `eabp-device-flashlight`, …), all funneling
 through one `eabp-device--invoke`.
 
-### Task 3: `intent.start` — the universal escape hatch
+### Task 3: `intent.start` — the universal escape hatch ✅ (2026-07-05)
+
+**Landed:** `intent.start` (activity/broadcast/service, plain-data
+extras), `app.launch`, `apps.list` in `DeviceCapabilities.kt`; the
+`<queries>` element in the `:eabp` manifest; elisp
+`emacs/core/eabp-device.el` (`eabp-device-intent`,
+`eabp-device-app-launch`, `eabp-device-apps-list`, interactive
+`eabp-device-launch-app` picker); SPEC §10 catalog table; arg shapes
+pinned in `test/frames.golden`. On-device REPL check pending.
 
 **Goal:** launch apps, deep links, share targets, anything with an
 Intent — this alone covers the largest slice of Tasker's action list.
@@ -256,7 +264,17 @@ contexts, best-effort otherwise.
 `(eabp-device-intent :action "android.intent.action.VIEW" :data
 "https://…")` opens the browser; `apps.list` feeds a picker.
 
-### Task 4: permission-free effector batch
+### Task 4: permission-free effector batch ✅ (2026-07-05)
+
+**Landed:** `vibrate`, `tts.speak` (lazy engine, 60 s idle release),
+`volume.set`, `ringer.mode` (silent → `cap-permission` + DND
+deep-link), `flashlight`, `media.key`, `clipboard.read`
+(main-thread-hopped, foreground-only → typed error, never logged),
+`settings.open`, `screen.keep_on` (window flag via
+`EabpRuntime.keepScreenOn`, applied in `SduiScaffold` so it can't pin
+the device from the background). VIBRATE permission added to the
+`:eabp` manifest. Per-cap elisp wrappers in `eabp-device.el`; golden
+covers every arg shape. On-device REPL pass pending.
 
 **Goal:** the everyday Tasker verbs that need no special access.
 
@@ -497,7 +515,21 @@ from the pushed set. Case test: `:trigger:` lowercase drawer parses.
 
 ## Phase L0 — app identity (mostly elisp; do Task 14 early, it's cheap)
 
-### Task 14: `eabp-defapp` + launcher home + per-app chrome
+### Task 14: `eabp-defapp` + launcher home + per-app chrome ✅ (2026-07-05)
+
+**Landed:** new `emacs/core/eabp-apps.el` (registry, home grid view,
+`app.open` action, conditional "Apps" drawer entry) over a new shell
+seam `eabp-shell-view-filter-function` (also honored by the bottom
+bar, default tab, and overlay pick). Decisions taken: ungrouped views
+show in **every** app — an explicit `(eabp-defapp "system" …)` contains
+them, so it's user policy, not core policy; single-vs-multi app is
+decided by registry size, so Glasspane alone changes nothing;
+action-name collision warning implemented for *view* claims at defapp
+time (lambda identity makes handler-level warnings too noisy).
+Glasspane is the first `eabp-defapp` (glasspane-ui.el); eabp-hello.el
+now declares the second. Home switching is a drop-policy action —
+Task 15 upgrades it to a companion-local builtin for offline. Docs in
+BUILDING-TIER1.md §4½. On-device two-card check pending.
 
 **Goal:** views group into named apps; a home view launches them; the
 bottom bar shows one app at a time. This is the AppSheet feel and it

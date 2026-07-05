@@ -22,6 +22,8 @@
 (require 'cl-lib)
 (require 'eabp)
 (require 'eabp-triggers)
+(require 'eabp-device)
+(require 'eabp-apps)
 (require 'eabp-widgets)
 (require 'eabp-shell)
 (require 'glasspane-org)
@@ -1690,10 +1692,157 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
         (should-not (car result))
         (should (equal (alist-get 'code (cadr result)) "cap-unsupported"))))))
 
+(ert-deftest eabp-device-apps-list-parses-result ()
+  "apps.list results become the (LABEL . PACKAGE) alist pickers want."
+  (let (got)
+    (cl-letf (((symbol-function 'eabp-capability-invoke)
+               (lambda (cap _args callback)
+                 (should (equal cap "apps.list"))
+                 (funcall callback t
+                          '((ok . t)
+                            (result . ((apps . (((label . "Emacs")
+                                                 (package . "org.gnu.emacs"))
+                                                ((label . "Termux")
+                                                 (package . "com.termux")))))))))))
+      (eabp-device-apps-list (lambda (apps) (setq got apps))))
+    (should (equal got '(("Emacs" . "org.gnu.emacs")
+                         ("Termux" . "com.termux"))))))
+
+(ert-deftest eabp-device-clipboard-read-nil-on-error ()
+  "A cap-permission clipboard failure yields nil, not an error."
+  (let ((got 'untouched))
+    (cl-letf (((symbol-function 'eabp-capability-invoke)
+               (lambda (_cap _args callback)
+                 (funcall callback nil '((code . "cap-permission")
+                                         (detail . "backgrounded"))))))
+      (eabp-device-clipboard-read (lambda (text) (setq got text))))
+    (should-not got)))
+
+;; ─── App identity (eabp-defapp, AUTO Task 14) ────────────────────────────────
+
+(ert-deftest eabp-apps-single-app-zero-change ()
+  "With one app registered, every view shows and the launcher is absent."
+  (let ((eabp-apps--registry nil)
+        (eabp-apps--current nil))
+    (eabp-defapp "one" :label "One" :views '("agenda"))
+    (should-not (eabp-apps--multi-p))
+    (should (eabp-apps--view-visible-p "agenda"))
+    (should (eabp-apps--view-visible-p "files"))
+    ;; Even views claimed by nobody-in-particular show.
+    (should (eabp-apps--view-visible-p "someone-elses-view"))))
+
+(ert-deftest eabp-apps-multi-app-gating ()
+  "From the second app on, only the current app's views (plus unclaimed
+core views) are included."
+  (let ((eabp-apps--registry nil)
+        (eabp-apps--current nil))
+    (eabp-defapp "glasspane" :views '("agenda" "tasks"))
+    (eabp-defapp "hello" :views '("hello"))
+    (should (eabp-apps--multi-p))
+    ;; Equal :order keeps registration order: glasspane is the default.
+    (should (equal (eabp-apps-current) "glasspane"))
+    (should (eabp-apps--view-visible-p "agenda"))
+    (should-not (eabp-apps--view-visible-p "hello"))
+    (should (eabp-apps--view-visible-p "files")) ; unclaimed: everywhere
+    (setq eabp-apps--current "hello")
+    (should (eabp-apps--view-visible-p "hello"))
+    (should-not (eabp-apps--view-visible-p "agenda"))
+    ;; Removing the second app restores single-app behavior.
+    (eabp-apps-remove "hello")
+    (should (eabp-apps--view-visible-p "agenda"))))
+
+(ert-deftest eabp-apps-bottom-bar-and-home-gating ()
+  "The bottom bar shows one app's tabs; home enters the push multi-app only."
+  (let ((eabp-apps--registry nil)
+        (eabp-apps--current nil)
+        (eabp-shell-views nil)
+        (eabp-shell--current-tab nil))
+    (eabp-shell-define-view "home" :builder #'eabp-apps--home-view
+                            :when #'eabp-apps--multi-p :order 1)
+    (eabp-shell-define-view "agenda" :builder #'ignore
+                            :tab '(:icon "event" :label "Agenda") :order 10)
+    (eabp-shell-define-view "hello" :builder #'ignore
+                            :tab '(:icon "home" :label "Hello") :order 20)
+    (eabp-defapp "glasspane" :views '("agenda"))
+    ;; Single app: home hidden, both tabs visible (hello is unclaimed).
+    (should-not (assoc "home" (eabp-shell--visible-views)))
+    (should (= 2 (length (alist-get 'items (eabp-shell-bottom-bar "agenda")))))
+    ;; Second app claims hello: home appears, bars split per app.
+    (eabp-defapp "hello-app" :views '("hello"))
+    (should (assoc "home" (eabp-shell--visible-views)))
+    (should-not (assoc "hello" (eabp-shell--visible-views)))
+    (let ((items (alist-get 'items (eabp-shell-bottom-bar "agenda"))))
+      (should (= 1 (length items)))
+      (should (equal (alist-get 'label (aref items 0)) "Agenda")))
+    ;; The default landing tab respects the filter too.
+    (should (equal (eabp-shell-current-tab) "agenda"))
+    ;; The home grid builds one card per app.
+    (should (eabp-apps--home-view nil))))
+
+(ert-deftest eabp-apps-open-action-switches ()
+  "app.open flips the current app and pushes onto its landing tab."
+  (let ((eabp-apps--registry nil)
+        (eabp-apps--current nil)
+        (eabp-shell-views nil)
+        (pushed nil))
+    (eabp-shell-define-view "agenda" :builder #'ignore
+                            :tab '(:icon "event" :label "Agenda") :order 10)
+    (eabp-shell-define-view "hello" :builder #'ignore
+                            :tab '(:icon "home" :label "Hello") :order 20)
+    (eabp-defapp "glasspane" :views '("agenda"))
+    (eabp-defapp "hello-app" :views '("hello"))
+    (cl-letf (((symbol-function 'eabp-shell-push)
+               (cl-function
+                (lambda (&optional tab &key switch-to)
+                  (setq pushed (list tab switch-to))))))
+      (eabp--on-action '((action . "app.open")
+                         (args . ((app . "hello-app"))))
+                       nil)
+      (should (equal (eabp-apps-current) "hello-app"))
+      (should (equal pushed '("hello" "hello")))
+      ;; Unknown apps are dropped, never switched to.
+      (eabp--on-action '((action . "app.open") (args . ((app . "nope")))) nil)
+      (should (equal (eabp-apps-current) "hello-app")))))
+
 ;; ─── Protocol frame shapes (golden snapshot, SPEC §10–§11) ──────────────────
 
 (defconst eabp-tests--frames-golden-file
   (expand-file-name "frames.golden" eabp-tests--dir))
+
+(defun eabp-tests--device-cases ()
+  "One `capability.invoke' payload per `eabp-device-*' wrapper.
+Captures what each thin defun hands the funnel — the SPEC §10 arg
+shapes — without touching the wire."
+  (let (calls)
+    (cl-letf (((symbol-function 'eabp-device--invoke)
+               (lambda (cap args &optional _callback)
+                 (push `((kind . "capability.invoke")
+                         (payload
+                          . ((cap . ,cap)
+                             (args . ,(or args (make-hash-table
+                                                :test 'equal))))))
+                       calls))))
+      (eabp-device-intent :action "android.intent.action.VIEW"
+                          :data "https://example.com")
+      (eabp-device-intent :package "com.termux"
+                          :class-name "com.termux.app.TermuxActivity"
+                          :mode "activity"
+                          :extras '((com.example.FLAG . t)
+                                    (com.example.COUNT . 3)))
+      (eabp-device-app-launch "org.gnu.emacs")
+      (eabp-device-apps-list #'ignore)
+      (eabp-device-vibrate 300)
+      (eabp-device-vibrate nil '(0 100 50 100))
+      (eabp-device-tts "hello" :pitch 1.2 :rate 0.9)
+      (eabp-device-volume-set "music" 5)
+      (eabp-device-ringer-mode "vibrate")
+      (eabp-device-flashlight t)
+      (eabp-device-flashlight nil)
+      (eabp-device-media-key "play_pause")
+      (eabp-device-clipboard-read #'ignore)
+      (eabp-device-settings-open "wifi")
+      (eabp-device-keep-screen-on t))
+    (nreverse calls)))
 
 (defun eabp-tests--frame-cases ()
   "Outbound protocol frame payloads pinned by test/frames.golden.
@@ -1707,12 +1856,11 @@ Trigger and capability frames today; new wire frames add cases here."
                                       (args . ((on . t))))])
     (eabp-trigger-register "screen-off" :type "screen"
                            :params '((state . "off")))
-    (list
-     `((kind . "triggers.set")
-       (payload . ((triggers . ,(eabp-triggers--specs)))))
-     '((kind . "capability.invoke")
-       (payload . ((cap . "settings.open")
-                   (args . ((panel . "wifi")))))))))
+    (append
+     (list
+      `((kind . "triggers.set")
+        (payload . ((triggers . ,(eabp-triggers--specs))))))
+     (eabp-tests--device-cases))))
 
 (defun eabp-tests--frame-lines ()
   (let ((i -1))

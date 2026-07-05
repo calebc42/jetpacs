@@ -138,7 +138,7 @@ registers the handler; the core reserves `eabp.*`, `nav.*`, `view.*`,
 `dashboard.*`, `files.*`, `emacs.*`, `packages.*`, `customize.*`,
 `transient.*`, `share.*`, `demo.*`, `witheditor.*`, `comint.*`,
 `imenu.*`, `tools.*`, `trigger.*` (device-trigger fires, §11), `app.*`
-(launcher app switching, reserved).
+(launcher app switching, eabp-apps.el).
 
 - `when_offline` is the queue policy the *spec author* chose for the
   control: `"queue"` (default — persist and replay), `"drop"` (meaningless
@@ -324,17 +324,26 @@ capability.result    {ok, result?}     companion → client (reply)
   background-launch limits); they are reliable from foreground and
   notification contexts.
 
-- **`settings.open {panel}`** — the first capability, and the compliant
-  "toggle" for radios Android no longer lets apps flip directly.
-  `panel` is a named panel (`wifi` | `internet` | `bluetooth` |
-  `volume` | `nfc`) or an `android.settings.*` intent-action string;
-  anything else is refused with `cap-failed`. Named panels use the
-  floating system panels where the platform has them and the full
-  settings screen otherwise.
+### Capability catalog
 
-The effector catalog (`intent.start`, `vibrate`, `tts.speak`, …) grows
-here as capabilities ship; each entry documents its `args` and its
-error behavior.
+| cap | args | result | notes |
+|---|---|---|---|
+| `settings.open` | `{panel}` | — | `panel` = `wifi` \| `internet` \| `bluetooth` \| `volume` \| `nfc`, or any `android.settings.*` action string; anything else → `cap-failed`. The compliant "toggle" for radios apps can't flip; floating panels where the platform has them |
+| `intent.start` | `{action?, data?, package?, class_name?, mime?, extras?, mode?}` | — | the universal escape hatch. `extras` values are strings/numbers/booleans only — never anything executable. `mode` = `activity` (default, adds `FLAG_ACTIVITY_NEW_TASK`) \| `broadcast` \| `service`. Activity mode is best-effort while the companion is backgrounded |
+| `app.launch` | `{package}` | — | the package's launcher activity, or `cap-failed` |
+| `apps.list` | — | `{apps: [{label, package}]}` | launchable packages sorted by label — feeds a client-side picker. Empty without the companion's package-visibility `<queries>` |
+| `vibrate` | `{ms?}` or `{pattern: [off, on, … ms]}` | — | `ms` defaults to 200; `pattern` wins when both given |
+| `tts.speak` | `{text, pitch?, rate?}` | — | asynchronous best-effort; engine lazy-inits (utterances queue during init) and releases after ~60 s idle |
+| `volume.set` | `{stream, level}` | `{max}` | `stream` = `music` \| `ring` \| `alarm` \| `notification` \| `call` \| `system`; `level` clamps to `0..max`. DND policy can refuse → `cap-permission` |
+| `ringer.mode` | `{mode}` | — | `normal` \| `vibrate` \| `silent`; silent needs DND access → `cap-permission` with the grant deep-link |
+| `flashlight` | `{on}` | — | torch of the first flash-capable camera; none → `cap-failed` |
+| `media.key` | `{key}` | — | `play_pause` \| `play` \| `pause` \| `next` \| `previous` \| `stop` \| `fast_forward` \| `rewind` |
+| `clipboard.read` | — | `{text}` | Android 10+ exposes the clipboard only to the focused app → `cap-permission` while backgrounded. Contents must never be logged or persisted companion-side |
+| `screen.keep_on` | `{on}` | — | a window flag held only while the companion's EABP UI is on screen — it cannot pin the device awake from the background |
+
+Special-access effectors (`brightness.set`, `dnd.set`) are specified
+when they ship; each will follow the `cap-permission` + deep-link
+pattern above.
 
 ## 11. Device triggers (optional)
 

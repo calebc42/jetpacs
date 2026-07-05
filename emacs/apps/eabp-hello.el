@@ -18,6 +18,7 @@
 ;;; Code:
 
 (require 'eabp-shell)
+(require 'eabp-apps)
 (require 'eabp-widgets)
 (require 'eabp-surfaces)
 
@@ -55,6 +56,11 @@
                                   :snackbar snackbar))
   :tab '(:icon "waving_hand" :label "Hello")
   :order 5)  ; leftmost — before any other app's tabs
+
+;; Loaded next to Glasspane this makes it app number two: the launcher
+;; home appears with two cards, and each app keeps its own tab bar.
+(eabp-defapp "hello" :label "Hello" :icon "waving_hand"
+             :views '("hello") :order 20)
 
 (provide 'eabp-hello)
 ;;; eabp-hello.el ends here

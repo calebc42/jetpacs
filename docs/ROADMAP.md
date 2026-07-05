@@ -64,8 +64,8 @@ inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 | order | item | why |
 |---|---|---|
 | 1 ✅ | **AUTO 1 + AUTO 2** — `triggers.set` / `trigger.fired` spec; `capability.invoke` + device-permission map | Landed 2026-07-05: SPEC §10–§11, `eabp-triggers.el`, capability helpers, `DeviceCapabilities.kt` (`settings.open` first), `frames.golden` |
-| 2 (par.) | **AUTO 3 + AUTO 4** — intent escape hatch; permission-free effectors | First Tasker value, days not weeks, instantly gratifying from the eval REPL; exercises the new channel end-to-end |
-| 2 (par.) | **AUTO 14 (launcher Task 14)** — `eabp-defapp` + home + per-app chrome | Pure elisp, zero behavior change single-app — and every Tier 1 built afterwards (Automations view, saved views) is *born* app-grouped instead of retrofitted |
+| 2 (par.) ✅ | **AUTO 3 + AUTO 4** — intent escape hatch; permission-free effectors | Landed 2026-07-05: 12-cap catalog in `DeviceCapabilities.kt` + `eabp-device.el`; REPL pass on device pending |
+| 2 (par.) ✅ | **AUTO 14 (launcher Task 14)** — `eabp-defapp` + home + per-app chrome | Landed 2026-07-05: `eabp-apps.el` + shell filter seam; Glasspane is the first defapp, eabp-hello the second; on-device check pending |
 
 ## Horizon 2 — the minimum usable automation loop
 

@@ -16,10 +16,10 @@
                                 (or load-file-name buffer-file-name))))
 
 (dolist (feature '(eabp eabp-widgets eabp-surfaces eabp-triggers
-                   eabp-minibuffer eabp-buffer eabp-shell eabp-tablist
-                   eabp-comint eabp-transient eabp-keymap eabp-sync
-                   eabp-complete eabp-settings eabp-files eabp-witheditor
-                   eabp-emacs-ui))
+                   eabp-device eabp-minibuffer eabp-buffer eabp-shell
+                   eabp-apps eabp-tablist eabp-comint eabp-transient
+                   eabp-keymap eabp-sync eabp-complete eabp-settings
+                   eabp-files eabp-witheditor eabp-emacs-ui))
   (require feature))
 
 (dolist (feature '(glasspane glasspane-ui glasspane-org eabp-magit

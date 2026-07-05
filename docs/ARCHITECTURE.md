@@ -35,9 +35,11 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `eabp-widgets.el` | the widget constructors (wire shapes in `test/widgets.golden`) |
 | `eabp-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
 | `eabp-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
+| `eabp-device.el` | device effectors: one thin defun per SPEC §10 capability (`eabp-device-intent`, `-flashlight`, `-tts`, …) through the `eabp-device--invoke` funnel |
 | `eabp-minibuffer.el` | prompt bridge: `y-or-n-p` / `completing-read` / … → dialogs, only inside action handlers |
 | `eabp-buffer.el` | **Tier 0 renderer**: any buffer → spans + tappable regions; the major-mode→skin registry |
 | `eabp-shell.el` | the app shell: view registry, tab/drawer/top-bar chrome, snackbar, connect/refresh pushes |
+| `eabp-apps.el` | app identity over the shell: `eabp-defapp` groups views, launcher home grid, per-app tab bars (inert until a second app registers) |
 | `eabp-tablist.el` | **Tier 0.5**: generic `tabulated-list-mode` renderer + skin hook alists |
 | `eabp-comint.el` | **Tier 0.5**: generic `comint-mode` renderer — transcript tail + input row, `comint.send` scoped to the buffer's own live process |
 | `eabp-transient.el` | **Tier 0.5**: transient prefixes as touch dialogs (advice on `transient-setup`) |

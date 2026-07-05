@@ -113,6 +113,24 @@ grows a Marks tab between Agenda-less core tabs. The pieces:
   queue drains run it), `eabp-shell-after-push-hook` (piggyback cheap,
   memo-guarded sends: home-screen widgets, reminders).
 
+### 4½. Group your views into an app (`eabp-defapp`)
+
+One `eabp-defapp` call gives your views an identity in the launcher:
+
+```elisp
+(eabp-defapp "marks" :label "Marks" :icon "bookmark"
+             :views '("bookmarks"))
+```
+
+While only one app is registered nothing changes — the phone boots
+straight into it, exactly as today. From the second app on, a **home
+grid** appears (an "Apps" drawer entry navigates to it, offline-capable
+via the multi-view switch), each card opens its app, and the bottom bar
+shows one app's tabs at a time. Views no app claims — the core Files /
+Eval / Tools tabs — show in every app; claim them in an explicit app of
+their own (say `"system"`) to contain them. The first `:tab` view in
+`:views` is the app's landing tab.
+
 ### 5. Per-file-type editor behaviour
 
 `eabp-files.el` owns the Files tab and the plain editor; your app teaches

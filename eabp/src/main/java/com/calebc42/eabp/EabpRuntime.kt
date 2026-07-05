@@ -58,6 +58,18 @@ object EabpRuntime {
     }
 
     /**
+     * The `screen.keep_on` effector's state (SPEC §10). Set by
+     * [DeviceCapabilities]; [SduiScaffold] applies it as the window's
+     * keep-screen-on flag, so it only holds while EABP UI is on screen.
+     */
+    private val _keepScreenOn = MutableStateFlow(false)
+    val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
+
+    fun setKeepScreenOn(value: Boolean) {
+        _keepScreenOn.value = value
+    }
+
+    /**
      * Number of offline events waiting in the Room queue, for the top-bar
      * badge. Refresh from a background thread only (Room forbids main).
      */

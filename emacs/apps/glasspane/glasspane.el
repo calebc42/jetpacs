@@ -13,6 +13,12 @@
 ;;; Code:
 
 (require 'glasspane-ui)
+(require 'glasspane-config)
+
+;; Load the app-managed defaults (capture templates, agenda wiring) if
+;; the user has opted in — init.el code after (require 'glasspane) still
+;; runs later, so personal settings always win.
+(glasspane-config-load)
 
 (provide 'glasspane)
 ;;; glasspane.el ends here

@@ -281,56 +281,206 @@ suitable for `glasspane-ui--agenda-card'."
           nil nil)
          (nreverse items))))))
 
-(defun glasspane-org--search-substring (query)
-  "Fallback search of agenda files for QUERY string.
-Supports basic tokenization like todo:TODO tags:work and raw text."
-  (let* ((q (string-trim query))
-         (tokens (split-string q "[ \t]+" t))
-         (todos nil)
-         (tags nil)
-         (texts nil)
-         items)
-    (dolist (tok tokens)
-      (cond
-       ((string-prefix-p "todo:" tok)
-        (push (substring tok 5) todos))
-       ((string-prefix-p "tags:" tok)
-        ;; Tags (like TODO keywords) are case-sensitive org data —
-        ;; "boss" and "Boss" are different tags, so no case folding.
-        ;; Free-text matching below stays case-insensitive (search UX).
-        (push (substring tok 5) tags))
-       (t
-        (push (downcase (replace-regexp-in-string "^\"\\(.*\\)\"$" "\\1" tok)) texts))))
+;; Search queries pass through one parser (`glasspane-org--parse-query')
+;; into an org-ql-shaped sexp, whichever of the three input shapes the
+;; user typed.  With org-ql installed the sexp runs there; without it a
+;; built-in interpreter (`glasspane-org--query-match-p') covers the
+;; common predicates.  Malformed queries signal `user-error' so the UI
+;; can show the problem — an empty result must mean "nothing matched",
+;; never "the query didn't parse".
+
+(defconst glasspane-org--ql-literals '(today nil t < <= > >= =)
+  "Symbols with meaning to org-ql that normalization must not stringify.")
+
+(defun glasspane-org--normalize-ql (form)
+  "Return sexp query FORM with elisp-isms rewritten to org-ql shape.
+Hand-typed queries arrive looking like elisp — (tags \\='server) or
+\(todo NEXT) — but org-ql wants plain strings, so quotes are unwrapped
+and bare symbols in argument positions become strings.  Clause heads,
+keywords, and the symbols org-ql itself understands (`today',
+comparators) pass through untouched."
+  (if (and (consp form) (eq (car form) 'quote) (cdr form))
+      (glasspane-org--normalize-ql (cadr form))
+    (if (not (consp form))
+        form
+      (cons (car form)
+            (mapcar #'glasspane-org--normalize-ql-arg (cdr form))))))
+
+(defun glasspane-org--normalize-ql-arg (arg)
+  "Normalize ARG, a clause argument inside a sexp query.
+Sub-clauses recurse through `glasspane-org--normalize-ql'; quoted or
+bare symbols become strings unless org-ql assigns them meaning."
+  (cond
+   ((and (consp arg) (eq (car arg) 'quote) (cdr arg))
+    (glasspane-org--normalize-ql-arg (cadr arg)))
+   ((consp arg) (glasspane-org--normalize-ql arg))
+   ((keywordp arg) arg)
+   ((memq arg glasspane-org--ql-literals) arg)
+   ((symbolp arg) (symbol-name arg))
+   (t arg)))
+
+(defun glasspane-org--query-tokens (q)
+  "Split query Q on whitespace, keeping \"quoted phrases\" whole."
+  (let ((pos 0) (tokens nil))
+    (while (string-match "\"\\([^\"]*\\)\"\\|\\S-+" q pos)
+      (push (or (match-string 1 q) (match-string 0 q)) tokens)
+      (setq pos (match-end 0)))
+    (nreverse tokens)))
+
+(defun glasspane-org--parse-query (query)
+  "Parse the search QUERY string into an org-ql sexp, or nil if empty.
+Three input shapes are accepted:
+- an org-ql sexp:  (and (todo \"TODO\") (tags \"work\"))
+- filter tokens:   todo:TODO,NEXT tags:work priority:A
+- free text:       \"exact phrase\" or bare words (matched
+  case-insensitively against the heading and body)
+Tokens of different kinds AND together; comma-separated values within
+todo:/tags: mean any-of.  Signals `user-error' on a malformed sexp."
+  (let ((q (string-trim query)))
+    (cond
+     ((string-empty-p q) nil)
+     ;; A sexp query, possibly pasted with its elisp quote: '(tags "x")
+     ((string-match-p "\\`'?(" q)
+      (let ((form (condition-case nil (read q)
+                    (error (user-error "Query has unbalanced parentheses: %s" q)))))
+        (glasspane-org--normalize-ql form)))
+     (t
+      (let ((clauses
+             (mapcar
+              (lambda (tok)
+                (cond
+                 ((string-prefix-p "todo:" tok)
+                  `(todo ,@(split-string (substring tok 5) "," t)))
+                 ((string-prefix-p "tags:" tok)
+                  `(tags ,@(split-string (substring tok 5) "," t)))
+                 ((string-prefix-p "priority:" tok)
+                  `(priority ,(substring tok 9)))
+                 (t `(regexp ,(regexp-quote tok)))))
+              (glasspane-org--query-tokens q))))
+        (if (cdr clauses) `(and ,@clauses) (car clauses)))))))
+
+(defun glasspane-org--query-match-p (tree)
+  "Non-nil when the heading at point matches query sexp TREE.
+The org-ql subset the built-in search understands; anything else
+signals `user-error' naming the term.  Tags and TODO keywords compare
+case-sensitively (they are org data); free text and headings match
+case-insensitively (search UX)."
+  (pcase tree
+    (`(and . ,cs) (cl-every #'glasspane-org--query-match-p cs))
+    (`(or . ,cs) (and (cl-some #'glasspane-org--query-match-p cs) t))
+    (`(not ,c) (not (glasspane-org--query-match-p c)))
+    (`(todo . ,kws)
+     (let ((st (org-get-todo-state)))
+       (and st (if kws (and (member st kws) t)
+                 (not (member st org-done-keywords))))))
+    (`(done)
+     (let ((st (org-get-todo-state)))
+       (and st (member st org-done-keywords) t)))
+    (`(tags . ,tags)
+     (let ((have (org-get-tags)))
+       (if tags (and (cl-some (lambda (tg) (member tg have)) tags) t)
+         (and have t))))
+    (`(priority ,(and op (pred symbolp)) ,val)
+     ;; Comparators run on priority rank, where #A outranks #B — the
+     ;; char values order the other way round, so the tests flip.
+     (let ((pr (nth 3 (org-heading-components)))
+           (want (string-to-char val)))
+       (and pr (pcase op
+                 ('< (> pr want)) ('<= (>= pr want))
+                 ('> (< pr want)) ('>= (<= pr want))
+                 ('= (= pr want))
+                 (_ (user-error "Unsupported priority comparator %s" op))))))
+    (`(priority . ,ps)
+     (let ((pr (nth 3 (org-heading-components))))
+       (if ps (and pr (member (char-to-string pr) ps) t)
+         (and pr t))))
+    (`(heading . ,texts)
+     (let ((hl (or (nth 4 (org-heading-components)) ""))
+           (case-fold-search t))
+       (cl-every (lambda (s) (string-match-p (regexp-quote s) hl)) texts)))
+    (`(regexp . ,res)
+     ;; Heading plus body, up to the next heading — close enough to
+     ;; org-ql's entry scope for search purposes.
+     (let ((end (save-excursion (outline-next-heading) (point)))
+           (case-fold-search t))
+       (cl-every (lambda (re)
+                   (save-excursion (re-search-forward re end t)))
+                 res)))
+    (`(property ,name . ,val)
+     (let ((v (org-entry-get (point) name)))
+       (if val (equal v (car val)) (and v t))))
+    (`(level ,n) (eql (org-current-level) n))
+    (`(level ,n ,m) (let ((l (org-current-level))) (and l (<= n l m))))
+    (`(scheduled . ,args) (glasspane-org--planning-match-p "SCHEDULED" args))
+    (`(deadline . ,args) (glasspane-org--planning-match-p "DEADLINE" args))
+    (_ (user-error "Query term %S needs the org-ql package installed" tree))))
+
+(defun glasspane-org--planning-day (spec)
+  "Resolve a query date SPEC to an absolute day number.
+SPEC is `today', an integer offset in days from today, or a date
+string org can read (\"2026-07-05\")."
+  (cond
+   ((eq spec 'today) (org-today))
+   ((integerp spec) (+ (org-today) spec))
+   ((stringp spec) (org-time-string-to-absolute spec))
+   (t (user-error "Unsupported query date %S" spec))))
+
+(defun glasspane-org--planning-match-p (which args)
+  "Match the WHICH (\"SCHEDULED\"/\"DEADLINE\") stamp at point against ARGS.
+ARGS is an org-ql-style plist of :on / :from / :to date specs; empty
+ARGS matches mere presence of the stamp."
+  (let ((ts (org-entry-get (point) which)))
+    (and ts
+         (let ((day (org-time-string-to-absolute ts)))
+           (cl-loop for (key spec) on args by #'cddr
+                    always (pcase key
+                             (:on (= day (glasspane-org--planning-day spec)))
+                             (:from (>= day (glasspane-org--planning-day spec)))
+                             (:to (<= day (glasspane-org--planning-day spec)))
+                             (_ (user-error "Unsupported %s option %s"
+                                            (downcase which) key))))))))
+
+(defun glasspane-org--search-fallback (tree)
+  "Run parsed query TREE over the agenda files without org-ql."
+  (let (items)
     (org-map-entries
      (lambda ()
-       (let* ((comps (org-heading-components))
-              (heading-todo (nth 2 comps))
-              (headline (downcase (or (nth 4 comps) "")))
-              (heading-tags (org-get-tags)))
-         (when (and
-                (or (null todos) (member heading-todo todos))
-                (or (null tags) (cl-every (lambda (t-req) (member t-req heading-tags)) tags))
-                (or (null texts) (cl-every (lambda (txt) (string-search txt headline)) texts)))
-           (push (glasspane-org--heading-item-at) items))))
+       (when (glasspane-org--query-match-p tree)
+         (push (glasspane-org--heading-item-at) items)))
      nil 'agenda)
     (nreverse items)))
 
 (defun glasspane-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
-Uses `org-ql' when available, falling back to a substring match.
-Memoised; see `glasspane-org-cache-invalidate'."
-  (if (string-empty-p (string-trim query))
-      nil
-    (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
-      (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
-                          (condition-case nil (read query) (error query))
-                        query)))
+QUERY may be an org-ql sexp, filter tokens, or free text — see
+`glasspane-org--parse-query'.  Runs through `org-ql' when installed,
+otherwise the built-in interpreter.  Signals `user-error' on queries
+that don't parse or use unsupported terms, so callers can surface the
+problem.  Memoised; see `glasspane-org-cache-invalidate'."
+  (let ((tree (glasspane-org--parse-query query)))
+    (when tree
+      (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
         (if (fboundp 'org-ql-select)
-            (condition-case nil
-                (org-ql-select (org-agenda-files) ql-query
+            (condition-case err
+                (org-ql-select (org-agenda-files) tree
                                :action #'glasspane-org--heading-item-at)
-              (error (glasspane-org--search-substring query)))
-          (glasspane-org--search-substring query))))))
+              (user-error (signal (car err) (cdr err)))
+              (error (user-error "Query failed: %s" (error-message-string err))))
+          (glasspane-org--search-fallback tree))))))
+
+(defun glasspane-org--all-tags ()
+  "Sorted tags for the query builder.
+Combines `org-tag-alist' (the configured vocabulary) with every tag
+actually used in the agenda files.  Memoised; see
+`glasspane-org-cache-invalidate'."
+  (glasspane-org--with-cache (glasspane-org--cache-key 'all-tags)
+    (let ((tags nil))
+      (dolist (entry org-tag-alist)
+        (let ((tg (if (consp entry) (car entry) entry)))
+          (when (stringp tg) (push tg tags))))
+      (dolist (entry (org-global-tags-completion-table))
+        (when (stringp (car entry)) (push (car entry) tags)))
+      (sort (delete-dups tags) #'string-lessp))))
 
 (defun glasspane-org--file-list ()
   "List of agenda files and basic stats."

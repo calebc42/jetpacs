@@ -760,7 +760,9 @@ changes."
   (eabp--node "enum_list"
               'id id
               'options (vconcat options)
-              'value (and value (vconcat value))
+              ;; A bare string VALUE would vconcat into a vector of char
+              ;; codes — wrap it as the one-element selection it means.
+              'value (and value (vconcat (if (stringp value) (list value) value)))
               'multi_select (and multi-select t)
               'allow_add (and allow-add t)
               'on_change on-change
@@ -8694,56 +8696,206 @@ suitable for `glasspane-ui--agenda-card'."
           nil nil)
          (nreverse items))))))
 
-(defun glasspane-org--search-substring (query)
-  "Fallback search of agenda files for QUERY string.
-Supports basic tokenization like todo:TODO tags:work and raw text."
-  (let* ((q (string-trim query))
-         (tokens (split-string q "[ \t]+" t))
-         (todos nil)
-         (tags nil)
-         (texts nil)
-         items)
-    (dolist (tok tokens)
-      (cond
-       ((string-prefix-p "todo:" tok)
-        (push (substring tok 5) todos))
-       ((string-prefix-p "tags:" tok)
-        ;; Tags (like TODO keywords) are case-sensitive org data —
-        ;; "boss" and "Boss" are different tags, so no case folding.
-        ;; Free-text matching below stays case-insensitive (search UX).
-        (push (substring tok 5) tags))
-       (t
-        (push (downcase (replace-regexp-in-string "^\"\\(.*\\)\"$" "\\1" tok)) texts))))
+;; Search queries pass through one parser (`glasspane-org--parse-query')
+;; into an org-ql-shaped sexp, whichever of the three input shapes the
+;; user typed.  With org-ql installed the sexp runs there; without it a
+;; built-in interpreter (`glasspane-org--query-match-p') covers the
+;; common predicates.  Malformed queries signal `user-error' so the UI
+;; can show the problem — an empty result must mean "nothing matched",
+;; never "the query didn't parse".
+
+(defconst glasspane-org--ql-literals '(today nil t < <= > >= =)
+  "Symbols with meaning to org-ql that normalization must not stringify.")
+
+(defun glasspane-org--normalize-ql (form)
+  "Return sexp query FORM with elisp-isms rewritten to org-ql shape.
+Hand-typed queries arrive looking like elisp — (tags \\='server) or
+\(todo NEXT) — but org-ql wants plain strings, so quotes are unwrapped
+and bare symbols in argument positions become strings.  Clause heads,
+keywords, and the symbols org-ql itself understands (`today',
+comparators) pass through untouched."
+  (if (and (consp form) (eq (car form) 'quote) (cdr form))
+      (glasspane-org--normalize-ql (cadr form))
+    (if (not (consp form))
+        form
+      (cons (car form)
+            (mapcar #'glasspane-org--normalize-ql-arg (cdr form))))))
+
+(defun glasspane-org--normalize-ql-arg (arg)
+  "Normalize ARG, a clause argument inside a sexp query.
+Sub-clauses recurse through `glasspane-org--normalize-ql'; quoted or
+bare symbols become strings unless org-ql assigns them meaning."
+  (cond
+   ((and (consp arg) (eq (car arg) 'quote) (cdr arg))
+    (glasspane-org--normalize-ql-arg (cadr arg)))
+   ((consp arg) (glasspane-org--normalize-ql arg))
+   ((keywordp arg) arg)
+   ((memq arg glasspane-org--ql-literals) arg)
+   ((symbolp arg) (symbol-name arg))
+   (t arg)))
+
+(defun glasspane-org--query-tokens (q)
+  "Split query Q on whitespace, keeping \"quoted phrases\" whole."
+  (let ((pos 0) (tokens nil))
+    (while (string-match "\"\\([^\"]*\\)\"\\|\\S-+" q pos)
+      (push (or (match-string 1 q) (match-string 0 q)) tokens)
+      (setq pos (match-end 0)))
+    (nreverse tokens)))
+
+(defun glasspane-org--parse-query (query)
+  "Parse the search QUERY string into an org-ql sexp, or nil if empty.
+Three input shapes are accepted:
+- an org-ql sexp:  (and (todo \"TODO\") (tags \"work\"))
+- filter tokens:   todo:TODO,NEXT tags:work priority:A
+- free text:       \"exact phrase\" or bare words (matched
+  case-insensitively against the heading and body)
+Tokens of different kinds AND together; comma-separated values within
+todo:/tags: mean any-of.  Signals `user-error' on a malformed sexp."
+  (let ((q (string-trim query)))
+    (cond
+     ((string-empty-p q) nil)
+     ;; A sexp query, possibly pasted with its elisp quote: '(tags "x")
+     ((string-match-p "\\`'?(" q)
+      (let ((form (condition-case nil (read q)
+                    (error (user-error "Query has unbalanced parentheses: %s" q)))))
+        (glasspane-org--normalize-ql form)))
+     (t
+      (let ((clauses
+             (mapcar
+              (lambda (tok)
+                (cond
+                 ((string-prefix-p "todo:" tok)
+                  `(todo ,@(split-string (substring tok 5) "," t)))
+                 ((string-prefix-p "tags:" tok)
+                  `(tags ,@(split-string (substring tok 5) "," t)))
+                 ((string-prefix-p "priority:" tok)
+                  `(priority ,(substring tok 9)))
+                 (t `(regexp ,(regexp-quote tok)))))
+              (glasspane-org--query-tokens q))))
+        (if (cdr clauses) `(and ,@clauses) (car clauses)))))))
+
+(defun glasspane-org--query-match-p (tree)
+  "Non-nil when the heading at point matches query sexp TREE.
+The org-ql subset the built-in search understands; anything else
+signals `user-error' naming the term.  Tags and TODO keywords compare
+case-sensitively (they are org data); free text and headings match
+case-insensitively (search UX)."
+  (pcase tree
+    (`(and . ,cs) (cl-every #'glasspane-org--query-match-p cs))
+    (`(or . ,cs) (and (cl-some #'glasspane-org--query-match-p cs) t))
+    (`(not ,c) (not (glasspane-org--query-match-p c)))
+    (`(todo . ,kws)
+     (let ((st (org-get-todo-state)))
+       (and st (if kws (and (member st kws) t)
+                 (not (member st org-done-keywords))))))
+    (`(done)
+     (let ((st (org-get-todo-state)))
+       (and st (member st org-done-keywords) t)))
+    (`(tags . ,tags)
+     (let ((have (org-get-tags)))
+       (if tags (and (cl-some (lambda (tg) (member tg have)) tags) t)
+         (and have t))))
+    (`(priority ,(and op (pred symbolp)) ,val)
+     ;; Comparators run on priority rank, where #A outranks #B — the
+     ;; char values order the other way round, so the tests flip.
+     (let ((pr (nth 3 (org-heading-components)))
+           (want (string-to-char val)))
+       (and pr (pcase op
+                 ('< (> pr want)) ('<= (>= pr want))
+                 ('> (< pr want)) ('>= (<= pr want))
+                 ('= (= pr want))
+                 (_ (user-error "Unsupported priority comparator %s" op))))))
+    (`(priority . ,ps)
+     (let ((pr (nth 3 (org-heading-components))))
+       (if ps (and pr (member (char-to-string pr) ps) t)
+         (and pr t))))
+    (`(heading . ,texts)
+     (let ((hl (or (nth 4 (org-heading-components)) ""))
+           (case-fold-search t))
+       (cl-every (lambda (s) (string-match-p (regexp-quote s) hl)) texts)))
+    (`(regexp . ,res)
+     ;; Heading plus body, up to the next heading — close enough to
+     ;; org-ql's entry scope for search purposes.
+     (let ((end (save-excursion (outline-next-heading) (point)))
+           (case-fold-search t))
+       (cl-every (lambda (re)
+                   (save-excursion (re-search-forward re end t)))
+                 res)))
+    (`(property ,name . ,val)
+     (let ((v (org-entry-get (point) name)))
+       (if val (equal v (car val)) (and v t))))
+    (`(level ,n) (eql (org-current-level) n))
+    (`(level ,n ,m) (let ((l (org-current-level))) (and l (<= n l m))))
+    (`(scheduled . ,args) (glasspane-org--planning-match-p "SCHEDULED" args))
+    (`(deadline . ,args) (glasspane-org--planning-match-p "DEADLINE" args))
+    (_ (user-error "Query term %S needs the org-ql package installed" tree))))
+
+(defun glasspane-org--planning-day (spec)
+  "Resolve a query date SPEC to an absolute day number.
+SPEC is `today', an integer offset in days from today, or a date
+string org can read (\"2026-07-05\")."
+  (cond
+   ((eq spec 'today) (org-today))
+   ((integerp spec) (+ (org-today) spec))
+   ((stringp spec) (org-time-string-to-absolute spec))
+   (t (user-error "Unsupported query date %S" spec))))
+
+(defun glasspane-org--planning-match-p (which args)
+  "Match the WHICH (\"SCHEDULED\"/\"DEADLINE\") stamp at point against ARGS.
+ARGS is an org-ql-style plist of :on / :from / :to date specs; empty
+ARGS matches mere presence of the stamp."
+  (let ((ts (org-entry-get (point) which)))
+    (and ts
+         (let ((day (org-time-string-to-absolute ts)))
+           (cl-loop for (key spec) on args by #'cddr
+                    always (pcase key
+                             (:on (= day (glasspane-org--planning-day spec)))
+                             (:from (>= day (glasspane-org--planning-day spec)))
+                             (:to (<= day (glasspane-org--planning-day spec)))
+                             (_ (user-error "Unsupported %s option %s"
+                                            (downcase which) key))))))))
+
+(defun glasspane-org--search-fallback (tree)
+  "Run parsed query TREE over the agenda files without org-ql."
+  (let (items)
     (org-map-entries
      (lambda ()
-       (let* ((comps (org-heading-components))
-              (heading-todo (nth 2 comps))
-              (headline (downcase (or (nth 4 comps) "")))
-              (heading-tags (org-get-tags)))
-         (when (and
-                (or (null todos) (member heading-todo todos))
-                (or (null tags) (cl-every (lambda (t-req) (member t-req heading-tags)) tags))
-                (or (null texts) (cl-every (lambda (txt) (string-search txt headline)) texts)))
-           (push (glasspane-org--heading-item-at) items))))
+       (when (glasspane-org--query-match-p tree)
+         (push (glasspane-org--heading-item-at) items)))
      nil 'agenda)
     (nreverse items)))
 
 (defun glasspane-org--search (query)
   "Search agenda files for QUERY; return a list of heading items.
-Uses `org-ql' when available, falling back to a substring match.
-Memoised; see `glasspane-org-cache-invalidate'."
-  (if (string-empty-p (string-trim query))
-      nil
-    (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
-      (let ((ql-query (if (and (stringp query) (string-prefix-p "(" (string-trim query)))
-                          (condition-case nil (read query) (error query))
-                        query)))
+QUERY may be an org-ql sexp, filter tokens, or free text — see
+`glasspane-org--parse-query'.  Runs through `org-ql' when installed,
+otherwise the built-in interpreter.  Signals `user-error' on queries
+that don't parse or use unsupported terms, so callers can surface the
+problem.  Memoised; see `glasspane-org-cache-invalidate'."
+  (let ((tree (glasspane-org--parse-query query)))
+    (when tree
+      (glasspane-org--with-cache (glasspane-org--cache-key 'search query)
         (if (fboundp 'org-ql-select)
-            (condition-case nil
-                (org-ql-select (org-agenda-files) ql-query
+            (condition-case err
+                (org-ql-select (org-agenda-files) tree
                                :action #'glasspane-org--heading-item-at)
-              (error (glasspane-org--search-substring query)))
-          (glasspane-org--search-substring query))))))
+              (user-error (signal (car err) (cdr err)))
+              (error (user-error "Query failed: %s" (error-message-string err))))
+          (glasspane-org--search-fallback tree))))))
+
+(defun glasspane-org--all-tags ()
+  "Sorted tags for the query builder.
+Combines `org-tag-alist' (the configured vocabulary) with every tag
+actually used in the agenda files.  Memoised; see
+`glasspane-org-cache-invalidate'."
+  (glasspane-org--with-cache (glasspane-org--cache-key 'all-tags)
+    (let ((tags nil))
+      (dolist (entry org-tag-alist)
+        (let ((tg (if (consp entry) (car entry) entry)))
+          (when (stringp tg) (push tg tags))))
+      (dolist (entry (org-global-tags-completion-table))
+        (when (stringp (car entry)) (push (car entry) tags)))
+      (sort (delete-dups tags) #'string-lessp))))
 
 (defun glasspane-org--file-list ()
   "List of agenda files and basic stats."
@@ -9791,6 +9943,9 @@ Returns a single `eabp-reorderable-list' node for refile mode."
 (defvar glasspane-ui--search-results nil
   "Cached heading items from the last search.")
 
+(defvar glasspane-ui--search-error nil
+  "Human-readable message when the last search query failed, else nil.")
+
 ;; ─── Reminders & home-screen widget (piggybacked on each shell push) ────────
 
 (defvar glasspane-ui--last-reminders 'unset
@@ -10446,56 +10601,142 @@ and a quick complete button for open todos."
     (eabp-card (list (apply #'eabp-column children))
                :on-tap (eabp-action "heading.tap" :args ref))))
 
+(defun glasspane-ui--filter-values (id)
+  "Selected values for builder filter ID, as a list of strings.
+UI state for an enum may hold the parsed vector from an action's
+args, the raw JSON text a `state.changed' event delivered, or a
+plain seed string — normalise them all."
+  (let ((v (eabp-ui-state id)))
+    (cond
+     ((null v) nil)
+     ((vectorp v) (append v nil))
+     ((and (stringp v) (string-prefix-p "[" v))
+      (condition-case nil
+          (append (json-parse-string v) nil)
+        (error (list v))))
+     ((stringp v) (list v))
+     ((listp v) v))))
+
+(defun glasspane-ui--search-builder-section (key label summary widget)
+  "One collapsible filter section of the query builder.
+KEY names the fold-state id; LABEL is the always-visible section
+name.  SUMMARY, when non-nil, is the active filter rendered into the
+header so a folded section still shows what it contributes.  WIDGET
+is the section's control."
+  (eabp-collapsible
+   (concat "search-sec-" key)
+   (if summary
+       (eabp-rich-text (list (eabp-span (concat label ": ") :bold t)
+                             (eabp-span summary))
+                       :style 'body)
+     (eabp-text label 'body))
+   (list widget)
+   :collapsed t))
+
+(defun glasspane-ui--search-builder ()
+  "The query-builder card for the Search view.
+Every filter change reruns the search and writes the equivalent
+org-ql query into the search field, so the builder doubles as a
+worked example of the query language.  Each filter lives in its own
+collapsible section whose header names the active value, so the
+folded builder reads as a filter summary.  The whole card starts
+folded once a search has results, to keep them above the fold."
+  (let* ((todo-val (or (car (glasspane-ui--filter-values "search-filter-todo")) "Any"))
+         (tags-list (glasspane-ui--filter-values "search-filter-tags"))
+         (text-val (or (eabp-ui-state "search-filter-text") ""))
+         (prio-val (or (car (glasspane-ui--filter-values "search-filter-priority")) "Any"))
+         (due-val (or (car (glasspane-ui--filter-values "search-filter-due")) "Any")))
+    (eabp-card
+     (list
+      (eabp-collapsible
+       "search-builder"
+       (eabp-text "Query builder" 'headline)
+       (list
+        (glasspane-ui--search-builder-section
+         "todo" "Status" (unless (equal todo-val "Any") todo-val)
+         (eabp-enum-list "search-filter-todo"
+                         (append '("Any") (glasspane-ui--global-todo-keywords)
+                                 '("Done (any)"))
+                         :value todo-val
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "todo")))))
+        (glasspane-ui--search-builder-section
+         "tags" "Tags (all must match)"
+         (when tags-list (string-join tags-list ", "))
+         (eabp-enum-list "search-filter-tags" (glasspane-org--all-tags)
+                         :value (vconcat tags-list)
+                         :multi-select t
+                         :allow-add t
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "tags")))))
+        (glasspane-ui--search-builder-section
+         "priority" "Priority" (unless (equal prio-val "Any") prio-val)
+         (eabp-enum-list "search-filter-priority" '("Any" "A" "B" "C")
+                         :value prio-val
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "priority")))))
+        (glasspane-ui--search-builder-section
+         "due" "Due" (unless (equal due-val "Any") due-val)
+         (eabp-enum-list "search-filter-due" '("Any" "Overdue" "Today" "This week")
+                         :value due-val
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "due")))))
+        (glasspane-ui--search-builder-section
+         "text" "Text contains"
+         (unless (string-empty-p text-val) text-val)
+         (eabp-text-input "search-filter-text"
+                          :value text-val
+                          :hint "e.g. meeting notes"
+                          :single-line t
+                          :on-submit (eabp-action "search.update-filter"
+                                                  :args '((field . "text")))))
+        (eabp-row
+         (eabp-box (list (eabp-text "Filters search as you pick them and write the org-ql query below — edit it there to go further."
+                                    'caption))
+                   :weight 1)
+         (eabp-button "Clear" (eabp-action "search.clear-filters"))))
+       :collapsed (and glasspane-ui--search-results t)))
+     :padding 16)))
+
 (defun glasspane-ui--search-body ()
   (let* ((q (or glasspane-ui--search-query ""))
          (results glasspane-ui--search-results)
          (input (eabp-text-input "search-query"
                                  :value q
-                                 :hint "Search headings (text or org-ql query)"
+                                 :hint "Text, todo:NEXT tags:work, or (org-ql query)"
                                  :single-line t
                                  :on-submit (eabp-action "org.search.run")))
-         (todo-val (or (eabp-ui-state "search-filter-todo") "Any"))
-         (tags-val (or (eabp-ui-state "search-filter-tags") []))
-         (text-val (or (eabp-ui-state "search-filter-text") ""))
-         (available-tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))
-         (builder (eabp-card
-                   (list
-                    (eabp-column
-                     (eabp-text "Query Builder" 'headline)
-                     (eabp-text "Status:" 'caption)
-                     (eabp-enum-list "search-filter-todo" '("Any" "TODO" "DONE")
-                                     :value todo-val
-                                     :on-change (eabp-action "search.update-filter" :args '((field . "todo"))))
-                     (eabp-text "Tags:" 'caption)
-                     (eabp-enum-list "search-filter-tags" available-tags
-                                     :value tags-val
-                                     :multi-select t
-                                     :on-change (eabp-action "search.update-filter" :args '((field . "tags"))))
-                     (eabp-text "Text Contains:" 'caption)
-                     (eabp-text-input "search-filter-text"
-                                      :value text-val
-                                      :hint "Search text..."
-                                      :single-line t
-                                      :on-submit (eabp-action "search.update-filter" :args '((field . "text"))))))
-                   :padding 16))
          (cards (mapcar #'glasspane-ui--result-card results)))
-    (eabp-column
-     builder
+    ;; One lazy column for the whole view: the builder card can grow
+    ;; taller than the screen (a big tag vocabulary), so everything —
+    ;; builder, search row, results — must share a single scroll.  A
+    ;; plain column gives overflowing children zero height instead.
+    (apply
+     #'eabp-lazy-column
+     (glasspane-ui--search-builder)
      (eabp-spacer :height 8)
      (eabp-row
       (eabp-box (list input) :weight 1)
       (eabp-button "Search" (eabp-action "org.search.run" :args `((value . ,q))))
       (eabp-button "Save" (eabp-action "agenda.save-custom" :args `((query . ,q)))))
+     (eabp-spacer :height 8)
      (cond
-      (cards (apply #'eabp-lazy-column cards))
+      (glasspane-ui--search-error
+       (list (eabp-empty-state :icon "error"
+                               :title "Query error"
+                               :caption glasspane-ui--search-error)))
+      (cards
+       (cons (eabp-section-header (format "%d match%s" (length cards)
+                                          (if (= (length cards) 1) "" "es")))
+             cards))
       ((and (stringp q) (not (string-empty-p q)))
-       (eabp-empty-state :icon "manage_search"
-                         :title "No matches"
-                         :caption (format "Nothing matched \"%s\"." q)))
+       (list (eabp-empty-state :icon "manage_search"
+                               :title "No matches"
+                               :caption (format "Nothing matched \"%s\"." q))))
       (t
-       (eabp-empty-state :icon "search"
-                         :title "Search your notes"
-                         :caption "Type a query and press search."))))))
+       (list (eabp-empty-state :icon "search"
+                               :title "Search your notes"
+                               :caption "Type a query, or open the query builder above.")))))))
 
 (defun glasspane-ui--global-todo-keywords ()
   "Extract a flat list of all global TODO keywords from `org-todo-keywords'."
@@ -11172,19 +11413,56 @@ Always present (even with no properties yet) so + Add is reachable."
     (setq glasspane-ui--tasks-filter (alist-get 'filter args))
     (eabp-shell-push)))
 
+(defun glasspane-ui--run-search (q)
+  "Run search query Q, refreshing the cached results and error state.
+A failed query lands in `glasspane-ui--search-error' for the view to
+show — the search body renders it instead of a bogus \"no matches\"."
+  (setq glasspane-ui--search-query q
+        glasspane-ui--search-error nil
+        glasspane-ui--search-results
+        (condition-case err
+            (glasspane-org--search q)
+          (error
+           (setq glasspane-ui--search-error (error-message-string err))
+           nil)))
+  ;; Mirror the query into the client-side field state so the search
+  ;; box shows what actually ran (builder edits included).
+  (eabp-ui-state-put "search-query" q))
+
+(defun glasspane-ui--search-filter-query ()
+  "Build an org-ql query string from the query-builder filter state.
+Returns \"\" when every filter is at its resting value."
+  (let ((todo (car (glasspane-ui--filter-values "search-filter-todo")))
+        (tags (glasspane-ui--filter-values "search-filter-tags"))
+        (text (eabp-ui-state "search-filter-text"))
+        (prio (car (glasspane-ui--filter-values "search-filter-priority")))
+        (due (car (glasspane-ui--filter-values "search-filter-due")))
+        (clauses nil))
+    (cond
+     ((or (null todo) (equal todo "Any")))
+     ((equal todo "Done (any)") (push '(done) clauses))
+     (t (push `(todo ,todo) clauses)))
+    (dolist (tg tags)
+      (push `(tags ,tg) clauses))
+    (when (and (stringp prio) (not (member prio '("Any" ""))))
+      (push `(priority ,prio) clauses))
+    (pcase due
+      ("Overdue" (push '(deadline :to -1) clauses))
+      ("Today" (push '(deadline :on today) clauses))
+      ("This week" (push '(deadline :from today :to 7) clauses)))
+    (when (and (stringp text) (not (string-empty-p (string-trim text))))
+      (push `(regexp ,(regexp-quote (string-trim text))) clauses))
+    (setq clauses (nreverse clauses))
+    (cond ((null clauses) "")
+          ((null (cdr clauses)) (format "%S" (car clauses)))
+          (t (format "%S" `(and ,@clauses))))))
+
 (eabp-defaction "org.search.run"
   ;; The query arrives as the search field's submitted `value'. Run it,
   ;; cache the results, and land the user on the search view.
   (lambda (args _)
-    (let ((q (or (alist-get 'value args) "")))
-      (setq glasspane-ui--search-query q
-            glasspane-ui--search-results
-            (condition-case err
-                (glasspane-org--search q)
-              (error
-               (message "EABP search error: %s" (error-message-string err))
-               nil)))
-      (eabp-shell-push nil :switch-to "search"))))
+    (glasspane-ui--run-search (or (alist-get 'value args) ""))
+    (eabp-shell-push nil :switch-to "search")))
 
 (eabp-defaction "org.capture.show"
   (lambda (_ _)
@@ -11704,29 +11982,20 @@ with the new states.  Returns non-nil when persisting succeeded."
         (eabp-shell-push)))))
 
 (eabp-defaction "search.update-filter"
+  ;; A builder filter changed: rebuild the org-ql query from the whole
+  ;; filter state and run it immediately — the results and the query
+  ;; text update together, no extra Search tap needed.
   (lambda (args _)
-    (let ((field (alist-get 'field args))
-          (value (alist-get 'value args)))
-      (eabp-ui-state-put (concat "search-filter-" field) value)
-      (let* ((todo (eabp-ui-state "search-filter-todo"))
-             (tags (eabp-ui-state "search-filter-tags"))
-             (text (eabp-ui-state "search-filter-text"))
-             (clauses nil))
-        (when (and (stringp todo) (not (equal todo "Any")))
-          (push (format "todo:%s" todo) clauses))
-        (when (vectorp tags)
-          (dolist (tg (append tags nil))
-            (push (format "tags:%s" tg) clauses)))
-        (when (and (stringp text) (not (string-empty-p text)))
-          (if (string-search " " text)
-              (push (format "\"%s\"" text) clauses)
-            (push text clauses)))
-        (let ((q (if clauses
-                     (mapconcat #'identity (nreverse clauses) " ")
-                   "")))
-          (setq glasspane-ui--search-query q)
-          (eabp-ui-state-put "search-query" q)))
-      (eabp-shell-push))))
+    (eabp-ui-state-put (concat "search-filter-" (alist-get 'field args))
+                       (alist-get 'value args))
+    (glasspane-ui--run-search (glasspane-ui--search-filter-query))
+    (eabp-shell-push)))
+
+(eabp-defaction "search.clear-filters"
+  (lambda (_ _)
+    (eabp-ui-state-clear "search-filter-")
+    (glasspane-ui--run-search "")
+    (eabp-shell-push)))
 
 (eabp-defaction "agenda.save-custom"
   (lambda (args _)
@@ -11781,18 +12050,14 @@ with the new states.  Returns non-nil when persisting succeeded."
       (eabp-shell-push "clock"))))
 
 (eabp-defaction "search.by-tag"
+  ;; A tag chip tap: reset the builder to just that tag, then run the
+  ;; same query the builder would generate, so the search field shows a
+  ;; query the user can retype or edit.
   (lambda (args _)
-    (let* ((tag (alist-get 'tag args))
-           (query (format "(tags %S)" tag)))
-      (eabp-ui-state-put "search-filter-tags" (vector tag))
-      (eabp-ui-state-put "search-filter-todo" "Any")
-      (eabp-ui-state-put "search-filter-text" "")
-      (setq glasspane-ui--search-query query
-            glasspane-ui--search-results
-            (condition-case nil
-                (glasspane-org--search query)
-              (error nil)))
-      (eabp-shell-push nil :switch-to "search"))))
+    (eabp-ui-state-clear "search-filter-")
+    (eabp-ui-state-put "search-filter-tags" (vector (alist-get 'tag args)))
+    (glasspane-ui--run-search (glasspane-ui--search-filter-query))
+    (eabp-shell-push nil :switch-to "search")))
 
 (eabp-defaction "org.link.open"
   ;; A tappable link inside rich org text. Emacs resolves it (id:, file:,
@@ -12983,6 +13248,162 @@ Returns the directory the files were written to."
 ;;; glasspane-demo.el ends here
 
 ;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-config.el
+;;; ==================================================================
+
+;;; glasspane-config.el --- App-managed org defaults on disk -*- lexical-binding: t; -*-
+
+;; Glasspane's opinionated defaults — capture templates, agenda wiring,
+;; babel languages — live as small elisp files in
+;; `glasspane-config-directory', written and refreshed by the app rather
+;; than hand-maintained in init.el.  The contract:
+;;
+;;   - `glasspane-config-sync' (or the allowlisted `config.sync' action)
+;;     rewrites every managed file to the bundle's current defaults, so
+;;     an app update can evolve them; edits to the files themselves are
+;;     expected to be lost.
+;;   - Personal configuration belongs in init.el (which runs after the
+;;     `require'-time load below, so it wins) or in Customize.
+;;   - The defaults are deliberately soft: capture templates merge by
+;;     key and never replace one the user already defined; variables are
+;;     seeded only while still at their stock values.
+;;
+;; The starter init (docs/starter-init.el) calls
+;; `glasspane-config-ensure': first run creates and loads the
+;; directory, later runs just load it.  An existing init opts in the
+;; same way — nothing is written until asked.
+
+;;; Code:
+
+(require 'eabp-surfaces)
+
+(defcustom glasspane-config-directory
+  (expand-file-name "elisp/glasspane/" user-emacs-directory)
+  "Directory holding Glasspane's app-managed configuration files.
+Files here are rewritten wholesale by `glasspane-config-sync' — treat
+the directory as the app's, not yours."
+  :type 'directory :group 'eabp)
+
+(defconst glasspane-config-version 1
+  "Version of the managed defaults; stamped into every written file.")
+
+(defconst glasspane-config--files
+  '(("capture-templates.el" . "\
+;;; capture-templates.el --- Glasspane-managed capture templates
+;; APP-MANAGED (glasspane-config v1): rewritten by `glasspane-config-sync'.
+;; Don't edit here — define your own templates in init.el; these merge
+;; by key and never replace one you already have.
+
+(require 'org-capture)
+
+(defvar glasspane-config-capture-templates
+  '((\"t\" \"Todo\" entry (file+headline org-default-notes-file \"Tasks\")
+     \"* TODO %?\\n%U\\n%i\" :empty-lines 1)
+    (\"n\" \"Note\" entry (file+headline org-default-notes-file \"Notes\")
+     \"* %? :note:\\n%U\\n%i\" :empty-lines 1)
+    (\"l\" \"Link\" entry (file+headline org-default-notes-file \"Links\")
+     \"* %?\\n%U\\n%a\" :empty-lines 1))
+  \"Glasspane's default capture templates (phone capture reads these).\")
+
+(dolist (tpl glasspane-config-capture-templates)
+  (unless (assoc (car tpl) org-capture-templates)
+    (setq org-capture-templates
+          (append org-capture-templates (list tpl)))))
+")
+    ("org-defaults.el" . "\
+;;; org-defaults.el --- Glasspane-managed org wiring
+;; APP-MANAGED (glasspane-config v1): rewritten by `glasspane-config-sync'.
+;; Personal settings belong in init.el or Customize — they win because
+;; init.el runs after this file loads.
+
+(require 'org)
+
+;; Capture lands in the inbox inside `org-directory' (only seeded while
+;; still at org's stock ~/.notes default).
+(when (equal org-default-notes-file
+             (convert-standard-filename \"~/.notes\"))
+  (setq org-default-notes-file
+        (expand-file-name \"inbox.org\" org-directory)))
+(make-directory org-directory t)
+
+;; The phone's agenda tab needs agenda files; default to the whole
+;; org directory when nothing is configured yet.
+(unless org-agenda-files
+  (setq org-agenda-files (list org-directory)))
+
+;; State changes and clocks go into LOGBOOK drawers — the heading
+;; detail view shows them as a structured section.
+(setq org-log-into-drawer t)
+
+;; Languages the demo corpus executes from the phone; the run button
+;; only appears for languages loaded here.
+(org-babel-do-load-languages
+ 'org-babel-load-languages
+ '((emacs-lisp . t) (shell . t)))
+"))
+  "Alist of (FILENAME . CONTENT) written by `glasspane-config-sync'.")
+
+;;;###autoload
+(defun glasspane-config-sync (&optional dir)
+  "Write the app-managed defaults into DIR and load them.
+DIR defaults to `glasspane-config-directory'.  Every file in
+`glasspane-config--files' is overwritten — the reset-to-current-bundle
+semantics are the point.  Returns DIR."
+  (interactive)
+  (let ((dir (file-name-as-directory
+              (expand-file-name (or dir glasspane-config-directory))))
+        (coding-system-for-write 'utf-8))
+    (make-directory dir t)
+    (dolist (spec glasspane-config--files)
+      (write-region (cdr spec) nil (expand-file-name (car spec) dir)
+                    nil 'silent))
+    (glasspane-config-load dir)
+    (when (called-interactively-p 'interactive)
+      (message "Glasspane defaults written to %s" dir))
+    dir))
+
+(defun glasspane-config-load (&optional dir)
+  "Load every elisp file in DIR (default `glasspane-config-directory').
+A missing directory is fine — nothing loads until the user opts in via
+`glasspane-config-ensure' or `glasspane-config-sync'.  Files load in
+name order, so extra user files sort predictably among the managed
+ones."
+  (let ((dir (expand-file-name (or dir glasspane-config-directory))))
+    (when (file-directory-p dir)
+      (dolist (file (directory-files dir t "\\.el\\'"))
+        (condition-case err
+            (load file nil 'nomessage)
+          (error (message "glasspane-config: error loading %s: %s"
+                          file (error-message-string err))))))))
+
+;;;###autoload
+(defun glasspane-config-ensure ()
+  "Create the app-managed defaults on first run; load them afterwards.
+The starter init calls this right after (require \\='glasspane): a
+missing `glasspane-config-directory' is populated via
+`glasspane-config-sync'; an existing one is only loaded, never
+rewritten."
+  (if (file-directory-p glasspane-config-directory)
+      (glasspane-config-load)
+    (glasspane-config-sync)))
+
+(eabp-defaction "config.sync"
+  ;; Allowlisted and argument-free: rewrites the fixed file set into
+  ;; `glasspane-config-directory' — nothing on the wire chooses paths
+  ;; or content.
+  (lambda (_ _)
+    (let ((dir (glasspane-config-sync)))
+      (when (fboundp 'eabp-shell-notify)
+        (eabp-shell-notify
+         (format "App defaults refreshed in %s"
+                 (abbreviate-file-name dir)))))
+    (when (fboundp 'eabp-shell-push)
+      (eabp-shell-push))))
+
+(provide 'glasspane-config)
+;;; glasspane-config.el ends here
+
+;;; ==================================================================
 ;;; BEGIN apps/glasspane/glasspane.el
 ;;; ==================================================================
 
@@ -13001,9 +13422,16 @@ Returns the directory the files were written to."
 ;;; Code:
 
 (require 'glasspane-ui)
+(require 'glasspane-config)
+
+;; Load the app-managed defaults (capture templates, agenda wiring) if
+;; the user has opted in — init.el code after (require 'glasspane) still
+;; runs later, so personal settings always win.
+(glasspane-config-load)
 
 (provide 'glasspane)
 ;;; glasspane.el ends here
 
+(provide 'eabp-core)
 (provide 'glasspane)
 ;;; glasspane.el ends here

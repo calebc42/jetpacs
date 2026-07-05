@@ -46,6 +46,9 @@
 (defvar glasspane-ui--search-results nil
   "Cached heading items from the last search.")
 
+(defvar glasspane-ui--search-error nil
+  "Human-readable message when the last search query failed, else nil.")
+
 ;; ─── Reminders & home-screen widget (piggybacked on each shell push) ────────
 
 (defvar glasspane-ui--last-reminders 'unset
@@ -701,56 +704,142 @@ and a quick complete button for open todos."
     (eabp-card (list (apply #'eabp-column children))
                :on-tap (eabp-action "heading.tap" :args ref))))
 
+(defun glasspane-ui--filter-values (id)
+  "Selected values for builder filter ID, as a list of strings.
+UI state for an enum may hold the parsed vector from an action's
+args, the raw JSON text a `state.changed' event delivered, or a
+plain seed string — normalise them all."
+  (let ((v (eabp-ui-state id)))
+    (cond
+     ((null v) nil)
+     ((vectorp v) (append v nil))
+     ((and (stringp v) (string-prefix-p "[" v))
+      (condition-case nil
+          (append (json-parse-string v) nil)
+        (error (list v))))
+     ((stringp v) (list v))
+     ((listp v) v))))
+
+(defun glasspane-ui--search-builder-section (key label summary widget)
+  "One collapsible filter section of the query builder.
+KEY names the fold-state id; LABEL is the always-visible section
+name.  SUMMARY, when non-nil, is the active filter rendered into the
+header so a folded section still shows what it contributes.  WIDGET
+is the section's control."
+  (eabp-collapsible
+   (concat "search-sec-" key)
+   (if summary
+       (eabp-rich-text (list (eabp-span (concat label ": ") :bold t)
+                             (eabp-span summary))
+                       :style 'body)
+     (eabp-text label 'body))
+   (list widget)
+   :collapsed t))
+
+(defun glasspane-ui--search-builder ()
+  "The query-builder card for the Search view.
+Every filter change reruns the search and writes the equivalent
+org-ql query into the search field, so the builder doubles as a
+worked example of the query language.  Each filter lives in its own
+collapsible section whose header names the active value, so the
+folded builder reads as a filter summary.  The whole card starts
+folded once a search has results, to keep them above the fold."
+  (let* ((todo-val (or (car (glasspane-ui--filter-values "search-filter-todo")) "Any"))
+         (tags-list (glasspane-ui--filter-values "search-filter-tags"))
+         (text-val (or (eabp-ui-state "search-filter-text") ""))
+         (prio-val (or (car (glasspane-ui--filter-values "search-filter-priority")) "Any"))
+         (due-val (or (car (glasspane-ui--filter-values "search-filter-due")) "Any")))
+    (eabp-card
+     (list
+      (eabp-collapsible
+       "search-builder"
+       (eabp-text "Query builder" 'headline)
+       (list
+        (glasspane-ui--search-builder-section
+         "todo" "Status" (unless (equal todo-val "Any") todo-val)
+         (eabp-enum-list "search-filter-todo"
+                         (append '("Any") (glasspane-ui--global-todo-keywords)
+                                 '("Done (any)"))
+                         :value todo-val
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "todo")))))
+        (glasspane-ui--search-builder-section
+         "tags" "Tags (all must match)"
+         (when tags-list (string-join tags-list ", "))
+         (eabp-enum-list "search-filter-tags" (glasspane-org--all-tags)
+                         :value (vconcat tags-list)
+                         :multi-select t
+                         :allow-add t
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "tags")))))
+        (glasspane-ui--search-builder-section
+         "priority" "Priority" (unless (equal prio-val "Any") prio-val)
+         (eabp-enum-list "search-filter-priority" '("Any" "A" "B" "C")
+                         :value prio-val
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "priority")))))
+        (glasspane-ui--search-builder-section
+         "due" "Due" (unless (equal due-val "Any") due-val)
+         (eabp-enum-list "search-filter-due" '("Any" "Overdue" "Today" "This week")
+                         :value due-val
+                         :on-change (eabp-action "search.update-filter"
+                                                 :args '((field . "due")))))
+        (glasspane-ui--search-builder-section
+         "text" "Text contains"
+         (unless (string-empty-p text-val) text-val)
+         (eabp-text-input "search-filter-text"
+                          :value text-val
+                          :hint "e.g. meeting notes"
+                          :single-line t
+                          :on-submit (eabp-action "search.update-filter"
+                                                  :args '((field . "text")))))
+        (eabp-row
+         (eabp-box (list (eabp-text "Filters search as you pick them and write the org-ql query below — edit it there to go further."
+                                    'caption))
+                   :weight 1)
+         (eabp-button "Clear" (eabp-action "search.clear-filters"))))
+       :collapsed (and glasspane-ui--search-results t)))
+     :padding 16)))
+
 (defun glasspane-ui--search-body ()
   (let* ((q (or glasspane-ui--search-query ""))
          (results glasspane-ui--search-results)
          (input (eabp-text-input "search-query"
                                  :value q
-                                 :hint "Search headings (text or org-ql query)"
+                                 :hint "Text, todo:NEXT tags:work, or (org-ql query)"
                                  :single-line t
                                  :on-submit (eabp-action "org.search.run")))
-         (todo-val (or (eabp-ui-state "search-filter-todo") "Any"))
-         (tags-val (or (eabp-ui-state "search-filter-tags") []))
-         (text-val (or (eabp-ui-state "search-filter-text") ""))
-         (available-tags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))
-         (builder (eabp-card
-                   (list
-                    (eabp-column
-                     (eabp-text "Query Builder" 'headline)
-                     (eabp-text "Status:" 'caption)
-                     (eabp-enum-list "search-filter-todo" '("Any" "TODO" "DONE")
-                                     :value todo-val
-                                     :on-change (eabp-action "search.update-filter" :args '((field . "todo"))))
-                     (eabp-text "Tags:" 'caption)
-                     (eabp-enum-list "search-filter-tags" available-tags
-                                     :value tags-val
-                                     :multi-select t
-                                     :on-change (eabp-action "search.update-filter" :args '((field . "tags"))))
-                     (eabp-text "Text Contains:" 'caption)
-                     (eabp-text-input "search-filter-text"
-                                      :value text-val
-                                      :hint "Search text..."
-                                      :single-line t
-                                      :on-submit (eabp-action "search.update-filter" :args '((field . "text"))))))
-                   :padding 16))
          (cards (mapcar #'glasspane-ui--result-card results)))
-    (eabp-column
-     builder
+    ;; One lazy column for the whole view: the builder card can grow
+    ;; taller than the screen (a big tag vocabulary), so everything —
+    ;; builder, search row, results — must share a single scroll.  A
+    ;; plain column gives overflowing children zero height instead.
+    (apply
+     #'eabp-lazy-column
+     (glasspane-ui--search-builder)
      (eabp-spacer :height 8)
      (eabp-row
       (eabp-box (list input) :weight 1)
       (eabp-button "Search" (eabp-action "org.search.run" :args `((value . ,q))))
       (eabp-button "Save" (eabp-action "agenda.save-custom" :args `((query . ,q)))))
+     (eabp-spacer :height 8)
      (cond
-      (cards (apply #'eabp-lazy-column cards))
+      (glasspane-ui--search-error
+       (list (eabp-empty-state :icon "error"
+                               :title "Query error"
+                               :caption glasspane-ui--search-error)))
+      (cards
+       (cons (eabp-section-header (format "%d match%s" (length cards)
+                                          (if (= (length cards) 1) "" "es")))
+             cards))
       ((and (stringp q) (not (string-empty-p q)))
-       (eabp-empty-state :icon "manage_search"
-                         :title "No matches"
-                         :caption (format "Nothing matched \"%s\"." q)))
+       (list (eabp-empty-state :icon "manage_search"
+                               :title "No matches"
+                               :caption (format "Nothing matched \"%s\"." q))))
       (t
-       (eabp-empty-state :icon "search"
-                         :title "Search your notes"
-                         :caption "Type a query and press search."))))))
+       (list (eabp-empty-state :icon "search"
+                               :title "Search your notes"
+                               :caption "Type a query, or open the query builder above.")))))))
 
 (defun glasspane-ui--global-todo-keywords ()
   "Extract a flat list of all global TODO keywords from `org-todo-keywords'."
@@ -1427,19 +1516,56 @@ Always present (even with no properties yet) so + Add is reachable."
     (setq glasspane-ui--tasks-filter (alist-get 'filter args))
     (eabp-shell-push)))
 
+(defun glasspane-ui--run-search (q)
+  "Run search query Q, refreshing the cached results and error state.
+A failed query lands in `glasspane-ui--search-error' for the view to
+show — the search body renders it instead of a bogus \"no matches\"."
+  (setq glasspane-ui--search-query q
+        glasspane-ui--search-error nil
+        glasspane-ui--search-results
+        (condition-case err
+            (glasspane-org--search q)
+          (error
+           (setq glasspane-ui--search-error (error-message-string err))
+           nil)))
+  ;; Mirror the query into the client-side field state so the search
+  ;; box shows what actually ran (builder edits included).
+  (eabp-ui-state-put "search-query" q))
+
+(defun glasspane-ui--search-filter-query ()
+  "Build an org-ql query string from the query-builder filter state.
+Returns \"\" when every filter is at its resting value."
+  (let ((todo (car (glasspane-ui--filter-values "search-filter-todo")))
+        (tags (glasspane-ui--filter-values "search-filter-tags"))
+        (text (eabp-ui-state "search-filter-text"))
+        (prio (car (glasspane-ui--filter-values "search-filter-priority")))
+        (due (car (glasspane-ui--filter-values "search-filter-due")))
+        (clauses nil))
+    (cond
+     ((or (null todo) (equal todo "Any")))
+     ((equal todo "Done (any)") (push '(done) clauses))
+     (t (push `(todo ,todo) clauses)))
+    (dolist (tg tags)
+      (push `(tags ,tg) clauses))
+    (when (and (stringp prio) (not (member prio '("Any" ""))))
+      (push `(priority ,prio) clauses))
+    (pcase due
+      ("Overdue" (push '(deadline :to -1) clauses))
+      ("Today" (push '(deadline :on today) clauses))
+      ("This week" (push '(deadline :from today :to 7) clauses)))
+    (when (and (stringp text) (not (string-empty-p (string-trim text))))
+      (push `(regexp ,(regexp-quote (string-trim text))) clauses))
+    (setq clauses (nreverse clauses))
+    (cond ((null clauses) "")
+          ((null (cdr clauses)) (format "%S" (car clauses)))
+          (t (format "%S" `(and ,@clauses))))))
+
 (eabp-defaction "org.search.run"
   ;; The query arrives as the search field's submitted `value'. Run it,
   ;; cache the results, and land the user on the search view.
   (lambda (args _)
-    (let ((q (or (alist-get 'value args) "")))
-      (setq glasspane-ui--search-query q
-            glasspane-ui--search-results
-            (condition-case err
-                (glasspane-org--search q)
-              (error
-               (message "EABP search error: %s" (error-message-string err))
-               nil)))
-      (eabp-shell-push nil :switch-to "search"))))
+    (glasspane-ui--run-search (or (alist-get 'value args) ""))
+    (eabp-shell-push nil :switch-to "search")))
 
 (eabp-defaction "org.capture.show"
   (lambda (_ _)
@@ -1959,29 +2085,20 @@ with the new states.  Returns non-nil when persisting succeeded."
         (eabp-shell-push)))))
 
 (eabp-defaction "search.update-filter"
+  ;; A builder filter changed: rebuild the org-ql query from the whole
+  ;; filter state and run it immediately — the results and the query
+  ;; text update together, no extra Search tap needed.
   (lambda (args _)
-    (let ((field (alist-get 'field args))
-          (value (alist-get 'value args)))
-      (eabp-ui-state-put (concat "search-filter-" field) value)
-      (let* ((todo (eabp-ui-state "search-filter-todo"))
-             (tags (eabp-ui-state "search-filter-tags"))
-             (text (eabp-ui-state "search-filter-text"))
-             (clauses nil))
-        (when (and (stringp todo) (not (equal todo "Any")))
-          (push (format "todo:%s" todo) clauses))
-        (when (vectorp tags)
-          (dolist (tg (append tags nil))
-            (push (format "tags:%s" tg) clauses)))
-        (when (and (stringp text) (not (string-empty-p text)))
-          (if (string-search " " text)
-              (push (format "\"%s\"" text) clauses)
-            (push text clauses)))
-        (let ((q (if clauses
-                     (mapconcat #'identity (nreverse clauses) " ")
-                   "")))
-          (setq glasspane-ui--search-query q)
-          (eabp-ui-state-put "search-query" q)))
-      (eabp-shell-push))))
+    (eabp-ui-state-put (concat "search-filter-" (alist-get 'field args))
+                       (alist-get 'value args))
+    (glasspane-ui--run-search (glasspane-ui--search-filter-query))
+    (eabp-shell-push)))
+
+(eabp-defaction "search.clear-filters"
+  (lambda (_ _)
+    (eabp-ui-state-clear "search-filter-")
+    (glasspane-ui--run-search "")
+    (eabp-shell-push)))
 
 (eabp-defaction "agenda.save-custom"
   (lambda (args _)
@@ -2036,18 +2153,14 @@ with the new states.  Returns non-nil when persisting succeeded."
       (eabp-shell-push "clock"))))
 
 (eabp-defaction "search.by-tag"
+  ;; A tag chip tap: reset the builder to just that tag, then run the
+  ;; same query the builder would generate, so the search field shows a
+  ;; query the user can retype or edit.
   (lambda (args _)
-    (let* ((tag (alist-get 'tag args))
-           (query (format "(tags %S)" tag)))
-      (eabp-ui-state-put "search-filter-tags" (vector tag))
-      (eabp-ui-state-put "search-filter-todo" "Any")
-      (eabp-ui-state-put "search-filter-text" "")
-      (setq glasspane-ui--search-query query
-            glasspane-ui--search-results
-            (condition-case nil
-                (glasspane-org--search query)
-              (error nil)))
-      (eabp-shell-push nil :switch-to "search"))))
+    (eabp-ui-state-clear "search-filter-")
+    (eabp-ui-state-put "search-filter-tags" (vector (alist-get 'tag args)))
+    (glasspane-ui--run-search (glasspane-ui--search-filter-query))
+    (eabp-shell-push nil :switch-to "search")))
 
 (eabp-defaction "org.link.open"
   ;; A tappable link inside rich org text. Emacs resolves it (id:, file:,

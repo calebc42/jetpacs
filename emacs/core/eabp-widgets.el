@@ -313,7 +313,9 @@ changes."
   (eabp--node "enum_list"
               'id id
               'options (vconcat options)
-              'value (and value (vconcat value))
+              ;; A bare string VALUE would vconcat into a vector of char
+              ;; codes — wrap it as the one-element selection it means.
+              'value (and value (vconcat (if (stringp value) (list value) value)))
               'multi_select (and multi-select t)
               'allow_add (and allow-add t)
               'on_change on-change

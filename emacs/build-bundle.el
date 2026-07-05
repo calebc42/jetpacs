@@ -51,8 +51,14 @@
                     "apps/glasspane/glasspane-clock.el"
                     "apps/glasspane/glasspane-ui.el"
                     "apps/glasspane/glasspane-demo.el"
+                    "apps/glasspane/glasspane-config.el"
                     "apps/glasspane/glasspane.el"))
-       (emit (lambda (out feature summary files)
+       ;; FEATURES: every feature the bundle satisfies.  glasspane.el also
+       ;; provides `eabp-core' because it is a strict superset — otherwise a
+       ;; later (require 'eabp-core) in someone's init hunts the load-path
+       ;; and a stale sibling eabp-core.el silently overrides the bundle's
+       ;; fresher definitions.
+       (emit (lambda (out features summary files)
                (with-temp-file out
                  (insert (format ";;; %s --- %s -*- lexical-binding: t; -*-\n"
                                  (file-name-nondirectory out) summary)
@@ -70,14 +76,16 @@
                    (insert-file-contents (expand-file-name f here))
                    (goto-char (point-max))
                    (insert "\n"))
-                 (insert (format "(provide '%s)\n" feature)
-                         (format ";;; %s ends here\n" (file-name-nondirectory out))))
+                 (dolist (feature features)
+                   (insert (format "(provide '%s)\n" feature)))
+                 (insert (format ";;; %s ends here\n" (file-name-nondirectory out))))
                (message "Wrote %s" out))))
   (funcall emit (expand-file-name "../eabp-core.el" here)
-           "eabp-core" "EABP core client, single-file bundle"
+           '(eabp-core) "EABP core client, single-file bundle"
            core-files)
   (funcall emit (expand-file-name "../glasspane.el" here)
-           "glasspane" "Glasspane Emacs client (EABP core + reference apps), single-file bundle"
+           '(eabp-core glasspane)
+           "Glasspane Emacs client (EABP core + reference apps), single-file bundle"
            (append core-files app-files)))
 
 ;;; build-bundle.el ends here

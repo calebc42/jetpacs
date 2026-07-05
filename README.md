@@ -1,5 +1,7 @@
 # EABP — Emacs–Android Bridge Protocol
 
+[![CI](https://github.com/calebc42/glasspane/actions/workflows/ci.yml/badge.svg)](https://github.com/calebc42/glasspane/actions/workflows/ci.yml)
+
 **Don't approximate Emacs — connect to it.**
 
 LLM-Generated Proof of Concept
@@ -38,21 +40,25 @@ inversion `emacsclient` uses on the desktop.
 
 ## The foundation and the reference app
 
-This repo is **two things with a hard boundary between them**:
+This repo is **two things with a hard boundary between them**, and the
+boundary is enforced by the build on both sides:
 
 - **EABP, the foundation** — a written protocol
   ([docs/SPEC.md](docs/SPEC.md)), the core Emacs client
   (`emacs/core/`, bundled as `eabp-core.el`), and the app-agnostic
-  Android renderer (`app/`). The foundation renders *any* buffer, palettes
-  *any* keymap, bridges *any* minibuffer prompt, and gives apps a shell
-  (tabs, drawer, snackbar), an editor bridge (completion, diagnostics,
-  eldoc), and a schema-driven settings machinery. It contains no org
-  code — a guard test enforces that.
+  Android renderer (the `:eabp` Gradle library in `eabp/`). The
+  foundation renders *any* buffer, palettes *any* keymap, bridges *any*
+  minibuffer prompt, and gives apps a shell (tabs, drawer, snackbar), an
+  editor bridge (completion, diagnostics, eldoc), and a schema-driven
+  settings machinery. It contains no org code and names no host app —
+  a guard test enforces the first, the module boundary the second.
 - **Glasspane, the reference Tier 1** — one opinionated org app built on
   those seams (`emacs/apps/glasspane/`, bundled with the core as
-  `glasspane.el`), plus two smaller worked examples: a curated magit
-  radial menu and a package browser. Glasspane exists to prove the
-  foundation and to be copied from — not to be the one true mobile Emacs.
+  `glasspane.el`; the Android shell — branding, launcher activity, org
+  capture tile, org keyboard toolbar — is the `:app` module), plus two
+  smaller worked examples: a curated magit radial menu and a package
+  browser. Glasspane exists to prove the foundation and to be copied
+  from — not to be the one true mobile Emacs.
 
 The tier model, module map, and every extension seam are documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). If you want to build your
@@ -83,6 +89,37 @@ Things a file parser can't do, no matter how good it is:
 When Emacs isn't connected, the file-parsing approach is still the right
 answer. The interesting design is the hybrid: parse offline, upgrade to
 the live bridge transparently when Emacs comes online.
+
+## Where this is going
+
+The prioritized plan across everything below is
+[docs/ROADMAP.md](docs/ROADMAP.md); each direction has a full audit and
+task breakdown in its own plan document:
+
+- **Device automation, FOSS Tasker-style**
+  ([docs/PLAN-automation-and-launcher.md](docs/PLAN-automation-and-launcher.md))
+  — the protocol already reserves `triggers` and `capabilities` in the
+  handshake; the plan fills them in: Android events (time, power,
+  screen, connectivity, notifications) delivered to Emacs through the
+  existing offline queue, device effectors (intents, flashlight, TTS,
+  volume) invocable from elisp, and automations authored in org files.
+  Elisp is the task language; that's the point.
+- **One app, many builds, AppSheet-style** (same plan, track L) — views
+  group into named apps behind a launcher home; builds travel as single
+  elisp files (installed with explicit code-trust consent) or as
+  **declarative org documents** with no code at all; any of them pins to
+  the home screen as its own icon.
+- **Converting Obsidian / Logseq / Notion users**
+  ([docs/PLAN-pkm-conversion.md](docs/PLAN-pkm-conversion.md)) — org
+  already subsumes their data models; the gap is UX abstraction:
+  wikilinks + backlinks, a daily-note landing surface, concealed live
+  editing, saved org-ql queries as table/board/calendar views, and vault
+  importers. The bar for every one of those tasks: a convert never sees
+  Emacs and never sees raw org syntax unless they ask.
+- **Beyond Android** (same plan, track K) — the companion is a thin
+  renderer by contract, so a Kotlin Multiplatform port (Compose Desktop,
+  iOS against a remote Emacs) is "port the pane, keep the brain." The
+  `:eabp` / `:app` module split is the extraction seam.
 
 ## Status
 
@@ -186,16 +223,24 @@ with `M-x eabp-ping`. The dashboard should now appear on the phone.
 
 - `docs/` — [SPEC.md](docs/SPEC.md) (the wire protocol),
   [ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams),
-  [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (extension guide).
+  [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (extension guide),
+  [ROADMAP.md](docs/ROADMAP.md) (prioritized plan) and the `PLAN-*.md`
+  audits it draws from.
 - `emacs/core/` — the EABP Elisp client (`eabp-*.el`): transport, shell,
   generic renderers, minibuffer bridge, editor sync, settings machinery.
 - `emacs/apps/` — Tier 1: `glasspane/` (the org app), `eabp-magit.el`,
   `eabp-package-browser.el`.
-- `app/` — the Android companion (Kotlin / Jetpack Compose).
+- `eabp/` — the `:eabp` Android library (Kotlin / Jetpack Compose):
+  protocol, renderer, offline queue, widgets/tiles/notifications.
+- `app/` — the `:app` Glasspane shell: branding, launcher activity, the
+  org capture tile and keyboard toolbar.
 - `test/` — ERT suite, the widget wire-format golden, and the
   core-isolation guard.
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the test suites, and
+the standing rules (the wire-safety boundary chief among them).
 
 The foundation is the part meant to outlive any single app. Most valuable
 right now: a second companion (desktop? e-ink?) written against the spec,

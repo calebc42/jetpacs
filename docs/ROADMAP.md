@@ -44,7 +44,11 @@ construction: `EabpLaunch` / `EabpToolbars` seams) and `:app` (the
 Glasspane shell). This is the in-repo half of the repo-split decision
 (see ARCHITECTURE.md); it gives PKM 16 its enforcement point and PKM 17
 its extraction seam, and future Kotlin from AUTO tasks lands in `:eabp`
-only if it is protocol, in `:app` if it is opinion.
+only if it is protocol, in `:app` if it is opinion. CI
+(`.github/workflows/ci.yml`) now runs the three elisp test entry
+points, the bundle-freshness check, and both Gradle modules on every
+push/PR — the automated half of the standing gates below. Contribution
+rules consolidated in CONTRIBUTING.md.
 
 ---
 

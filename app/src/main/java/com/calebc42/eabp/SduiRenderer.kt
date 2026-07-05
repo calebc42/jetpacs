@@ -11,6 +11,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -106,13 +108,23 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             }
         }
         "row" -> {
+            // `scroll` keeps the children on one line and pans sideways on
+            // overflow (a chip rail). Weights are meaningless with unbounded
+            // width, so a scrolling row renders its children unweighted.
+            val scroll = node.optBoolean("scroll")
             Row(
-                modifier = baseModifier.fillMaxWidth(),
+                modifier = if (scroll)
+                    baseModifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                else baseModifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(node.optInt("spacing", 8).dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                WeightedChildren(node.optJSONArray("children"), surfaceId, revision, dispatch) { weight ->
-                    Modifier.weight(weight)
+                if (scroll) {
+                    RenderChildren(node.optJSONArray("children"), surfaceId, revision, dispatch)
+                } else {
+                    WeightedChildren(node.optJSONArray("children"), surfaceId, revision, dispatch) { weight ->
+                        Modifier.weight(weight)
+                    }
                 }
             }
         }

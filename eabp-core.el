@@ -539,6 +539,13 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
 The right container for chip/tag rows, which overflow a plain `eabp-row'."
   (eabp--node "flow_row" 'children (vconcat children)))
 
+(defun eabp-scroll-row (&rest children)
+  "A horizontal row of CHILDREN that pans sideways when it overflows.
+The single-line counterpart to `eabp-flow-row' (which wraps instead):
+use it for chip rails that must stay on one row.  Child weights are
+ignored — a scrolling row has no bounded width to distribute."
+  (eabp--node "row" 'children (vconcat children) 'scroll t))
+
 (defun eabp-column (&rest children)
   "A vertical column of CHILDREN nodes."
   (eabp--node "column" 'children (vconcat children)))

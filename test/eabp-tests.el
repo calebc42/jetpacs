@@ -982,12 +982,16 @@ the text it tells the user to type."
       (should (eq (alist-get 'rule r1) t))
       ;; The numeric column right-aligns (org's own heuristic).
       (should (equal (append (alist-get 'aligns table) nil) '("start" "end")))
-      ;; Cells carry edit actions with real-file positions baked in.
+      ;; Cells carry edit actions with real-file positions baked in,
+      ;; and a long-press menu for row/column operations.
       (let* ((cell (aref (alist-get 'cells r2) 0))
-             (tap (alist-get 'on_tap cell)))
+             (tap (alist-get 'on_tap cell))
+             (long (alist-get 'on_long_tap cell)))
         (should (equal (alist-get 'action tap) "org.table.edit"))
         (should (equal (alist-get 'file (alist-get 'args tap)) "/tmp/t.org"))
-        (should (integerp (alist-get 'pos (alist-get 'args tap))))))
+        (should (integerp (alist-get 'pos (alist-get 'args tap))))
+        (should (equal (alist-get 'action long) "org.table.cell-menu"))
+        (should (equal (alist-get 'args long) (alist-get 'args tap)))))
     ;; Add affordances point back at the table.
     (should (equal (alist-get 'action (alist-get 'on_add_row table))
                    "org.table.add-row"))
@@ -1010,6 +1014,45 @@ the text it tells the user to type."
   (let ((table (car (glasspane-org-rich-body "| <c> | <r> |\n| a | b |\n" nil))))
     (should (equal (append (alist-get 'aligns table) nil) '("center" "end")))
     (should (= (length (alist-get 'rows table)) 1))))
+
+(ert-deftest glasspane-org-rich-emphasis-preserves-trailing-space ()
+  "Whitespace after inline objects survives rendering.
+Org stores it as `:post-blank' on the object — it is in neither the
+object's contents nor the next string, so the emitter must re-add it."
+  (let* ((node (car (glasspane-org-rich-body
+                     "a /it/ b *bo*  c ~vb~ d [[https://e.org][ln]] e"
+                     nil)))
+         (text (mapconcat (lambda (sp) (alist-get 'text sp))
+                          (alist-get 'spans node) "")))
+    (should (equal text "a it b bo  c vb d ln e"))))
+
+;; ─── Org babel results: foldable and read-only ──────────────────────────────
+
+(ert-deftest glasspane-org-rich-results-foldable-and-inert ()
+  "Babel #+RESULTS render inside a foldable section without edit taps."
+  ;; Table results: no cell taps, no menus, no add affordances.
+  (let* ((node (car (glasspane-org-rich-body
+                     "#+RESULTS:\n| a | b |\n| 1 | 2 |\n"
+                     nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't node) "collapsible"))
+    (should (equal (alist-get 'text (alist-get 'header node)) "RESULTS"))
+    (should-not (alist-get 'collapsed node))    ; visible until folded
+    (let ((table (aref (alist-get 'children node) 0)))
+      (should (equal (alist-get 't table) "table"))
+      (should-not (alist-get 'on_add_row table))
+      (should-not (alist-get 'on_add_col table))
+      (let ((cell (aref (alist-get 'cells (aref (alist-get 'rows table) 0)) 0)))
+        (should-not (alist-get 'on_tap cell))
+        (should-not (alist-get 'on_long_tap cell)))))
+  ;; Fixed-width results (the ": value" form) fold too.
+  (let ((node (car (glasspane-org-rich-body "#+RESULTS:\n: 3\n"
+                                            nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't node) "collapsible"))
+    (should (equal (alist-get 'text (alist-get 'header node)) "RESULTS")))
+  ;; The same table without #+RESULTS stays editable.
+  (let ((table (car (glasspane-org-rich-body "| a | b |\n" nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't table) "table"))
+    (should (alist-get 'on_add_row table))))
 
 (ert-deftest glasspane-ui-table-edit-recalculates ()
   "The org.table.edit handler writes the field and recalculates #+TBLFM."
@@ -1037,6 +1080,64 @@ the text it tells the user to type."
                            (insert-file-contents file) (buffer-string))))
             ;; Qty written, Cost recalculated by the formula.
             (should (string-match-p "| apples | +5 | +10 |" content))))
+      (delete-file file))))
+
+(ert-deftest glasspane-ui-table-edit-formula-cell-edits-formula ()
+  "Tapping a #+TBLFM-computed cell edits the formula, not the value
+the next recalculation would overwrite."
+  (let ((file (make-temp-file "eabp-table-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "| Item   | Qty | Cost |\n"
+                    "|--------+-----+------|\n"
+                    "| apples |   2 |    4 |\n"
+                    "#+TBLFM: $3=$2*2\n"))
+          (let (pos prompt seed)
+            (with-temp-buffer
+              (insert-file-contents file)
+              (goto-char (point-min))
+              (search-forward "|    4")
+              (setq pos (point)))       ; inside the computed Cost field
+            (cl-letf (((symbol-function 'read-string)
+                       (lambda (p &optional initial &rest _)
+                         (setq prompt p seed initial) "$2*3"))
+                      ((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                      ((symbol-function 'eabp-shell-notify)
+                       (lambda (text) (ert-fail text))))
+              (funcall (gethash "org.table.edit" eabp-action-handlers)
+                       `((file . ,file) (pos . ,pos)) nil))
+            ;; The dialog names the formula target and seeds its body.
+            (should (string-match-p "\\$3" prompt))
+            (should (equal seed "$2*2"))
+            (let ((content (with-temp-buffer
+                             (insert-file-contents file) (buffer-string))))
+              (should (string-match-p "#\\+TBLFM: \\$3=\\$2\\*3" content))
+              (should (string-match-p "| apples | +2 | +6 |" content)))))
+      (delete-file file))))
+
+(ert-deftest glasspane-ui-table-cell-menu-deletes-row-and-column ()
+  "The long-press menu deletes the row and column at the tapped cell."
+  (let ((file (make-temp-file "eabp-table-test" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "| a | b | c |\n| d | e | f |\n"))
+          (let ((choice "Delete row"))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (&rest _) choice))
+                      ((symbol-function 'eabp-shell-push) (lambda (&rest _)))
+                      ((symbol-function 'eabp-shell-notify)
+                       (lambda (text) (ert-fail text))))
+              ;; Delete the first row, then the first remaining column.
+              (funcall (gethash "org.table.cell-menu" eabp-action-handlers)
+                       `((file . ,file) (pos . 3)) nil)
+              (setq choice "Delete column")
+              (funcall (gethash "org.table.cell-menu" eabp-action-handlers)
+                       `((file . ,file) (pos . 3)) nil)))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            (should (string-match-p "\\`| e | f |" content))
+            (should-not (string-match-p "| a " content))))
       (delete-file file))))
 
 (ert-deftest glasspane-ui-table-add-row-and-column ()
@@ -1413,7 +1514,8 @@ rich renderers (native table, babel run button)."
                    (eabp-table-cell (list (eabp-span "4"))))))
       :aligns '("start" "end") :on-add-row act :on-add-col act :padding 2)
      (eabp-table
-      (list (eabp-table-row (list (eabp-table-cell (list (eabp-span "a"))))))))))
+      (list (eabp-table-row (list (eabp-table-cell (list (eabp-span "a")))))))
+     (eabp-scroll-row leaf leaf))))
 
 (defun eabp-tests--widget-lines ()
   (let ((i -1))

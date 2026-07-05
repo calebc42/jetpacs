@@ -539,6 +539,13 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
 The right container for chip/tag rows, which overflow a plain `eabp-row'."
   (eabp--node "flow_row" 'children (vconcat children)))
 
+(defun eabp-scroll-row (&rest children)
+  "A horizontal row of CHILDREN that pans sideways when it overflows.
+The single-line counterpart to `eabp-flow-row' (which wraps instead):
+use it for chip rails that must stay on one row.  Child weights are
+ignored — a scrolling row has no bounded width to distribute."
+  (eabp--node "row" 'children (vconcat children) 'scroll t))
+
 (defun eabp-column (&rest children)
   "A vertical column of CHILDREN nodes."
   (eabp--node "column" 'children (vconcat children)))
@@ -9109,8 +9116,10 @@ ready for the companion's `reminders.set' frame."
 ;; Block-level content that doesn't fit a single styled paragraph — source
 ;; blocks, example blocks — falls back to `eabp-markup' so code keeps its
 ;; highlighted, fixed-width look.  Org tables render as native `table' grids
-;; (tap-to-edit and add-row/add-column when file context is supplied);
-;; table.el tables keep the markup fallback.
+;; (tap-to-edit, long-press row/column menu, and add-row/add-column when
+;; file context is supplied); table.el tables keep the markup fallback.
+;; Babel #+RESULTS content renders read-only inside a foldable section —
+;; execution regenerates it, so hand edits would be silently lost.
 ;;
 ;; Entry point: `glasspane-org-rich-body' (an org body string -> a list of nodes).
 
@@ -9137,6 +9146,12 @@ FILE and OFFSET are supplied.")
 Bound by callers that present a drawer's content in their own way —
 the heading detail view parses LOGBOOK into a structured section, so
 rendering the raw drawer too would double it.")
+
+(defvar glasspane-org-rich--read-only nil
+  "Non-nil while rendering babel #+RESULTS content.
+Suppresses edit affordances (table cell taps, row/column menus,
+checkbox toggles) — execution regenerates results, so a hand edit
+would be silently overwritten by the next run.")
 
 ;; ─── Inline spans ────────────────────────────────────────────────────────────
 
@@ -9202,7 +9217,12 @@ and URL fragments aren't mistaken for tags."
 (defun glasspane-org-rich--inline (objects style)
   "Convert a list of org inline OBJECTS (strings and elements) to spans.
 STYLE carries inherited emphasis flags as recursion descends into
-bold/italic/... containers."
+bold/italic/... containers.
+
+Whitespace following an object belongs to the object as `:post-blank'
+— it is absent from both the object's contents and the next sibling
+string — so every non-string object re-emits it as a plain span, or
+words jam together after emphasis, links, and timestamps."
   (let (spans)
     (dolist (obj objects)
       (cond
@@ -9296,7 +9316,12 @@ bold/italic/... containers."
              (when (stringp txt)
                (setq spans (append spans
                                    (glasspane-org-rich--text-spans
-                                    (string-trim-right txt) style))))))))))
+                                    (string-trim-right txt) style)))))))
+        (let ((pb (or (org-element-property :post-blank obj) 0)))
+          (when (> pb 0)
+            (setq spans (append spans
+                                (list (glasspane-org-rich--leaf
+                                       (make-string pb ?\s) style)))))))))
     spans))
 
 ;; ─── Block elements ──────────────────────────────────────────────────────────
@@ -9314,7 +9339,8 @@ toggles the checkbox via Emacs without entering edit mode."
          (inline (when para (glasspane-org-rich--inline (org-element-contents para) nil)))
          (lead-text (concat (string-trim-right bullet) " "))
          (head
-          (if (and checkbox glasspane-org-rich--file glasspane-org-rich--body-offset)
+          (if (and checkbox glasspane-org-rich--file glasspane-org-rich--body-offset
+                   (not glasspane-org-rich--read-only))
               ;; Interactive checkbox — a tappable icon beside the item text.
               (let* ((checked (eq checkbox 'on))
                      (item-pos (+ glasspane-org-rich--body-offset
@@ -9444,20 +9470,23 @@ nil when every column would be \"start\" (no wire noise)."
 
 (defun glasspane-org-rich--table-cell (cell)
   "Build a cell node for table CELL.
-When file context is present (the reader passes it), the cell taps
-through to `org.table.edit' at its real-file position."
-  (let ((spans (or (glasspane-org-rich--inline (org-element-contents cell) nil)
-                   (list (eabp-span ""))))
-        (pos (and glasspane-org-rich--file glasspane-org-rich--body-offset
-                  (+ glasspane-org-rich--body-offset
-                     (or (org-element-property :contents-begin cell)
-                         (org-element-property :begin cell))))))
+When file context is present (the reader passes it), tapping the cell
+edits it through `org.table.edit' and long-pressing opens the
+row/column menu (`org.table.cell-menu'), both at its real-file
+position.  Read-only renders (babel results) stay inert."
+  (let* ((spans (or (glasspane-org-rich--inline (org-element-contents cell) nil)
+                    (list (eabp-span ""))))
+         (pos (and glasspane-org-rich--file glasspane-org-rich--body-offset
+                   (not glasspane-org-rich--read-only)
+                   (+ glasspane-org-rich--body-offset
+                      (or (org-element-property :contents-begin cell)
+                          (org-element-property :begin cell)))))
+         (args (when pos
+                 `((file . ,glasspane-org-rich--file) (pos . ,pos)))))
     (eabp-table-cell
      spans
-     :on-tap (when pos
-               (eabp-action "org.table.edit"
-                            :args `((file . ,glasspane-org-rich--file)
-                                    (pos . ,pos)))))))
+     :on-tap (when pos (eabp-action "org.table.edit" :args args))
+     :on-long-tap (when pos (eabp-action "org.table.cell-menu" :args args)))))
 
 (defun glasspane-org-rich--table (el)
   "Render an org table EL to a native `eabp-table' node, or nil when empty.
@@ -9496,6 +9525,7 @@ tap-edit and the client offers add-row/add-column affordances."
             (when (= groups 1) (push shape header-rows))))
         (unless (> groups 1) (setq header-rows nil))
         (let ((table-pos (and file offset
+                              (not glasspane-org-rich--read-only)
                               (+ offset
                                  (org-element-property :post-affiliated el)))))
           (eabp-table
@@ -9549,7 +9579,28 @@ and for drawers whose content renders to nothing."
         (when url (eabp-image url))))))
 
 (defun glasspane-org-rich--element (el)
-  "Render one top-level org element EL to a node, or nil to skip it."
+  "Render one top-level org element EL to a node, or nil to skip it.
+Babel output — any element under a #+RESULTS: affiliated keyword —
+renders read-only inside a foldable RESULTS section, like desktop org."
+  (if (org-element-property :results el)
+      (let* ((glasspane-org-rich--read-only t)
+             (node (glasspane-org-rich--element-1 el)))
+        (when node
+          ;; `:results drawer' output is already a foldable drawer named
+          ;; RESULTS — don't nest a second collapsible around it.
+          (if (equal (alist-get 't node) "collapsible")
+              node
+            (eabp-collapsible
+             (format "results/%s/%s"
+                     (or glasspane-org-rich--file "")
+                     (+ (or glasspane-org-rich--body-offset 0)
+                        (org-element-property :begin el)))
+             (eabp-text "RESULTS" 'label)
+             (list node)))))
+    (glasspane-org-rich--element-1 el)))
+
+(defun glasspane-org-rich--element-1 (el)
+  "Render element EL to a node ignoring any #+RESULTS: wrapping."
   (pcase (org-element-type el)
     ('paragraph
      (or (glasspane-org-rich--paragraph-image el)
@@ -10877,8 +10928,10 @@ is the finished state."
             (eabp-settings-sections)))))
 
 (defun glasspane-ui--todo-chips (current keywords ref)
-  "A row of chips for KEYWORDS with CURRENT selected; tapping an active chip removes it."
-  (apply #'eabp-flow-row
+  "A single-line chip rail for KEYWORDS with CURRENT selected.
+Tapping an active chip removes the state.  Long sequences pan
+sideways rather than wrapping into a stack."
+  (apply #'eabp-scroll-row
          (mapcar (lambda (kw)
                    (eabp-chip kw
                               :selected (equal kw current)
@@ -11085,7 +11138,20 @@ Always present (even with no properties yet) so + Add is reachable."
                               :local-tags (ignore-errors (org-get-tags pos t))
                               :scheduled (org-entry-get pos "SCHEDULED")
                               :deadline (org-entry-get pos "DEADLINE")
-                              :keywords (or org-todo-keywords-1 '("TODO" "DONE")))))))
+                              :keywords (or org-todo-keywords-1 '("TODO" "DONE"))
+                              ;; Ancestor (TITLE . POS) pairs, outermost
+                              ;; first, for the breadcrumb trail.
+                              :ancestors
+                              (save-excursion
+                                (let (path)
+                                  (ignore-errors
+                                    (org-back-to-heading t)
+                                    (while (org-up-heading-safe)
+                                      (push (cons (substring-no-properties
+                                                   (org-get-heading t t t t))
+                                                  (point))
+                                            path)))
+                                  path)))))))
              (headline (plist-get meta :headline))
              (todo (plist-get meta :todo))
              (priority (plist-get meta :priority))
@@ -11137,8 +11203,31 @@ Always present (even with no properties yet) so + Add is reachable."
                    (delq nil
                          (append
                           (list
-                           ;; File breadcrumb
-                           (eabp-text (file-name-nondirectory (or file "?")) 'caption)
+                           ;; Breadcrumb trail — the file, then each
+                           ;; ancestor heading.  Every chip taps up to that
+                           ;; level, so climbing out of a deep subtree never
+                           ;; detours through the file picker.
+                           (apply #'eabp-scroll-row
+                                  (cons
+                                   (if file
+                                       (eabp-assist-chip
+                                        (file-name-nondirectory file)
+                                        :icon "description"
+                                        :on-tap (eabp-action
+                                                 "files.open"
+                                                 :args `((file . ,file))))
+                                     (eabp-text "?" 'caption))
+                                   (mapcan
+                                    (lambda (anc)
+                                      (list (eabp-icon "chevron_right" :size 16)
+                                            (eabp-assist-chip
+                                             (car anc)
+                                             :on-tap (eabp-action
+                                                      "heading.tap"
+                                                      :args `((file . ,file)
+                                                              (pos . ,(cdr anc))
+                                                              (headline . ""))))))
+                                    (plist-get meta :ancestors))))
                            ;; Headline
                            (eabp-text headline 'title)
                            ;; State (always visible)
@@ -12143,50 +12232,124 @@ with the new states.  Returns non-nil when persisting succeeded."
   "Run FN with point at POS inside FILE's table, then align, save, repush.
 FN performs one table mutation.  Afterwards the table is realigned,
 recalculated when a #+TBLFM line follows it (formulas live Emacs-side —
-the phone never computes), saved, and every view repushed."
+the phone never computes), saved, and every view repushed.  A mutation
+that moves point off the table (killing a row) realigns from the
+table's start; one that consumes the table entirely (killing its only
+row) skips the realign instead of erroring."
   (with-current-buffer (find-file-noselect file)
     (org-with-wide-buffer
      (goto-char pos)
      (unless (org-at-table-p) (error "No table at position %s" pos))
-     (funcall fn)
-     (org-table-align)
-     (when (save-excursion
-             (goto-char (org-table-end))
-             ;; "#+tblfm:" is valid org — match case-insensitively.
-             (let ((case-fold-search t))
-               (looking-at-p "[ \t]*#\\+TBLFM:")))
-       (org-table-recalculate t)))
+     (let ((table-beg (org-table-begin)))
+       (funcall fn)
+       (unless (org-at-table-p)
+         (goto-char (min table-beg (point-max))))
+       (when (org-at-table-p)
+         (org-table-align)
+         (when (save-excursion
+                 (goto-char (org-table-end))
+                 ;; "#+tblfm:" is valid org — match case-insensitively.
+                 (let ((case-fold-search t))
+                   (looking-at-p "[ \t]*#\\+TBLFM:")))
+           (org-table-recalculate t)))))
     (let ((glasspane-org--inhibit-save-refresh t)
           (save-silently t))
       (save-buffer)))
   (glasspane-org-cache-invalidate)
   (eabp-shell-push))
 
+(defun glasspane-ui--table-field-formula ()
+  "The #+TBLFM entry (LHS . RHS) computing the field at point, or nil.
+Field formulas (@R$C, with @< / @> resolved to concrete rows) win over
+column formulas ($C), mirroring org's own recalculation.  Point must be
+inside a table.  The LHS comes back exactly as written in the #+TBLFM
+line, so callers can `assoc' it in `org-table-get-stored-formulas'
+output to update the formula in place.  Formulas keyed by field name
+are not resolved — those cells stay value-editable."
+  (org-table-analyze)
+  (let* ((line (count-lines org-table-current-begin-pos
+                            (line-beginning-position)))
+         (dline (org-table-line-to-dline line))
+         (col (org-table-current-column))
+         (stored (org-table-get-stored-formulas t))
+         (norm (lambda (kv)
+                 (or (ignore-errors
+                       (org-table-formula-handle-first/last-rc (car kv)))
+                     (car kv)))))
+    (when (and dline col (> col 0))
+      (or (cl-find (format "@%d$%d" dline col) stored :key norm :test #'equal)
+          (cl-find (format "$%d" col) stored :key norm :test #'equal)))))
+
 (eabp-defaction "org.table.edit"
   ;; Tap a table cell in the reader: a native dialog (bridged
   ;; `read-string') prefilled with the current field, written back
-  ;; through the org table machinery so formulas recalculate.
+  ;; through the org table machinery so formulas recalculate.  A field
+  ;; that #+TBLFM computes opens its formula instead — recalculation
+  ;; would immediately overwrite any value typed into it.
   (lambda (args _)
     (let ((file (alist-get 'file args))
           (pos  (alist-get 'pos args)))
       (when (and file pos (file-readable-p file))
         (condition-case err
-            (let (current)
+            (let (current formula)
               (with-current-buffer (find-file-noselect file)
                 (org-with-wide-buffer
                  (goto-char pos)
                  (unless (org-at-table-p) (error "No table cell here"))
-                 (setq current (string-trim (org-table-get-field)))))
-              (let* ((input (read-string "Cell: " current))
-                     ;; A field is one line between pipes — keep it that way.
-                     (new (string-replace
-                           "|" "\\vert{}"
-                           (string-replace "\n" " " input))))
-                (glasspane-ui--table-mutate file pos
-                  (lambda () (org-table-get-field nil new)))))
+                 (setq formula (glasspane-ui--table-field-formula))
+                 (unless formula
+                   (setq current (string-trim (org-table-get-field))))))
+              (if formula
+                  (let ((input (string-trim
+                                (read-string (format "Formula %s= " (car formula))
+                                             (cdr formula)))))
+                    (when (string-empty-p input)
+                      (error "Empty formula — edit the #+TBLFM line to remove one"))
+                    (glasspane-ui--table-mutate file pos
+                      (lambda ()
+                        (let* ((stored (org-table-get-stored-formulas t))
+                               (entry (or (assoc (car formula) stored)
+                                          (error "Formula %s not found"
+                                                 (car formula)))))
+                          (setcdr entry input)
+                          (save-excursion
+                            (org-table-store-formulas stored))))))
+                (let* ((input (read-string "Cell: " current))
+                       ;; A field is one line between pipes — keep it that way.
+                       (new (string-replace
+                             "|" "\\vert{}"
+                             (string-replace "\n" " " input))))
+                  (glasspane-ui--table-mutate file pos
+                    (lambda () (org-table-get-field nil new))))))
           (error
            (eabp-shell-notify
             (format "Edit failed: %s" (error-message-string err)))
+           (eabp-shell-push)))))))
+
+(eabp-defaction "org.table.cell-menu"
+  ;; Long-press a table cell in the reader: row/column structure edits
+  ;; picked from a bridged `completing-read'.  Org's own commands fix up
+  ;; #+TBLFM references (or mark them INVALID) on the way through.
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (pos  (alist-get 'pos args)))
+      (when (and file pos (file-readable-p file))
+        (condition-case err
+            (let ((choice (completing-read
+                           "Row/column: "
+                           '("Insert row above" "Insert column left"
+                             "Delete row" "Delete column")
+                           nil t)))
+              (glasspane-ui--table-mutate file pos
+                (lambda ()
+                  (pcase choice
+                    ("Insert row above"   (org-table-insert-row))
+                    ("Insert column left" (org-table-insert-column))
+                    ("Delete row"         (org-table-kill-row))
+                    ("Delete column"      (org-table-delete-column))))))
+          (error
+           (eabp-shell-notify
+            (format "Table edit failed: %s" (error-message-string err)))
            (eabp-shell-push)))))))
 
 (eabp-defaction "org.table.add-row"

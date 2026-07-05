@@ -222,7 +222,15 @@ path when the group is already on it)."
   ;; unreachable below the fold.
   (apply #'eabp-lazy-column
          (append
-          (list (eabp-text-input "customize-search"
+          ;; The framing: the Settings screen is the curated Tier 1
+          ;; experience; this browser is the escape hatch to everything
+          ;; else, and "everything else" is desktop-oriented.
+          (list (eabp-text
+                 (concat "These are desktop Emacs's own options — many "
+                         "won't affect the phone experience. Curated "
+                         "options live in Settings.")
+                 'caption)
+                (eabp-text-input "customize-search"
                                  :value eabp-customize--search
                                  :label "Search all variables" :single-line t
                                  :on-submit (eabp-action "customize.search"))
@@ -246,10 +254,20 @@ path when the group is already on it)."
 
 (eabp-shell-define-view "customize" :builder #'eabp-customize--view :order 85)
 
-(eabp-shell-add-drawer-item
- 45 (lambda ()
-      (eabp-drawer-item "tune" "Customize"
-                        (eabp-shell-switch-view "customize"))))
+;; Entry point: a card in the settings screen's Emacs section (a
+;; companion-local view switch, so it works offline).
+(eabp-settings-add-link
+ 20 (lambda ()
+      (eabp-card
+       (list (eabp-row
+              (eabp-icon "tune")
+              (eabp-box (list (eabp-column
+                               (eabp-text "Customize" 'label)
+                               (eabp-text "Browse and edit any Emacs option"
+                                          'caption)))
+                        :weight 1)
+              (eabp-icon "chevron_right")))
+       :on-tap (eabp-shell-switch-view "customize"))))
 
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 

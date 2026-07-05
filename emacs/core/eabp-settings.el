@@ -307,12 +307,30 @@ name under `name' — the settings screen uses the registry-gated
   "Widget column for registry ENTRY."
   (eabp-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
+(defvar eabp-settings-links nil
+  "Ordered list of (ORDER . BUILDER) navigation entries for the settings screen.
+BUILDER is a nullary function returning a node (usually a tappable card
+leading to another screen).  Apps register their satellite screens here
+— the package browser, the customize browser — instead of each claiming
+a drawer slot; `eabp-settings-sections' renders them under a trailing
+\"Emacs\" section.")
+
+(defun eabp-settings-add-link (order builder)
+  "Add BUILDER (a nullary node builder) to the settings screen at ORDER."
+  (setq eabp-settings-links
+        (sort (cons (cons order builder) eabp-settings-links)
+              (lambda (a b) (< (car a) (car b))))))
+
 (defun eabp-settings-sections ()
-  "Flat list of nodes rendering every registry section."
-  (cl-loop for (title . entries) in eabp-settings-registry
-           append (append (list (eabp-divider)
-                                (eabp-section-header title))
-                          (mapcar #'eabp-settings--item entries))))
+  "Flat list of nodes rendering every registry section, then the links."
+  (append
+   (cl-loop for (title . entries) in eabp-settings-registry
+            append (append (list (eabp-divider)
+                                 (eabp-section-header title))
+                           (mapcar #'eabp-settings--item entries)))
+   (when eabp-settings-links
+     (append (list (eabp-divider) (eabp-section-header "Emacs"))
+             (mapcar (lambda (e) (funcall (cdr e))) eabp-settings-links)))))
 
 ;; ─── Actions and state handlers ──────────────────────────────────────────────
 

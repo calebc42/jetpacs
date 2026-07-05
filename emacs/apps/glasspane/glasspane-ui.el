@@ -302,10 +302,9 @@ suppressed identical push would leave it frozen."
         (eabp-fab "add" :label "Capture"
                   :on-tap (eabp-action "org.capture.show"))))
 
-;; Search from every tab's top bar; Settings from the drawer.
-(eabp-shell-add-top-action
- 9 (lambda () (eabp-icon-button "filter_list" (eabp-shell-switch-view "search")
-                                 :content-description "Filter")))
+;; Search from every tab's top bar; Settings from the drawer.  (There
+;; used to be a second filter_list icon here doing the same switch —
+;; one affordance per destination.)
 (eabp-shell-add-top-action
  10 (lambda () (eabp-icon-button "search" (eabp-shell-switch-view "search")
                                  :content-description "Search")))

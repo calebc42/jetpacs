@@ -17,6 +17,7 @@
 (require 'eabp-widgets)
 (require 'eabp-surfaces)
 (require 'eabp-tablist)
+(require 'eabp-settings)
 (require 'eabp-shell)
 
 (defvar eabp-pkg--search ""
@@ -225,11 +226,20 @@
         (save-window-excursion (describe-package sym))
         (funcall eabp-tablist-view-buffer-function "*Help*")))))
 
-;; The browser's drawer entry in the shell.
-(eabp-shell-add-drawer-item
- 40 (lambda ()
-      (eabp-drawer-item "archive" "Packages"
-                        (eabp-action "packages.show" :when-offline "drop"))))
+;; The browser's entry point: a card in the settings screen's Emacs
+;; section (drawer slots stay reserved for everyday navigation).
+(eabp-settings-add-link
+ 10 (lambda ()
+      (eabp-card
+       (list (eabp-row
+              (eabp-icon "archive")
+              (eabp-box (list (eabp-column
+                               (eabp-text "Packages" 'label)
+                               (eabp-text "Install and manage Emacs packages"
+                                          'caption)))
+                        :weight 1)
+              (eabp-icon "chevron_right")))
+       :on-tap (eabp-action "packages.show" :when-offline "drop"))))
 
 (provide 'eabp-package-browser)
 ;;; eabp-package-browser.el ends here

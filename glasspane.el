@@ -5801,12 +5801,30 @@ name under `name' — the settings screen uses the registry-gated
   "Widget column for registry ENTRY."
   (eabp-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
+(defvar eabp-settings-links nil
+  "Ordered list of (ORDER . BUILDER) navigation entries for the settings screen.
+BUILDER is a nullary function returning a node (usually a tappable card
+leading to another screen).  Apps register their satellite screens here
+— the package browser, the customize browser — instead of each claiming
+a drawer slot; `eabp-settings-sections' renders them under a trailing
+\"Emacs\" section.")
+
+(defun eabp-settings-add-link (order builder)
+  "Add BUILDER (a nullary node builder) to the settings screen at ORDER."
+  (setq eabp-settings-links
+        (sort (cons (cons order builder) eabp-settings-links)
+              (lambda (a b) (< (car a) (car b))))))
+
 (defun eabp-settings-sections ()
-  "Flat list of nodes rendering every registry section."
-  (cl-loop for (title . entries) in eabp-settings-registry
-           append (append (list (eabp-divider)
-                                (eabp-section-header title))
-                          (mapcar #'eabp-settings--item entries))))
+  "Flat list of nodes rendering every registry section, then the links."
+  (append
+   (cl-loop for (title . entries) in eabp-settings-registry
+            append (append (list (eabp-divider)
+                                 (eabp-section-header title))
+                           (mapcar #'eabp-settings--item entries)))
+   (when eabp-settings-links
+     (append (list (eabp-divider) (eabp-section-header "Emacs"))
+             (mapcar (lambda (e) (funcall (cdr e))) eabp-settings-links)))))
 
 ;; ─── Actions and state handlers ──────────────────────────────────────────────
 
@@ -6507,28 +6525,25 @@ state (the same pattern as the capture form)."
                 (write-region value nil file))
               (run-hook-with-args 'eabp-files-after-save-hook file)
               (eabp-shell-notify
-               (format "Saved %s" (file-name-nondirectory file))))
+               ;; Re-loading init in a running session never applies
+               ;; cleanly (defvars keep old values, hooks double up), so
+               ;; the honest instruction is a restart.
+               (if (and user-init-file (file-equal-p file user-init-file))
+                   "Saved init — restart Emacs to apply config changes"
+                 (format "Saved %s" (file-name-nondirectory file)))))
           (error
            (eabp-shell-notify
             (format "Save failed: %s" (error-message-string err))))))))
     (eabp-shell-push)))
 
 (eabp-defaction "config.reload"
+  ;; Retired: `load user-init-file' mid-session never applies cleanly
+  ;; (defvars keep their values, hooks double-register), so the drawer
+  ;; entry is gone.  The handler stays as a stub so a stale cached UI
+  ;; from an older push gets the instruction instead of a dropped tap.
   (lambda (_ _)
-    (condition-case err
-        (progn
-          (load user-init-file)
-          (eabp-shell-notify "Config reloaded ✓"))
-      (error
-       (eabp-shell-notify
-        (format "Reload error: %s" (error-message-string err)))))
+    (eabp-shell-notify "Reload was removed — restart Emacs to apply config changes")
     (eabp-shell-push)))
-
-;; Self-hosting entry in the drawer.
-(eabp-shell-add-drawer-item
- 50 (lambda ()
-      (eabp-drawer-item "sync" "Reload config"
-                        (eabp-action "config.reload"))))
 
 (provide 'eabp-files)
 ;;; eabp-files.el ends here
@@ -7333,11 +7348,8 @@ with a keyboard FAB that opens the buffer's keymap."
 (eabp-shell-add-drawer-item
  20 (lambda () (eabp-drawer-item "history" "Messages"
                                  (eabp-shell-switch-view "messages"))))
-(eabp-shell-add-drawer-item
- 30 (lambda () (eabp-drawer-item "terminal" "M-x"
-                                 (eabp-action "emacs.mx.show"))))
 
-;; M-x is available from every tab's top bar.
+;; M-x is available from every tab's top bar (no drawer entry needed).
 (eabp-shell-add-top-action
  20 (lambda () (eabp-icon-button "terminal" (eabp-action "emacs.mx.show"))))
 
@@ -7367,6 +7379,7 @@ with a keyboard FAB that opens the buffer's keymap."
 (require 'eabp-widgets)
 (require 'eabp-surfaces)
 (require 'eabp-tablist)
+(require 'eabp-settings)
 (require 'eabp-shell)
 
 (defvar eabp-pkg--search ""
@@ -7575,11 +7588,20 @@ with a keyboard FAB that opens the buffer's keymap."
         (save-window-excursion (describe-package sym))
         (funcall eabp-tablist-view-buffer-function "*Help*")))))
 
-;; The browser's drawer entry in the shell.
-(eabp-shell-add-drawer-item
- 40 (lambda ()
-      (eabp-drawer-item "archive" "Packages"
-                        (eabp-action "packages.show" :when-offline "drop"))))
+;; The browser's entry point: a card in the settings screen's Emacs
+;; section (drawer slots stay reserved for everyday navigation).
+(eabp-settings-add-link
+ 10 (lambda ()
+      (eabp-card
+       (list (eabp-row
+              (eabp-icon "archive")
+              (eabp-box (list (eabp-column
+                               (eabp-text "Packages" 'label)
+                               (eabp-text "Install and manage Emacs packages"
+                                          'caption)))
+                        :weight 1)
+              (eabp-icon "chevron_right")))
+       :on-tap (eabp-action "packages.show" :when-offline "drop"))))
 
 (provide 'eabp-package-browser)
 ;;; eabp-package-browser.el ends here
@@ -7812,7 +7834,15 @@ path when the group is already on it)."
   ;; unreachable below the fold.
   (apply #'eabp-lazy-column
          (append
-          (list (eabp-text-input "customize-search"
+          ;; The framing: the Settings screen is the curated Tier 1
+          ;; experience; this browser is the escape hatch to everything
+          ;; else, and "everything else" is desktop-oriented.
+          (list (eabp-text
+                 (concat "These are desktop Emacs's own options — many "
+                         "won't affect the phone experience. Curated "
+                         "options live in Settings.")
+                 'caption)
+                (eabp-text-input "customize-search"
                                  :value eabp-customize--search
                                  :label "Search all variables" :single-line t
                                  :on-submit (eabp-action "customize.search"))
@@ -7836,10 +7866,20 @@ path when the group is already on it)."
 
 (eabp-shell-define-view "customize" :builder #'eabp-customize--view :order 85)
 
-(eabp-shell-add-drawer-item
- 45 (lambda ()
-      (eabp-drawer-item "tune" "Customize"
-                        (eabp-shell-switch-view "customize"))))
+;; Entry point: a card in the settings screen's Emacs section (a
+;; companion-local view switch, so it works offline).
+(eabp-settings-add-link
+ 20 (lambda ()
+      (eabp-card
+       (list (eabp-row
+              (eabp-icon "tune")
+              (eabp-box (list (eabp-column
+                               (eabp-text "Customize" 'label)
+                               (eabp-text "Browse and edit any Emacs option"
+                                          'caption)))
+                        :weight 1)
+              (eabp-icon "chevron_right")))
+       :on-tap (eabp-shell-switch-view "customize"))))
 
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 
@@ -9662,10 +9702,9 @@ suppressed identical push would leave it frozen."
         (eabp-fab "add" :label "Capture"
                   :on-tap (eabp-action "org.capture.show"))))
 
-;; Search from every tab's top bar; Settings from the drawer.
-(eabp-shell-add-top-action
- 9 (lambda () (eabp-icon-button "filter_list" (eabp-shell-switch-view "search")
-                                 :content-description "Filter")))
+;; Search from every tab's top bar; Settings from the drawer.  (There
+;; used to be a second filter_list icon here doing the same switch —
+;; one affordance per destination.)
 (eabp-shell-add-top-action
  10 (lambda () (eabp-icon-button "search" (eabp-shell-switch-view "search")
                                  :content-description "Search")))

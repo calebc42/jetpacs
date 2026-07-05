@@ -592,11 +592,8 @@ with a keyboard FAB that opens the buffer's keymap."
 (eabp-shell-add-drawer-item
  20 (lambda () (eabp-drawer-item "history" "Messages"
                                  (eabp-shell-switch-view "messages"))))
-(eabp-shell-add-drawer-item
- 30 (lambda () (eabp-drawer-item "terminal" "M-x"
-                                 (eabp-action "emacs.mx.show"))))
 
-;; M-x is available from every tab's top bar.
+;; M-x is available from every tab's top bar (no drawer entry needed).
 (eabp-shell-add-top-action
  20 (lambda () (eabp-icon-button "terminal" (eabp-action "emacs.mx.show"))))
 

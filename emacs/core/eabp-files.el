@@ -640,28 +640,25 @@ state (the same pattern as the capture form)."
                 (write-region value nil file))
               (run-hook-with-args 'eabp-files-after-save-hook file)
               (eabp-shell-notify
-               (format "Saved %s" (file-name-nondirectory file))))
+               ;; Re-loading init in a running session never applies
+               ;; cleanly (defvars keep old values, hooks double up), so
+               ;; the honest instruction is a restart.
+               (if (and user-init-file (file-equal-p file user-init-file))
+                   "Saved init — restart Emacs to apply config changes"
+                 (format "Saved %s" (file-name-nondirectory file)))))
           (error
            (eabp-shell-notify
             (format "Save failed: %s" (error-message-string err))))))))
     (eabp-shell-push)))
 
 (eabp-defaction "config.reload"
+  ;; Retired: `load user-init-file' mid-session never applies cleanly
+  ;; (defvars keep their values, hooks double-register), so the drawer
+  ;; entry is gone.  The handler stays as a stub so a stale cached UI
+  ;; from an older push gets the instruction instead of a dropped tap.
   (lambda (_ _)
-    (condition-case err
-        (progn
-          (load user-init-file)
-          (eabp-shell-notify "Config reloaded ✓"))
-      (error
-       (eabp-shell-notify
-        (format "Reload error: %s" (error-message-string err)))))
+    (eabp-shell-notify "Reload was removed — restart Emacs to apply config changes")
     (eabp-shell-push)))
-
-;; Self-hosting entry in the drawer.
-(eabp-shell-add-drawer-item
- 50 (lambda ()
-      (eabp-drawer-item "sync" "Reload config"
-                        (eabp-action "config.reload"))))
 
 (provide 'eabp-files)
 ;;; eabp-files.el ends here

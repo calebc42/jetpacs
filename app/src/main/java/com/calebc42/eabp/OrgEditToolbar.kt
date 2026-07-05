@@ -255,28 +255,6 @@ fun OrgEditToolbar(
 }
 
 /**
- * A small chip-button for the toolbar.
- */
-@Composable
-fun ToolbarChip(
-    icon: String,
-    label: String,
-    onClick: () -> Unit
-) {
-    AssistChip(
-        onClick = onClick,
-        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-        leadingIcon = {
-            Icon(
-                IconMap.get(icon),
-                contentDescription = label,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    )
-}
-
-/**
  * Dialog for picking the language of a source block.
  */
 @Composable

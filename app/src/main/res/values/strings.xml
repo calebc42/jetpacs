@@ -1,26 +1,15 @@
 <resources>
     <string name="app_name">Glasspane</string>
-    <string name="widget_agenda_label">Org Agenda</string>
-    <string name="widget_title_default">Agenda</string>
-    <string name="widget_description">Today\'s Org agenda. Tap an item to open it; tap its circle to cycle the TODO state. Shows the last synced agenda even while Emacs is offline.</string>
-    <string name="widget_empty">Nothing scheduled today</string>
+    <string name="tile_capture_label">Org Capture</string>
+
+    <!-- Glasspane rebrands of the :eabp library defaults (app resources win
+         the resource merge). Keep keys in sync with the library's
+         values/strings.xml. -->
     <string name="widget_no_data">Open Glasspane to sync your agenda</string>
-    <string name="widget_synced_at">Synced %1$s</string>
-    <string name="widget_toggle_todo">Cycle TODO state</string>
-    <string name="widget_refresh">Refresh agenda</string>
-    <string name="widget_overdue">Overdue</string>
-    <string name="widget_today">Today</string>
-    <string name="widget_view_selector_title">Widget view</string>
     <string name="widget_custom_description">A blank Glasspane widget slot. Compose its contents from Emacs Lisp by pushing the matching widget:customN surface.</string>
     <string name="widget_custom_label_1">Glasspane 1</string>
     <string name="widget_custom_label_2">Glasspane 2</string>
     <string name="widget_custom_label_3">Glasspane 3</string>
     <string name="widget_custom_label_4">Glasspane 4</string>
     <string name="widget_custom_label_5">Glasspane 5</string>
-    <string name="widget_capture">New capture</string>
-    <string name="widget_clock_label">Org Clock</string>
-    <string name="widget_clock_description">Quick clock in/out shortcuts for the Org clock. Taps queue when Emacs is offline.</string>
-    <string name="tile_capture_label">Org Capture</string>
-    <string name="widget_clock_in_last">Clock in (last)</string>
-    <string name="widget_clock_out">Clock out</string>
 </resources>

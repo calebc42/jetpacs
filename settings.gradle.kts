@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "eabp"
 include(":app")
+include(":eabp")
  

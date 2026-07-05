@@ -1,5 +1,6 @@
 package com.calebc42.eabp
 
+import com.calebc42.eabp.core.R
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -133,7 +134,7 @@ class EabpWidgetProvider : AppWidgetProvider() {
                 R.id.widget_root,
                 PendingIntent.getActivity(
                     context, REQUEST_OPEN_APP,
-                    Intent(context, MainActivity::class.java),
+                    EabpLaunch.openAppIntent(context),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
 
             // Force sync: the shell's explicit "bypass memos and re-push".
@@ -156,8 +157,9 @@ class EabpWidgetProvider : AppWidgetProvider() {
 
         /**
          * An action that must land in a visible app (navigation, dialogs):
-         * open MainActivity with the action embedded; it rebroadcasts through
-         * ActionReceiver on arrival.
+         * open the host app with the action embedded; its launcher activity
+         * rebroadcasts through ActionReceiver on arrival (the EabpLaunch
+         * extras contract).
          */
         private fun trampolineIntent(
             context: Context,
@@ -171,11 +173,7 @@ class EabpWidgetProvider : AppWidgetProvider() {
                 put("when_offline", "queue")
                 if (args != null) put("args", args)
             }
-            val intent = Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                putExtra(MainActivity.EXTRA_WIDGET_ACTION, actionJson.toString())
-                putExtra(MainActivity.EXTRA_WIDGET_REVISION, revision)
-            }
+            val intent = EabpLaunch.openAppIntent(context, actionJson.toString(), revision)
             return PendingIntent.getActivity(
                 context, requestCode, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

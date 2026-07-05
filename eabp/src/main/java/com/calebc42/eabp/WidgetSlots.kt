@@ -1,5 +1,6 @@
 package com.calebc42.eabp
 
+import com.calebc42.eabp.core.R
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -91,7 +92,9 @@ abstract class EabpCustomWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(
                 R.id.widget_title,
                 spec?.optString("title")?.ifEmpty { null }
-                    ?: context.getString(R.string.app_name))
+                    // Host label, not a library string: the slot belongs to
+                    // whatever app hosts the bridge.
+                    ?: context.applicationInfo.loadLabel(context.packageManager).toString())
 
             // The refresh/capture header buttons are agenda-widget chrome.
             views.setViewVisibility(R.id.widget_refresh, View.GONE)
@@ -150,7 +153,7 @@ abstract class EabpCustomWidgetProvider : AppWidgetProvider() {
                 R.id.widget_root,
                 PendingIntent.getActivity(
                     context, 2001,
-                    Intent(context, MainActivity::class.java),
+                    EabpLaunch.openAppIntent(context),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             return views
         }

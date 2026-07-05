@@ -33,12 +33,7 @@ class ActionTrampolineActivity : Activity() {
                         putExtra(ActionReceiver.EXTRA_ACTION, actionJson)
                     })
                 TYPE_OPEN_APP -> startActivity(
-                    Intent(this, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        putExtra(MainActivity.EXTRA_WIDGET_ACTION, actionJson)
-                        putExtra(MainActivity.EXTRA_WIDGET_REVISION, revision)
-                    })
+                    EabpLaunch.openAppIntent(this, actionJson, revision))
             }
         }
         // Theme.NoDisplay requires finishing before onResume completes.

@@ -1,5 +1,6 @@
 package com.calebc42.eabp
 
+import com.calebc42.eabp.core.R
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.res.Configuration

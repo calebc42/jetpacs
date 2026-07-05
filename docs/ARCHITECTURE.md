@@ -72,24 +72,39 @@ this directory and fails if an app feature or org itself sneaks in.
 **`eabp-core.el`** (the foundation only — what a third-party Tier 1
 depends on) and **`glasspane.el`** (core + reference apps).
 
-## Android side (`app/`)
+## Android side: two Gradle modules
 
-The Kotlin app is one module, but the same boundary runs through it:
+The elisp core/apps boundary has a Kotlin mirror, enforced by the build
+(split 2026-07-05 — the module boundary is the future repo boundary,
+and the KMP extraction seam):
 
-**Protocol + renderer (EABP, app-agnostic):** `EabpServer` /
-`EabpConnection` / `FrameCodec` / `Envelope` / `EabpAuth` (transport,
-handshake, pairing), `EabpDatabase` (offline queue + surface cache),
-`SurfaceStore` / `SurfaceManager`, `SduiRenderer` / `SduiContentNodes` /
-`SduiInputNodes` / `SduiScaffold` (spec → Compose), `SyntaxHighlight`,
-`EditorSync` / `EabpCompletionState` / `EabpDialogState`,
-`NotificationRenderer`, `Reminders`, `EabpWidgetProvider`, `RadialMenu` /
-`EabpPieMenuState` (spec-driven), `ActionReceiver`, `BridgeService`,
-`EmacsWaker`, `MainActivity`.
+**`eabp/` — the `:eabp` library** (namespace `com.calebc42.eabp.core`;
+Kotlin package stays `com.calebc42.eabp`). Everything a host companion
+needs short of its own identity: `EabpServer` / `EabpConnection` /
+`FrameCodec` / `Envelope` / `EabpAuth` (transport, handshake, pairing),
+`EabpDatabase` (offline queue + surface cache), `SurfaceStore` /
+`SurfaceManager`, `SduiRenderer` / `SduiContentNodes` / `SduiInputNodes`
+/ `SduiScaffold` (spec → Compose), `SyntaxHighlight`, `EditorSync` /
+`EabpCompletionState` / `EabpDialogState`, `NotificationRenderer`,
+`Reminders`, the widget providers + tile slots, `RadialMenu` /
+`EabpPieMenuState`, `ActionReceiver`, `BridgeService`, `EmacsWaker` —
+plus their manifest entries, permissions, and widget resources, which
+merge into any host app.
 
-**Reference affordances (server-opted, not server-agnostic):**
-`OrgEditToolbar` — shipped in the renderer but attached only when an
-editor spec requests `toolbar: "org"`. The renderer carries no file-type
-knowledge; the app decides.
+**`app/` — the Glasspane shell**: `MainActivity` (pairing screen,
+dashboard host, share/widget trampoline), `CaptureTileService`,
+`OrgEditToolbar`, theme/branding, and string overrides that rebrand the
+library's host-neutral defaults (app resources win the merge).
+
+**The two seams that keep the library host-agnostic** (the rule: the
+library names no host class):
+
+- `EabpLaunch` — "open the app" resolves the host's launcher activity
+  via the package manager and carries the trampoline-extras contract
+  the host's activity must honor.
+- `EabpToolbars` — editor toolbars are host-registered by name; the
+  library ships none. Glasspane registers `"org"` → `OrgEditToolbar`.
+  An unregistered name renders nothing (the unknown-node rule).
 
 ## The seams (how Tier 1 plugs in)
 

@@ -46,14 +46,14 @@ import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
 
-    companion object {
-        const val EXTRA_WIDGET_ACTION = "widget_action"
-        const val EXTRA_WIDGET_REVISION = "widget_revision"
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Glasspane's app opinion: the org keyboard toolbar. The :eabp
+        // renderer ships no toolbars; hosts register theirs by name.
+        EabpToolbars.register("org") { value, onValueChange ->
+            OrgEditToolbar(value = value, onValueChange = onValueChange)
+        }
         BridgeService.start(this)
         // savedInstanceState guard: a rotation must not re-fire the share.
         if (savedInstanceState == null) {
@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
      * and the app opens on the cached view.
      */
     private fun handleWidgetIntent(intent: Intent?) {
-        val actionJson = intent?.getStringExtra(EXTRA_WIDGET_ACTION) ?: return
+        val actionJson = intent?.getStringExtra(EabpLaunch.EXTRA_WIDGET_ACTION) ?: return
         // Relaunching from recents redelivers the original intent — that is a
         // "reopen the app" gesture, not a fresh row tap; don't re-navigate.
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
@@ -117,7 +117,7 @@ class MainActivity : ComponentActivity() {
             putExtra(ActionReceiver.EXTRA_SURFACE, EabpWidgetProvider.SURFACE)
             putExtra(
                 ActionReceiver.EXTRA_REVISION,
-                intent.getIntExtra(EXTRA_WIDGET_REVISION, -1))
+                intent.getIntExtra(EabpLaunch.EXTRA_WIDGET_REVISION, -1))
             putExtra(ActionReceiver.EXTRA_ACTION, actionJson)
         })
     }

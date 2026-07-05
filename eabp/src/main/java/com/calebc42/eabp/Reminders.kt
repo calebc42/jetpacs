@@ -88,7 +88,7 @@ class ReminderReceiver : BroadcastReceiver() {
         }
         val open = PendingIntent.getActivity(
             context, 0,
-            Intent(context, MainActivity::class.java),
+            EabpLaunch.openAppIntent(context),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)

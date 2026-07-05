@@ -1,5 +1,6 @@
 package com.calebc42.eabp
 
+import com.calebc42.eabp.core.R
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider

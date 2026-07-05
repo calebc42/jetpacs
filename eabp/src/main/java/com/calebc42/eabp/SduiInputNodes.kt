@@ -613,9 +613,11 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         }
         // Server-requested formatting toolbar — sits at the bottom of the
         // editor, just above the soft keyboard (keyboard-adjacent, à la
-        // Orgro). "org" is the only toolbar this renderer ships today.
-        if (toolbar == "org" && !readOnly) {
-            OrgEditToolbar(value = readValue, onValueChange = applyValue)
+        // Orgro). Toolbars are host-registered ([EabpToolbars]); the library
+        // ships none, and an unregistered name renders nothing — the same
+        // forward-compat rule as unknown widget nodes.
+        if (toolbar.isNotEmpty() && !readOnly) {
+            EabpToolbars.Render(toolbar, readValue, applyValue)
         }
     }
 }

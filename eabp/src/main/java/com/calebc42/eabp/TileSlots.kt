@@ -1,5 +1,6 @@
 package com.calebc42.eabp
 
+import com.calebc42.eabp.core.R
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
@@ -88,11 +89,7 @@ abstract class EabpTileSlotService : TileService() {
     }
 
     private fun openInApp(action: JSONObject, revision: Int) {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MainActivity.EXTRA_WIDGET_ACTION, action.toString())
-            putExtra(MainActivity.EXTRA_WIDGET_REVISION, revision)
-        }
+        val intent = EabpLaunch.openAppIntent(this, action.toString(), revision)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startActivityAndCollapse(
                 PendingIntent.getActivity(

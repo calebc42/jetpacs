@@ -42,8 +42,8 @@ class CaptureTileService : TileService() {
         }
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MainActivity.EXTRA_WIDGET_ACTION, actionJson.toString())
-            putExtra(MainActivity.EXTRA_WIDGET_REVISION, -1)
+            putExtra(EabpLaunch.EXTRA_WIDGET_ACTION, actionJson.toString())
+            putExtra(EabpLaunch.EXTRA_WIDGET_REVISION, -1)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startActivityAndCollapse(

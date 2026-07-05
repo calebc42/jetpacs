@@ -38,6 +38,14 @@ Task references:
 Within a horizon, the streams listed are independent and safely
 parallel; horizons themselves are ordered.
 
+**Completed pre-work (2026-07-05):** the Kotlin side is now two Gradle
+modules — `:eabp` (protocol + renderer library, host-agnostic by
+construction: `EabpLaunch` / `EabpToolbars` seams) and `:app` (the
+Glasspane shell). This is the in-repo half of the repo-split decision
+(see ARCHITECTURE.md); it gives PKM 16 its enforcement point and PKM 17
+its extraction seam, and future Kotlin from AUTO tasks lands in `:eabp`
+only if it is protocol, in `:app` if it is opinion.
+
 ---
 
 ## Horizon 0 — close the loop (do before anything new)

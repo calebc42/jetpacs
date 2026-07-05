@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget palette: static Material 3 baseline for API 24-30.
+         values-v31 overlays swap in dynamic (Material You) system colors,
+         and the values-night variants handle dark mode. -->
+    <color name="widget_background">#FFFFFBFE</color>
+    <color name="widget_text_primary">#FF1C1B1F</color>
+    <color name="widget_text_secondary">#991C1B1F</color>
+    <color name="widget_button_container">#FFE8DEF8</color>
+    <color name="widget_button_text">#FF1D192B</color>
+    <color name="widget_button_ripple">#33000000</color>
+    <!-- Open TODO keyword in widget rows; org-conventional red, static in
+         both palettes (no dynamic system red exists). -->
+    <color name="widget_todo">#FFC62828</color>
+</resources>

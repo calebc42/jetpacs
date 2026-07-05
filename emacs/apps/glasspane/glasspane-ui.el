@@ -304,6 +304,9 @@ suppressed identical push would leave it frozen."
 
 ;; Search from every tab's top bar; Settings from the drawer.
 (eabp-shell-add-top-action
+ 9 (lambda () (eabp-icon-button "filter_list" (eabp-shell-switch-view "search")
+                                 :content-description "Filter")))
+(eabp-shell-add-top-action
  10 (lambda () (eabp-icon-button "search" (eabp-shell-switch-view "search")
                                  :content-description "Search")))
 (eabp-shell-add-drawer-item
@@ -465,7 +468,7 @@ and a quick complete button for open todos."
            (delq nil
                  (list
                   (when priority
-                    (eabp-span (format "[#%s] " priority) :bold t :color "#F57C00"))
+                    (eabp-span (format "[%s] " priority) :bold t :color "#F57C00"))
                   (if done
                       (eabp-span headline :strike t)
                     (eabp-span headline))))))
@@ -480,7 +483,7 @@ and a quick complete button for open todos."
                         (when tags
                           (apply #'eabp-flow-row
                                  (mapcar (lambda (tg)
-                                           (eabp-assist-chip (concat "#" tg)))
+                                           (eabp-assist-chip tg :on-tap (eabp-action "search.by-tag" :args `((tag . ,tg)))))
                                          tags))))))))
     (eabp-card
      (list (apply #'eabp-row
@@ -697,7 +700,7 @@ and a quick complete button for open todos."
                           (when tags
                             (apply #'eabp-flow-row
                                    (mapcar (lambda (tg)
-                                             (eabp-assist-chip (concat "#" tg)))
+                                             (eabp-assist-chip tg :on-tap (eabp-action "search.by-tag" :args `((tag . ,tg)))))
                                            tags)))))))
     (eabp-card (list (apply #'eabp-column children))
                :on-tap (eabp-action "heading.tap" :args ref))))
@@ -799,6 +802,28 @@ is the finished state."
                           ('absolute "Absolute")
                           ('relative "Relative")
                           (_ "Off")))
+         (agenda-cards
+          (cl-loop for (name . query) in glasspane-org-custom-agendas
+                   collect
+                   (eabp-card
+                    (list
+                     (eabp-row
+                      (eabp-box
+                       (list
+                        (eabp-column
+                         (eabp-text name 'label)
+                         (eabp-text query 'body)))
+                       :weight 1)
+                      (eabp-icon-button "edit"
+                                        (eabp-action "settings.agenda.edit"
+                                                     :args `((name . ,name))
+                                                     :when-offline "drop")
+                                        :content-description "Edit search")
+                      (eabp-icon-button "delete"
+                                        (eabp-action "settings.agenda.delete"
+                                                     :args `((name . ,name))
+                                                     :when-offline "drop")
+                                        :content-description "Delete search"))))))
          (seq-cards
           (condition-case err
               (cl-loop for seq in (or (default-value 'org-todo-keywords) '((sequence "TODO" "DONE")))
@@ -845,6 +870,13 @@ is the finished state."
                   (eabp-enum-list "settings-linenum" '("Off" "Absolute" "Relative")
                                   :value (list linenum-value)
                                   :on-change (eabp-action "settings.line-numbers"))
+                  (eabp-divider)
+                  (eabp-section-header "Saved Searches")
+                  (eabp-text "Manage your custom agenda queries." 'caption))
+            agenda-cards
+            (list (eabp-button "New Saved Search"
+                               (eabp-action "settings.agenda.edit")
+                               :variant "outlined")
                   (eabp-divider)
                   (eabp-section-header "Global TODO Sequences")
                   (eabp-text "Manage your global TODO states and workflows." 'caption))
@@ -1206,7 +1238,7 @@ Always present (even with no properties yet) so + Add is reachable."
                                                     (eabp-text "Inherited" 'caption nil nil nil nil 8)
                                                     (apply #'eabp-flow-row
                                                            (mapcar (lambda (tg)
-                                                                     (eabp-assist-chip (concat "#" tg)))
+                                                                     (eabp-assist-chip tg))
                                                                    inherited-tags)))))))))
                              (eabp-collapsible
                               (format "detail-tags-fold/%s" pos)
@@ -1831,6 +1863,52 @@ with the new states.  Returns non-nil when persisting succeeded."
       (error
        (eabp-shell-notify (format "Edit failed: %s" (error-message-string err)))))))
 
+(eabp-defaction "settings.agenda.edit"
+  (lambda (args _)
+    (let* ((name (alist-get 'name args))
+           (query (if name (cdr (assoc name glasspane-org-custom-agendas)) "")))
+      (eabp-ui-state-clear "agenda-")
+      (eabp-ui-state-put "agenda-name" (or name ""))
+      (eabp-ui-state-put "agenda-query" query)
+      (eabp-send-dialog
+       (eabp-column
+        (eabp-text (if name "Edit Saved Search" "New Saved Search") 'title)
+        (eabp-text "Enter the display name and the org-ql query string." 'caption)
+        (eabp-text-input "agenda-name" :label "Name" :value (or name "") :single-line t)
+        (eabp-text-input "agenda-query" :label "Query String" :value query)
+        (eabp-row
+         (eabp-spacer :weight 1)
+         (when name
+           (eabp-button "Delete" (eabp-action "settings.agenda.delete" :args `((name . ,name))) :variant "text"))
+         (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
+         (eabp-spacer :width 8)
+         (eabp-button "Save" (eabp-action "settings.agenda.save" :args `((old-name . ,name))))))))))
+
+(eabp-defaction "settings.agenda.delete"
+  (lambda (args _)
+    (let ((name (alist-get 'name args)))
+      (setq glasspane-org-custom-agendas (assoc-delete-all name glasspane-org-custom-agendas))
+      (glasspane-ui--customize-save 'glasspane-org-custom-agendas glasspane-org-custom-agendas)
+      (eabp-dismiss-dialog)
+      (eabp-shell-notify (format "Deleted saved search: %s" name))
+      (eabp-shell-push))))
+
+(eabp-defaction "settings.agenda.save"
+  (lambda (args _)
+    (let ((old-name (alist-get 'old-name args))
+          (new-name (eabp-ui-state "agenda-name"))
+          (query (eabp-ui-state "agenda-query")))
+      (if (or (not (stringp new-name)) (string-empty-p new-name))
+          (eabp-shell-notify "Name cannot be empty")
+        (when (and old-name (not (equal old-name new-name)))
+          (setq glasspane-org-custom-agendas (assoc-delete-all old-name glasspane-org-custom-agendas)))
+        (setq glasspane-org-custom-agendas (assoc-delete-all new-name glasspane-org-custom-agendas))
+        (setq glasspane-org-custom-agendas (append glasspane-org-custom-agendas (list (cons new-name query))))
+        (glasspane-ui--customize-save 'glasspane-org-custom-agendas glasspane-org-custom-agendas)
+        (eabp-dismiss-dialog)
+        (eabp-shell-notify "Saved custom agenda")
+        (eabp-shell-push)))))
+
 (eabp-defaction "settings.todo.save"
   (lambda (args _)
     (let* ((idx (alist-get 'index args))
@@ -1952,6 +2030,20 @@ with the new states.  Returns non-nil when persisting succeeded."
     (when (glasspane-ui--at-ref args #'org-clock-in)
       (eabp-shell-notify "Clocked in")
       (eabp-shell-push "clock"))))
+
+(eabp-defaction "search.by-tag"
+  (lambda (args _)
+    (let* ((tag (alist-get 'tag args))
+           (query (format "(tags %S)" tag)))
+      (eabp-ui-state-put "search-filter-tags" (vector tag))
+      (eabp-ui-state-put "search-filter-todo" "Any")
+      (eabp-ui-state-put "search-filter-text" "")
+      (setq glasspane-ui--search-query query
+            glasspane-ui--search-results
+            (condition-case nil
+                (glasspane-org--search query)
+              (error nil)))
+      (eabp-shell-push nil :switch-to "search"))))
 
 (eabp-defaction "org.link.open"
   ;; A tappable link inside rich org text. Emacs resolves it (id:, file:,

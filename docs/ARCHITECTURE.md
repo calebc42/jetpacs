@@ -68,6 +68,7 @@ this directory and fails if an app feature or org itself sneaks in.
 | `eabp-package-browser.el` | package-menu skin for the tablist renderer — the worked example |
 | `eabp-customize.el` | customize browser: the defgroup tree + `custom-type` schemas as native controls (gate: `custom-variable-p`) |
 | `eabp-tools.el` | tools hub: bookmark/process/timer entry points (free via the tablist renderer), kill-ring browser, `M-x shell` entry |
+| `eabp-automations.el` | device-trigger management view (enable switches, last-fired, test-fire) over core eabp-triggers.el; settings-link satellite |
 
 ### Bundles
 
@@ -137,3 +138,69 @@ Two standing contracts worth knowing before you build:
    (Glasspane memoises its org reads); every mutation path must drop the
    memo — actions do it directly, and the shell's `refresh` hook covers
    pull-to-refresh and queue drains.
+
+## Execution model: how alive must Emacs be?
+
+Android will not let one app silently start another: background
+activity launches are blocked and notification trampolines are banned
+(targetSdk 31+). `EmacsWaker` already does the two compliant things —
+an opportunistic launch when the app is foregrounded, and a
+tap-to-open notification otherwise. Everything else is designed around
+*not needing* Emacs for the common cases, in four layers:
+
+1. **Resident Emacs (the baseline).** For this project's user profile,
+   Emacs is the phone's brain and should simply stay running: give the
+   Emacs APK a battery-optimization exemption (Settings → Apps → Emacs
+   → Battery → Unrestricted) and check dontkillmyapp.com for
+   OEM-specific killers. The bridge reconnects with backoff whenever
+   the OS pauses sockets, so a resident Emacs feels always-on.
+2. **`on_fire` (instant, dumb).** A trigger registration can carry a
+   flat companion-local response — capability invocations and a
+   notification — executed at fire time with Emacs dead (SPEC §11).
+   Deliberately no conditionals and no loops: when a rule needs logic
+   Emacs-dead, the answer is layer 1, not a rule language in Kotlin.
+3. **The offline queue (eventual, smart).** Every fire and every tap
+   with `queue` policy persists and replays on reconnect, so full-Emacs
+   logic always runs *eventually* — the companion never becomes the
+   source of truth.
+4. **The wake notification (user-assisted).** `wake` policy posts the
+   `EmacsWaker` notification; one tap brings Emacs up, and the queue
+   drains into it.
+
+**Open spike (timeboxed, needs hardware):** whether the Termux-signed
+Emacs exposes a compliant silent-start vector — Termux's
+`RunCommandService` (`com.termux.permission.RUN_COMMAND`) starting a
+daemonized Emacs, or an exported service/activity-alias in the Emacs
+APK. May well dead-end; the result gets recorded here either way.
+
+## Kotlin conformance checklist (the contract tripwire)
+
+The companion stays a portable renderer by construction: **every
+Kotlin behavior must be traceable to a SPEC section**, and new Kotlin
+lands in `:eabp` only if it is protocol, in `:app` if it is opinion.
+Audit this table whenever a Kotlin wave lands (last audited
+2026-07-05, after the automation wave AUTO 6–10):
+
+| Kotlin surface | SPEC section |
+|---|---|
+| `FrameCodec` / `Envelope` (NDJSON, envelope, ids) | §1–§2 |
+| `EabpAuth` + handshake in `EabpConnection` | §3 |
+| `session.welcome` `device` report | §3, §10 |
+| `SurfaceStore` / `SurfaceManager` (revisions, cache, multi-view) | §4 |
+| `ActionReceiver` (actions, policies, dedupe), `dispatchWithValue` value injection | §5 |
+| Builtins (`view.switch`, `clipboard.copy`) | §5 |
+| Offline queue + replay (`EabpDatabase`, replay loop) | §6 |
+| Dialogs, toasts, pies (`EabpDialogState`, `EabpPieMenuState`) | §7 |
+| `ReminderScheduler` (replace-set, reboot persistence) | §7 |
+| `EditorSync` / completion / diagnostics / eldoc / fontify | §8 |
+| `SduiRenderer` + node files (shapes pinned by `test/widgets.golden`) | §9 |
+| `DeviceCapabilities` (catalog + perm map), `EabpRuntime.keepScreenOn` | §10 |
+| `TriggerHost` / `TriggerAlarmReceiver` / `BootReceiver` (types, throttle, hysteresis, `on_fire`, reboot rearm) | §11 |
+| `EmacsWaker` | §5 (`wake` policy), execution model above |
+| Widgets / tiles / notification rendering | §4 surfaces (`widget:*`, `notification:*`) |
+
+Divergence rule: a behavior with no SPEC home gets spec'd or removed —
+the 2026-07-05 audit found one (the `value` injection on change
+callbacks) and spec'd it into §9. The only org knowledge outside
+`:app` remains **none**; `:app`'s `OrgEditToolbar` is the single
+org-aware Kotlin class, opt-in by toolbar name (§9 `editor`).

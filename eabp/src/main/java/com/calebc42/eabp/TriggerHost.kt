@@ -1,6 +1,8 @@
 package com.calebc42.eabp
 
 import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -10,6 +12,7 @@ import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -293,6 +296,11 @@ class TriggerHost(private val context: Context) {
             }
             lastFired[row.id] = now
 
+            // The companion-local response runs first (instant, dumb) and
+            // IN ADDITION to the event below — Emacs still learns of the
+            // fire on (re)connect and stays the source of truth.
+            row.onFire?.let { executeOnFire(context, row.id, it) }
+
             val payload = JSONObject().apply {
                 put("action", "trigger.fired")
                 put("args", JSONObject().apply {
@@ -323,6 +331,63 @@ class TriggerHost(private val context: Context) {
                     if (row.policy == "wake") EmacsWaker.requestWake(context)
                 }
             }
+        }
+
+        /**
+         * SPEC §11 `on_fire` (automation plan Task 10): the companion-local
+         * response — a flat list of `{cap, args}` capability invocations
+         * (SPEC §10) and `{notify: {title?, text?}}` notification posts,
+         * executed in order at fire time even with Emacs dead. This is the
+         * one place the companion acts on its own, so the vocabulary is
+         * deliberately closed: no conditionals, no loops — a rule that
+         * needs logic Emacs-dead means "keep Emacs alive", not a rule
+         * language in Kotlin. Unknown entries and capability failures are
+         * logged and skipped, never fatal (additive rule).
+         */
+        private fun executeOnFire(context: Context, id: String, onFireJson: String) {
+            val list = runCatching { JSONArray(onFireJson) }.getOrNull() ?: return
+            for (i in 0 until list.length()) {
+                val entry = list.optJSONObject(i) ?: continue
+                when {
+                    entry.has("cap") -> {
+                        val cap = entry.optString("cap")
+                        try {
+                            DeviceCapabilities.invoke(
+                                context, cap, entry.optJSONObject("args") ?: JSONObject())
+                            Log.d(TAG, "on_fire[$id]: $cap ok")
+                        } catch (e: CapabilityException) {
+                            Log.w(TAG, "on_fire[$id]: $cap failed: ${e.code} (${e.message})")
+                        }
+                    }
+                    entry.has("notify") ->
+                        postOnFireNotification(
+                            context, id, entry.optJSONObject("notify") ?: JSONObject())
+                    else -> Log.d(TAG, "on_fire[$id]: ignoring unknown entry $i")
+                }
+            }
+        }
+
+        private const val NOTIFY_CHANNEL = "eabp_automations"
+
+        private fun postOnFireNotification(context: Context, id: String, spec: JSONObject) {
+            val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                mgr.createNotificationChannel(NotificationChannel(
+                    NOTIFY_CHANNEL, "Automations", NotificationManager.IMPORTANCE_DEFAULT))
+            }
+            val open = PendingIntent.getActivity(
+                context, 0, EabpLaunch.openAppIntent(context),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val notification = NotificationCompat.Builder(context, NOTIFY_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_popup_reminder)
+                .setContentTitle(spec.optString("title").ifEmpty { id })
+                .setContentText(spec.optString("text"))
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .build()
+            runCatching { mgr.notify("on_fire/$id".hashCode(), notification) }
+                .onFailure { Log.w(TAG, "on_fire[$id]: notify failed: ${it.message}") }
         }
 
         /**

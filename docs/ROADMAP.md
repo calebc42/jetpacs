@@ -73,10 +73,10 @@ inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 |---|---|---|
 | 1 ✅ | **AUTO 6** — trigger host, persistence, boot receiver | Landed 2026-07-05 (TriggerHost.kt, boot rearm, reminder reboot fix); on-device acceptance pending |
 | 2 ✅ | **AUTO 7** — trigger batch 1 (time/power/battery/screen/…) | Landed 2026-07-05 with AUTO 6 (9 types, SPEC §11 catalog); on-device checks pending |
-| 3 | **AUTO 12** ⚠ — `eabp-deftrigger` + Automations view | **Override:** pulled ahead of its plan-internal A4 slot. Without authoring UX the trigger host isn't usable day-to-day, and daily use is what the battery gate below needs to measure |
-| 4 | **AUTO 10** — companion-local `on_fire` | The Emacs-dead story for the common cases |
-| any | **AUTO 11** — wake spike (timeboxed) | Informs how much weight `on_fire` must carry; also feeds PKM 15 later |
-| after Kotlin lands | **PKM 16** — contract-discipline audit | The tripwire: AUTO 6–10 is the largest Kotlin growth since the renderer; verify it added protocol, not policy |
+| 3 ✅ | **AUTO 12** ⚠ — `eabp-deftrigger` + Automations view | Landed 2026-07-05 (macro, toggles via Customize, test-fire, eabp-automations.el); on-device pass pending |
+| 4 ✅ | **AUTO 10** — companion-local `on_fire` | Landed 2026-07-05 (cap invocations + notify posts in TriggerHost); on-device pass pending |
+| any 🟡 | **AUTO 11** — wake spike (timeboxed) | Docs half landed 2026-07-05 (ARCHITECTURE "Execution model"); Termux silent-start spike needs hardware |
+| after Kotlin lands ✅ | **PKM 16** — contract-discipline audit | Done 2026-07-05: conformance checklist in ARCHITECTURE.md; one divergence found (on_change `value` injection) and spec'd into §9 |
 
 **⛔ GATE before Horizon 3:** battery profile of a normal day with a
 real trigger set (screen + power + a time trigger) active. Expectation

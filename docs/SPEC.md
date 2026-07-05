@@ -178,7 +178,7 @@ mutated state the cached views no longer reflect).
 | `dialog.show` / `dialog.dismiss`  | → comp.   | a UI-tree spec rendered modally                     | `surfaces.dialog` |
 | `toast.show`                      | → comp.   | `{text}` transient toast                            | optional |
 | `pie_menu.show` / `.dismiss`      | → comp.   | radial menu spec (curated, ≤ ~10 items)             | optional |
-| `reminders.set`                   | → comp.   | `{reminders: [{title, body, at_ms, ...}]}` — the set **replaces** the previous one, so cancelled items never fire stale | optional |
+| `reminders.set`                   | → comp.   | `{reminders: [{title, body, at_ms, ...}]}` — the set **replaces** the previous one, so cancelled items never fire stale; the companion persists it across reboots | optional |
 
 The minibuffer bridge rides on dialogs: when a client action handler hits
 a prompting call (`y-or-n-p`, `completing-read`, `read-passwd`,
@@ -229,7 +229,11 @@ and completion insertion happens companion-side.
 Specs are trees of nodes; every node is `{"t": type, ...}` and unknown
 keys must be ignored (forward compat). Actions embed as objects under
 `on_tap` / `on_change` / `on_submit` / `on_save` / `on_pick` /
-`on_reorder` / `on_refresh` / `nav_action`.
+`on_reorder` / `on_refresh` / `nav_action`. Value-carrying callbacks
+(`on_change`, `on_submit`, `on_save`, `on_pick`) dispatch their action
+with the widget's current value injected into `args` as `value` — a
+switch's `on_change` arrives with `args.value` true/false, a text
+input's `on_submit` with the text.
 
 The normative, machine-checked reference for every node's wire shape is
 [`test/widgets.golden`](../test/widgets.golden) — one JSON line per
@@ -387,13 +391,21 @@ triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
 - `throttle_s` is a host-side minimum interval between fires of one
   trigger. Threshold types (e.g. battery level) must fire on edge
   crossings computed host-side, never on every underlying broadcast.
-- `on_fire` **(reserved)** — a companion-local response executed at
-  fire time even with Emacs dead: a flat list drawn strictly from the
-  existing builtin and capability vocabulary plus a notification spec.
-  No conditionals, no loops — logic lives in the client, period. It is
-  specified now so registrations are forward-compatible; a companion
-  that does not implement it ignores it (the `trigger.fired` event
-  still queues and delivers).
+- `on_fire` — the companion-local response, executed at fire time even
+  with Emacs dead, **in addition to** the `trigger.fired` event (which
+  still queues and delivers, so the client always learns of the fire
+  and stays the source of truth). A flat list, executed in order, of:
+
+  - `{cap, args?}` — a §10 capability invocation
+    (`{"cap": "flashlight", "args": {"on": true}}`);
+  - `{notify: {title?, text?}}` — post a simple notification.
+
+  Builtin entries are reserved. This is the one place the companion
+  acts on its own, so the vocabulary is deliberately closed: **no
+  conditionals, no loops** — a rule that needs logic while Emacs is
+  dead means "keep Emacs alive", not a rule language in the companion.
+  Unknown entries and failing capabilities are logged and skipped,
+  never fatal.
 
 ### Trigger-type catalog
 

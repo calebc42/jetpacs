@@ -435,7 +435,15 @@ end-to-end; disabling the special access degrades to a typed error.
 
 ## Phase A3 — running while Emacs is dead
 
-### Task 10: companion-local responses (`on_fire`)
+### Task 10: companion-local responses (`on_fire`) ✅ (2026-07-05)
+
+**Landed:** `TriggerHost.executeOnFire` — `{cap, args}` entries run
+through `DeviceCapabilities.invoke` (failures logged, never fatal),
+`{notify: {title?, text?}}` posts on an "Automations" channel; executed
+before the queued `trigger.fired`, which still delivers. Builtin
+entries stay reserved (documented). SPEC §11 on_fire updated from
+reserved to shipped subset. On-device acceptance (force-stop Emacs,
+plug power, flashlight + notification, replay on reconnect) pending.
 
 **Goal:** the "flashlight when power connects" class of rules works
 with Emacs gone — the same design move as builtins and multi-view
@@ -457,7 +465,14 @@ loops. If someone needs logic Emacs-dead, that's the line where we say
 **Acceptance:** force-stop Emacs; plug in power; flashlight toggles
 and a notification posts; on reconnect the queued fire replays.
 
-### Task 11: the wake story — spike, timeboxed
+### Task 11: the wake story — spike, timeboxed 🟡 (docs half 2026-07-05)
+
+**Landed:** the "Execution model" section in ARCHITECTURE.md — the
+four-layer story (resident Emacs baseline + keep-alive recipe →
+on_fire → queue → wake notification). **Still open:** the item-2
+device spike (Termux `RunCommandService` / exported start vector in
+the Emacs APK) — needs hardware; record the result in that section
+either way.
 
 **Goal:** an honest, documented answer to "how alive must Emacs be?"
 
@@ -483,7 +498,20 @@ user can follow; spike results recorded either way.
 
 ## Phase A4 — authoring UX (pure Tier 1 polish)
 
-### Task 12: `eabp-deftrigger` + the Automations view
+### Task 12: `eabp-deftrigger` + the Automations view ✅ (2026-07-05)
+
+**Landed:** `eabp-deftrigger` macro + enable/disable
+(`eabp-triggers-disabled` defcustom; disabled = excluded from the
+pushed set, persisted via `eabp-settings-save-variable`), last-fired
+bookkeeping, `eabp-trigger-test-fire` (interactive + `trigger.test`
+action), `trigger.toggle` — all in core eabp-triggers.el (trigger.* is
+core's namespace; the view is pure rendering). View in
+`emacs/apps/eabp-automations.el`: per-trigger cards (switch, wire
+summary, last fired, Fire now), settings-link entry (satellite screen
+per the drawer contract), re-render via `eabp-triggers-changed-hook`.
+Deviation: deliberately NOT an `eabp-defapp` — that would flip the
+launcher into multi-app mode for the sole user. On-device pass
+(define/disable/re-enable/test-fire from the phone) pending.
 
 **Goal:** registering an automation feels like `eabp-defaction`, and
 the phone gets a management surface.

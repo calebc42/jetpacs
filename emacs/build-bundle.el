@@ -47,6 +47,7 @@
        (app-files '("apps/eabp-package-browser.el"
                     "apps/eabp-customize.el"
                     "apps/eabp-tools.el"
+                    "apps/eabp-automations.el"
                     "apps/eabp-magit.el"
                     "apps/glasspane/glasspane-org.el"
                     "apps/glasspane/glasspane-org-rich.el"

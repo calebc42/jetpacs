@@ -24,6 +24,7 @@
 (require 'eabp-triggers)
 (require 'eabp-device)
 (require 'eabp-apps)
+(require 'eabp-automations)
 (require 'eabp-widgets)
 (require 'eabp-shell)
 (require 'glasspane-org)
@@ -1556,6 +1557,7 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
   "Registering triggers pushes the full replace-set, id-sorted, nils omitted."
   (let ((eabp-triggers--table (make-hash-table :test 'equal))
         (eabp--session '((granted . ("triggers"))))
+        (eabp-triggers-changed-hook nil)  ; isolate from the app's re-push
         (sent nil))
     (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
               ((symbol-function 'eabp-send)
@@ -1588,6 +1590,7 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
   "No triggers.set leaves Emacs unless the companion granted `triggers'."
   (let ((eabp-triggers--table (make-hash-table :test 'equal))
         (eabp--session '((granted . ("surfaces.dialog" "capabilities"))))
+        (eabp-triggers-changed-hook nil)  ; isolate from the app's re-push
         (sent nil))
     (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
               ((symbol-function 'eabp-send)
@@ -1627,6 +1630,81 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
                              (data . :null) (at_ms . 1))))))
       :null-object :null :false-object :false))
     (should-not fired)))
+
+(ert-deftest eabp-triggers-deftrigger-and-disable ()
+  "eabp-deftrigger registers under the symbol name; disabling excludes
+the id from the pushed specs and re-enabling restores it."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp-triggers-disabled nil))
+    (eabp-deftrigger test/charge
+      :type "power" :params '((state . "connected"))
+      :handler #'ignore)
+    (should (gethash "test/charge" eabp-triggers--table))
+    (should (= 1 (length (eabp-triggers--specs))))
+    ;; Disable: registration stays, the wire set shrinks.
+    (eabp-trigger-set-enabled "test/charge" nil)
+    (should-not (eabp-trigger-enabled-p "test/charge"))
+    (should (gethash "test/charge" eabp-triggers--table))
+    (should (= 0 (length (eabp-triggers--specs))))
+    ;; Re-enable restores the spec.
+    (eabp-trigger-set-enabled "test/charge" t)
+    (should (= 1 (length (eabp-triggers--specs))))))
+
+(ert-deftest eabp-triggers-toggle-action-persists ()
+  "The trigger.toggle action flips enablement and saves via the seam."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp-triggers-disabled nil)
+        (saved nil))
+    (eabp-deftrigger test/toggle :type "screen" :handler #'ignore)
+    (cl-letf (((symbol-function 'eabp-settings-save-variable)
+               (lambda (sym val) (setq saved (cons sym val)) t)))
+      (eabp--on-action '((action . "trigger.toggle")
+                         (args . ((id . "test/toggle") (value . :false))))
+                       nil)
+      (should-not (eabp-trigger-enabled-p "test/toggle"))
+      (should (equal (car saved) 'eabp-triggers-disabled))
+      (should (member "test/toggle" (cdr saved)))
+      ;; Toggling an unknown id is a no-op, not an error.
+      (eabp--on-action '((action . "trigger.toggle")
+                         (args . ((id . "nope") (value . t))))
+                       nil)
+      (should-not (eabp-trigger-enabled-p "test/toggle")))))
+
+(ert-deftest eabp-triggers-test-fire-and-last-fired ()
+  "trigger.test runs the handler through the real dispatch path and
+records the last-fired time."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp-triggers--last-fired (make-hash-table :test 'equal))
+        (fired nil))
+    (eabp-deftrigger test/fire
+      :type "power"
+      :handler (lambda (_data args) (setq fired args)))
+    (should-not (gethash "test/fire" eabp-triggers--last-fired))
+    (eabp--on-action '((action . "trigger.test")
+                       (args . ((id . "test/fire"))))
+                     nil)
+    (should fired)
+    (should (eq (alist-get 'test fired) t))
+    (should (equal (alist-get 'type fired) "power"))
+    (should (gethash "test/fire" eabp-triggers--last-fired))))
+
+(ert-deftest eabp-automations-view-renders ()
+  "The Automations view builds for both the empty and populated registry."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp-triggers--last-fired (make-hash-table :test 'equal))
+        (eabp-triggers-disabled nil))
+    (should (eabp-automations--view nil))   ; empty state
+    (eabp-deftrigger test/view
+      :type "battery.level" :params '((below . 20))
+      :policy "drop" :throttle-s 300 :handler #'ignore)
+    (let ((json (json-serialize
+                 (eabp-tests--canon (eabp-automations--view "snack"))
+                 :null-object :null :false-object :false)))
+      (should (string-search "test/view" json))
+      (should (string-search "trigger.toggle" json))
+      (should (string-search "trigger.test" json))
+      (should (string-search "Never fired" json))
+      (should (string-search "below=20" json)))))
 
 (ert-deftest eabp-device-report-queries ()
   "Session helpers read the granted list and the welcome's device report."

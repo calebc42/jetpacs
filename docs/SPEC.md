@@ -57,7 +57,7 @@ Errors travel as `kind: "error"` with `{code, detail}`.
 Emacs → companion   session.hello    {protocol, client, wants: [capability...]}
 companion → Emacs   auth.challenge   {nonce: SNONCE}
 Emacs → companion   auth.response    {nonce: CNONCE, mac}
-companion → Emacs   session.welcome  {server_proof, granted, surfaces, queued_events}
+companion → Emacs   session.welcome  {server_proof, granted, device?, surfaces, queued_events}
 ```
 
 - **Pairing token.** The companion generates a secret token shown once in
@@ -80,6 +80,9 @@ companion → Emacs   session.welcome  {server_proof, granted, surfaces, queued_
   lost (fresh machine, deleted state) can raise it above the cache floor
   before pushing. `queued_events` is the number of offline events waiting
   for replay.
+- **Device report.** When `capabilities` is granted, the welcome carries
+  a `device` object — the invocable capability names and the device
+  permission map. See §10.
 
 ## 4. Surfaces
 
@@ -134,7 +137,8 @@ registers the handler; the core reserves `eabp.*`, `nav.*`, `view.*`,
 `dialog.*`, `edit.*`, `tablist.*`, `settings.*`, `prompt.*`,
 `dashboard.*`, `files.*`, `emacs.*`, `packages.*`, `customize.*`,
 `transient.*`, `share.*`, `demo.*`, `witheditor.*`, `comint.*`,
-`imenu.*`, `tools.*`.
+`imenu.*`, `tools.*`, `trigger.*` (device-trigger fires, §11), `app.*`
+(launcher app switching, reserved).
 
 - `when_offline` is the queue policy the *spec author* chose for the
   control: `"queue"` (default — persist and replay), `"drop"` (meaningless
@@ -264,15 +268,137 @@ constructor, kept honest by the ERT suite. Summary by family:
 - **Notification specs** add `meta` (channel, ongoing, category, priority,
   `chronometer: {base_ms}`) above a body of content nodes.
 
-## 10. Conformance
+## 10. Device capabilities (optional)
+
+The Emacs → device *effector* channel: the client invokes device-side
+actions (open a settings panel; later: intents, flashlight, TTS, …).
+Negotiated under the `capabilities` capability name.
+
+```
+capability.invoke    {cap, args?}      client → companion
+capability.result    {ok, result?}     companion → client (reply)
+```
+
+- `cap` names an entry in the welcome's `device.caps` list; `args` is a
+  plain-data object whose shape belongs to the capability. On success
+  the companion replies `capability.result` with `ok: true` and, for
+  querying capabilities, a `result` object. A failed or unknown invoke
+  is answered with a standard `error` frame (`reply_to` set) whose
+  `code` is one of:
+
+  | code              | meaning                                               |
+  |-------------------|-------------------------------------------------------|
+  | `cap-unsupported` | this companion has no such capability                 |
+  | `cap-permission`  | needs a device permission the user has not granted    |
+  | `cap-failed`      | supported and permitted, but the device action failed |
+
+  A `cap-permission` error additionally carries `perm` (the missing
+  `device.perms` key) and, when one exists, `settings` — a value the
+  client can pass straight back as `capability.invoke {cap:
+  "settings.open", args: {panel: …}}` to take the user to the right
+  grant screen.
+
+- **Device report.** When `capabilities` is granted, `session.welcome`
+  carries a `device` object:
+
+  ```json
+  "device": {"caps": ["settings.open"],
+             "perms": {"post_notifications": true, "exact_alarms": true,
+                       "write_settings": false, "notification_policy": false,
+                       "notification_listener": false, "fine_location": false,
+                       "bluetooth_connect": false}}
+  ```
+
+  `caps` is the invocable capability set. `perms` reports the runtime
+  and special-access permissions effectors and triggers depend on, so
+  the client can degrade gracefully — grey out a control, deep-link to
+  the grant screen — instead of invoking blind. The map is a snapshot
+  at welcome time; the companion re-checks at invoke time, so a stale
+  map can only cause a typed error, never a wrong action.
+
+- **Trust model.** This flows in the already-trusted direction: the
+  post-handshake client drives notifications, reminders, and dialogs,
+  and effectors are consistent with that. `args` are plain data,
+  validated per capability. Capabilities that launch activities are
+  best-effort while the companion is backgrounded (Android
+  background-launch limits); they are reliable from foreground and
+  notification contexts.
+
+- **`settings.open {panel}`** — the first capability, and the compliant
+  "toggle" for radios Android no longer lets apps flip directly.
+  `panel` is a named panel (`wifi` | `internet` | `bluetooth` |
+  `volume` | `nfc`) or an `android.settings.*` intent-action string;
+  anything else is refused with `cap-failed`. Named panels use the
+  floating system panels where the platform has them and the full
+  settings screen otherwise.
+
+The effector catalog (`intent.start`, `vibrate`, `tts.speak`, …) grows
+here as capabilities ship; each entry documents its `args` and its
+error behavior.
+
+## 11. Device triggers (optional)
+
+The device → Emacs *event source* path: the companion watches device
+state (time, power, screen, connectivity, …) and reports changes the
+client subscribed to — durable the same way its UI serving is durable.
+Negotiated under the `triggers` capability name; a companion that
+cannot host triggers does not grant it, and a client must not send
+`triggers.set` without the grant.
+
+```
+triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
+                            throttle_s?, on_fire?}]}        client → companion
+```
+
+- **Replace-set semantics**, exactly like `reminders.set`: each set
+  replaces the previous one in full, so a removed trigger can never
+  fire stale, and re-pushing the current set on reconnect is
+  idempotent. The registered set persists on the companion and is
+  re-armed after reboots.
+- `id` is the client's stable name for the registration; `type` names
+  an entry in the trigger-type catalog below; `params` is the
+  plain-data, type-specific match configuration (an SSID, a battery
+  threshold, a clock time).
+- **Firing is an ordinary event.** A firing trigger delivers
+
+  ```
+  event.action   {action: "trigger.fired",
+                  args: {id, type, data, at_ms}}
+  ```
+
+  through the exact machinery of §5–§6: connected ⇒ delivered,
+  disconnected ⇒ queued / dropped / woken per the registration's
+  `policy` (the §5 `when_offline` vocabulary; default `queue`), with
+  `dedupe` collapsing queued fires that share the key. There is no
+  second event channel. The allowlist rule holds: the companion may
+  fire only ids present in the currently registered set — names the
+  client itself registered — and `data` is plain JSON shaped per
+  trigger type (an SSID string, a battery percentage), never anything
+  executable.
+- `throttle_s` is a host-side minimum interval between fires of one
+  trigger. Threshold types (e.g. battery level) must fire on edge
+  crossings computed host-side, never on every underlying broadcast.
+- `on_fire` **(reserved)** — a companion-local response executed at
+  fire time even with Emacs dead: a flat list drawn strictly from the
+  existing builtin and capability vocabulary plus a notification spec.
+  No conditionals, no loops — logic lives in the client, period. It is
+  specified now so registrations are forward-compatible; a companion
+  that does not implement it ignores it (the `trigger.fired` event
+  still queues and delivers).
+
+**Trigger-type catalog:** populated as types ship — none yet; this
+section currently specifies the frame contract only. Each shipped type
+documents its `params` and its `data` shape in a table here.
+
+## 12. Conformance
 
 A minimal companion implements: the envelope, the handshake with pairing
 auth, `surface.update`/`surface.remove` with revision + cache semantics
 for `app:*` surfaces, `event.action`/`state.changed`, the offline queue
 with `queue.replay`/`queue.drained`, the two builtins, and the widget
 families under §9 it can render (unknown nodes render as their children
-or nothing, never as a crash). Everything in §7–§8 is negotiated or
-optional.
+or nothing, never as a crash). Everything in §7–§8 and §10–§11 is
+negotiated or optional.
 
 A minimal client implements: the envelope, the handshake (failing closed
 on a bad `server_proof`), monotonic revisions with snapshot absorption,

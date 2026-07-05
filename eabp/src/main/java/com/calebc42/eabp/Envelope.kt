@@ -26,7 +26,10 @@ object Kind {
     const val DIAGNOSTICS_SHOW = "diagnostics.show"
     const val ELDOC_SHOW = "eldoc.show"
     const val FONTIFY_SHOW = "fontify.show"
-    // surface.*, capability.*, trigger.*, event.*, queue.* arrive later.
+    const val CAPABILITY_INVOKE = "capability.invoke"
+    const val CAPABILITY_RESULT = "capability.result"
+    // Reserved by SPEC §11; handled once the trigger host lands (AUTO Task 6).
+    const val TRIGGERS_SET = "triggers.set"
 }
 
 /**

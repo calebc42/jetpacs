@@ -70,14 +70,16 @@ however good the feature.
    come from `emacs --batch -l emacs/build-bundle.el` — never edit them
    by hand; regenerate after any `emacs/` source change and commit the
    result.
-5. **The widget golden is the wire truth.** `test/widgets.golden` is
-   the machine-checked shape of every node constructor. Regenerate it
-   only for an INTENTIONAL wire change
-   (`emacs -Q --batch -l test/eabp-tests.el -f eabp-tests-regen-widget-golden`),
-   and document the change in SPEC §9. Wire additions must be additive —
-   unknown kinds/attrs are ignored, never fatal. If the Kotlin
-   counterpart can't land in the same PR, the elisp side must degrade
-   cleanly without it.
+5. **The goldens are the wire truth.** `test/widgets.golden` is the
+   machine-checked shape of every node constructor; `test/frames.golden`
+   pins the trigger/capability frame payloads (SPEC §10–§11). Regenerate
+   them only for an INTENTIONAL wire change
+   (`emacs -Q --batch -l test/eabp-tests.el -f eabp-tests-regen-widget-golden`
+   / `-f eabp-tests-regen-frame-golden`), and document the change in
+   SPEC §9 (widgets) or the frame's own section. Wire additions must be
+   additive — unknown kinds/attrs are ignored, never fatal. If the
+   Kotlin counterpart can't land in the same PR, the elisp side must
+   degrade cleanly without it.
 6. **Org case conventions.** Keywords, blocks, and drawers are
    recognized case-insensitively (bind `case-fold-search` explicitly);
    TODO keywords and tags are case-sensitive; display preserves file

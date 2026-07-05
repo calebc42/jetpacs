@@ -28,6 +28,7 @@
        (core-files '("core/eabp.el"
                      "core/eabp-widgets.el"
                      "core/eabp-surfaces.el"
+                     "core/eabp-triggers.el"
                      "core/eabp-minibuffer.el"
                      "core/eabp-buffer.el"
                      "core/eabp-shell.el"

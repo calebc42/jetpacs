@@ -21,6 +21,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'eabp)
+(require 'eabp-triggers)
 (require 'eabp-widgets)
 (require 'eabp-shell)
 (require 'glasspane-org)
@@ -1544,6 +1545,199 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
                  (split-string
                   (with-temp-buffer
                     (insert-file-contents eabp-tests--golden-file)
+                    (buffer-string))
+                  "\n" t))))
+
+;; ─── Triggers & device capabilities (SPEC §10–§11) ──────────────────────────
+
+(ert-deftest eabp-triggers-replace-set-push ()
+  "Registering triggers pushes the full replace-set, id-sorted, nils omitted."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp--session '((granted . ("triggers"))))
+        (sent nil))
+    (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+              ((symbol-function 'eabp-send)
+               (lambda (kind payload &rest _)
+                 (push (cons kind payload) sent))))
+      (eabp-trigger-register "t2" :type "screen" :params '((state . "off")))
+      (eabp-trigger-register "t1" :type "power"
+                             :params '((state . "connected"))
+                             :policy "wake" :throttle-s 60)
+      ;; One push per register; the latest carries both, sorted by id.
+      (should (= (length sent) 2))
+      (should (equal (caar sent) "triggers.set"))
+      (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
+        (should (= (length specs) 2))
+        (should (equal (alist-get 'id (nth 0 specs)) "t1"))
+        (should (equal (alist-get 'policy (nth 0 specs)) "wake"))
+        (should (equal (alist-get 'throttle_s (nth 0 specs)) 60))
+        (should-not (assq 'dedupe (nth 0 specs)))
+        (should-not (assq 'on_fire (nth 0 specs)))
+        (should (equal (alist-get 'id (nth 1 specs)) "t2"))
+        (should-not (assq 'policy (nth 1 specs))))
+      ;; Unregistering pushes the shrunken set (never fires stale).
+      (setq sent nil)
+      (eabp-trigger-unregister "t1")
+      (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
+        (should (= (length specs) 1))
+        (should (equal (alist-get 'id (car specs)) "t2"))))))
+
+(ert-deftest eabp-triggers-gated-on-grant ()
+  "No triggers.set leaves Emacs unless the companion granted `triggers'."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp--session '((granted . ("surfaces.dialog" "capabilities"))))
+        (sent nil))
+    (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+              ((symbol-function 'eabp-send)
+               (lambda (kind &rest _) (push kind sent))))
+      (eabp-trigger-register "t" :type "power")
+      (should-not sent))))
+
+(ert-deftest eabp-triggers-fire-dispatch ()
+  "An inbound trigger.fired event.action reaches the per-id handler."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (fired nil))
+    ;; Disconnected in batch, so register never sends.
+    (eabp-trigger-register "charge" :type "power"
+                           :handler (lambda (data args)
+                                      (setq fired (list data args))))
+    (eabp--handle-line
+     (json-serialize
+      '((v . 1) (id . "m-test-1") (reply_to . :null)
+        (kind . "event.action")
+        (payload . ((action . "trigger.fired")
+                    (args . ((id . "charge") (type . "power")
+                             (data . ((state . "connected")))
+                             (at_ms . 1751700000000))))))
+      :null-object :null :false-object :false))
+    (should fired)
+    (should (equal (alist-get 'state (car fired)) "connected"))
+    (should (equal (alist-get 'id (cadr fired)) "charge"))
+    (should (equal (alist-get 'at_ms (cadr fired)) 1751700000000))
+    ;; A fire for an id not in the set is dropped, never signalled.
+    (setq fired nil)
+    (eabp--handle-line
+     (json-serialize
+      '((v . 1) (id . "m-test-2") (reply_to . :null)
+        (kind . "event.action")
+        (payload . ((action . "trigger.fired")
+                    (args . ((id . "gone") (type . "power")
+                             (data . :null) (at_ms . 1))))))
+      :null-object :null :false-object :false))
+    (should-not fired)))
+
+(ert-deftest eabp-device-report-queries ()
+  "Session helpers read the granted list and the welcome's device report."
+  (let ((eabp--session
+         '((granted . ("capabilities" "surfaces.dialog"))
+           (device . ((caps . ("settings.open"))
+                      (perms . ((exact_alarms . t)
+                                (write_settings . :false))))))))
+    (should (eabp-granted-p "capabilities"))
+    (should-not (eabp-granted-p "triggers"))
+    (should (eabp-device-cap-p "settings.open"))
+    (should-not (eabp-device-cap-p "flashlight"))
+    (should (eabp-device-can-p "exact_alarms"))
+    (should-not (eabp-device-can-p 'write_settings))
+    (should-not (eabp-device-can-p "fine_location")))
+  ;; With no session at all, everything reads as absent, nothing errors.
+  (let ((eabp--session nil))
+    (should-not (eabp-granted-p "capabilities"))
+    (should-not (eabp-device-caps))
+    (should-not (eabp-device-can-p "exact_alarms"))))
+
+(ert-deftest eabp-capability-invoke-roundtrip ()
+  "capability.invoke correlates its reply and normalizes ok vs typed error."
+  (let ((eabp--pending (make-hash-table :test 'equal))
+        (eabp--process 'fake)
+        (sent nil)
+        (result nil))
+    (cl-letf (((symbol-function 'process-live-p)
+               (lambda (p) (eq p 'fake)))
+              ((symbol-function 'eabp--raw-send)
+               (lambda (line) (push line sent))))
+      ;; Success path: capability.result {ok: true} resolves with OK non-nil.
+      (let ((id (eabp-capability-invoke
+                 "settings.open" '((panel . "wifi"))
+                 (lambda (ok payload) (setq result (list ok payload))))))
+        (should (= (length sent) 1))
+        (let* ((frame (json-parse-string (car sent)
+                                         :object-type 'alist :array-type 'list
+                                         :null-object :null :false-object :false))
+               (payload (alist-get 'payload frame)))
+          (should (equal (alist-get 'kind frame) "capability.invoke"))
+          (should (equal (alist-get 'cap payload) "settings.open"))
+          (should (equal (alist-get 'panel (alist-get 'args payload)) "wifi")))
+        (eabp--handle-line
+         (json-serialize
+          `((v . 1) (id . "m-r-1") (reply_to . ,id)
+            (kind . "capability.result") (payload . ((ok . t))))
+          :null-object :null :false-object :false))
+        (should (equal (car result) t)))
+      ;; Error path: a typed error frame resolves with OK nil and the code.
+      (setq result nil)
+      (let ((id (eabp-capability-invoke
+                 "flashlight" nil
+                 (lambda (ok payload) (setq result (list ok payload))))))
+        (eabp--handle-line
+         (json-serialize
+          `((v . 1) (id . "m-r-2") (reply_to . ,id)
+            (kind . "error")
+            (payload . ((code . "cap-unsupported")
+                        (detail . "unknown capability 'flashlight'"))))
+          :null-object :null :false-object :false))
+        (should result)
+        (should-not (car result))
+        (should (equal (alist-get 'code (cadr result)) "cap-unsupported"))))))
+
+;; ─── Protocol frame shapes (golden snapshot, SPEC §10–§11) ──────────────────
+
+(defconst eabp-tests--frames-golden-file
+  (expand-file-name "frames.golden" eabp-tests--dir))
+
+(defun eabp-tests--frame-cases ()
+  "Outbound protocol frame payloads pinned by test/frames.golden.
+Trigger and capability frames today; new wire frames add cases here."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal)))
+    ;; Batch Emacs is disconnected, so these registers never send.
+    (eabp-trigger-register "power-sync" :type "power"
+                           :params '((state . "connected"))
+                           :policy "wake" :dedupe "power-sync" :throttle-s 60
+                           :on-fire [((cap . "flashlight")
+                                      (args . ((on . t))))])
+    (eabp-trigger-register "screen-off" :type "screen"
+                           :params '((state . "off")))
+    (list
+     `((kind . "triggers.set")
+       (payload . ((triggers . ,(eabp-triggers--specs)))))
+     '((kind . "capability.invoke")
+       (payload . ((cap . "settings.open")
+                   (args . ((panel . "wifi")))))))))
+
+(defun eabp-tests--frame-lines ()
+  (let ((i -1))
+    (mapcar (lambda (c)
+              (setq i (1+ i))
+              (format "%02d %s" i
+                      (json-serialize (eabp-tests--canon c)
+                                      :null-object :null
+                                      :false-object :false)))
+            (eabp-tests--frame-cases))))
+
+(defun eabp-tests-regen-frame-golden ()
+  "Rewrite the frame golden snapshot from the current senders.
+Only run this after an INTENTIONAL wire-format change; review the diff."
+  (with-temp-file eabp-tests--frames-golden-file
+    (insert (string-join (eabp-tests--frame-lines) "\n") "\n"))
+  (message "Wrote %s" eabp-tests--frames-golden-file))
+
+(ert-deftest eabp-frames-wire-format ()
+  "Trigger/capability frame payloads match the committed golden snapshot."
+  (should (file-readable-p eabp-tests--frames-golden-file))
+  (should (equal (eabp-tests--frame-lines)
+                 (split-string
+                  (with-temp-buffer
+                    (insert-file-contents eabp-tests--frames-golden-file)
                     (buffer-string))
                   "\n" t))))
 

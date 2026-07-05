@@ -52,21 +52,18 @@ rules consolidated in CONTRIBUTING.md.
 
 ---
 
-## Horizon 0 — close the loop (do before anything new)
+## Horizon 0 — ✅ closed 2026-07-05
 
-| item | why now |
-|---|---|
-| On-device verification: magit commit end-to-end, diff shading, live compile refresh (PRIM residue) | Last unverified work; the commit chain touches minibuffer/witheditor/transient — the exact plumbing later tasks assume solid |
+On-device verification done: magit commit end-to-end, diff shading,
+live compile refresh (PRIM residue). Stays deferred deliberately:
+PRIM Task 15 (point/region indication — optional polish); PRIM
+inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 
-Stays deferred deliberately: PRIM Task 15 (point/region indication —
-optional polish); PRIM inline-images follow-up is absorbed by PKM 9 in
-Horizon 4.
-
-## Horizon 1 — protocol seams + three quick wins
+## Horizon 1 — protocol seams + three quick wins (current)
 
 | order | item | why |
 |---|---|---|
-| 1 | **AUTO 1 + AUTO 2** — `triggers.set` / `trigger.fired` spec; `capability.invoke` + device-permission map | The fan-out maximum: unblocks AUTO 3–13 and PKM 9. Paper + stubs, low risk |
+| 1 ✅ | **AUTO 1 + AUTO 2** — `triggers.set` / `trigger.fired` spec; `capability.invoke` + device-permission map | Landed 2026-07-05: SPEC §10–§11, `eabp-triggers.el`, capability helpers, `DeviceCapabilities.kt` (`settings.open` first), `frames.golden` |
 | 2 (par.) | **AUTO 3 + AUTO 4** — intent escape hatch; permission-free effectors | First Tasker value, days not weeks, instantly gratifying from the eval REPL; exercises the new channel end-to-end |
 | 2 (par.) | **AUTO 14 (launcher Task 14)** — `eabp-defapp` + home + per-app chrome | Pure elisp, zero behavior change single-app — and every Tier 1 built afterwards (Automations view, saved views) is *born* app-grouped instead of retrofitted |
 
@@ -138,14 +135,14 @@ PKM 16 is the exception and already lives in H2.
 
 ## The next five concrete actions
 
-1. On-device: run the magit commit chain end-to-end (H0).
-2. AUTO 1 + 2: write SPEC §11 + the capability section; land the
+1. AUTO 1 + 2: write SPEC §11 + the capability section; land the
    Emacs/Kotlin stubs.
-3. AUTO 3 + 4: `DeviceCapabilities.kt` + `eabp-device.el`, effectors
+2. AUTO 3 + 4: `DeviceCapabilities.kt` + `eabp-device.el`, effectors
    green from the REPL.
-4. AUTO 14: `eabp-defapp` + home view, Glasspane as the first app,
+3. AUTO 14: `eabp-defapp` + home view, Glasspane as the first app,
    zero visible change single-app.
-5. AUTO 6: trigger table + boot receiver + firing pipeline.
+4. AUTO 6: trigger table + boot receiver + firing pipeline.
+5. AUTO 7: trigger batch 1 (time/power/battery/screen/…).
 
 ## Standing gates (checked at every horizon boundary)
 

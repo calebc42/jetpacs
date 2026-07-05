@@ -1,12 +1,8 @@
 package com.calebc42.eabp
 
-import android.Manifest
-import android.app.AlarmManager
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
-import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.Socket
@@ -40,9 +36,12 @@ class EabpConnection(
 
     // What the companion can offer in v0. Anything Emacs `wants` that isn't here
     // is simply not granted — the forward-compat mechanism from the spec.
+    // `triggers` stays ungranted until the trigger host exists (automation
+    // plan Task 6): granting it would invite triggers.set frames nothing
+    // here can honor yet, and the client gates its pushes on the grant.
     private val supported = setOf(
         "surfaces.widget", "surfaces.notification", "surfaces.dialog",
-        "capabilities", "triggers", "queue.replay",
+        "capabilities", "queue.replay",
     )
 
     fun start() {
@@ -172,7 +171,11 @@ class EabpConnection(
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 
-            // capability.*, trigger.*, state.* dispatch lands in later phases.
+            // The Emacs → device effector channel (SPEC §10).
+            Kind.CAPABILITY_INVOKE -> handleCapabilityInvoke(frame)
+
+            // triggers.set handling lands with the trigger host (automation
+            // plan Task 6); until then `triggers` is not granted above.
             else -> send(error(frame.id, "spec-invalid", "unhandled kind '${frame.kind}'"))
         }
     }
@@ -243,10 +246,15 @@ class EabpConnection(
                 put("server_proof",
                     EabpAuth.hmacHex(token, "eabp1:server:$clientNonce:$serverNonce"))
                 put("granted", JSONArray(granted))
-                put("permissions", JSONObject().apply {
-                    put("post_notifications", hasNotificationPermission())
-                    put("exact_alarms", canScheduleExactAlarms())
-                })
+                // The device report (SPEC §10): what capability.invoke can
+                // do here, and the permission map so elisp degrades
+                // gracefully instead of invoking blind.
+                if ("capabilities" in granted) {
+                    put("device", JSONObject().apply {
+                        put("caps", JSONArray(DeviceCapabilities.names()))
+                        put("perms", DeviceCapabilities.permissionMap(context))
+                    })
+                }
                 put("surfaces", surfaces.revisionSnapshot())
                 put("queued_events", dbCount)
             },
@@ -348,6 +356,40 @@ class EabpConnection(
         }
     }.getOrNull()
 
+    /**
+     * SPEC §10: run a device capability and reply with `capability.result`
+     * or a typed error the client can act on (grey out, deep-link to the
+     * grant screen). Runs on the read-loop thread; capabilities must stay
+     * quick or hop threads themselves.
+     */
+    private fun handleCapabilityInvoke(frame: Frame) {
+        val cap = frame.payload.optString("cap")
+        val args = frame.payload.optJSONObject("args") ?: JSONObject()
+        try {
+            val result = DeviceCapabilities.invoke(context, cap, args)
+            send(Frame(
+                kind = Kind.CAPABILITY_RESULT,
+                replyTo = frame.id,
+                payload = JSONObject().apply {
+                    put("ok", true)
+                    if (result.length() > 0) put("result", result)
+                },
+            ))
+        } catch (e: CapabilityException) {
+            Log.i(TAG, "capability.invoke $cap failed: ${e.code} (${e.message})")
+            send(Frame(
+                kind = Kind.ERROR,
+                replyTo = frame.id,
+                payload = JSONObject().apply {
+                    put("code", e.code)
+                    put("detail", e.message)
+                    e.perm?.let { put("perm", it) }
+                    e.settings?.let { put("settings", it) }
+                },
+            ))
+        }
+    }
+
     private fun error(replyTo: String?, code: String, detail: String): Frame =
         Frame(
             kind = Kind.ERROR,
@@ -357,19 +399,6 @@ class EabpConnection(
                 put("detail", detail)
             },
         )
-
-    private fun hasNotificationPermission(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.POST_NOTIFICATIONS,
-            ) == PackageManager.PERMISSION_GRANTED
-        } else true
-
-    private fun canScheduleExactAlarms(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            am.canScheduleExactAlarms()
-        } else true
 
     fun shutdown() {
         if (!running) return

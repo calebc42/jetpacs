@@ -1,0 +1,2 @@
+00 {"kind":"triggers.set","payload":{"triggers":[{"dedupe":"power-sync","id":"power-sync","on_fire":[{"args":{"on":true},"cap":"flashlight"}],"params":{"state":"connected"},"policy":"wake","throttle_s":60,"type":"power"},{"id":"screen-off","params":{"state":"off"},"type":"screen"}]}}
+01 {"kind":"capability.invoke","payload":{"args":{"panel":"wifi"},"cap":"settings.open"}}

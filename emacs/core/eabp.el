@@ -252,6 +252,8 @@ by the transport itself and cannot be overridden here."
     ;; Bare acks (e.g. to fire-and-forget surface.updates) are expected
     ;; noise; anything that wanted the ack used `eabp-request'.
     ("ack" nil)
+    ;; Reply-only kind: consumed by the pending map above (SPEC §10).
+    ("capability.result" nil)
     ("queue.drained"
      (message "EABP: replay complete (%s delivered, %s expired)"
               (or (alist-get 'delivered payload) 0)
@@ -294,6 +296,51 @@ or wrong — nothing is trusted from an unproven peer."
       ;; on a coherent state.
       (when (> queued 0)
         (eabp-send "queue.replay")))))
+
+;; ─── Session queries & device capabilities (SPEC §10) ────────────────────────
+
+(defun eabp-granted-p (capability)
+  "Non-nil when the current session granted CAPABILITY (a string).
+Layers gate their pushes on this: a companion that doesn't grant
+`triggers' never receives a `triggers.set', per the negotiation rule."
+  (and eabp--session
+       (member capability (alist-get 'granted eabp--session))
+       t))
+
+(defun eabp-device-caps ()
+  "Capability names invocable via `eabp-capability-invoke', or nil.
+From the welcome's `device' report; empty until a session with the
+`capabilities' grant is up."
+  (alist-get 'caps (alist-get 'device eabp--session)))
+
+(defun eabp-device-cap-p (cap)
+  "Non-nil when the companion offers device capability CAP (a string)."
+  (and (member cap (eabp-device-caps)) t))
+
+(defun eabp-device-can-p (perm)
+  "Non-nil when the companion reports device permission PERM as granted.
+PERM is a string or symbol keying the welcome's `device.perms' map,
+e.g. \"write_settings\".  The map is a welcome-time snapshot — the
+companion re-checks at invoke time, so this is for degrading UI
+gracefully, not for enforcement."
+  (eq t (alist-get (if (symbolp perm) perm (intern perm))
+                   (alist-get 'perms (alist-get 'device eabp--session)))))
+
+(defun eabp-capability-invoke (cap &optional args callback)
+  "Invoke device capability CAP (a string) with plain-data alist ARGS.
+CALLBACK, when non-nil, receives (OK PAYLOAD): OK is non-nil iff the
+invoke succeeded; PAYLOAD is the `capability.result' payload on
+success, or the error payload (`code', `detail', and for
+cap-permission possibly `perm' / `settings') on failure.  When
+disconnected the frame is dropped like any other request."
+  (eabp-request "capability.invoke"
+                `((cap . ,cap)
+                  (args . ,(or args (make-hash-table :test 'equal))))
+                (lambda (payload)
+                  (when callback
+                    (funcall callback
+                             (eq t (alist-get 'ok payload))
+                             payload)))))
 
 ;; ─── Connection lifecycle ────────────────────────────────────────────────────
 

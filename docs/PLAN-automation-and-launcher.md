@@ -1,6 +1,10 @@
 # Plan: Device automation (Tasker parity) & the Glasspane launcher
 
-**STATUS (2026-07-05): draft — audit done, no tasks started.**
+**STATUS (2026-07-05): in progress — Phase P (Tasks 1–2) landed
+2026-07-05; everything else not started.** Note: Kotlin file paths below
+predate the `:eabp`/`:app` module split — protocol code now lives under
+`eabp/src/main/java/com/calebc42/eabp/` (rule: protocol → `:eabp`,
+opinion → `:app`).
 
 Produced 2026-07-05 from an audit of the repo against two visions:
 
@@ -152,7 +156,14 @@ For the launcher vision:
 
 ## Phase P — protocol groundwork (paper first, both tracks blocked on it)
 
-### Task 1: Specify `triggers.set` and trigger delivery
+### Task 1: Specify `triggers.set` and trigger delivery ✅ (2026-07-05)
+
+**Landed:** SPEC §11; `emacs/core/eabp-triggers.el` (registry,
+replace-set push gated on the `triggers` grant, `trigger.fired`
+dispatch); `test/frames.golden` pins the frame shape; ERT covers
+push/gate/fire. The companion deliberately stopped claiming `triggers`
+in its supported set until Task 6 lands, so the client's grant gate
+holds.
 
 **Goal:** a spec section (SPEC §11) both sides implement against.
 
@@ -181,7 +192,14 @@ is plain JSON (SSID string, battery pct) — never anything executable.
 shape; `eabp-triggers.el` can send a set and receive a fire against a
 fake server in ERT.
 
-### Task 2: `capability.invoke` + device-permission report
+### Task 2: `capability.invoke` + device-permission report ✅ (2026-07-05)
+
+**Landed:** SPEC §10; `eabp-capability-invoke` / `eabp-device-can-p` /
+`eabp-device-cap-p` / `eabp-granted-p` in `emacs/core/eabp.el`;
+`DeviceCapabilities.kt` dispatch seam with `settings.open` as the first
+capability; welcome carries `device: {caps, perms}` (7-key perm map,
+gated on the `capabilities` grant), replacing the old ad-hoc
+`permissions` object.
 
 **Goal:** the Emacs → device effector channel, with graceful degrade.
 

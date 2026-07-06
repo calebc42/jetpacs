@@ -1665,8 +1665,9 @@ Needs Do Not Disturb access — see the Device permissions screen."
                     "android.settings.action.MANAGE_WRITE_SETTINGS")
     (notification_policy "Do Not Disturb access (ringer, DND, volume)"
                          "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS")
-    (notification_listener "Notification access (notification triggers)"
-                           "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+    ;; No grant link yet: the app appears in that system list only once
+    ;; the notification-listener service ships (automation plan Task 9).
+    (notification_listener "Notification access (feature not shipped yet)" nil)
     (fine_location "Location (Wi-Fi SSID triggers)" "app")
     (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app"))
   "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
@@ -1675,18 +1676,21 @@ Glasspane's own app-info page (runtime permissions live there).")
 
 (defun eabp-device--perm-row (key label panel perms)
   (let ((granted (eq t (alist-get key perms))))
-    (eabp-row
-     (eabp-box
-      (list (eabp-column
-             (eabp-text label 'body)
-             (eabp-text (if granted "Granted" "Not granted") 'caption)))
-      :weight 1)
-     (unless granted
-       (eabp-button "Grant"
-                    (eabp-action "device.perm.open"
-                                 :args `((panel . ,panel))
-                                 :when-offline "drop")
-                    :variant "text")))))
+    (apply #'eabp-row
+           (delq nil
+                 (list
+                  (eabp-box
+                   (list (eabp-column
+                          (eabp-text label 'body)
+                          (eabp-text (if granted "Granted" "Not granted")
+                                     'caption)))
+                   :weight 1)
+                  (when (and panel (not granted))
+                    (eabp-button "Grant"
+                                 (eabp-action "device.perm.open"
+                                              :args `((panel . ,panel))
+                                              :when-offline "drop")
+                                 :variant "text")))))))
 
 (defun eabp-device-permissions-dialog ()
   "Show the device-permission map with grant deep-links.

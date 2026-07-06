@@ -29,6 +29,21 @@
     <!-- `network` triggers (SPEC §11): the default-network callback. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Special access the effectors gate on (SPEC §10). DECLARING these
+         is what makes the app appear in the system grant screens at all —
+         without the declaration the "Modify system settings" / "Do Not
+         Disturb access" lists simply omit it. Nothing is granted by
+         declaration alone; the user flips the toggle. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
+    <!-- Runtime permissions the connectivity triggers use (wifi.ssid /
+         bluetooth.device, SPEC §11). Declared so the rows exist under
+         App info → Permissions; granted there (or via a future runtime
+         prompt), never silently. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
     <!-- Android 11 package visibility: without these, `apps.list` returns
          nothing and TTS finds no engine. -->
     <queries>

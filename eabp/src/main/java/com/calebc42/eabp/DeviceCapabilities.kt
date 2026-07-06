@@ -136,7 +136,13 @@ object DeviceCapabilities {
                 throw CapabilityException("cap-failed", "settings.open: unknown panel '$panel'")
         }
         val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (panel == "app") intent.data = Uri.parse("package:${context.packageName}")
+        // Screens that support a per-app deep link get one — landing on
+        // this app's own toggle instead of a list to hunt through. (The
+        // DND-access screen takes no package and always shows the list.)
+        if (panel == "app" ||
+            action == "android.settings.action.MANAGE_WRITE_SETTINGS" ||
+            action == "android.settings.REQUEST_SCHEDULE_EXACT_ALARM"
+        ) intent.data = Uri.parse("package:${context.packageName}")
         try {
             context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {

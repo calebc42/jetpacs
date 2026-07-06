@@ -2398,6 +2398,29 @@ a full id link via the candidate `insert' attr."
     ;; No id in the ref → no section at all.
     (should-not (glasspane-notes-detail-nodes '((file . "/v/x.org"))))))
 
+(ert-deftest glasspane-demo-link-graph-consistent ()
+  "The demo corpus's id links resolve to real :ID: properties, and the
+unlinked-mention fixtures ('Babel playground', 'Grace Hopper') appear
+as plain text — the on-device backlink checks depend on this graph."
+  (let ((ids nil) (targets nil))
+    (dolist (entry glasspane-demo--org-files)
+      (let ((content (cdr entry)) (pos 0))
+        (while (string-match ":ID:[ \t]+\\([0-9a-f-]+\\)" content pos)
+          (push (match-string 1 content) ids)
+          (setq pos (match-end 0)))
+        (setq pos 0)
+        (while (string-match "\\[\\[id:\\([0-9a-f-]+\\)\\]" content pos)
+          (push (match-string 1 content) targets)
+          (setq pos (match-end 0)))))
+    (should (>= (length targets) 3))
+    (dolist (target targets)
+      (should (member target ids))))
+  (let ((project (cdr (assoc "project.org" glasspane-demo--org-files)))
+        (notes (cdr (assoc "notes.org" glasspane-demo--org-files))))
+    ;; Mentions must be plain text, not links.
+    (should (string-search "Babel playground over" project))
+    (should (string-search "Grace Hopper would" notes))))
+
 (ert-deftest glasspane-notes-materialize-links-mention ()
   "link.materialize rewrites the mention line into a real id link."
   (let ((file (make-temp-file "eabp-mention" nil ".org")))

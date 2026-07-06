@@ -192,8 +192,12 @@ becomes "verify before H4" rather than "verify before H3".
 - [ ] **Wikilinks:** in the phone editor type `[[` in an org file —
       the strip offers notes immediately; typing narrows; accepting
       inserts `[[id:…][Title]]`. Offline `[[` completes nothing.
-- [ ] **Backlinks:** open a heading with an ID that other notes link
-      to — "Linked references (n)" lists them, cards open the source;
-      "Find mentions" runs the ripgrep pass (needs `rg` from Termux)
-      and "Link it" rewrites the mention into a real link (verify the
-      source file).
+- [ ] **Backlinks (the demo corpus is the fixture — run
+      `M-x glasspane-demo-setup-org` first):** open "Mobile companion
+      app" (project.org) → "Linked references (1)" shows Alan Kay's
+      quote; "Calculus — the Gaussian integral" is linked from the
+      LaTeX-previews task. On "Babel playground" (notes.org), "Find
+      mentions" (needs `rg` from Termux: `pkg install ripgrep`) finds
+      the plain-text mention in project.org's build-size section;
+      "Link it" rewrites it into an id link — verify the file. "Grace
+      Hopper" (quotes.org) has a second mention fixture in notes.org.

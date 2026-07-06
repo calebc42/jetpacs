@@ -15052,6 +15052,7 @@ CLOSED: [2026-07-04 Sat 18:30]
 :PROPERTIES:
 :ID:       c8d7b18d-de46-4934-aab4-ef46096a4de5
 :END:
+Fixtures live in [[id:53e5ad9b-a66d-480b-b91a-050f526515ab][Calculus — the Gaussian integral]].
 *** TODO Transcluded sections
 :PROPERTIES:
 :ID:       71a8da2a-c295-4b30-807b-bb845bf72fd7
@@ -15070,7 +15071,8 @@ SCHEDULED: <2026-08-01 Sat>
 :PROPERTIES:
 :ID:       5e097c4d-442a-4376-b691-7b513864a666
 :END:
-Run the block to regenerate the table below it.
+Run the block to regenerate the table below it — the same trick as the
+Babel playground over in the study notes.
 
 #+begin_src emacs-lisp :results table
 (mapcar (lambda (r) (list (car r) (cdr r)))
@@ -15156,6 +15158,8 @@ The definite integral every statistics course leans on:
 Inline fragments work too: the normal density peaks at
 \\(1/\\sqrt{2\\pi\\sigma^2}\\).
 
+Related: [[id:94bff2e9-8e82-40d5-9403-b9278cc3a1ec][Physics — mass–energy equivalence]]
+
 * Physics — mass–energy equivalence                                :physics:
 :PROPERTIES:
 :ID:       94bff2e9-8e82-40d5-9403-b9278cc3a1ec
@@ -15182,6 +15186,7 @@ Alignment cookies pin each column: left, center, right.
 :ID:       ba4b6d51-efe5-44b7-a702-a302d5c3e27d
 :END:
 Tap the play button on a block to execute it in Emacs on this device.
+Grace Hopper would have insisted on a shell block, so there is one below.
 
 #+begin_src emacs-lisp
 (emacs-version)
@@ -15235,6 +15240,7 @@ Captured: [2026-05-15 Fri 08:30]
 The best way to predict the future is to /invent/ it.
 #+end_quote
 Captured: [2026-05-28 Thu 14:22]
+A fitting motto for the [[id:f95e563c-62e9-4c8a-bff6-eef9194f9660][Mobile companion app]].
 
 * Grace Hopper
 :PROPERTIES:

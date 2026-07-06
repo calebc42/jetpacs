@@ -2398,6 +2398,44 @@ a full id link via the candidate `insert' attr."
     ;; No id in the ref → no section at all.
     (should-not (glasspane-notes-detail-nodes '((file . "/v/x.org"))))))
 
+(ert-deftest glasspane-notes-ref-id-resolves-from-heading ()
+  "A reader-built ref (file/pos, no id) still finds the heading's :ID:,
+so drilled-into child headings get their backlink section."
+  (let ((file (make-temp-file "eabp-refid" nil ".org")))
+    (with-temp-file file
+      (insert "* Parent\n** Child heading\n:PROPERTIES:\n"
+              ":ID: child-id-42\n:END:\nBody.\n"))
+    (unwind-protect
+        (let ((pos (with-current-buffer (find-file-noselect file)
+                     (org-with-wide-buffer
+                      (goto-char (point-min))
+                      (search-forward "** Child")
+                      (line-beginning-position)))))
+          (should (equal (glasspane-notes--ref-id
+                          `((file . ,file) (pos . ,pos)
+                            (headline . "Child heading")))
+                         "child-id-42"))
+          ;; And a ref that already carries the id short-circuits.
+          (should (equal (glasspane-notes--ref-id '((id . "direct")))
+                         "direct")))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest glasspane-notes-mention-card-path-from-note ()
+  "Mention cards take the path from the mentioning note — vulpea's
+resolve plists don't reliably carry :path."
+  (eabp-tests--with-fake-vulpea nil
+    (let ((json (json-serialize
+                 (eabp-tests--canon
+                  (glasspane-notes--mention-card
+                   '(:note (:id "src" :title "Source note" :path "/v/src.org")
+                     :line 7 :context "the mention line" :matched "Target")
+                   "target-id"))
+                 :null-object :null :false-object :false)))
+      (should (string-search "/v/src.org" json))
+      (should (string-search "link.materialize" json))
+      (should (string-search "\"line\":7" json)))))
+
 (ert-deftest glasspane-demo-link-graph-consistent ()
   "The demo corpus's id links resolve to real :ID: properties, and the
 unlinked-mention fixtures ('Babel playground', 'Grace Hopper') appear

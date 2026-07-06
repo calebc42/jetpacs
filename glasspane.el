@@ -14547,13 +14547,17 @@ Dropped wholesale by the cache seam.")
                         :when-offline "drop")))
 
 (defun glasspane-notes--mention-card (mention note-id)
-  "A card for MENTION (:note :path :line :context :matched plist)."
-  (let ((source (plist-get mention :note)))
+  "A card for MENTION (:note :line :context :matched plist).
+The path comes from the mentioning note — vulpea's resolve plists
+document a :path key but don't reliably carry one."
+  (let* ((source (plist-get mention :note))
+         (path (or (plist-get mention :path)
+                   (and source (vulpea-note-path source)))))
     (eabp-card
      (list
       (eabp-column
        (eabp-text (if source (vulpea-note-title source)
-                    (file-name-nondirectory (or (plist-get mention :path) "")))
+                    (file-name-nondirectory (or path "")))
                   'body)
        (eabp-text (or (plist-get mention :context) "") 'caption)
        (eabp-row
@@ -14561,19 +14565,32 @@ Dropped wholesale by the cache seam.")
         (eabp-button "Link it"
                      (eabp-action "link.materialize"
                                   :args `((id . ,note-id)
-                                          (path . ,(plist-get mention :path))
+                                          (path . ,path)
                                           (line . ,(plist-get mention :line))
                                           (matched . ,(plist-get mention :matched)))
                                   :when-offline "queue")
                      :variant "text" :icon "link"))))
-     :on-tap (when-let ((path (plist-get mention :path)))
+     :on-tap (when path
                (eabp-action "files.open" :args `((file . ,path))
                             :when-offline "drop")))))
 
+(defun glasspane-notes--ref-id (ref)
+  "REF's org ID: carried in the ref, or read from the heading itself.
+Reader-built drill-in refs carry only file/pos, so a child heading
+with an :ID: still gets its backlink section."
+  (or (alist-get 'id ref)
+      (condition-case nil
+          (let ((marker (glasspane-org--resolve-ref ref)))
+            (with-current-buffer (marker-buffer marker)
+              (org-with-wide-buffer
+               (goto-char marker)
+               (org-entry-get nil "ID"))))
+        (error nil))))
+
 (defun glasspane-notes-detail-nodes (ref)
-  "Backlink section nodes for the detail REF (needs an `id'), or nil."
+  "Backlink section nodes for the detail REF (needs an org ID), or nil."
   (when-let* (((glasspane-notes-available-p))
-              (id (alist-get 'id ref)))
+              (id (glasspane-notes--ref-id ref)))
     (let* ((backlinks (condition-case nil
                           (vulpea-db-query-by-links-some (list id))
                         (error nil)))
@@ -14634,28 +14651,37 @@ Dropped wholesale by the cache seam.")
   ;; Replace the first un-linked occurrence of MATCHED on LINE in PATH
   ;; with a real id link.  Titles match case-insensitively (search UX);
   ;; the replacement keeps the text exactly as written in the file.
+  ;; Every failure path answers with a snackbar — a tap that silently
+  ;; does nothing is a bug class, not an outcome.
   (lambda (args _)
     (let ((id (alist-get 'id args))
           (path (alist-get 'path args))
           (line (alist-get 'line args))
           (matched (alist-get 'matched args)))
-      (when (and (stringp id) (stringp path) (integerp line)
-                 (stringp matched) (not (string-empty-p matched))
-                 (file-writable-p path))
+      (cond
+       ((not (and (stringp id) (stringp path) (integerp line)
+                  (stringp matched) (not (string-empty-p matched))))
+        (eabp-shell-notify "Couldn't link — mention data incomplete"))
+       ((not (file-writable-p path))
+        (eabp-shell-notify (format "Couldn't link — %s not writable"
+                                   (file-name-nondirectory path))))
+       (t
         (with-current-buffer (find-file-noselect path)
           (org-with-wide-buffer
            (goto-char (point-min))
            (forward-line (1- line))
            (let ((end (line-end-position))
                  (case-fold-search t))
-             (when (search-forward matched end t)
+             (if (not (search-forward matched end t))
+                 (eabp-shell-notify
+                  "Couldn't find the mention — file changed? Refresh and retry")
                (replace-match (format "[[id:%s][%s]]" id (match-string 0))
                               t t)
                (let ((save-silently t)) (save-buffer))
                (remhash id glasspane-notes--mentions)
                (glasspane-org-cache-invalidate)
-               (eabp-shell-notify "Linked")
-               (eabp-shell-push)))))))))
+               (eabp-shell-notify "Linked")))))))
+      (eabp-shell-push))))
 
 (add-hook 'eabp-shell-refresh-hook
           (lambda () (clrhash glasspane-notes--mentions)))

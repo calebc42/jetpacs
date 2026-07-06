@@ -28,7 +28,7 @@ object Kind {
     const val FONTIFY_SHOW = "fontify.show"
     const val CAPABILITY_INVOKE = "capability.invoke"
     const val CAPABILITY_RESULT = "capability.result"
-    // Reserved by SPEC §11; handled once the trigger host lands (AUTO Task 6).
+    // SPEC §11 replace-set; routed to [TriggerHost.replaceSet].
     const val TRIGGERS_SET = "triggers.set"
 }
 

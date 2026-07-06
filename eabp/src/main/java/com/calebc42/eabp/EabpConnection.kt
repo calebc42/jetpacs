@@ -255,13 +255,22 @@ class EabpConnection(
                 put("server_proof",
                     EabpAuth.hmacHex(token, "eabp1:server:$clientNonce:$serverNonce"))
                 put("granted", JSONArray(granted))
-                // The device report (SPEC §10): what capability.invoke can
-                // do here, and the permission map so elisp degrades
-                // gracefully instead of invoking blind.
-                if ("capabilities" in granted) {
+                // The device report (SPEC §10–§11): what capability.invoke
+                // can do here, the permission map so elisp degrades
+                // gracefully instead of invoking blind, and the trigger-type
+                // catalog so the client can skip a registration this
+                // companion would reject (one unknown type must never cost
+                // the whole replace-set).
+                if ("capabilities" in granted || "triggers" in granted) {
                     put("device", JSONObject().apply {
-                        put("caps", JSONArray(DeviceCapabilities.names()))
-                        put("perms", DeviceCapabilities.permissionMap(context))
+                        if ("capabilities" in granted) {
+                            put("caps", JSONArray(DeviceCapabilities.names()))
+                            put("perms", DeviceCapabilities.permissionMap(context))
+                        }
+                        if ("triggers" in granted) {
+                            put("trigger_types",
+                                JSONArray(TriggerHost.SUPPORTED_TYPES.sorted()))
+                        }
                     })
                 }
                 put("surfaces", surfaces.revisionSnapshot())

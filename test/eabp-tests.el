@@ -1558,10 +1558,13 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
 ;; ─── Triggers & device capabilities (SPEC §10–§11) ──────────────────────────
 
 (ert-deftest eabp-triggers-replace-set-push ()
-  "Registering triggers pushes the full replace-set, id-sorted, nils omitted."
+  "Registering triggers pushes the full replace-set, id-sorted, nils omitted.
+Register-time pushes are debounced (a burst is one frame);
+`eabp-triggers-push-now' is the flush."
   (let ((eabp-triggers--table (make-hash-table :test 'equal))
         (eabp--session '((granted . ("triggers"))))
         (eabp-triggers-changed-hook nil)  ; isolate from the app's re-push
+        (eabp-triggers--push-timer nil)
         (sent nil))
     (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
               ((symbol-function 'eabp-send)
@@ -1571,8 +1574,13 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
       (eabp-trigger-register "t1" :type "power"
                              :params '((state . "connected"))
                              :policy "wake" :throttle-s 60)
-      ;; One push per register; the latest carries both, sorted by id.
-      (should (= (length sent) 2))
+      ;; The burst is pending, not sent; the flush emits ONE frame
+      ;; carrying both, sorted by id.
+      (should-not sent)
+      (should (timerp eabp-triggers--push-timer))
+      (eabp-triggers-push-now)
+      (should (= (length sent) 1))
+      (should-not eabp-triggers--push-timer)
       (should (equal (caar sent) "triggers.set"))
       (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
         (should (= (length specs) 2))
@@ -1586,6 +1594,7 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
       ;; Unregistering pushes the shrunken set (never fires stale).
       (setq sent nil)
       (eabp-trigger-unregister "t1")
+      (eabp-triggers-push-now)
       (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
         (should (= (length specs) 1))
         (should (equal (alist-get 'id (car specs)) "t2"))))))
@@ -1600,7 +1609,45 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
               ((symbol-function 'eabp-send)
                (lambda (kind &rest _) (push kind sent))))
       (eabp-trigger-register "t" :type "power")
+      (eabp-triggers-push-now)          ; flush past the debounce
       (should-not sent))))
+
+(ert-deftest eabp-triggers-unsupported-type-skipped ()
+  "A type the companion can't host is skipped, never pushed.
+The companion rejects a replace-set wholesale on an unknown type, so
+one too-new registration must cost itself, not the whole set — checked
+against both the static batch-1 catalog and a welcome-reported one."
+  (let ((eabp-triggers--table (make-hash-table :test 'equal))
+        (eabp--session '((granted . ("triggers"))))
+        (eabp-triggers-changed-hook nil)
+        (eabp-triggers--push-timer nil)
+        (sent nil))
+    (cl-letf (((symbol-function 'eabp-connected-p) (lambda () t))
+              ((symbol-function 'eabp-send)
+               (lambda (kind payload &rest _)
+                 (push (cons kind payload) sent))))
+      (eabp-trigger-register "ok" :type "power")
+      (eabp-trigger-register "too-new" :type "wifi.ssid")
+      ;; The fallback catalog governs: wifi.ssid stays home.
+      (eabp-triggers-push-now)
+      (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
+        (should (equal (mapcar (lambda (s) (alist-get 'id s)) specs)
+                       '("ok"))))
+      ;; A companion that reports the type gets it.
+      (setq eabp--session '((granted . ("triggers"))
+                            (device . ((trigger_types . ("power" "wifi.ssid"))))))
+      (eabp-triggers-push-now)
+      (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
+        (should (equal (mapcar (lambda (s) (alist-get 'id s)) specs)
+                       '("ok" "too-new"))))
+      ;; And one that reports a catalog WITHOUT a batch-1 type wins too:
+      ;; the report is authoritative in both directions.
+      (setq eabp--session '((granted . ("triggers"))
+                            (device . ((trigger_types . ("wifi.ssid"))))))
+      (eabp-triggers-push-now)
+      (let ((specs (append (alist-get 'triggers (cdar sent)) nil)))
+        (should (equal (mapcar (lambda (s) (alist-get 'id s)) specs)
+                       '("too-new")))))))
 
 (ert-deftest eabp-triggers-fire-dispatch ()
   "An inbound trigger.fired event.action reaches the per-id handler."
@@ -2149,6 +2196,25 @@ input id (the server-driven field clear)."
       (should (string-search "Unscheduled" json))
       (should (string-search "Ship it" json)))))
 
+(ert-deftest glasspane-views-board-includes-file-local-keywords ()
+  "A TODO state the global keyword list doesn't know still gets a
+column — cards with file-local #+TODO: keywords must not silently
+vanish from the board."
+  (let ((org-todo-keywords-1 '("TODO" "DONE"))
+        (items '(((headline . "Global") (todo . "TODO")
+                  (ref . ((file . "/tmp/a.org") (pos . 1))))
+                 ((headline . "Waiting on Bob") (todo . "WAIT")
+                  (ref . ((file . "/tmp/b.org") (pos . 1))))
+                 ((headline . "Stateless")
+                  (ref . ((file . "/tmp/b.org") (pos . 9)))))))
+    (should (equal (glasspane-views--board-columns items)
+                   '("TODO" "WAIT" "")))
+    (let ((json (json-serialize (eabp-tests--canon
+                                 (glasspane-views--board-node items))
+                                :null-object :null :false-object :false)))
+      (should (string-search "WAIT (1)" json))
+      (should (string-search "Waiting on Bob" json)))))
+
 (ert-deftest glasspane-views-save-open-delete ()
   "The save/open/rendering/delete lifecycle over the UI-state store."
   (let ((glasspane-saved-views nil)
@@ -2186,6 +2252,25 @@ input id (the server-driven field clear)."
       (eabp--on-action '((action . "views.delete") (args . ((name . "Work")))) nil)
       (should-not glasspane-saved-views)
       (should-not glasspane-views--current))))
+
+(ert-deftest glasspane-views-rendering-on-bare-entry ()
+  "views.rendering works on a hand-authored entry without a
+`rendering' key (the `repeat sexp' Customize type invites those) —
+the list is rebuilt, never mutated in place."
+  (let ((glasspane-saved-views '(((name . "Bare") (query . "todo:TODO"))))
+        (persisted 0))
+    (cl-letf (((symbol-function 'eabp-settings-save-variable)
+               (lambda (_sym _val) (cl-incf persisted) t))
+              ((symbol-function 'eabp-shell-push)
+               (cl-function (lambda (&optional _tab &key _switch-to)))))
+      (eabp--on-action '((action . "views.rendering")
+                         (args . ((name . "Bare") (rendering . "board"))))
+                       nil)
+      (should (equal (alist-get 'rendering (glasspane-views--get "Bare"))
+                     "board"))
+      (should (equal (alist-get 'query (glasspane-views--get "Bare"))
+                     "todo:TODO"))
+      (should (= persisted 1)))))
 
 (ert-deftest glasspane-views-end-to-end-render ()
   "A saved view renders real query results from an agenda file."
@@ -2240,7 +2325,11 @@ lowercase drawer parses (org case conventions)."
               ":PROPERTIES:\n:TRIGGER: screen off\n:END:\n"
               "* Not a rule\nJust some notes.\n"
               "* Bad type\n"
-              ":PROPERTIES:\n:TRIGGER: warp.drive on\n:END:\n")
+              ":PROPERTIES:\n:TRIGGER: warp.drive on\n:END:\n"
+              ;; Hardware-gated, not shipped: must be skipped, or its
+              ;; presence would poison the whole replace-set companion-side.
+              "* Home wifi\n"
+              ":PROPERTIES:\n:TRIGGER: wifi.ssid connected\n:END:\n")
     (let ((ids (glasspane-automations-reload)))
       (should (equal (sort (copy-sequence ids) #'string<)
                      '("org/Charge sync" "org/Low battery")))
@@ -2253,9 +2342,10 @@ lowercase drawer parses (org case conventions)."
       (let ((reg (gethash "org/Low battery" eabp-triggers--table)))
         (should (equal (plist-get reg :type) "battery.level"))
         (should (equal (plist-get reg :params) '((below . 20)))))
-      ;; DONE and unknown-type rules never registered.
+      ;; DONE and unknown/unshipped-type rules never registered.
       (should-not (gethash "org/Old rule" eabp-triggers--table))
-      (should-not (gethash "org/Bad type" eabp-triggers--table)))))
+      (should-not (gethash "org/Bad type" eabp-triggers--table))
+      (should-not (gethash "org/Home wifi" eabp-triggers--table)))))
 
 (ert-deftest glasspane-automations-handler-runs-and-reload-replaces ()
   "The src-block handler fires with `data' in scope; a reload drops
@@ -2354,12 +2444,19 @@ queries surface instead of blanking the file."
                  ,notes)))
              ((symbol-function 'vulpea-db-query-by-links-some)
               (lambda (_ids &optional _type) ,notes))
+             ((symbol-function 'vulpea-db-get-by-id)
+              (lambda (id)
+                (cl-find id ,notes
+                         :key (lambda (n) (plist-get n :id))
+                         :test #'equal)))
              ((symbol-function 'vulpea-note-id)
               (lambda (n) (plist-get n :id)))
              ((symbol-function 'vulpea-note-title)
               (lambda (n) (plist-get n :title)))
              ((symbol-function 'vulpea-note-path)
-              (lambda (n) (plist-get n :path))))
+              (lambda (n) (plist-get n :path)))
+             ((symbol-function 'vulpea-note-aliases)
+              (lambda (n) (plist-get n :aliases))))
      ,@body))
 
 (ert-deftest glasspane-notes-wikilink-completion ()
@@ -2476,6 +2573,44 @@ as plain text — the on-device backlink checks depend on this graph."
                            (insert-file-contents file) (buffer-string))))
             ;; Case-insensitive find, file's own casing preserved.
             (should (string-search "[[id:abc-1][paris trip]]" content))))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest glasspane-notes-materialize-without-matched ()
+  "link.materialize works from a real-shaped vulpea mention plist.
+Current vulpea resolve plists carry no :matched, so the action falls
+back to the note's title and aliases; occurrences already inside a
+link are skipped (the double-link guard)."
+  (let ((file (make-temp-file "eabp-mention" nil ".org")))
+    (with-temp-file file
+      (insert "* Notes\n"
+              "See [[id:abc-1][Paris trip]] and our paris trip plans.\n"
+              "The city of light features often.\n"))
+    (unwind-protect
+        (eabp-tests--with-fake-vulpea
+            '((:id "abc-1" :title "Paris trip" :path "/v/paris.org"
+                    :aliases ("City of Light")))
+          (cl-letf (((symbol-function 'eabp-shell-push)
+                     (cl-function (lambda (&optional _tab &key _switch-to)))))
+            ;; Line 2: the already-linked occurrence must be skipped;
+            ;; the plain one after it gets the link.
+            (eabp--on-action
+             `((action . "link.materialize")
+               (args . ((id . "abc-1") (path . ,file) (line . 2))))
+             nil)
+            ;; Line 3: no title on the line — the alias matches.
+            (eabp--on-action
+             `((action . "link.materialize")
+               (args . ((id . "abc-1") (path . ,file) (line . 3))))
+             nil)
+            (let ((content (with-temp-buffer
+                             (insert-file-contents file) (buffer-string))))
+              (should (string-search "See [[id:abc-1][Paris trip]] and"
+                                     content))
+              (should (string-search "[[id:abc-1][paris trip]] plans"
+                                     content))
+              (should (string-search "[[id:abc-1][city of light]] features"
+                                     content)))))
       (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
       (delete-file file))))
 

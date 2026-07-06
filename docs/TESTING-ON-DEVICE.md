@@ -201,3 +201,31 @@ becomes "verify before H4" rather than "verify before H3".
       the plain-text mention in project.org's build-size section;
       "Link it" rewrites it into an id link — verify the file. "Grace
       Hopper" (quotes.org) has a second mention fixture in notes.org.
+
+## 10. 2026-07-06 review fixes (needs a fresh APK + bundle)
+
+- [ ] **Vulpea vintage:** the vulpea installed on the device matches
+      the WSL checkout at `~/pkb/resources/emacs/vulpea` — both
+      "Link it" paths (wire `matched` vs the title/alias fallback)
+      assume its mention-plist shape (`:note :path :line :context`,
+      no `:matched`).
+- [ ] **Wikilink substring match:** type `[[integral` in the phone
+      editor over the demo corpus — the strip offers "Calculus — the
+      Gaussian integral" even though the title doesn't START with the
+      typed text; accepting inserts the full id link.
+- [ ] **Link it (no :matched):** the §9 backlinks item's "Link it" now
+      exercises the title/alias fallback — it rewrites the mention
+      line rather than answering "mention data incomplete"; on a line
+      whose mention was already linked by hand it answers "Couldn't
+      find the mention", never a nested link.
+- [ ] **Unsupported trigger type degrades:** add an automations.org
+      rule `:TRIGGER: wifi.ssid connected` → the skip message names
+      the rule, the Automations view still lists the others, and
+      logcat shows the replace-set landing without it. The welcome's
+      `device` object carries `trigger_types` (10 entries).
+- [ ] **Board with file-local keywords:** a saved board view over a
+      file with `#+TODO: WAIT | CANCELED` shows WAIT/CANCELED columns.
+- [ ] **Push debounce:** `M-x glasspane-automations-reload` with ~4
+      rules on a live session → logcat shows ONE `triggers.set`
+      (after ~0.2 s idle), not one per rule.
+

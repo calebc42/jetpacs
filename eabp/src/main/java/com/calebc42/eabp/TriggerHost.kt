@@ -12,6 +12,7 @@ import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
@@ -89,6 +90,9 @@ class TriggerHost(private val context: Context) {
     }
 
     /** Unregister everything (service teardown — receivers must not leak). */
+    // Synchronized like arm(): teardown races a replace-set on the read
+    // thread, and the receiver list must not be mutated from both sides.
+    @Synchronized
     fun shutdown() {
         disarmReceivers()
         armNetworkCallback(false)
@@ -331,7 +335,7 @@ class TriggerHost(private val context: Context) {
     companion object {
         private const val TAG = "EabpTriggerHost"
         private const val PREFS = "eabp_triggers"
-        private const val KEY_ALARM_CODES = "alarm_codes"
+        private const val KEY_ALARM_IDS = "alarm_ids"
         /** Repeating time triggers never fire more often than this. */
         private const val MIN_EVERY_S = 60L
 
@@ -471,18 +475,21 @@ class TriggerHost(private val context: Context) {
 
         /**
          * (Re)arm exact alarms for the `time` triggers: cancel the previous
-         * set (stable request codes in prefs, the [ReminderScheduler]
-         * pattern), then arm `{at_ms}` one-shots and `{every_s}` repeats
-         * (first fire one period from now; each fire re-arms the next —
-         * `setRepeating` has been inexact since KitKat).
+         * set (the armed trigger IDS persist in prefs, the
+         * [ReminderScheduler] pattern), then arm `{at_ms}` one-shots and
+         * `{every_s}` repeats (first fire one period from now; each fire
+         * re-arms the next — `setRepeating` has been inexact since KitKat).
          */
         internal fun armTimeAlarms(context: Context, timeRows: List<TriggerRow>) {
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            prefs.getStringSet(KEY_ALARM_CODES, emptySet())!!.forEach { code ->
-                code.toIntOrNull()?.let { am.cancel(alarmPending(context, it, "")) }
+            // Cancellation must rebuild the exact PendingIntent, so the
+            // full ids are stored — a request code alone can't reproduce
+            // the data URI that keeps colliding hashCodes apart.
+            prefs.getStringSet(KEY_ALARM_IDS, emptySet())!!.forEach { id ->
+                am.cancel(alarmPending(context, id.hashCode(), id))
             }
-            val codes = mutableSetOf<String>()
+            val ids = mutableSetOf<String>()
             val now = System.currentTimeMillis()
             for (row in timeRows) {
                 val p = runCatching { JSONObject(row.params) }.getOrDefault(JSONObject())
@@ -494,9 +501,9 @@ class TriggerHost(private val context: Context) {
                 }
                 if (at <= now) continue
                 scheduleAlarm(context, am, row.id, at)
-                codes.add(row.id.hashCode().toString())
+                ids.add(row.id)
             }
-            prefs.edit().putStringSet(KEY_ALARM_CODES, codes).apply()
+            prefs.edit().putStringSet(KEY_ALARM_IDS, ids).apply()
         }
 
         internal fun scheduleAlarm(context: Context, am: AlarmManager, id: String, at: Long) {
@@ -513,6 +520,10 @@ class TriggerHost(private val context: Context) {
         private fun alarmPending(context: Context, code: Int, id: String): PendingIntent {
             val intent = Intent(context, TriggerAlarmReceiver::class.java).apply {
                 action = "com.calebc42.eabp.TRIGGER_ALARM"
+                // The data URI participates in filterEquals (extras don't),
+                // so two ids whose hashCodes collide still get distinct
+                // PendingIntents instead of silently sharing one.
+                if (id.isNotEmpty()) data = Uri.parse("eabp-trigger:" + Uri.encode(id))
                 putExtra("trigger_id", id)
             }
             return PendingIntent.getBroadcast(

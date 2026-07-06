@@ -682,9 +682,16 @@ private fun CompletionStrip(
             val label = c.optString("label")
             // Case-insensitive narrowing — completion-strip convention;
             // the accepted candidate restores the canonical case anyway.
-            if (label.startsWith(effective, ignoreCase = true) &&
-                !label.equals(effective, ignoreCase = false)
-            ) add(c)
+            // Candidates carrying `insert` were matched Emacs-side by rules
+            // of their own (a wikilink capf matches titles by SUBSTRING),
+            // so their labels only have to contain the prefix; plain
+            // candidates keep the prefix rule of ordinary code completion.
+            val keeps = if (c.has("insert")) {
+                label.contains(effective, ignoreCase = true)
+            } else {
+                label.startsWith(effective, ignoreCase = true)
+            }
+            if (keeps && !label.equals(effective, ignoreCase = false)) add(c)
         }
     }
     if (visible.isEmpty()) return

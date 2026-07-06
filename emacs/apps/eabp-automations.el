@@ -107,10 +107,12 @@
        :on-tap (eabp-shell-switch-view "automations"))))
 
 ;; Registry changes (a toggle from the phone, a deftrigger evaluated on
-;; a live session) re-render this view via the standard shell push.
+;; a live session) re-render this view.  Debounced: an automations
+;; reload fires this hook once per rule, and one idle push after the
+;; burst beats a full view rebuild per rule (the scheduler no-ops
+;; while disconnected).
 (defun eabp-automations--on-change ()
-  (when (eabp-connected-p)
-    (eabp-shell-push)))
+  (eabp-shell--schedule-repush))
 
 (add-hook 'eabp-triggers-changed-hook #'eabp-automations--on-change)
 

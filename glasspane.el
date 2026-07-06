@@ -1299,6 +1299,25 @@ command runs instead of raw-reading a confirmation char (another hang)."
   "Map of trigger id (string) -> registration plist.
 Keys: :type :params :policy :dedupe :throttle-s :on-fire :handler.")
 
+(defconst eabp-triggers-supported-types
+  '("time" "power" "battery.level" "screen" "headset" "airplane"
+    "boot" "timezone.changed" "package" "network")
+  "The SPEC §11 batch-1 trigger-type catalog.
+The fallback when the welcome carries no `device.trigger_types' — a
+newer companion reports its own catalog there and that report wins
+(see `eabp-triggers--supported-p').  Mirrors TriggerHost.kt's
+SUPPORTED_TYPES; extend both (and SPEC §11) together.")
+
+(defun eabp-triggers--supported-p (type)
+  "Non-nil when the companion can host trigger TYPE.
+Prefers the session's `device.trigger_types' report; the static
+batch-1 catalog covers companions that predate the field.  The point
+is to skip a single too-new registration rather than push it and have
+the companion reject the whole replace-set."
+  (let ((reported (alist-get 'trigger_types
+                             (alist-get 'device eabp--session))))
+    (and (member type (or reported eabp-triggers-supported-types)) t)))
+
 (defcustom eabp-triggers-disabled nil
   "Trigger ids excluded from the pushed set (the Automations toggles).
 A disabled trigger stays registered — handler, params, everything — but
@@ -1393,11 +1412,19 @@ Exercises the exact dispatch path a device fire takes, minus the wire."
   "The `triggers' payload vector built from the registry.
 Wire fields only — handlers stay Emacs-side; nil fields are omitted so
 the frame stays additive-friendly; disabled ids are excluded, which is
-what disables them (replace-set: absent = can never fire)."
+what disables them (replace-set: absent = can never fire).  A type
+this companion doesn't support is skipped with a message: the
+companion rejects a replace-set wholesale, so one too-new registration
+must cost itself, never the set."
   (let (specs)
     (maphash
      (lambda (id reg)
-       (unless (member id eabp-triggers-disabled)
+       (cond
+        ((member id eabp-triggers-disabled))
+        ((not (eabp-triggers--supported-p (plist-get reg :type)))
+         (message "EABP triggers: skipping %s — companion lacks type %s"
+                  id (plist-get reg :type)))
+        (t
          (push (append
                 `((id . ,id)
                   (type . ,(plist-get reg :type)))
@@ -1411,7 +1438,7 @@ what disables them (replace-set: absent = can never fire)."
                   `((throttle_s . ,throttle)))
                 (when-let ((on-fire (plist-get reg :on-fire)))
                   `((on_fire . ,on-fire))))
-               specs)))
+               specs))))
      eabp-triggers--table)
     ;; Stable order (by id) so identical registries produce identical
     ;; frames — replace-set pushes are diff-able in logs and tests.
@@ -1419,13 +1446,33 @@ what disables them (replace-set: absent = can never fire)."
                    (lambda (a b)
                      (string< (alist-get 'id a) (alist-get 'id b)))))))
 
-(defun eabp-triggers-push ()
+(defvar eabp-triggers--push-timer nil)
+
+(defun eabp-triggers-push-now ()
   "Push the full trigger set to the companion (replace-set, idempotent).
 No-op unless connected and the session granted `triggers' — pushing an
 empty set is meaningful (it clears the companion's table), so this
-sends even when the registry is empty."
+sends even when the registry is empty.  Satisfies any pending
+debounced push (`eabp-triggers-push')."
+  (when (timerp eabp-triggers--push-timer)
+    (cancel-timer eabp-triggers--push-timer)
+    (setq eabp-triggers--push-timer nil))
   (when (and (eabp-connected-p) (eabp-granted-p "triggers"))
     (eabp-send "triggers.set" `((triggers . ,(eabp-triggers--specs))))))
+
+(defun eabp-triggers-push ()
+  "Debounced `eabp-triggers-push-now'.
+Registry changes come in bursts — an init file or an automations
+reload registering rule after rule — and replace-set means only the
+final state matters, so one idle push after the burst replaces a frame
+per rule (battery is first-order here).  A no-op while disconnected:
+the on-connect push carries the registrations."
+  (when (and (eabp-connected-p) (not (timerp eabp-triggers--push-timer)))
+    (setq eabp-triggers--push-timer
+          (run-with-idle-timer 0.2 nil
+                               (lambda ()
+                                 (setq eabp-triggers--push-timer nil)
+                                 (eabp-triggers-push-now))))))
 
 (defun eabp-triggers--on-fired (args _payload)
   "Dispatch a `trigger.fired' event to its registration's handler.
@@ -1465,8 +1512,10 @@ ARGS carries {id, type, data, at_ms} per SPEC §11."
         (eabp-trigger-test-fire id)))))
 
 (defun eabp-triggers--on-connect (_welcome)
-  "Re-push the trigger set after every handshake (replace-set = idempotent)."
-  (eabp-triggers-push))
+  "Re-push the trigger set after every handshake (replace-set = idempotent).
+Immediate, not debounced: a fresh session must arm without waiting on
+idle time."
+  (eabp-triggers-push-now))
 
 (add-hook 'eabp-connected-hook #'eabp-triggers--on-connect)
 
@@ -9138,10 +9187,12 @@ and carries the full (untrimmed) text."
        :on-tap (eabp-shell-switch-view "automations"))))
 
 ;; Registry changes (a toggle from the phone, a deftrigger evaluated on
-;; a live session) re-render this view via the standard shell push.
+;; a live session) re-render this view.  Debounced: an automations
+;; reload fires this hook once per rule, and one idle push after the
+;; burst beats a full view rebuild per rule (the scheduler no-ops
+;; while disconnected).
 (defun eabp-automations--on-change ()
-  (when (eabp-connected-p)
-    (eabp-shell-push)))
+  (eabp-shell--schedule-repush))
 
 (add-hook 'eabp-triggers-changed-hook #'eabp-automations--on-change)
 
@@ -13904,6 +13955,19 @@ filter tokens, or free text); `rendering' is \"list\" | \"board\" |
 (defun glasspane-views--persist ()
   (eabp-settings-save-variable 'glasspane-saved-views glasspane-saved-views))
 
+(defun glasspane-views--set-rendering (name rendering)
+  "Set view NAME's rendering to RENDERING, rebuilding the saved list.
+Rebuilding (rather than a `setcdr' into the entry) tolerates a
+hand-authored Customize entry without a `rendering' key and never
+mutates the value Customize handed out."
+  (setq glasspane-saved-views
+        (mapcar (lambda (v)
+                  (if (equal (alist-get 'name v) name)
+                      (cons (cons 'rendering rendering)
+                            (assq-delete-all 'rendering (copy-alist v)))
+                    v))
+                glasspane-saved-views)))
+
 (defun glasspane-views--items (view)
   "Run VIEW's query; heading items, or signal `user-error'."
   (glasspane-org--query
@@ -13947,12 +14011,20 @@ filter tokens, or free text); `rendering' is \"list\" | \"board\" |
    :aligns '("start" "start" "start" "start")))
 
 (defun glasspane-views--board-columns (items)
-  "Distinct TODO states across ITEMS, keyword order preserved."
+  "Distinct TODO states across ITEMS, keyword order preserved.
+Global keywords come first in `org-todo-keywords-1' order; states the
+global list doesn't know (file-local #+TODO: lines) follow in encounter
+order — every present state gets a column, or its cards would silently
+vanish from the board."
   (let ((present (delete-dups (mapcar (lambda (i)
                                         (or (alist-get 'todo i) ""))
                                       items))))
     (append (cl-remove-if-not (lambda (kw) (member kw present))
                               org-todo-keywords-1)
+            (cl-remove-if (lambda (kw)
+                            (or (string-empty-p kw)
+                                (member kw org-todo-keywords-1)))
+                          present)
             (and (member "" present) '("")))))
 
 (defun glasspane-views--board-card (item columns)
@@ -14059,9 +14131,11 @@ filter tokens, or free text); `rendering' is \"list\" | \"board\" |
               (broken
                (list (eabp-text (cadr items) 'body)))
               ((null items)
+               ;; %s: a hand-authored query may be a sexp, not a string.
                (list (eabp-empty-state :icon "manage_search"
                                        :title "No matches"
-                                       :caption (alist-get 'query view))))
+                                       :caption (format "%s"
+                                                        (alist-get 'query view)))))
               (t (pcase (alist-get 'rendering view)
                    ("board" (list (glasspane-views--board-node items)))
                    ("calendar" (glasspane-views--calendar-nodes items))
@@ -14160,7 +14234,7 @@ Field values mirror through the UI-state store; views.save reads them."
     (let ((view (glasspane-views--get (alist-get 'name args)))
           (rendering (alist-get 'rendering args)))
       (when (and view (member rendering glasspane-views--renderings))
-        (setcdr (assq 'rendering view) rendering)
+        (glasspane-views--set-rendering (alist-get 'name view) rendering)
         (glasspane-views--persist)
         (eabp-shell-push)))))
 
@@ -14278,13 +14352,13 @@ nil means automations.org inside `org-directory'."
 
 ;; ─── Parsing ─────────────────────────────────────────────────────────────────
 
-(defconst glasspane-automations--types
-  '("time" "power" "battery.level" "screen" "headset" "airplane"
-    "boot" "timezone.changed" "package" "network" "wifi.ssid"
-    "bluetooth.device")
-  "Trigger types rules may use (mirrors the SPEC §11 catalog).
-An unknown type would make the companion reject the whole replace-set,
-so unknown rules are skipped with a message instead of registered.")
+(defconst glasspane-automations--types eabp-triggers-supported-types
+  "Trigger types rules may use — the shipped SPEC §11 catalog.
+An unknown type would make the companion reject the whole replace-set
+\(and `eabp-triggers--specs' skips it as a second line of defense), so
+unknown rules are caught at parse time with a message naming the rule.
+Notably NOT here yet: wifi.ssid / bluetooth.device — hardware-gated,
+see the automation plan.")
 
 (defun glasspane-automations--parse-trigger (str)
   "Parse the `:TRIGGER:' shorthand STR into (TYPE . PARAMS).
@@ -14462,6 +14536,7 @@ the file is the source of truth for the `org/' id namespace."
 (declare-function vulpea-note-id "vulpea-note")
 (declare-function vulpea-note-title "vulpea-note")
 (declare-function vulpea-note-path "vulpea-note")
+(declare-function vulpea-note-aliases "vulpea-note")
 
 (defun glasspane-notes-available-p ()
   "Non-nil when the vulpea note database is usable."
@@ -14551,9 +14626,11 @@ Dropped wholesale by the cache seam.")
                         :when-offline "drop")))
 
 (defun glasspane-notes--mention-card (mention note-id)
-  "A card for MENTION (:note :line :context :matched plist).
-The path comes from the mentioning note — vulpea's resolve plists
-document a :path key but don't reliably carry one."
+  "A card for MENTION (a :note :path :line :context plist).
+Current vulpea resolve plists don't carry :matched (the exact text the
+scan hit) — it is forwarded when present, and link.materialize falls
+back to the note's title/aliases otherwise.  The path prefers the
+plist's own :path, with the mentioning note's file as backstop."
   (let* ((source (plist-get mention :note))
          (path (or (plist-get mention :path)
                    (and source (vulpea-note-path source)))))
@@ -14651,20 +14728,52 @@ with an :ID: still gets its backlink section."
              (eabp-shell-push)))
           (eabp-shell-push))))))
 
+(defun glasspane-notes--materialize-terms (id matched)
+  "The strings to look for on the mention line, most specific first.
+MATCHED when the wire carried it; otherwise the note's title and
+aliases — current vulpea mention plists name the note but not the
+matched text, so the fallback is what makes \"Link it\" work at all."
+  (if (and (stringp matched) (not (string-empty-p matched)))
+      (list matched)
+    (when-let ((note (and (glasspane-notes-available-p)
+                          (fboundp 'vulpea-db-get-by-id)
+                          (ignore-errors (vulpea-db-get-by-id id)))))
+      (delq nil (cons (vulpea-note-title note)
+                      (and (fboundp 'vulpea-note-aliases)
+                           (ignore-errors (vulpea-note-aliases note))))))))
+
+(defun glasspane-notes--find-unlinked (terms end)
+  "Move point to the first occurrence of a TERMS member before END.
+Case-insensitive; leaves the match data on the hit and returns the
+term, or nil.  Occurrences already inside an org link are skipped —
+the file may have changed since the mention scan, and a stale tap
+must not nest a link inside a link."
+  (let ((case-fold-search t)
+        (start (point)))
+    (cl-loop for term in terms
+             do (goto-char start)
+             thereis (cl-loop while (search-forward term end t)
+                              unless (save-match-data
+                                       (save-excursion
+                                         (goto-char (match-beginning 0))
+                                         (org-in-regexp org-link-any-re)))
+                              return term))))
+
 (eabp-defaction "link.materialize"
-  ;; Replace the first un-linked occurrence of MATCHED on LINE in PATH
-  ;; with a real id link.  Titles match case-insensitively (search UX);
-  ;; the replacement keeps the text exactly as written in the file.
-  ;; Every failure path answers with a snackbar — a tap that silently
-  ;; does nothing is a bug class, not an outcome.
+  ;; Replace the first un-linked occurrence of the mention on LINE in
+  ;; PATH with a real id link.  Matching is case-insensitive (search
+  ;; UX); the replacement keeps the text exactly as written in the
+  ;; file.  Every failure path answers with a snackbar — a tap that
+  ;; silently does nothing is a bug class, not an outcome.
   (lambda (args _)
-    (let ((id (alist-get 'id args))
-          (path (alist-get 'path args))
-          (line (alist-get 'line args))
-          (matched (alist-get 'matched args)))
+    (let* ((id (alist-get 'id args))
+           (path (alist-get 'path args))
+           (line (alist-get 'line args))
+           (terms (and (stringp id)
+                       (glasspane-notes--materialize-terms
+                        id (alist-get 'matched args)))))
       (cond
-       ((not (and (stringp id) (stringp path) (integerp line)
-                  (stringp matched) (not (string-empty-p matched))))
+       ((not (and (stringp id) (stringp path) (integerp line) terms))
         (eabp-shell-notify "Couldn't link — mention data incomplete"))
        ((not (file-writable-p path))
         (eabp-shell-notify (format "Couldn't link — %s not writable"
@@ -14674,17 +14783,16 @@ with an :ID: still gets its backlink section."
           (org-with-wide-buffer
            (goto-char (point-min))
            (forward-line (1- line))
-           (let ((end (line-end-position))
-                 (case-fold-search t))
-             (if (not (search-forward matched end t))
-                 (eabp-shell-notify
-                  "Couldn't find the mention — file changed? Refresh and retry")
-               (replace-match (format "[[id:%s][%s]]" id (match-string 0))
-                              t t)
-               (let ((save-silently t)) (save-buffer))
-               (remhash id glasspane-notes--mentions)
-               (glasspane-org-cache-invalidate)
-               (eabp-shell-notify "Linked")))))))
+           (if (not (glasspane-notes--find-unlinked
+                     terms (line-end-position)))
+               (eabp-shell-notify
+                "Couldn't find the mention — file changed? Refresh and retry")
+             (replace-match (format "[[id:%s][%s]]" id (match-string 0))
+                            t t)
+             (let ((save-silently t)) (save-buffer))
+             (remhash id glasspane-notes--mentions)
+             (glasspane-org-cache-invalidate)
+             (eabp-shell-notify "Linked"))))))
       (eabp-shell-push))))
 
 (add-hook 'eabp-shell-refresh-hook

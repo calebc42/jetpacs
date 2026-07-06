@@ -35,6 +35,7 @@
 (declare-function vulpea-note-id "vulpea-note")
 (declare-function vulpea-note-title "vulpea-note")
 (declare-function vulpea-note-path "vulpea-note")
+(declare-function vulpea-note-aliases "vulpea-note")
 
 (defun glasspane-notes-available-p ()
   "Non-nil when the vulpea note database is usable."
@@ -124,9 +125,11 @@ Dropped wholesale by the cache seam.")
                         :when-offline "drop")))
 
 (defun glasspane-notes--mention-card (mention note-id)
-  "A card for MENTION (:note :line :context :matched plist).
-The path comes from the mentioning note — vulpea's resolve plists
-document a :path key but don't reliably carry one."
+  "A card for MENTION (a :note :path :line :context plist).
+Current vulpea resolve plists don't carry :matched (the exact text the
+scan hit) — it is forwarded when present, and link.materialize falls
+back to the note's title/aliases otherwise.  The path prefers the
+plist's own :path, with the mentioning note's file as backstop."
   (let* ((source (plist-get mention :note))
          (path (or (plist-get mention :path)
                    (and source (vulpea-note-path source)))))
@@ -224,20 +227,52 @@ with an :ID: still gets its backlink section."
              (eabp-shell-push)))
           (eabp-shell-push))))))
 
+(defun glasspane-notes--materialize-terms (id matched)
+  "The strings to look for on the mention line, most specific first.
+MATCHED when the wire carried it; otherwise the note's title and
+aliases — current vulpea mention plists name the note but not the
+matched text, so the fallback is what makes \"Link it\" work at all."
+  (if (and (stringp matched) (not (string-empty-p matched)))
+      (list matched)
+    (when-let ((note (and (glasspane-notes-available-p)
+                          (fboundp 'vulpea-db-get-by-id)
+                          (ignore-errors (vulpea-db-get-by-id id)))))
+      (delq nil (cons (vulpea-note-title note)
+                      (and (fboundp 'vulpea-note-aliases)
+                           (ignore-errors (vulpea-note-aliases note))))))))
+
+(defun glasspane-notes--find-unlinked (terms end)
+  "Move point to the first occurrence of a TERMS member before END.
+Case-insensitive; leaves the match data on the hit and returns the
+term, or nil.  Occurrences already inside an org link are skipped —
+the file may have changed since the mention scan, and a stale tap
+must not nest a link inside a link."
+  (let ((case-fold-search t)
+        (start (point)))
+    (cl-loop for term in terms
+             do (goto-char start)
+             thereis (cl-loop while (search-forward term end t)
+                              unless (save-match-data
+                                       (save-excursion
+                                         (goto-char (match-beginning 0))
+                                         (org-in-regexp org-link-any-re)))
+                              return term))))
+
 (eabp-defaction "link.materialize"
-  ;; Replace the first un-linked occurrence of MATCHED on LINE in PATH
-  ;; with a real id link.  Titles match case-insensitively (search UX);
-  ;; the replacement keeps the text exactly as written in the file.
-  ;; Every failure path answers with a snackbar — a tap that silently
-  ;; does nothing is a bug class, not an outcome.
+  ;; Replace the first un-linked occurrence of the mention on LINE in
+  ;; PATH with a real id link.  Matching is case-insensitive (search
+  ;; UX); the replacement keeps the text exactly as written in the
+  ;; file.  Every failure path answers with a snackbar — a tap that
+  ;; silently does nothing is a bug class, not an outcome.
   (lambda (args _)
-    (let ((id (alist-get 'id args))
-          (path (alist-get 'path args))
-          (line (alist-get 'line args))
-          (matched (alist-get 'matched args)))
+    (let* ((id (alist-get 'id args))
+           (path (alist-get 'path args))
+           (line (alist-get 'line args))
+           (terms (and (stringp id)
+                       (glasspane-notes--materialize-terms
+                        id (alist-get 'matched args)))))
       (cond
-       ((not (and (stringp id) (stringp path) (integerp line)
-                  (stringp matched) (not (string-empty-p matched))))
+       ((not (and (stringp id) (stringp path) (integerp line) terms))
         (eabp-shell-notify "Couldn't link — mention data incomplete"))
        ((not (file-writable-p path))
         (eabp-shell-notify (format "Couldn't link — %s not writable"
@@ -247,17 +282,16 @@ with an :ID: still gets its backlink section."
           (org-with-wide-buffer
            (goto-char (point-min))
            (forward-line (1- line))
-           (let ((end (line-end-position))
-                 (case-fold-search t))
-             (if (not (search-forward matched end t))
-                 (eabp-shell-notify
-                  "Couldn't find the mention — file changed? Refresh and retry")
-               (replace-match (format "[[id:%s][%s]]" id (match-string 0))
-                              t t)
-               (let ((save-silently t)) (save-buffer))
-               (remhash id glasspane-notes--mentions)
-               (glasspane-org-cache-invalidate)
-               (eabp-shell-notify "Linked")))))))
+           (if (not (glasspane-notes--find-unlinked
+                     terms (line-end-position)))
+               (eabp-shell-notify
+                "Couldn't find the mention — file changed? Refresh and retry")
+             (replace-match (format "[[id:%s][%s]]" id (match-string 0))
+                            t t)
+             (let ((save-silently t)) (save-buffer))
+             (remhash id glasspane-notes--mentions)
+             (glasspane-org-cache-invalidate)
+             (eabp-shell-notify "Linked"))))))
       (eabp-shell-push))))
 
 (add-hook 'eabp-shell-refresh-hook

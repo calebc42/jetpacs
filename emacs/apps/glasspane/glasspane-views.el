@@ -46,6 +46,19 @@ filter tokens, or free text); `rendering' is \"list\" | \"board\" |
 (defun glasspane-views--persist ()
   (eabp-settings-save-variable 'glasspane-saved-views glasspane-saved-views))
 
+(defun glasspane-views--set-rendering (name rendering)
+  "Set view NAME's rendering to RENDERING, rebuilding the saved list.
+Rebuilding (rather than a `setcdr' into the entry) tolerates a
+hand-authored Customize entry without a `rendering' key and never
+mutates the value Customize handed out."
+  (setq glasspane-saved-views
+        (mapcar (lambda (v)
+                  (if (equal (alist-get 'name v) name)
+                      (cons (cons 'rendering rendering)
+                            (assq-delete-all 'rendering (copy-alist v)))
+                    v))
+                glasspane-saved-views)))
+
 (defun glasspane-views--items (view)
   "Run VIEW's query; heading items, or signal `user-error'."
   (glasspane-org--query
@@ -89,12 +102,20 @@ filter tokens, or free text); `rendering' is \"list\" | \"board\" |
    :aligns '("start" "start" "start" "start")))
 
 (defun glasspane-views--board-columns (items)
-  "Distinct TODO states across ITEMS, keyword order preserved."
+  "Distinct TODO states across ITEMS, keyword order preserved.
+Global keywords come first in `org-todo-keywords-1' order; states the
+global list doesn't know (file-local #+TODO: lines) follow in encounter
+order — every present state gets a column, or its cards would silently
+vanish from the board."
   (let ((present (delete-dups (mapcar (lambda (i)
                                         (or (alist-get 'todo i) ""))
                                       items))))
     (append (cl-remove-if-not (lambda (kw) (member kw present))
                               org-todo-keywords-1)
+            (cl-remove-if (lambda (kw)
+                            (or (string-empty-p kw)
+                                (member kw org-todo-keywords-1)))
+                          present)
             (and (member "" present) '("")))))
 
 (defun glasspane-views--board-card (item columns)
@@ -201,9 +222,11 @@ filter tokens, or free text); `rendering' is \"list\" | \"board\" |
               (broken
                (list (eabp-text (cadr items) 'body)))
               ((null items)
+               ;; %s: a hand-authored query may be a sexp, not a string.
                (list (eabp-empty-state :icon "manage_search"
                                        :title "No matches"
-                                       :caption (alist-get 'query view))))
+                                       :caption (format "%s"
+                                                        (alist-get 'query view)))))
               (t (pcase (alist-get 'rendering view)
                    ("board" (list (glasspane-views--board-node items)))
                    ("calendar" (glasspane-views--calendar-nodes items))
@@ -302,7 +325,7 @@ Field values mirror through the UI-state store; views.save reads them."
     (let ((view (glasspane-views--get (alist-get 'name args)))
           (rendering (alist-get 'rendering args)))
       (when (and view (member rendering glasspane-views--renderings))
-        (setcdr (assq 'rendering view) rendering)
+        (glasspane-views--set-rendering (alist-get 'name view) rendering)
         (glasspane-views--persist)
         (eabp-shell-push)))))
 

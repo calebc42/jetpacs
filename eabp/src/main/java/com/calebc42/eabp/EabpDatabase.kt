@@ -53,7 +53,7 @@ data class TriggerRow(
     val policy: String = "queue",
     val dedupe: String? = null,
     val throttleS: Long? = null,
-    /** Reserved (SPEC §11 on_fire, automation plan Task 10). */
+    /** The SPEC §11 on_fire list, run by [TriggerHost] at fire time. */
     val onFire: String? = null,
 )
 

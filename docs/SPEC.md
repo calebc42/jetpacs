@@ -225,6 +225,14 @@ with a fresh `edit.open`. Invariant: **wrong state can only ever cause a
 missing feature, never a wrong edit** — the shadow never writes to disk,
 and completion insertion happens companion-side.
 
+A candidate's optional `insert` is what lands in the buffer when it
+differs from the display `label` (a wikilink chip shows `[[Title` but
+inserts `[[id:…][Title]]`). Candidates carrying `insert` were matched
+by client-side rules of their own — a wikilink capf matches note
+titles by **substring** — so the companion narrows them by
+contains-prefix rather than the starts-with rule it applies to plain
+code-completion candidates.
+
 ## 9. Widget vocabulary
 
 Specs are trees of nodes; every node is `{"t": type, ...}` and unknown
@@ -303,15 +311,16 @@ capability.result    {ok, result?}     companion → client (reply)
   "settings.open", args: {panel: …}}` to take the user to the right
   grant screen.
 
-- **Device report.** When `capabilities` is granted, `session.welcome`
-  carries a `device` object:
+- **Device report.** When `capabilities` or `triggers` is granted,
+  `session.welcome` carries a `device` object:
 
   ```json
   "device": {"caps": ["settings.open"],
              "perms": {"post_notifications": true, "exact_alarms": true,
                        "write_settings": false, "notification_policy": false,
                        "notification_listener": false, "fine_location": false,
-                       "bluetooth_connect": false}}
+                       "bluetooth_connect": false},
+             "trigger_types": ["airplane", "battery.level", "boot", "..."]}
   ```
 
   `caps` is the invocable capability set. `perms` reports the runtime
@@ -320,6 +329,10 @@ capability.result    {ok, result?}     companion → client (reply)
   the grant screen — instead of invoking blind. The map is a snapshot
   at welcome time; the companion re-checks at invoke time, so a stale
   map can only cause a typed error, never a wrong action.
+  `trigger_types` (under the `triggers` grant, §11) is this
+  companion's trigger-type catalog: because `triggers.set` rejects a
+  set wholesale on an unknown type, the client uses this list to skip
+  a too-new registration instead of poisoning the push.
 
 - **Trust model.** This flows in the already-trusted direction: the
   post-handshake client drives notifications, reminders, and dialogs,
@@ -410,7 +423,9 @@ triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
 
 An empty or absent `params` field means "match every event of the
 type". Registering an unknown type is refused (the whole set is
-rejected with an error, so the client never half-arms).
+rejected with an error, so the client never half-arms) — which is why
+the welcome's `device.trigger_types` (§10) exists: the client filters
+its push against that report and skips what this companion can't host.
 
 | type | params | data | notes |
 |---|---|---|---|

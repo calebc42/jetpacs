@@ -55,13 +55,13 @@ nil means automations.org inside `org-directory'."
 
 ;; ─── Parsing ─────────────────────────────────────────────────────────────────
 
-(defconst glasspane-automations--types
-  '("time" "power" "battery.level" "screen" "headset" "airplane"
-    "boot" "timezone.changed" "package" "network" "wifi.ssid"
-    "bluetooth.device")
-  "Trigger types rules may use (mirrors the SPEC §11 catalog).
-An unknown type would make the companion reject the whole replace-set,
-so unknown rules are skipped with a message instead of registered.")
+(defconst glasspane-automations--types eabp-triggers-supported-types
+  "Trigger types rules may use — the shipped SPEC §11 catalog.
+An unknown type would make the companion reject the whole replace-set
+\(and `eabp-triggers--specs' skips it as a second line of defense), so
+unknown rules are caught at parse time with a message naming the rule.
+Notably NOT here yet: wifi.ssid / bluetooth.device — hardware-gated,
+see the automation plan.")
 
 (defun glasspane-automations--parse-trigger (str)
   "Parse the `:TRIGGER:' shorthand STR into (TYPE . PARAMS).

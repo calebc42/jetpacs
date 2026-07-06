@@ -372,7 +372,9 @@ object DeviceCapabilities {
 
     private val ttsRelease = Runnable {
         val e = tts
-        if (e != null && !e.isSpeaking) {
+        // Pending utterances mean the engine is still initializing —
+        // releasing now would swallow them, so wait another period.
+        if (e != null && !e.isSpeaking && ttsPending.isEmpty()) {
             e.shutdown()
             tts = null
             ttsReady = false

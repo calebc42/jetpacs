@@ -1790,6 +1790,41 @@ records the last-fired time."
     (should (equal got '(("Emacs" . "org.gnu.emacs")
                          ("Termux" . "com.termux"))))))
 
+(ert-deftest eabp-device-permissions-dialog-renders ()
+  "The permissions dialog lists the perm map with grant deep-links."
+  (let ((eabp--session
+         '((granted . ("capabilities"))
+           (device . ((caps . ("settings.open"))
+                      (perms . ((write_settings . :false)
+                                (notification_policy . :false)
+                                (exact_alarms . t)))))))
+        (sent nil))
+    (cl-letf (((symbol-function 'eabp-send-dialog)
+               (lambda (spec) (push spec sent))))
+      (eabp-device-permissions-dialog))
+    (let ((json (json-serialize (eabp-tests--canon (car sent))
+                                :null-object :null :false-object :false)))
+      (should (string-search "Device permissions" json))
+      (should (string-search "MANAGE_WRITE_SETTINGS" json))
+      (should (string-search "device.perm.open" json))
+      ;; Granted rows carry no Grant button.
+      (should (string-search "Exact alarms" json))
+      (should (string-search "\"Granted\"" json)))))
+
+(ert-deftest eabp-device-launch-app-uses-dialog ()
+  "The app picker is a companion dialog dispatching device.launch."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'eabp-device-apps-list)
+               (lambda (callback)
+                 (funcall callback '(("Emacs" . "org.gnu.emacs")))))
+              ((symbol-function 'eabp-send-dialog)
+               (lambda (spec) (push spec sent))))
+      (eabp-device-launch-app))
+    (let ((json (json-serialize (eabp-tests--canon (car sent))
+                                :null-object :null :false-object :false)))
+      (should (string-search "device.launch" json))
+      (should (string-search "org.gnu.emacs" json)))))
+
 (ert-deftest eabp-device-clipboard-read-nil-on-error ()
   "A cap-permission clipboard failure yields nil, not an error."
   (let ((got 'untouched))
@@ -1923,7 +1958,9 @@ shapes — without touching the wire."
       (eabp-device-media-key "play_pause")
       (eabp-device-clipboard-read #'ignore)
       (eabp-device-settings-open "wifi")
-      (eabp-device-keep-screen-on t))
+      (eabp-device-keep-screen-on t)
+      (eabp-device-brightness 128)
+      (eabp-device-dnd "priority"))
     (nreverse calls)))
 
 (defun eabp-tests--frame-cases ()

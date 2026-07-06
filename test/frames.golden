@@ -14,3 +14,5 @@
 13 {"kind":"capability.invoke","payload":{"args":{},"cap":"clipboard.read"}}
 14 {"kind":"capability.invoke","payload":{"args":{"panel":"wifi"},"cap":"settings.open"}}
 15 {"kind":"capability.invoke","payload":{"args":{"on":true},"cap":"screen.keep_on"}}
+16 {"kind":"capability.invoke","payload":{"args":{"level":128},"cap":"brightness.set"}}
+17 {"kind":"capability.invoke","payload":{"args":{"mode":"priority"},"cap":"dnd.set"}}

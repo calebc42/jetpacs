@@ -77,6 +77,8 @@ object DeviceCapabilities {
         "media.key" to ::mediaKey,
         "clipboard.read" to ::clipboardRead,
         "screen.keep_on" to ::screenKeepOn,
+        "brightness.set" to ::brightnessSet,
+        "dnd.set" to ::dndSet,
     )
 
     /** Invocable capability names, for the welcome's `device.caps`. */
@@ -124,17 +126,59 @@ object DeviceCapabilities {
             panel == "nfc" ->
                 if (floating) Settings.Panel.ACTION_NFC else Settings.ACTION_NFC_SETTINGS
             panel == "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            // The app-info page: where the OS puts this app's runtime
+            // permission grants (notifications, location, nearby devices).
+            panel == "app" -> Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             panel.startsWith("android.settings.") -> panel
             panel.isEmpty() ->
                 throw CapabilityException("cap-failed", "settings.open: missing 'panel'")
             else ->
                 throw CapabilityException("cap-failed", "settings.open: unknown panel '$panel'")
         }
+        val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (panel == "app") intent.data = Uri.parse("package:${context.packageName}")
         try {
-            context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
             throw CapabilityException("cap-failed", "settings.open: no activity for '$action'")
         }
+        return JSONObject()
+    }
+
+    // ── Special-access effectors (automation plan Task 5) ────────────────────
+
+    /** `brightness.set {level}` — 0–255, behind the write-settings grant. */
+    private fun brightnessSet(context: Context, args: JSONObject): JSONObject {
+        if (!args.has("level"))
+            throw CapabilityException("cap-failed", "brightness.set: missing 'level'")
+        if (!Settings.System.canWrite(context))
+            throw CapabilityException("cap-permission",
+                "brightness.set needs the modify-system-settings grant",
+                perm = "write_settings",
+                settings = "android.settings.action.MANAGE_WRITE_SETTINGS")
+        val level = args.optInt("level").coerceIn(0, 255)
+        val resolver = context.contentResolver
+        Settings.System.putInt(resolver,
+            Settings.System.SCREEN_BRIGHTNESS_MODE,
+            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+        Settings.System.putInt(resolver, Settings.System.SCREEN_BRIGHTNESS, level)
+        return JSONObject()
+    }
+
+    /** `dnd.set {mode}` — on | off | priority, behind DND access. */
+    private fun dndSet(context: Context, args: JSONObject): JSONObject {
+        val nm = notificationManager(context)
+        if (!nm.isNotificationPolicyAccessGranted)
+            throw CapabilityException("cap-permission",
+                "dnd.set needs Do Not Disturb access",
+                perm = "notification_policy", settings = DND_SETTINGS)
+        val filter = when (val m = args.optString("mode")) {
+            "on" -> NotificationManager.INTERRUPTION_FILTER_NONE
+            "priority" -> NotificationManager.INTERRUPTION_FILTER_PRIORITY
+            "off" -> NotificationManager.INTERRUPTION_FILTER_ALL
+            else -> throw CapabilityException("cap-failed", "dnd.set: unknown mode '$m'")
+        }
+        nm.setInterruptionFilter(filter)
         return JSONObject()
     }
 
@@ -296,7 +340,12 @@ object DeviceCapabilities {
                             ttsReady = true
                             tts?.let { e -> ttsPending.forEach { ttsSpeakNow(e, it) } }
                         } else {
+                            // The invoke already ACKed (speak is async), so
+                            // the failure must be visible some other way.
                             Log.w(TAG, "tts.speak: engine init failed ($status)")
+                            android.widget.Toast.makeText(context,
+                                "Text-to-speech engine unavailable",
+                                android.widget.Toast.LENGTH_SHORT).show()
                             tts?.shutdown()
                             tts = null
                         }

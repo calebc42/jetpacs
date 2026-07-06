@@ -1493,6 +1493,8 @@ ARGS carries {id, type, data, at_ms} per SPEC §11."
 
 (require 'cl-lib)
 (require 'eabp)
+(require 'eabp-widgets)
+(require 'eabp-surfaces)
 
 (defun eabp-device--invoke (cap args &optional callback)
   "Invoke device capability CAP with plain-data alist ARGS.
@@ -1550,13 +1552,31 @@ Example, from the eval REPL:
                         (alist-get 'apps (alist-get 'result payload))))))))
 
 (defun eabp-device-launch-app ()
-  "Pick an installed companion-side app with completion and launch it."
+  "Pick an installed app in a companion dialog and launch it.
+The picker renders on the phone: choosing there keeps Glasspane
+foregrounded, which is what makes the activity launch legal — Android
+silently drops launches requested while the app is backgrounded (the
+reason a desktop `completing-read' picker can never work here)."
   (interactive)
   (eabp-device-apps-list
    (lambda (apps)
-     (let ((choice (completing-read "Launch on phone: " apps nil t)))
-       (when-let ((pkg (cdr (assoc choice apps))))
-         (eabp-device-app-launch pkg))))))
+     (eabp-send-dialog
+      (apply #'eabp-lazy-column
+             (cons (eabp-section-header "Launch app")
+                   (mapcar (lambda (app)
+                             (eabp-button (car app)
+                                          (eabp-action
+                                           "device.launch"
+                                           :args `((package . ,(cdr app)))
+                                           :when-offline "drop")
+                                          :variant "text"))
+                           apps)))))))
+
+(eabp-defaction "device.launch"
+  (lambda (args _)
+    (when-let ((pkg (alist-get 'package args)))
+      (eabp-dismiss-dialog)
+      (eabp-device-app-launch pkg))))
 
 ;; ─── Permission-free effectors ───────────────────────────────────────────────
 
@@ -1621,6 +1641,96 @@ radios Android won't let apps flip."
 A window flag, not a wakelock: it clears when EABP UI leaves the
 screen, so it cannot pin the device awake in the background."
   (eabp-device--invoke "screen.keep_on" `((on . ,(if on t :false)))))
+
+;; ─── Special-access effectors ────────────────────────────────────────────────
+
+(defun eabp-device-brightness (level)
+  "Set screen brightness LEVEL (0–255).
+Needs the modify-system-settings grant; a cap-permission error carries
+the deep-link (or use the Device permissions screen)."
+  (eabp-device--invoke "brightness.set" `((level . ,level))))
+
+(defun eabp-device-dnd (mode)
+  "Set Do Not Disturb MODE: \"on\", \"off\", or \"priority\".
+Needs Do Not Disturb access — see the Device permissions screen."
+  (eabp-device--invoke "dnd.set" `((mode . ,mode))))
+
+;; ─── The Device permissions screen ───────────────────────────────────────────
+
+(defconst eabp-device--perm-info
+  '((post_notifications "Notifications" "app")
+    (exact_alarms "Exact alarms (reminders, time triggers)"
+                  "android.settings.REQUEST_SCHEDULE_EXACT_ALARM")
+    (write_settings "Modify system settings (brightness)"
+                    "android.settings.action.MANAGE_WRITE_SETTINGS")
+    (notification_policy "Do Not Disturb access (ringer, DND, volume)"
+                         "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS")
+    (notification_listener "Notification access (notification triggers)"
+                           "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+    (fine_location "Location (Wi-Fi SSID triggers)" "app")
+    (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app"))
+  "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
+PANEL feeds `settings.open': a grant screen action, or \"app\" for
+Glasspane's own app-info page (runtime permissions live there).")
+
+(defun eabp-device--perm-row (key label panel perms)
+  (let ((granted (eq t (alist-get key perms))))
+    (eabp-row
+     (eabp-box
+      (list (eabp-column
+             (eabp-text label 'body)
+             (eabp-text (if granted "Granted" "Not granted") 'caption)))
+      :weight 1)
+     (unless granted
+       (eabp-button "Grant"
+                    (eabp-action "device.perm.open"
+                                 :args `((panel . ,panel))
+                                 :when-offline "drop")
+                    :variant "text")))))
+
+(defun eabp-device-permissions-dialog ()
+  "Show the device-permission map with grant deep-links.
+Android never pops a dialog for special-access permissions — the only
+compliant flow is deep-linking the user to the grant screen.  The map
+refreshes on the next reconnect after granting."
+  (interactive)
+  (let ((perms (alist-get 'perms (alist-get 'device eabp--session))))
+    (eabp-send-dialog
+     (apply #'eabp-lazy-column
+            (append
+             (list (eabp-section-header "Device permissions")
+                   (eabp-text (concat "Special access needs a trip to system "
+                                      "settings; the list refreshes on the "
+                                      "next reconnect.")
+                              'caption))
+             (mapcar (lambda (row)
+                       (apply #'eabp-device--perm-row
+                              (append row (list perms))))
+                     eabp-device--perm-info))))))
+
+(eabp-defaction "device.perms"
+  (lambda (_args _) (eabp-device-permissions-dialog)))
+
+(eabp-defaction "device.perm.open"
+  (lambda (args _)
+    (when-let ((panel (alist-get 'panel args)))
+      (eabp-dismiss-dialog)
+      (eabp-device-settings-open panel))))
+
+;; Entry point: a card on the settings screen (satellite contract).
+(with-eval-after-load 'eabp-settings
+  (eabp-settings-add-link
+   18 (lambda ()
+        (eabp-card
+         (list (eabp-row
+                (eabp-icon "key")
+                (eabp-box (list (eabp-column
+                                 (eabp-text "Device permissions" 'label)
+                                 (eabp-text "Grant special access for effectors and triggers"
+                                            'caption)))
+                          :weight 1)
+                (eabp-icon "chevron_right")))
+         :on-tap (eabp-action "device.perms" :when-offline "drop")))))
 
 (provide 'eabp-device)
 ;;; eabp-device.el ends here
@@ -10963,8 +11073,12 @@ suppressed identical push would leave it frozen."
                         :tab '(:icon "event" :label "Agenda") :order 10)
 (eabp-shell-define-view "tasks" :builder #'glasspane-ui--tasks-view
                         :tab '(:icon "checklist" :label "Tasks") :order 20)
+;; The clock lost its tab 2026-07-06 (user decision: six tabs was
+;; crowded and the screen alone felt barren) — its body now renders as
+;; a section of the Journal view.  The view stays registered so cached
+;; `view.switch' targets from older pushes still resolve.
 (eabp-shell-define-view "clock" :builder #'glasspane-ui--clock-view
-                        :tab '(:icon "schedule" :label "Clock") :order 30)
+                        :order 30)
 (eabp-shell-define-view "search" :builder #'glasspane-ui--search-view
                         :order 70)
 (eabp-shell-define-view "settings" :builder #'glasspane-ui--settings-view
@@ -13659,7 +13773,13 @@ orgro timestamp-tap-edit item folds in here."
                 (list (eabp-divider)
                       (eabp-section-header
                        (format "Carried over (%d)" (length carried))))
-                (mapcar #'glasspane-journal--carried-card carried)))))
+                (mapcar #'glasspane-journal--carried-card carried)))
+             ;; The clock rides the journal (its own tab felt barren and
+             ;; crowded the bottom bar) — today's time is journal matter.
+             (when (and today-p (fboundp 'glasspane-ui--clock-body))
+               (list (eabp-divider)
+                     (eabp-section-header "Clock")
+                     (glasspane-ui--clock-body)))))
      :snackbar snackbar)))
 
 (eabp-shell-define-view "journal"

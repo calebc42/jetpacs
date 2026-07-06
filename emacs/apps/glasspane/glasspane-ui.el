@@ -284,8 +284,12 @@ suppressed identical push would leave it frozen."
                         :tab '(:icon "event" :label "Agenda") :order 10)
 (eabp-shell-define-view "tasks" :builder #'glasspane-ui--tasks-view
                         :tab '(:icon "checklist" :label "Tasks") :order 20)
+;; The clock lost its tab 2026-07-06 (user decision: six tabs was
+;; crowded and the screen alone felt barren) — its body now renders as
+;; a section of the Journal view.  The view stays registered so cached
+;; `view.switch' targets from older pushes still resolve.
 (eabp-shell-define-view "clock" :builder #'glasspane-ui--clock-view
-                        :tab '(:icon "schedule" :label "Clock") :order 30)
+                        :order 30)
 (eabp-shell-define-view "search" :builder #'glasspane-ui--search-view
                         :order 70)
 (eabp-shell-define-view "settings" :builder #'glasspane-ui--settings-view

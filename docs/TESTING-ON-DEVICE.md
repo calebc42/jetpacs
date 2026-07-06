@@ -47,7 +47,35 @@ From the phone's Eval tab (or any REPL against the live bridge):
 - [ ] `(eabp-apps-remove "hello")` + `(eabp-shell-remove-view "hello")`
       → everything collapses back to the single-app look.
 
+### 2026-07-06 results (scrcpy session, first pass)
+
+Verified: caps list (12), browser intent, vibrate, flashlight,
+`settings.open wifi`, eabp-hello two-card launcher, `ringer.mode`'s
+typed cap-permission degrade. Fixed from findings: launch-app picker
+is now a companion dialog (desktop `completing-read` can't bridge from
+an async reply AND leaves Glasspane backgrounded, where Android drops
+the launch); TTS engine-init failure now shows a toast; the "Device
+permissions" settings card (Settings → Device permissions) provides
+the grant deep-links that special-access permissions require — Android
+never pops a dialog for those, so grant DND access there and re-test
+`ringer.mode` / `dnd.set`. Clipboard note: run the read from the
+phone's Eval tab with Glasspane foregrounded — nil is the correct
+answer whenever Glasspane isn't the focused app.
+
 ## 4. H2 — triggers end-to-end (AUTO 6–7, 12)
+
+**Broken-screen variant: everything here works over adb alone.**
+
+```
+adb shell cmd battery unplug     # fakes power-disconnect (cable stays in)
+adb shell cmd battery reset      # back to real state = power-connected fire
+adb shell input keyevent 26      # power button: screen off/on
+adb shell cmd connectivity airplane-mode enable   # (and disable)
+adb reboot                        # the reboot-rearm check, watch logcat
+```
+
+`cmd battery unplug` also drives `battery.level` tests:
+`adb shell cmd battery set level 15` crosses a `below 20` threshold.
 
 Register the canary set from the REPL:
 

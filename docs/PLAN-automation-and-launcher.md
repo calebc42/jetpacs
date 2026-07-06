@@ -292,7 +292,18 @@ return `cap-permission`-style error otherwise; never log contents),
 **Acceptance:** each cap exercised from the REPL; ungranted/unavailable
 paths return typed errors, not crashes; golden test for arg shapes.
 
-### Task 5: special-access effector batch
+### Task 5: special-access effector batch ✅ (2026-07-06)
+
+**Landed** (pulled forward from H4 the day on-device testing hit the
+DND wall on `ringer.mode`): `brightness.set` + `dnd.set` behind their
+grants with `cap-permission` deep-links, `settings.open {panel:
+"app"}` for the app-info page (runtime grants), and the "Device
+permissions" settings card → dialog in eabp-device.el listing every
+perm from the welcome map with a Grant button (map refreshes on
+reconnect). Same pass fixed the launch-app picker (companion dialog —
+a desktop `completing-read` both fails to bridge from an async reply
+and leaves Glasspane backgrounded, where Android drops the launch)
+and made TTS engine-init failure visible as a toast.
 
 **Goal:** brightness and DND, with the grant flow held to the same
 standard as the rest of the UX.

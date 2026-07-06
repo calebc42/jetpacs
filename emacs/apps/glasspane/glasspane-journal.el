@@ -195,7 +195,13 @@ orgro timestamp-tap-edit item folds in here."
                 (list (eabp-divider)
                       (eabp-section-header
                        (format "Carried over (%d)" (length carried))))
-                (mapcar #'glasspane-journal--carried-card carried)))))
+                (mapcar #'glasspane-journal--carried-card carried)))
+             ;; The clock rides the journal (its own tab felt barren and
+             ;; crowded the bottom bar) — today's time is journal matter.
+             (when (and today-p (fboundp 'glasspane-ui--clock-body))
+               (list (eabp-divider)
+                     (eabp-section-header "Clock")
+                     (glasspane-ui--clock-body)))))
      :snackbar snackbar)))
 
 (eabp-shell-define-view "journal"

@@ -84,7 +84,7 @@ Per-app distinctives, positioned:
 | Typed-property forms | Notion/Obsidian | Settings controls pattern reused → Task 10 |
 | Templates UI | all | capture templates + Task 19 org-apps → Task 5/11 side-effects |
 | Graph view | Obsidian/Logseq | demo candy, low retention — non-goal v1 |
-| SRS / PDF annotation | Logseq | deferred, engines exist |
+| SRS / PDF annotation | Logseq | SRS ✅ 2026-07-06 (glasspane-srs.el over org-srs; TESTING-ON-DEVICE §11); PDF deferred |
 
 ## Constraints & realities (read before estimating)
 
@@ -706,5 +706,7 @@ Task 1's decision.
 - **AI features** — no.
 - **Web publish v1** — org-export exists for the motivated; not a
   conversion lever.
-- **SRS / PDF annotation v1** — engines exist Emacs-side; revisit on
-  demand.
+- **SRS / PDF annotation v1** — demand arrived for SRS: shipped
+  2026-07-06 as `glasspane-srs.el` (review + authoring over org-srs;
+  cloze authoring and stats screens still engine-only). PDF annotation
+  stays deferred.

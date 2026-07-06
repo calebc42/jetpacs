@@ -304,7 +304,7 @@ suppressed identical push would leave it frozen."
 ;; appears with these views grouped as Glasspane's own.
 (eabp-defapp "glasspane" :label "Glasspane" :icon "event"
              :views '("agenda" "journal" "tasks" "clock" "search" "views"
-                      "settings" "detail")
+                      "srs" "settings" "detail")
              :order 10)
 
 ;; Landing on any non-overlay view closes the detail drill-in.
@@ -1185,25 +1185,30 @@ Always present (even with no properties yet) so + Add is reachable."
                          :variant "outlined")))))
    :collapsed t))
 
+(defvar glasspane-ui-detail-nodes-functions nil
+  "Abnormal hook: functions from a detail REF to extra section nodes.
+App layers (notes backlinks, SRS flashcards) contribute detail-view
+sections here; each returns a node list or nil.  An erroring function
+costs its own section, never the body.")
+
 (defun glasspane-ui--detail-body-with-notes (ref)
-  "The detail body plus the notes layer's backlink section, when any.
-The section splices INTO a lazy_column body (nesting another scroll
-container would break Compose) and wraps otherwise.  A missing or
-erroring notes layer costs the section, never the body."
+  "The detail body plus every registered app layer's sections.
+The sections splice INTO a lazy_column body (nesting another scroll
+container would break Compose) and wrap otherwise."
   (let ((body (glasspane-ui--detail-body ref))
-        (notes (and ref (fboundp 'glasspane-notes-detail-nodes)
-                    (condition-case nil
-                        (glasspane-notes-detail-nodes ref)
-                      (error nil)))))
+        (extras (and ref
+                     (cl-loop for fn in glasspane-ui-detail-nodes-functions
+                              append (condition-case nil (funcall fn ref)
+                                       (error nil))))))
     (cond
-     ((null notes) body)
+     ((null extras) body)
      ((equal (alist-get 't body) "lazy_column")
       (mapcar (lambda (kv)
                 (if (eq (car kv) 'children)
-                    (cons 'children (vconcat (cdr kv) notes))
+                    (cons 'children (vconcat (cdr kv) extras))
                   kv))
               body))
-     (t (apply #'eabp-column body notes)))))
+     (t (apply #'eabp-column body extras)))))
 
 (defun glasspane-ui--detail-body (ref)
   (condition-case err

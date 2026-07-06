@@ -42,6 +42,7 @@
 (require 'glasspane-views)
 (require 'glasspane-automations)
 (require 'glasspane-notes)
+(require 'glasspane-srs)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -1375,7 +1376,7 @@ rich renderers (native table, babel run button)."
         (progn
           (glasspane-demo-setup-org dir)
           (glasspane-demo-setup-org dir)  ; overwrite must not error
-          (should (= (length glasspane-demo--org-files) 6))
+          (should (= (length glasspane-demo--org-files) 7))
           (dolist (spec glasspane-demo--org-files)
             (should (glasspane-org-reader-file
                      (expand-file-name (car spec) dir))))
@@ -2613,6 +2614,213 @@ link are skipped (the double-link guard)."
                                      content)))))
       (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
       (delete-file file))))
+
+;; ─── SRS skin: review over org-srs (org-srs mocked) ──────────────────────────
+
+(ert-deftest eabp-buffer-overlay-hiding-fidelity ()
+  "The generic renderer honors overlay `display' and `invisible' —
+the property the whole SRS skin rests on: org-srs hides answers with
+exactly these, so the phone must show the ellipsis, never the answer."
+  (with-temp-buffer
+    (insert "Front text\nAnswer text\nFolded text\n")
+    (add-to-invisibility-spec 'eabp-test-fold)
+    ;; Card-style hiding: the answer displays as an ellipsis.
+    (let ((ov (make-overlay 12 23)))        ; "Answer text"
+      (overlay-put ov 'display "..."))
+    ;; Fold-style hiding: the region is invisible.
+    (let ((ov (make-overlay 24 35)))        ; "Folded text"
+      (overlay-put ov 'invisible 'eabp-test-fold))
+    (let ((json (json-serialize
+                 (eabp-tests--canon (apply #'eabp-column (eabp-buffer-render)))
+                 :null-object :null :false-object :false)))
+      (should (string-search "Front text" json))
+      (should (string-search "..." json))
+      (should-not (string-search "Answer text" json))
+      (should-not (string-search "Folded text" json)))))
+
+(defmacro eabp-tests--with-fake-org-srs (&rest body)
+  "Run BODY with the org-srs seam mocked.
+Exposes `reviewing', `pending', and `rated' (a recorder) to BODY via
+dynamic closure variables established with `cl-letf'."
+  (declare (indent 0))
+  `(let ((glasspane-srs--available t)
+         (glasspane-srs--buffer nil)
+         (eabp-tests--srs-reviewing nil)
+         (eabp-tests--srs-pending nil)
+         (eabp-tests--srs-rated nil))
+     (cl-letf (((symbol-function 'org-srs-reviewing-p)
+                (lambda () eabp-tests--srs-reviewing))
+               ((symbol-function 'org-srs-item-confirm-pending-p)
+                (lambda () eabp-tests--srs-pending))
+               ((symbol-function 'org-srs-item-confirm-command)
+                (lambda () nil))
+               ((symbol-function 'org-srs-review-pending-items)
+                (lambda (&optional _) eabp-tests--srs-items))
+               ((symbol-function 'org-srs-review-rate)
+                (lambda (rating) (push rating eabp-tests--srs-rated)))
+               ((symbol-function 'org-srs-item-call-with-current)
+                (lambda (thunk &rest _) (funcall thunk)))
+               ((symbol-function 'org-srs-table-goto-column)
+                (lambda (_) t))
+               ((symbol-function 'org-srs-stats-intervals)
+                (lambda () '(:again 600 :hard 86400 :good 259200 :easy 604800)))
+               ((symbol-function 'org-srs-time-seconds-desc)
+                (lambda (secs) (list (/ secs 60) :minute)))
+               ((symbol-function 'eabp-shell-push)
+                (cl-function (lambda (&optional _tab &key _switch-to)))))
+       ,@body)))
+
+(defvar eabp-tests--srs-reviewing nil)
+(defvar eabp-tests--srs-pending nil)
+(defvar eabp-tests--srs-rated nil)
+(defvar eabp-tests--srs-items nil)
+
+(ert-deftest glasspane-srs-idle-view ()
+  "Between sessions the view shows the due count and the start button;
+zero due shows the caught-up empty state."
+  (eabp-tests--with-fake-org-srs
+    (glasspane-org-cache-invalidate)
+    (let* ((eabp-tests--srs-items '(a b c))
+           (json (json-serialize
+                  (eabp-tests--canon (glasspane-srs--view nil))
+                  :null-object :null :false-object :false)))
+      (should (string-search "3 items due" json))
+      (should (string-search "srs.review.start" json)))
+    (glasspane-org-cache-invalidate)
+    (let* ((eabp-tests--srs-items nil)
+           (json (json-serialize
+                  (eabp-tests--canon (glasspane-srs--view nil))
+                  :null-object :null :false-object :false)))
+      (should (string-search "All caught up" json)))))
+
+(ert-deftest glasspane-srs-question-then-answer ()
+  "Question state: hidden answer + Show answer.  Answer state: the four
+rating buttons with predicted intervals."
+  (eabp-tests--with-fake-org-srs
+    (with-temp-buffer
+      (insert "What is the capital of France?\nParis\n")
+      (let ((ov (make-overlay 31 36)))      ; "Paris"
+        (overlay-put ov 'display "..."))
+      (setq-local org-srs-review-item '((card back) "test-id"))
+      (setq glasspane-srs--buffer (current-buffer)
+            eabp-tests--srs-reviewing t
+            eabp-tests--srs-pending #'org-srs-item-confirm-command)
+      (let ((json (json-serialize
+                   (eabp-tests--canon (glasspane-srs--view nil))
+                   :null-object :null :false-object :false)))
+        (should (string-search "capital of France" json))
+        (should-not (string-search "Paris" json))
+        (should (string-search "Show answer" json))
+        (should (string-search "srs.answer.show" json))
+        (should-not (string-search "srs.rate" json)))
+      ;; Reveal: overlay dropped, ratings shown with intervals.
+      (delete-overlay (car (overlays-in (point-min) (point-max))))
+      (setq eabp-tests--srs-pending nil)
+      (let ((json (json-serialize
+                   (eabp-tests--canon (glasspane-srs--view nil))
+                   :null-object :null :false-object :false)))
+        (should (string-search "Paris" json))
+        (dolist (label '("Again" "Hard" "Good" "Easy"))
+          (should (string-search label json)))
+        (should (string-search "srs.rate" json))
+        (should (string-search "10m" json))     ; :again 600s
+        (should-not (string-search "Show answer" json))))))
+
+(ert-deftest glasspane-srs-rate-dispatches ()
+  "srs.rate maps the wire name to the rating keyword in the review
+buffer; unknown ratings are ignored; rating before the reveal answers
+with a snackbar instead of rating blind."
+  (eabp-tests--with-fake-org-srs
+    (with-temp-buffer
+      (setq glasspane-srs--buffer (current-buffer)
+            eabp-tests--srs-reviewing t)
+      (eabp--on-action '((action . "srs.rate")
+                         (args . ((rating . "good")))) nil)
+      (should (equal eabp-tests--srs-rated '(:good)))
+      (eabp--on-action '((action . "srs.rate")
+                         (args . ((rating . "amazing")))) nil)
+      (should (equal eabp-tests--srs-rated '(:good)))
+      ;; Question still pending → refuse with feedback.
+      (setq eabp-tests--srs-pending #'org-srs-item-confirm-command
+            eabp-shell--snackbar nil)
+      (eabp--on-action '((action . "srs.rate")
+                         (args . ((rating . "easy")))) nil)
+      (should (equal eabp-tests--srs-rated '(:good)))
+      (should (string-search "Show the answer" (or eabp-shell--snackbar ""))))))
+
+(ert-deftest glasspane-srs-item-create-at-ref ()
+  "srs.item.create resolves the ref and runs org-srs-item-create with
+the heading current (its prompts bridge to phone dialogs upstream)."
+  (let ((file (make-temp-file "eabp-srs" nil ".org"))
+        (created nil))
+    (with-temp-file file (insert "* Alpha\nBody.\n* Beta\nMore.\n"))
+    (unwind-protect
+        (eabp-tests--with-fake-org-srs
+          (cl-letf (((symbol-function 'org-srs-item-create)
+                     (lambda ()
+                       (setq created (org-get-heading t t t t)))))
+            (eabp--on-action
+             `((action . "srs.item.create")
+               (args . ((file . ,file) (pos . 18)))) ; inside Beta
+             nil)
+            (should (equal created "Beta"))
+            (should (string-search "created" (or eabp-shell--snackbar "")))))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest glasspane-demo-srs-registration ()
+  "Demo setup registers flashcards.org as review items when org-srs is
+around: cards at the card headings, cloze targets wrapped in place,
+one items-update per cloze entry.  Without org-srs the file is still
+written as plain org."
+  (let ((dir (make-temp-file "eabp-demo-srs" t))
+        (created nil) (clozed nil) (updated 0))
+    (unwind-protect
+        (progn
+          (let ((glasspane-srs--available t))
+            (cl-letf (((symbol-function 'org-srs-item-new)
+                       (lambda (_type)
+                         (push (org-get-heading t t t t) created)))
+                      ((symbol-function 'org-srs-item-cloze-default)
+                       (lambda (start end &optional _hint)
+                         (push (buffer-substring-no-properties start end)
+                               clozed)))
+                      ((symbol-function 'org-srs-item-cloze-update-entry)
+                       (lambda (&optional _) (cl-incf updated))))
+              (glasspane-demo-setup-org dir)))
+          (should (equal (sort created #'string<)
+                         '("Mass–energy equivalence"
+                           "What does the Gaussian integral evaluate to?")))
+          (should (equal (sort clozed #'string<) '("1947" "a moth")))
+          (should (= updated 1))
+          ;; Unavailable → written but unregistered, no error.
+          (let ((glasspane-srs--available nil))
+            (setq created nil)
+            (glasspane-demo-setup-org dir)
+            (should-not created)
+            (should (file-exists-p (expand-file-name "flashcards.org" dir)))))
+      (when-let ((buf (find-buffer-visiting
+                       (expand-file-name "flashcards.org" dir))))
+        (kill-buffer buf))
+      (delete-directory dir t))))
+
+(ert-deftest glasspane-srs-detail-section-and-hook-seam ()
+  "The detail splice hook carries both layers: the SRS section appears
+through `glasspane-ui-detail-nodes-functions', and an erroring
+contributor costs only itself."
+  (eabp-tests--with-fake-org-srs
+    (cl-letf (((symbol-function 'glasspane-ui--detail-body)
+               (lambda (_ref) (eabp-lazy-column (eabp-text "The body" 'body)))))
+      (let* ((glasspane-ui-detail-nodes-functions
+              (list (lambda (_ref) (error "broken contributor"))
+                    #'glasspane-srs-detail-nodes))
+             (json (json-serialize
+                    (eabp-tests--canon
+                     (glasspane-ui--detail-body-with-notes '((id . "x"))))
+                    :null-object :null :false-object :false)))
+        (should (string-search "The body" json))
+        (should (string-search "Make flashcard" json))
+        (should (string-search "srs.item.create" json))))))
 
 (provide 'eabp-tests)
 ;;; eabp-tests.el ends here

@@ -13,6 +13,11 @@
 ;;; Code:
 
 (require 'glasspane-ui)
+(require 'glasspane-journal)
+(require 'glasspane-views)
+(require 'glasspane-automations)
+(require 'glasspane-notes)
+(require 'glasspane-srs)
 (require 'glasspane-config)
 
 ;; Load the app-managed defaults (capture templates, agenda wiring) if

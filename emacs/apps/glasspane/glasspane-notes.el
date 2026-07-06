@@ -297,5 +297,8 @@ must not nest a link inside a link."
 (add-hook 'eabp-shell-refresh-hook
           (lambda () (clrhash glasspane-notes--mentions)))
 
+;; The detail view splices this module's sections through the ui seam.
+(add-hook 'glasspane-ui-detail-nodes-functions #'glasspane-notes-detail-nodes)
+
 (provide 'glasspane-notes)
 ;;; glasspane-notes.el ends here

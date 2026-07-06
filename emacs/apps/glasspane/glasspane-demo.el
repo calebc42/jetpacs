@@ -16,7 +16,9 @@
 
 ;;; Code:
 
+(require 'org)
 (require 'eabp-surfaces)
+(require 'glasspane-srs)               ; SRS registration for the flashcards
 
 (defcustom glasspane-demo-directory "~/glasspane-demo/"
   "Directory `glasspane-demo-setup' writes the tour files into.
@@ -694,8 +696,89 @@ CLOSED: [2026-07-02 Thu 09:15]
 :Effort:   15min
 :ID:       9142df4e-1111-4cf1-9675-943e16da5e47
 :END:
+")
+    ("flashcards.org" . "\
+#+TITLE: Flashcards
+#+STARTUP: overview
+
+Spaced repetition over the study notes (drawer → Review on the phone).
+Plain org until org-srs is installed — the demo setup registers these
+as review items automatically when it is.
+
+* What does the Gaussian integral evaluate to?
+:PROPERTIES:
+:ID:       7c2e91d4-5a38-4f61-9b0e-3d84a2c6f105
+:END:
+√π — [[id:53e5ad9b-a66d-480b-b91a-050f526515ab][Calculus — the Gaussian integral]]
+walks through the polar-coordinates trick.
+* Mass–energy equivalence
+:PROPERTIES:
+:ID:       b19f4e73-2c60-4585-8aa1-64f0d3b7e2c9
+:END:
+State Einstein's relation between rest mass and energy.
+** Back
+E = mc² — derivation notes live in
+[[id:94bff2e9-8e82-40d5-9403-b9278cc3a1ec][Physics — mass–energy equivalence]].
+* The first computer bug
+:PROPERTIES:
+:ID:       e4a8c1f6-97b2-4d3e-8c05-1f6a9d24b380
+:END:
+The first actual case of bug being found: operators taped a moth into
+the Harvard Mark II logbook in 1947.
 "))
   "Alist of (FILENAME . CONTENT) written by `glasspane-demo-setup-org'.")
+
+;; ─── SRS registration for the flashcards file ────────────────────────────────
+
+(declare-function org-srs-item-new "org-srs-item")
+(declare-function org-srs-item-cloze-default "org-srs-item-cloze")
+(declare-function org-srs-item-cloze-update-entry "org-srs-item-cloze")
+
+(defconst glasspane-demo--srs-cards
+  '("What does the Gaussian integral evaluate to?"
+    "Mass–energy equivalence")
+  "flashcards.org headings the demo registers as `card' items.")
+
+(defconst glasspane-demo--srs-clozes
+  '(("The first computer bug" "a moth" "1947"))
+  "(HEADING TARGET…) rows the demo registers as cloze items.
+Each TARGET is clozed in place, then the entry's items are created.")
+
+(defun glasspane-demo--srs-goto-heading (heading)
+  "Move point to HEADING's line in the current org buffer."
+  (goto-char (point-min))
+  (re-search-forward (format org-complex-heading-regexp-format
+                             (regexp-quote heading)))
+  (beginning-of-line))
+
+(defun glasspane-demo--register-srs-items (dir)
+  "Register DIR's flashcards.org entries as org-srs review items.
+A no-op without org-srs — the file reads as plain org either way.
+Runs right after the corpus overwrote the files, so previously
+registered drawers are gone and every item is created fresh.  Errors
+cost the registration, never the demo setup."
+  (when (glasspane-srs-available-p)
+    (condition-case err
+        (with-current-buffer
+            (find-file-noselect (expand-file-name "flashcards.org" dir))
+          ;; The buffer may predate the overwrite; the disk copy rules.
+          (revert-buffer :ignore-auto :noconfirm)
+          (org-with-wide-buffer
+           (dolist (heading glasspane-demo--srs-cards)
+             (glasspane-demo--srs-goto-heading heading)
+             (org-srs-item-new 'card))
+           (pcase-dolist (`(,heading . ,targets) glasspane-demo--srs-clozes)
+             (dolist (target targets)
+               ;; Re-locate per target: each cloze wrap shifts positions.
+               (glasspane-demo--srs-goto-heading heading)
+               (search-forward target (org-entry-end-position))
+               (org-srs-item-cloze-default (match-beginning 0)
+                                           (match-end 0)))
+             (glasspane-demo--srs-goto-heading heading)
+             (org-srs-item-cloze-update-entry)))
+          (let ((save-silently t)) (save-buffer)))
+      (error (message "glasspane-demo: SRS registration failed: %s"
+                      (error-message-string err))))))
 
 ;;;###autoload
 (defun glasspane-demo-setup-org (&optional dir)
@@ -713,6 +796,8 @@ other files in the directory are untouched.  Returns DIR."
     (dolist (spec glasspane-demo--org-files)
       (write-region (cdr spec) nil (expand-file-name (car spec) dir)
                     nil 'silent))
+    ;; The flashcards become live review items when org-srs is around.
+    (glasspane-demo--register-srs-items dir)
     ;; Agenda/search memos now describe files that no longer exist.
     (when (fboundp 'glasspane-org-cache-invalidate)
       (glasspane-org-cache-invalidate))

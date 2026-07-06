@@ -86,8 +86,8 @@
 (savehist-mode 1)
 (recentf-mode 1)
 
-;;; ── External packages: org-ql, vulpea ────────────────────────────────
-;; Both optional, both degrade cleanly:
+;;; ── External packages: org-ql, vulpea, org-srs ───────────────────────
+;; All optional, all degrade cleanly:
 ;;   - org-ql: the search tab understands the common queries on its own
 ;;     (todo:/tags:/priority: tokens, free text, and sexps like
 ;;     (and (todo "TODO") (tags "work"))); installing org-ql unlocks the
@@ -95,12 +95,15 @@
 ;;   - vulpea (v2+): the note database behind backlinks, unlinked
 ;;     mentions, and [[ note completion in the phone editor.  Without it
 ;;     those sections simply don't appear.
+;;   - org-srs: spaced repetition (FSRS) behind the Review screen and
+;;     the detail view's "Make flashcard".  Without it the Review drawer
+;;     entry simply doesn't exist.
 ;; Installs are attempted once per launch until they succeed; with no
 ;; network nothing breaks.
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 (package-initialize)
-(dolist (pkg '(org-ql vulpea))
+(dolist (pkg '(org-ql vulpea org-srs))
   (unless (package-installed-p pkg)
     (condition-case err
         (progn
@@ -120,9 +123,17 @@
   (setq vulpea-db-sync-directories (list org-directory))
   (vulpea-db-autosync-mode 1))
 
+;;; ── Spaced repetition: org-srs ───────────────────────────────────────
+;; The command-style confirm is what makes phone-driven review work (the
+;; default reads a key), and it is upstream's own recommendation for
+;; Emacs on Android.  The Review screen also binds it defensively.
+(when (require 'org-srs nil t)
+  (setq org-srs-item-confirm #'org-srs-item-confirm-command))
+
 ;;; ── Try the demo ─────────────────────────────────────────────────────
 ;; M-x glasspane-demo-setup-org writes a sample org corpus (tables,
-;; babel, LaTeX, agenda data) into ~/org — note it overwrites the six
-;; demo file names if they already exist.
+;; babel, LaTeX, agenda data, flashcards) into ~/org — note it
+;; overwrites the seven demo file names if they already exist.  With
+;; org-srs installed the flashcards register as live review items.
 
 ;;; init.el ends here

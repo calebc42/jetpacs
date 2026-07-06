@@ -58,6 +58,7 @@
                     "apps/glasspane/glasspane-views.el"
                     "apps/glasspane/glasspane-automations.el"
                     "apps/glasspane/glasspane-notes.el"
+                    "apps/glasspane/glasspane-srs.el"
                     "apps/glasspane/glasspane-demo.el"
                     "apps/glasspane/glasspane-config.el"
                     "apps/glasspane/glasspane.el"))

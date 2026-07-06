@@ -229,3 +229,38 @@ becomes "verify before H4" rather than "verify before H3".
       rules on a live session → logcat shows ONE `triggers.set`
       (after ~0.2 s idle), not one per rule.
 
+## 11. SRS — spaced repetition over org-srs (needs a fresh bundle)
+
+Setup: the updated starter init installs `org-srs` (MELPA; pulls the
+`fsrs` ELPA dep) and sets `org-srs-item-confirm` to the command-style
+confirm. `M-x glasspane-demo-setup-org` now seeds `flashcards.org`
+(two cards + a two-target cloze entry) and registers the items when
+org-srs is present, so a review has material immediately. On a big
+collection, note `org-srs-review-cache` exists for session
+performance.
+
+- [ ] **Availability gate:** without org-srs installed the drawer has
+      no Review entry; after install + pull-to-refresh it appears.
+- [ ] **Authoring:** open a demo heading's detail view → "Make
+      flashcard" → the type picker arrives as a phone dialog; pick
+      `card` → snackbar "Review item created"; the entry gains the srs
+      drawer (check in the editor).  Cancel the picker → "Cancelled",
+      nothing written.
+- [ ] **Review flow:** drawer → Review shows "N items due" → Start
+      review → the item renders with the answer as "..." (card) —
+      answers must never be readable in question state; "Show answer"
+      reveals in place; the four rating buttons appear with predicted
+      intervals ("10m · 1d · …"); rating advances to the next item;
+      the session ends on "All caught up".
+- [ ] **Cloze:** cloze an entry on the desktop side
+      (`org-srs-item-cloze-dwim` + `org-srs-item-cloze-update`), review
+      from the phone — the cloze shows as its hint/ellipsis until
+      revealed.
+- [ ] **Top actions:** postpone (item leaves the queue for tomorrow),
+      suspend (heading gets commented), undo (appears only after a
+      rating; restores the previous log row), quit (back to the idle
+      screen; due count reflects work done).
+- [ ] **Desktop mirror:** start a review in on-device Emacs directly —
+      the phone view follows along (the confirm/finish hooks repush).
+- [ ] **Settings:** Settings → Review shows "New cards per day" /
+      "Max reviews per day" and edits persist through Customize.

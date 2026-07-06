@@ -222,7 +222,19 @@ needed; SPEC §8 draft of the `conceal` run attribute.
 
 ## Phase C1 — linking core
 
-### Task 3: Wikilink autocomplete
+### Task 3: Wikilink autocomplete ✅ (2026-07-05)
+
+**Landed:** `emacs/apps/glasspane/glasspane-notes.el` — a wikilink
+capf installed in org shadow buffers (via
+`eabp-sync-shadow-setup-hook`, so desktop org buffers stay untouched);
+candidates from `vulpea-db-search-by-title` (capped, annotated with
+the file); acceptance inserts the full `[[id:…][Title]]` link through
+the new candidate `insert` attr (SPEC §8, core
+`:eabp-insert-function` capf prop, Kotlin strip applies insert over
+label). Kotlin: `[` added to the completion trigger chars;
+strip narrowing made case-insensitive. Degrades to absent without
+vulpea. starter-init installs vulpea + autosync. On-device pass
+pending; vulpea perf numbers still owed by the Task 1 spike.
 
 **Goal:** typing `[[` in any editor offers headings/files, inserts a
 proper org link.
@@ -247,7 +259,18 @@ queue by design; offline `[[` simply completes nothing (fine).
 **Acceptance:** on-device: type `[[`, pick a note, link renders as its
 title; ERT covers the candidate function and prefix math.
 
-### Task 4: Backlinks panel + unlinked mentions
+### Task 4: Backlinks panel + unlinked mentions ✅ (2026-07-05)
+
+**Landed** (same module): the detail view splices a "Linked
+references (n)" collapsible (from `vulpea-db-query-by-links-some`;
+cards open the source file) plus "Unlinked mentions" computed only on
+an explicit button tap through
+`vulpea-note-unlinked-mentions-async` (ripgrep, cached per note,
+dropped by the refresh seam — the battery-risk item stays lazy);
+`link.materialize` rewrites the mention line into an id link
+(case-insensitive find, file casing preserved — case test included).
+Sections appear only for refs with an org ID and only with vulpea
+present. On-device pass pending.
 
 **Goal:** every note detail view grows a backlinks section; unlinked
 mentions listed below with one-tap "link it".

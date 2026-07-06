@@ -65,6 +65,7 @@ this directory and fails if an app feature or org itself sneaks in.
 | `glasspane/glasspane-journal.el` | daily-note landing surface: datetree journal tab, capture row, carried-over reschedule |
 | `glasspane/glasspane-views.el` | saved org-ql queries as views: table/board/calendar renderings over `glasspane-org--query` |
 | `glasspane/glasspane-automations.el` | automations as literate org: automations.org headings → trigger registrations (DONE = disabled) |
+| `glasspane/glasspane-notes.el` | vulpea bridge: `[[` wikilink capf in phone-editor shadows, detail-view backlinks + on-demand unlinked mentions, `link.materialize` |
 | `glasspane/glasspane-demo.el` | the mobile-IDE tour files |
 | `glasspane/glasspane.el` | aggregate entry point: `(require 'glasspane)` |
 | `eabp-magit.el` | curated magit radial menu (pure data + key dispatch) |

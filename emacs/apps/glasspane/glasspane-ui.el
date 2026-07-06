@@ -234,7 +234,7 @@ suppressed identical push would leave it frozen."
                                (= (line-number-at-pos pos)
                                   (line-number-at-pos org-clock-hd-marker))))))
     (eabp-shell-nav-view
-     "Detail" (glasspane-ui--detail-body ref)
+     "Detail" (glasspane-ui--detail-body-with-notes ref)
      ;; Back is pure navigation: builtin = instant, local, works offline.
      ;; heading.back stays registered for compatibility but nothing emits
      ;; it anymore.
@@ -1180,6 +1180,26 @@ Always present (even with no properties yet) so + Add is reachable."
                          (eabp-action "heading.prop-add" :args ref)
                          :variant "outlined")))))
    :collapsed t))
+
+(defun glasspane-ui--detail-body-with-notes (ref)
+  "The detail body plus the notes layer's backlink section, when any.
+The section splices INTO a lazy_column body (nesting another scroll
+container would break Compose) and wraps otherwise.  A missing or
+erroring notes layer costs the section, never the body."
+  (let ((body (glasspane-ui--detail-body ref))
+        (notes (and ref (fboundp 'glasspane-notes-detail-nodes)
+                    (condition-case nil
+                        (glasspane-notes-detail-nodes ref)
+                      (error nil)))))
+    (cond
+     ((null notes) body)
+     ((equal (alist-get 't body) "lazy_column")
+      (mapcar (lambda (kv)
+                (if (eq (car kv) 'children)
+                    (cons 'children (vconcat (cdr kv) notes))
+                  kv))
+              body))
+     (t (apply #'eabp-column body notes)))))
 
 (defun glasspane-ui--detail-body (ref)
   (condition-case err

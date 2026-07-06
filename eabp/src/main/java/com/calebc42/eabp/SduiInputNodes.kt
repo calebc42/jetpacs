@@ -626,7 +626,9 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
 
 private const val COMPLETION_DEBOUNCE_MS = 300L
 private const val COMPLETION_MIN_PREFIX = 2
-private const val COMPLETION_TRIGGER_CHARS = ".:"
+// "." member access, ":" keywords/paths, "[" org wikilinks ("[[" fires
+// note completion — the Emacs-side capf decides what the brackets mean).
+private const val COMPLETION_TRIGGER_CHARS = ".:["
 
 /** Token characters for the completion prefix; mirrors the Emacs-side
  *  word/symbol syntax closely enough for lisp-case and snake_case. */
@@ -678,7 +680,11 @@ private fun CompletionStrip(
         for (i in 0 until candidates.length()) {
             val c = candidates.optJSONObject(i) ?: continue
             val label = c.optString("label")
-            if (label.startsWith(effective) && label != effective) add(c)
+            // Case-insensitive narrowing — completion-strip convention;
+            // the accepted candidate restores the canonical case anyway.
+            if (label.startsWith(effective, ignoreCase = true) &&
+                !label.equals(effective, ignoreCase = false)
+            ) add(c)
         }
     }
     if (visible.isEmpty()) return
@@ -695,10 +701,14 @@ private fun CompletionStrip(
             val annotation = c.optString("annotation")
             AssistChip(
                 onClick = {
+                    // `insert` (SPEC §8): what lands in the buffer when it
+                    // differs from the display label — e.g. a wikilink chip
+                    // shows "[[Title" but inserts "[[id:…][Title]]".
+                    val insert = c.optString("insert").ifEmpty { label }
                     val start = cursor - effective.length
                     state.edit {
-                        replace(start, cursor, label)
-                        selection = TextRange(start + label.length)
+                        replace(start, cursor, insert)
+                        selection = TextRange(start + insert.length)
                     }
                     EabpRuntime.completionState.clear()
                 },

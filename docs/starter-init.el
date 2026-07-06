@@ -3,9 +3,10 @@
 ;; A minimal init for running Emacs with the Glasspane companion app on
 ;; Android.  Copy it to ~/.emacs.d/init.el on the device (or use it as
 ;; the seed for your own config).  Everything works with built-in Emacs
-;; alone; the one external package (org-ql, for the phone's search tab)
-;; installs itself on the first launch with a network connection and is
-;; skipped gracefully offline — startup never breaks either way.
+;; alone; the two external packages (org-ql for the search tab, vulpea
+;; for backlinks and note completion) install themselves on the first
+;; launch with a network connection and are skipped gracefully offline —
+;; startup never breaks either way.
 ;;
 ;; How the pieces divide:
 ;;   - This file: getting the bundle loaded, pairing, phone basics.
@@ -85,26 +86,39 @@
 (savehist-mode 1)
 (recentf-mode 1)
 
-;;; ── Search: org-ql ───────────────────────────────────────────────────
-;; The search tab understands the common org-ql queries on its own
-;; (todo:/tags:/priority: tokens, free text, and sexps like
-;; (and (todo "TODO") (tags "work"))).  Installing org-ql unlocks the
-;; rest of the language — ts/clocked/property comparators and friends.
-;; Install is attempted once per launch until it succeeds; with no
-;; network, search stays on the built-in subset — nothing else is
-;; affected.
+;;; ── External packages: org-ql, vulpea ────────────────────────────────
+;; Both optional, both degrade cleanly:
+;;   - org-ql: the search tab understands the common queries on its own
+;;     (todo:/tags:/priority: tokens, free text, and sexps like
+;;     (and (todo "TODO") (tags "work"))); installing org-ql unlocks the
+;;     rest of the language — ts/clocked/property comparators and friends.
+;;   - vulpea (v2+): the note database behind backlinks, unlinked
+;;     mentions, and [[ note completion in the phone editor.  Without it
+;;     those sections simply don't appear.
+;; Installs are attempted once per launch until they succeed; with no
+;; network nothing breaks.
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 (package-initialize)
-(unless (package-installed-p 'org-ql)
-  (condition-case err
-      (progn
-        (unless package-archive-contents
-          (package-refresh-contents))
-        (package-install 'org-ql))
-    (error (message "starter-init: org-ql install deferred (%s)"
-                    (error-message-string err)))))
+(dolist (pkg '(org-ql vulpea))
+  (unless (package-installed-p pkg)
+    (condition-case err
+        (progn
+          (unless package-archive-contents
+            (package-refresh-contents))
+          (package-install pkg))
+      (error (message "starter-init: %s install deferred (%s)"
+                      pkg (error-message-string err))))))
 (require 'org-ql nil t)
+
+;;; ── Notes database: vulpea ───────────────────────────────────────────
+;; vulpea keeps a SQLite index of the vault (titles, aliases, links) and
+;; watches `org-directory' for changes — including external ones from
+;; git or Syncthing.  Glasspane reads it for the detail view's backlinks
+;; and the editor's [[ completion; index updates stay off the save path.
+(when (require 'vulpea nil t)
+  (setq vulpea-db-sync-directories (list org-directory))
+  (vulpea-db-autosync-mode 1))
 
 ;;; ── Try the demo ─────────────────────────────────────────────────────
 ;; M-x glasspane-demo-setup-org writes a sample org corpus (tables,

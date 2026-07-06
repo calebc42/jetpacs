@@ -6008,6 +6008,10 @@ next keystroke saver), capped at `eabp-complete-max-candidates'."
          (props (nthcdr 3 data))
          (ann-fn (plist-get props :annotation-function))
          (kind-fn (plist-get props :company-kind))
+         ;; Optional capf extension (SPEC §8): what a candidate INSERTS
+         ;; when it differs from its display label — a wikilink chip
+         ;; shows "[[Title" but lands "[[id:…][Title]]" in the buffer.
+         (insert-fn (plist-get props :eabp-insert-function))
          ;; The phone replaces text *before* the cursor, so the prefix is
          ;; [BEG, point) even when the capf's END extends past point.
          (prefix (and data (buffer-substring-no-properties beg (point))))
@@ -6029,7 +6033,8 @@ next keystroke saver), capped at `eabp-complete-max-candidates'."
     ;; Empty capf result → generic word fallback (org prose, unknown modes).
     (unless cands
       (when-let ((fb (eabp-complete--word-fallback)))
-        (setq prefix (car fb) cands (cdr fb) ann-fn nil kind-fn nil)))
+        (setq prefix (car fb) cands (cdr fb)
+              ann-fn nil kind-fn nil insert-fn nil)))
     (when cands
       (setq cands (sort (delete-dups
                          (mapcar #'substring-no-properties cands))
@@ -6044,6 +6049,12 @@ next keystroke saver), capped at `eabp-complete-max-candidates'."
                         `((label . ,c)
                           ,@(when-let ((a (eabp-complete--annotate ann-fn c)))
                               `((annotation . ,a)))
+                          ,@(when-let ((ins (and insert-fn
+                                                 (condition-case nil
+                                                     (funcall insert-fn c)
+                                                   (error nil)))))
+                              (and (stringp ins) (not (equal ins c))
+                                   `((insert . ,ins))))
                           ,@(when-let ((k (and kind-fn
                                                (condition-case nil
                                                    (funcall kind-fn c)

@@ -156,3 +156,16 @@ becomes "verify before H4" rather than "verify before H3".
       filter row narrows by `tags:x` / `todo:TODO` / free text;
       "n of m headings" + Clear behave; a nonsense query shows its
       error instead of a blank file.
+- [ ] **Vulpea (needs the updated starter init + network once):**
+      startup installs vulpea and `vulpea-db-autosync-mode` builds the
+      index (first run on a big vault: note the wall time — this IS
+      the PKM 1 spike's cold-index number; also note incremental
+      update lag after a save and Emacs RSS before/after).
+- [ ] **Wikilinks:** in the phone editor type `[[` in an org file —
+      the strip offers notes immediately; typing narrows; accepting
+      inserts `[[id:…][Title]]`. Offline `[[` completes nothing.
+- [ ] **Backlinks:** open a heading with an ID that other notes link
+      to — "Linked references (n)" lists them, cards open the source;
+      "Find mentions" runs the ripgrep pass (needs `rg` from Termux)
+      and "Link it" rewrites the mention into a real link (verify the
+      source file).

@@ -210,7 +210,7 @@ companion → client   edit.delta     {file, session, seq, start, del, text, len
 companion → client   edit.caret     {file, session, pos}
 companion → client   edit.close     {file, session}
 companion → client   edit.complete  {id, session, pos, request_id, ...}      pure query
-client → companion   completions.show {id, request_id, prefix, candidates: [{label, annotation?}]}
+client → companion   completions.show {id, request_id, prefix, candidates: [{label, annotation?, insert?}]}
 client → companion   diagnostics.show {id, session, diags: [{start, end, type, text}]}
 client → companion   eldoc.show       {id, session, text}
 client → companion   fontify.show     {id, session, runs}

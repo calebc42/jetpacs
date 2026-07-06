@@ -92,7 +92,7 @@ acceptance list: [TESTING-ON-DEVICE.md](TESTING-ON-DEVICE.md).
 |---|---|
 | ✅ **PKM 5** — daily-note landing surface (absorbs ORGRO: timestamp tap-edit via carried-over reschedule) | Landed 2026-07-05: glasspane-journal.el (datetree, carried-over reschedule, landing setting) |
 | ⏸ **PKM 1** — backlink-engine spike/decision (vulpea v2 decided; spike = on-device validation) | Hardware-gated: cold-index/incremental/memory numbers need the phone |
-| ⏸ **PKM 3 → PKM 4** — wikilink autocomplete; backlinks panel + unlinked mentions | Layer on PKM 1's validated vulpea; after the spike |
+| ✅ **PKM 3 → PKM 4** — wikilink autocomplete; backlinks panel + unlinked mentions | Landed 2026-07-05 ahead of the spike (glasspane-notes.el; degrades to absent without vulpea); on-device pass + spike numbers pending |
 | ✅ **PKM 11** — saved org-ql queries as table/board/calendar views | Landed 2026-07-05: glasspane-views.el (hub + 3 renderings over glasspane-org--query) |
 | 🟡 **AUTO 8** — connectivity triggers (network/SSID/BT) | `network` landed 2026-07-05; SSID/BT hardware-gated (their value is the permission-degrade flow) |
 | ✅ **AUTO 13** — org-defined automations | Landed 2026-07-05: glasspane-automations.el (automations.org, DONE = disabled, case test) |

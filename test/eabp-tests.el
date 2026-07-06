@@ -41,6 +41,7 @@
 (require 'glasspane-journal)
 (require 'glasspane-views)
 (require 'glasspane-automations)
+(require 'glasspane-notes)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -2301,6 +2302,84 @@ queries surface instead of blanking the file."
       (should (equal glasspane-ui--files-filter "todo:TODO"))
       (run-hook-with-args 'eabp-files-open-hook "/tmp/other.org")
       (should (equal glasspane-ui--files-filter "")))))
+
+;; ─── Notes bridge: wikilinks + backlinks (PKM 3–4, vulpea mocked) ────────────
+
+(defmacro eabp-tests--with-fake-vulpea (notes &rest body)
+  "Run BODY with the vulpea seam answering from NOTES (plists)."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'glasspane-notes-available-p) (lambda () t))
+             ((symbol-function 'vulpea-db-search-by-title)
+              (lambda (pattern)
+                (cl-remove-if-not
+                 (lambda (n) (string-match-p (regexp-quote (downcase pattern))
+                                             (downcase (plist-get n :title))))
+                 ,notes)))
+             ((symbol-function 'vulpea-db-query-by-links-some)
+              (lambda (_ids &optional _type) ,notes))
+             ((symbol-function 'vulpea-note-id)
+              (lambda (n) (plist-get n :id)))
+             ((symbol-function 'vulpea-note-title)
+              (lambda (n) (plist-get n :title)))
+             ((symbol-function 'vulpea-note-path)
+              (lambda (n) (plist-get n :path))))
+     ,@body))
+
+(ert-deftest glasspane-notes-wikilink-completion ()
+  "Typing [[pa in an org shadow buffer offers notes; accepting inserts
+a full id link via the candidate `insert' attr."
+  (eabp-tests--with-fake-vulpea
+      '((:id "abc-1" :title "Paris trip" :path "/v/paris.org")
+        (:id "abc-2" :title "Pasta recipes" :path "/v/pasta.org"))
+    (let ((result (eabp-complete-in-text "wiki-test.org" "see [[pa" 8)))
+      (should result)
+      (should (equal (car result) "[[pa"))
+      (let ((cand (cl-find "[[Paris trip" (cdr result)
+                           :key (lambda (c) (alist-get 'label c))
+                           :test #'equal)))
+        (should cand)
+        (should (equal (alist-get 'insert cand) "[[id:abc-1][Paris trip]]"))
+        (should (equal (alist-get 'annotation cand) "paris.org"))))
+    ;; Outside brackets the org capf stays silent (word fallback rules).
+    (let ((result (eabp-complete-in-text "wiki-test.org" "plain pa" 8)))
+      (should-not (cl-find-if (lambda (c)
+                                (string-prefix-p "[[" (alist-get 'label c)))
+                              (cdr result))))))
+
+(ert-deftest glasspane-notes-backlink-section ()
+  "The detail section lists linked references and the mentions button."
+  (eabp-tests--with-fake-vulpea
+      '((:id "src-1" :title "Travel log" :path "/v/log.org"))
+    (let* ((glasspane-notes--mentions (make-hash-table :test 'equal))
+           (nodes (glasspane-notes-detail-nodes '((id . "abc-1"))))
+           (json (json-serialize (eabp-tests--canon (apply #'eabp-column nodes))
+                                 :null-object :null :false-object :false)))
+      (should (string-search "Linked references (1)" json))
+      (should (string-search "Travel log" json))
+      (should (string-search "notes.mentions" json))
+      (should (string-search "files.open" json)))
+    ;; No id in the ref → no section at all.
+    (should-not (glasspane-notes-detail-nodes '((file . "/v/x.org"))))))
+
+(ert-deftest glasspane-notes-materialize-links-mention ()
+  "link.materialize rewrites the mention line into a real id link."
+  (let ((file (make-temp-file "eabp-mention" nil ".org")))
+    (with-temp-file file
+      (insert "* Notes\nWe talked about paris trip plans today.\n"))
+    (unwind-protect
+        (cl-letf (((symbol-function 'eabp-shell-push)
+                   (cl-function (lambda (&optional _tab &key _switch-to)))))
+          (eabp--on-action
+           `((action . "link.materialize")
+             (args . ((id . "abc-1") (path . ,file) (line . 2)
+                      (matched . "Paris trip"))))
+           nil)
+          (let ((content (with-temp-buffer
+                           (insert-file-contents file) (buffer-string))))
+            ;; Case-insensitive find, file's own casing preserved.
+            (should (string-search "[[id:abc-1][paris trip]]" content))))
+      (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+      (delete-file file))))
 
 (provide 'eabp-tests)
 ;;; eabp-tests.el ends here

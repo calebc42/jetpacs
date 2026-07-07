@@ -2670,7 +2670,9 @@ a full id link via the candidate `insert' attr."
       (should (string-search "Linked references (1)" json))
       (should (string-search "Travel log" json))
       (should (string-search "notes.mentions" json))
-      (should (string-search "files.open" json)))
+      ;; The backlink card opens the referenced heading in the detail
+      ;; view (`heading.tap'), not the raw file.
+      (should (string-search "heading.tap" json)))
     ;; No id in the ref → no section at all.
     (should-not (glasspane-notes-detail-nodes '((file . "/v/x.org"))))))
 

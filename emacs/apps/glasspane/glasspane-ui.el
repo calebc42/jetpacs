@@ -1043,10 +1043,13 @@ The one part of a timestamp the date-stamp chip can't display."
 KEY renders without org's colons.  ID is shown read-only (editing it
 breaks links); every other value is an inline input whose submit runs
 `heading.prop-set' — submitting an empty value removes the property."
-  (let* ((buf (marker-buffer (glasspane-org--resolve-ref ref)))
-         (allowed (with-current-buffer buf
-                    (org-with-wide-buffer (goto-char pos)
-                      (org-property-get-allowed-values pos key))))
+  (let* ((marker (ignore-errors (glasspane-org--resolve-ref ref)))
+         (buf (and marker (marker-buffer marker)))
+         (allowed (and buf
+                       (with-current-buffer buf
+                         (org-with-wide-buffer (goto-char pos)
+                           (ignore-errors
+                             (org-property-get-allowed-values pos key))))))
          (is-boolean (or (equal allowed '("t" "nil")) (equal allowed '("true" "false"))
                          (string-match-p "\\?" key)))
          (is-date (or (string-match-p "_DATE\\|_TIME\\'" key)

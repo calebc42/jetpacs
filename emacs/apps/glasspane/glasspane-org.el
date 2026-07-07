@@ -722,11 +722,15 @@ ready for the companion's `reminders.set' frame."
           (replace-match (glasspane-org--timestamp-string) t t nil 1))
         
         (goto-char (point-min))
-        ;; Add #+CREATED if missing
-        (unless (re-search-forward "^[ \t]*#\\+CREATED:" nil t)
-          (goto-char (point-min))
-          (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
-            (forward-line 1))
+        ;; Add #+CREATED to titled note files only.  Inserting front
+        ;; matter into a plain org buffer (agenda file, table, config)
+        ;; grows it at the top and invalidates the buffer positions any
+        ;; in-flight position-based action was rendered with, so gate on
+        ;; a #+TITLE — the marker of a note document.
+        (when (and (not (re-search-forward "^[ \t]*#\\+CREATED:" nil t))
+                   (progn (goto-char (point-min))
+                          (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)))
+          (forward-line 1)
           (insert (format "#+CREATED: %s\n" (glasspane-org--timestamp-string))))))))
 
 (add-hook 'before-save-hook #'glasspane-org--before-save-timestamps)

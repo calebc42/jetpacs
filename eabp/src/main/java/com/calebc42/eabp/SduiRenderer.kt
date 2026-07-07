@@ -8,6 +8,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.combinedClickable
@@ -21,8 +23,11 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -45,6 +50,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +66,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -92,8 +100,8 @@ val SDUI_NODE_TYPES: Set<String> = setOf(
     "empty_state", "icon", "image", "progress",
     // Input
     "text_input", "editor", "checkbox", "switch", "enum_list",
-    "date_button", "time_button", "button", "icon_button", "chip",
-    "assist_chip",
+    "date_button", "time_button", "slider", "button", "icon_button",
+    "chip", "assist_chip",
 )
 
 /**
@@ -133,7 +141,12 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             }
             Column(
                 modifier = mod,
-                verticalArrangement = Arrangement.spacedBy(node.optInt("spacing", 8).dp)
+                verticalArrangement = Arrangement.spacedBy(node.optInt("spacing", 8).dp),
+                horizontalAlignment = when (node.optString("align")) {
+                    "center" -> Alignment.CenterHorizontally
+                    "end" -> Alignment.End
+                    else -> Alignment.Start
+                }
             ) {
                 WeightedChildren(node.optJSONArray("children"), surfaceId, revision, dispatch) { weight ->
                     Modifier.weight(weight)
@@ -150,7 +163,11 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                     baseModifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                 else baseModifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(node.optInt("spacing", 8).dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = when (node.optString("align")) {
+                    "top" -> Alignment.Top
+                    "bottom" -> Alignment.Bottom
+                    else -> Alignment.CenterVertically
+                }
             ) {
                 if (scroll) {
                     RenderChildren(node.optJSONArray("children"), surfaceId, revision, dispatch)
@@ -172,9 +189,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 "bottom_center" -> Alignment.BottomCenter
                 else -> Alignment.TopStart
             }
-            val boxModifier = if (actionJson != null) {
+            val boxModifier = (if (actionJson != null) {
                 baseModifier.clickable { dispatch(actionJson) }
-            } else baseModifier
+            } else baseModifier).then(containerModifier(node, RectangleShape))
             Box(modifier = boxModifier, contentAlignment = alignment) {
                 RenderChildren(node.optJSONArray("children"), surfaceId, revision, dispatch)
             }
@@ -193,7 +210,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             }
             val fillMod = if (node.optBoolean("fill")) Modifier.fillMaxWidth() else Modifier
             Surface(
-                modifier = baseModifier.then(fillMod),
+                modifier = baseModifier.then(fillMod).then(containerModifier(node, shape)),
                 color = color,
                 shape = shape,
                 tonalElevation = node.optInt("elevation", 0).dp
@@ -208,6 +225,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 androidx.compose.material3.ElevatedCard(
                     modifier = baseModifier
                         .fillMaxWidth()
+                        .then(containerModifier(node, RoundedCornerShape(12.dp)))
                         .clickable(enabled = actionJson != null) { if (actionJson != null) dispatch(actionJson) }
                 ) {
                     Box(modifier = Modifier.padding(16.dp)) {
@@ -362,6 +380,28 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         "enum_list" -> SduiEnumList(node, baseModifier, dispatch)
         "date_button" -> SduiDateButton(node, baseModifier, dispatch)
         "time_button" -> SduiTimeButton(node, baseModifier, dispatch)
+        "slider" -> {
+            // A continuous value input (progress is display-only). Dispatches
+            // on_change once, on release, with the value injected into args
+            // (SPEC §9); the position tracks locally during the drag so a
+            // drag never floods the wire.
+            val min = node.optDouble("min", 0.0).toFloat()
+            val max = node.optDouble("max", 1.0).toFloat()
+            val onChange = node.optJSONObject("on_change")
+            var pos by remember(node.optString("id"), revision) {
+                mutableFloatStateOf(node.optDouble("value", min.toDouble()).toFloat())
+            }
+            Slider(
+                value = pos,
+                onValueChange = { pos = it },
+                onValueChangeFinished = {
+                    if (onChange != null) dispatchWithValue(dispatch, onChange, pos.toDouble())
+                },
+                valueRange = min..max,
+                steps = node.optInt("steps", 0),
+                modifier = baseModifier.fillMaxWidth()
+            )
+        }
 
         // ── Simple controls ──────────────────────────────────────────────
         "button" -> {
@@ -451,10 +491,27 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             val url = node.optString("url")
             val desc = node.optString("content_description")
             if (url.isNotEmpty()) {
+                var m = baseModifier
+                if (node.has("width")) m = m.width(node.optInt("width").dp)
+                if (node.has("height")) m = m.height(node.optInt("height").dp)
+                if (node.has("aspect_ratio")) m = m.aspectRatio(node.optDouble("aspect_ratio").toFloat())
+                // Default to full-width only when the server gave no explicit
+                // sizing (the historical behaviour); otherwise honour it.
+                m = when {
+                    node.has("width") -> m
+                    node.has("fill_fraction") -> m.fillMaxWidth(node.optDouble("fill_fraction").toFloat())
+                    else -> m.fillMaxWidth()
+                }
+                val scale = when (node.optString("content_scale")) {
+                    "crop" -> ContentScale.Crop
+                    "fill" -> ContentScale.FillBounds
+                    else -> ContentScale.Fit
+                }
                 AsyncImage(
                     model = url,
                     contentDescription = desc.ifEmpty { null },
-                    modifier = baseModifier.fillMaxWidth()
+                    modifier = m,
+                    contentScale = scale
                 )
             }
         }
@@ -471,6 +528,27 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             }
         }
     }
+}
+
+/**
+ * Sizing and border modifiers shared by the container nodes (box, surface,
+ * card): explicit width/height in dp, fill_fraction (0..1 of the parent's
+ * width), and an optional {width,color} border stroked with the container's
+ * SHAPE. All additive — an absent key changes nothing, so a plain container
+ * is unaffected.
+ */
+@Composable
+private fun containerModifier(node: JSONObject, shape: Shape): Modifier {
+    var m: Modifier = Modifier
+    if (node.has("width")) m = m.width(node.optInt("width").dp)
+    if (node.has("height")) m = m.height(node.optInt("height").dp)
+    if (node.has("fill_fraction")) m = m.fillMaxWidth(node.optDouble("fill_fraction").toFloat())
+    node.optJSONObject("border")?.let { b ->
+        val c = resolveColor(b.optString("color")).takeIf { it != Color.Unspecified }
+            ?: MaterialTheme.colorScheme.outline
+        m = m.border(BorderStroke(b.optInt("width", 1).dp, c), shape)
+    }
+    return m
 }
 
 /**

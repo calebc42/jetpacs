@@ -285,7 +285,9 @@ constructor, kept honest by the ERT suite. Summary by family:
   styled `spans` (emphasis, `color`/`bg` hex overrides, `mono`, tap
   links), `icon`, `image`, `date_stamp`, `divider`, `section_header`,
   `empty_state`, `progress`.
-- **Layout**: `row`, `column`, `flow_row`, `lazy_column` (a child may
+- **Layout**: `row`, `column` (both take `spacing` in dp between children
+  and `align` for the cross axis — row `top`/`center`/`bottom`, column
+  `start`/`center`/`end`), `flow_row`, `lazy_column` (a child may
   carry `scroll_here: true` — the list scrolls to it on first show and
   whenever its index changes, e.g. a REPL input row pushed down by new
   output; an update that leaves the index unchanged never disturbs the
@@ -300,8 +302,17 @@ constructor, kept honest by the ERT suite. Summary by family:
   the client draw slim "+" append affordances below the last row /
   after the last column. All embedded actions dispatch verbatim — the
   server bakes file/position into the args, the client adds nothing).
+- **Container sizing** (additive, all optional): `box`/`surface`/`card`
+  accept `width`/`height` in dp, `fill_fraction` (0–1 of the parent's
+  width), and `border` (`{width, color}`, stroked with the node's shape);
+  `image` accepts `width`/`height`, `aspect_ratio`, and `content_scale`
+  (`fit`/`crop`/`fill`). Absent keys preserve the prior behaviour. A
+  fixed-column grid is composed as a `flow_row` of `width`- or
+  `fill_fraction`-sized cells — there is no dedicated grid node.
 - **Input**: `button`, `icon_button`, `chip`, `assist_chip`, `menu`,
-  `checkbox`, `switch`, `text_input` (optional `password` masks entry and
+  `checkbox`, `switch`, `slider` (continuous value; `min`/`max` default
+  0/1, `steps` for discrete; dispatches `on_change` once on release with
+  the value injected), `text_input` (optional `password` masks entry and
   requests a password keyboard; such values must not be logged or
   retained), `enum_list` (single/multi select, optional free-add),
   `date_button` / `time_button` (native pickers),

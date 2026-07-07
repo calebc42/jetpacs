@@ -35,7 +35,7 @@
     "reorderable_list" "table" "icon" "image" "date_stamp"
     "section_header" "empty_state" "progress" "menu" "button"
     "icon_button" "chip" "assist_chip" "text_input" "editor" "checkbox"
-    "switch" "enum_list" "date_button" "time_button" "scaffold")
+    "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
   "Node `t' discriminators the reference companion renders.
 Mirror of `SDUI_NODE_TYPES' in SduiRenderer.kt.  A `t' outside this set
 is almost always a typo; a Tier 1 deliberately targeting an extended
@@ -47,7 +47,8 @@ companion gates on `eabp-node-supported-p' instead.")
   "Node keys whose value is an embedded action object (SPEC §9).")
 
 (defconst eabp-lint--numeric-attrs
-  '(padding weight spacing elevation size min_lines max_lines width height)
+  '(padding weight spacing run_spacing elevation size min_lines max_lines
+    width height fill_fraction aspect_ratio min max steps)
   "Attributes whose value must be a number.")
 
 (defconst eabp-lint--color-attrs '(color bg)

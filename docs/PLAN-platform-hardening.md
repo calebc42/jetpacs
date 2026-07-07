@@ -1,8 +1,20 @@
 # Plan: platform hardening — make eabp-core a foundation others build on
 
-**STATUS (2026-07-07): Phases A + B DONE; Phase C next.** Produced from an
-audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/` (the
+**STATUS (2026-07-07): Phases A + B + C DONE; Phase D next.** Produced from
+an audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/` (the
 `:eabp` renderer), `test/widgets.golden`, and the existing plan docs.
+
+Phase C landed 2026-07-07 (Tasks 5–10): `row`/`column`/`flow_row` take
+`:spacing` and `:align` (splitter `eabp--children-and-opts` keeps
+`(eabp-row a b c)` callers working); cross-axis alignment consumed in the
+renderer; `box`/`surface`/`card` gain `:width`/`:height`/`:fill-fraction`/
+`:border` (via `eabp-border`) through a shared Kotlin `containerModifier`;
+`image` gains sizing + `aspect_ratio` + `content_scale`; new `slider`
+input node (elisp `eabp-slider`, renderer `Slider`, in `SDUI_NODE_TYPES` +
+`eabp-lint-node-types`). Task 10: grid = compose a `flow_row` of sized
+cells (no dedicated node, per the accepted default). Golden +5 additive
+lines (48–52); SPEC §9 updated. Suite 131 tests / 126 green (same 5
+pre-existing); `:eabp` Kotlin compiles clean.
 
 Phase B landed 2026-07-07 (**Task 4**): new `emacs/core/eabp-lint.el` —
 `eabp-lint-spec` (validate a node tree: unknown `t`, malformed actions,

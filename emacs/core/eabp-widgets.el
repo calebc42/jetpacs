@@ -83,14 +83,36 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
               'on_tap on-tap
               'mono (and mono t)))
 
-(defun eabp-row (&rest children)
-  "A horizontal row of CHILDREN nodes."
-  (eabp--node "row" 'children (vconcat children)))
+(defun eabp--children-and-opts (args)
+  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
+Child nodes are alists, never keywords, so the first keyword in ARGS
+marks the start of a trailing options plist.  Lets the `&rest'-children
+constructors take options without breaking `(eabp-row a b c)' callers."
+  (let ((i (cl-position-if #'keywordp args)))
+    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
+      (cons args nil))))
 
-(defun eabp-flow-row (&rest children)
-  "A horizontal row of CHILDREN that wraps onto new lines when full.
-The right container for chip/tag rows, which overflow a plain `eabp-row'."
-  (eabp--node "flow_row" 'children (vconcat children)))
+(defun eabp-row (&rest args)
+  "A horizontal row of child nodes.
+ARGS is child nodes, optionally followed by keywords: :spacing (dp
+between children), :align (cross-axis \"top\"/\"center\"/\"bottom\"),
+and :scroll (pan sideways on overflow)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "row"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'align (plist-get (cdr split) :align)
+                'scroll (and (plist-get (cdr split) :scroll) t))))
+
+(defun eabp-flow-row (&rest args)
+  "A horizontal row of children that wraps onto new lines when full.
+The right container for chip/tag rows, which overflow a plain `eabp-row'.
+Optional trailing keywords: :spacing and :run-spacing (dp)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "flow_row"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'run_spacing (plist-get (cdr split) :run-spacing))))
 
 (defun eabp-scroll-row (&rest children)
   "A horizontal row of CHILDREN that pans sideways when it overflows.
@@ -99,36 +121,63 @@ use it for chip rails that must stay on one row.  Child weights are
 ignored — a scrolling row has no bounded width to distribute."
   (eabp--node "row" 'children (vconcat children) 'scroll t))
 
-(defun eabp-column (&rest children)
-  "A vertical column of CHILDREN nodes."
-  (eabp--node "column" 'children (vconcat children)))
+(defun eabp-column (&rest args)
+  "A vertical column of child nodes.
+ARGS is child nodes, optionally followed by keywords: :spacing (dp
+between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
+and :scroll (make the column scroll vertically)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "column"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'align (plist-get (cdr split) :align)
+                'scroll (and (plist-get (cdr split) :scroll) t))))
 
 (defun eabp-scroll-column (&rest children)
   "A vertically scrollable column of CHILDREN nodes."
   (eabp--node "column" 'children (vconcat children) 'scroll t))
 
-(cl-defun eabp-box (children &key alignment padding weight on-tap)
-  "A Box wrapping CHILDREN."
+(cl-defun eabp-border (&key (width 1) color)
+  "A border spec of WIDTH dp in COLOR (hex or theme token).
+Pass as the :border of `eabp-box' / `eabp-surface' / `eabp-card'."
+  (eabp--node nil 'width width 'color color))
+
+(cl-defun eabp-box (children &key alignment padding weight on-tap
+                             width height fill-fraction border)
+  "A Box wrapping CHILDREN.
+WIDTH/HEIGHT fix the box size (dp); FILL-FRACTION (0.0-1.0) sets it to a
+fraction of the parent width; BORDER is an `eabp-border' spec."
   (eabp--node "box"
               'children (vconcat children)
               'alignment alignment
               'padding padding
               'weight weight
-              'on_tap on-tap))
+              'on_tap on-tap
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
-(cl-defun eabp-surface (children &key color shape elevation padding fill)
+(cl-defun eabp-surface (children &key color shape elevation padding fill
+                                 width height fill-fraction border)
   "A Surface wrapping CHILDREN.
 COLOR is a hex string or a theme token (\"primary\", \"surface_container\",
 \"primary_container\", …) that adapts to the device's light/dark theme.
 SHAPE is \"rounded\", \"rounded_small\", or \"circle\".  FILL stretches the
-surface to full width (e.g. zebra rows in a list)."
+surface to full width (e.g. zebra rows in a list).  WIDTH/HEIGHT fix the
+size (dp), FILL-FRACTION (0.0-1.0) sets a fraction of parent width, and
+BORDER is an `eabp-border' spec stroked with SHAPE."
   (eabp--node "surface"
               'children (vconcat children)
               'color color
               'shape shape
               'elevation elevation
               'padding padding
-              'fill (and fill t)))
+              'fill (and fill t)
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
 (defun eabp-lazy-column (&rest children)
   "A scrollable column of CHILDREN."
@@ -151,14 +200,21 @@ first flagged child wins."
   "A horizontal divider."
   (eabp--node "divider"))
 
-(cl-defun eabp-card (children &key on-tap padding weight on-swipe)
-  "An elevated card wrapping CHILDREN."
+(cl-defun eabp-card (children &key on-tap padding weight on-swipe
+                              width height fill-fraction border)
+  "An elevated card wrapping CHILDREN.
+WIDTH/HEIGHT fix the size (dp), FILL-FRACTION (0.0-1.0) sets a fraction
+of parent width, and BORDER is an `eabp-border' spec."
   (eabp--node "card"
               'children (vconcat children)
               'on_tap on-tap
               'on_swipe on-swipe
               'padding padding
-              'weight weight))
+              'weight weight
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
 (cl-defun eabp-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.
@@ -262,12 +318,20 @@ picker (\"YYYY-MM-DD\")."
 time injected into its args as `value' (\"HH:MM\"). VALUE seeds the picker."
   (eabp--node "time_button" 'label label 'on_pick on-pick 'value value))
 
-(cl-defun eabp-image (url &key content-description padding)
-  "An image loaded from URL (an http(s) URL or a readable file:// path)."
+(cl-defun eabp-image (url &key content-description padding
+                          width height aspect-ratio content-scale)
+  "An image loaded from URL (an http(s) URL or a readable file:// path).
+WIDTH/HEIGHT fix the size (dp); ASPECT-RATIO (w/h) constrains it;
+CONTENT-SCALE is \"fit\" (default), \"crop\", or \"fill\".  With no width or
+fill given the image fills the available width, as before."
   (eabp--node "image"
               'url url
               'content_description content-description
-              'padding padding))
+              'padding padding
+              'width width
+              'height height
+              'aspect_ratio aspect-ratio
+              'content_scale (and content-scale (format "%s" content-scale))))
 
 (cl-defun eabp-icon-button (icon action &key content-description padding)
   "An icon button."
@@ -350,6 +414,19 @@ changes."
               'label label
               'on_change on-change
               'padding padding))
+
+(cl-defun eabp-slider (id on-change &key value min max steps)
+  "A continuous slider identified by ID.
+ON-CHANGE fires once on release with the position injected into args as
+`value'.  VALUE seeds the position; MIN/MAX bound the range (default
+0.0/1.0); STEPS, when > 0, makes the slider discrete."
+  (eabp--node "slider"
+              'id id
+              'on_change on-change
+              'value value
+              'min min
+              'max max
+              'steps steps))
 
 ;; ─── Display ─────────────────────────────────────────────────────────────────
 

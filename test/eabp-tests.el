@@ -1528,7 +1528,15 @@ rich renderers (native table, babel run button)."
       :aligns '("start" "end") :on-add-row act :on-add-col act :padding 2)
      (eabp-table
       (list (eabp-table-row (list (eabp-table-cell (list (eabp-span "a")))))))
-     (eabp-scroll-row leaf leaf))))
+     (eabp-scroll-row leaf leaf)
+     ;; Phase C — composition knobs
+     (eabp-slider "vol" act :value 0.3 :min 0.0 :max 1.0 :steps 10)
+     (eabp-row leaf leaf :spacing 4 :align "top")
+     (eabp-column leaf leaf :spacing 6 :align "center")
+     (eabp-surface (list leaf) :width 120 :height 40 :fill-fraction 0.5
+                   :border (eabp-border :width 2 :color "#888"))
+     (eabp-image "http://x" :width 100 :height 80 :aspect-ratio 1.5
+                 :content-scale "crop"))))
 
 (defun eabp-tests--widget-lines ()
   (let ((i -1))

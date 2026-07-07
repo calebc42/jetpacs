@@ -181,10 +181,10 @@ child's own heading and meta-data, so it carries no `*' stars."
 
 (defun glasspane-srs--card-parts (side)
   "Return (QUESTION . ANSWER) parts for the narrowed heading entry.
-Each part is (title . STRING) or (region BEG . END).  SIDE is the
-reviewed (hidden answer) side, `front' or `back'.  Handles the common
-heading-level layouts: heading-as-front + body-as-back, and explicit
-`Front'/`Back' children."
+Each part is (title . STRING), (region BEG . END), or 
+(title-and-region STRING BEG . END). SIDE is the reviewed (hidden answer) side.
+Handles the common heading-level layouts: heading-as-front + body-as-back, 
+explicit `Front`/`Back` children, and Logseq-style nested block children."
   (goto-char (point-min))
   (let* ((base (or (org-current-level) 1))
          (title (or (org-get-heading t t t t) ""))
@@ -200,26 +200,39 @@ heading-level layouts: heading-as-front + body-as-back, and explicit
          (back (glasspane-srs--child-body base "Back" child-re))
          (front-face
           (cond (front (cons 'region front))
-                ((and back (< meta-end first-child))
-                 (list 'region meta-end first-child))
+                ((< first-child (point-max))
+                 ;; Has children: Front is title + body up to first-child
+                 (list 'title-and-region title meta-end first-child))
                 (t (cons 'title title))))
          (back-face
           (cond (back (cons 'region back))
-                (t (list 'region meta-end (point-max))))))
+                ((< first-child (point-max))
+                 ;; Has children: Back is the children
+                 (list 'region first-child (point-max)))
+                (t 
+                 ;; No children: Back is the body
+                 (list 'region meta-end (point-max))))))
     (if (eq side 'front)
         (cons back-face front-face)
       (cons front-face back-face))))
 
 (defun glasspane-srs--part-nodes (part)
-  "Render a card PART: (title . STRING) or (region BEG END)/(region BEG . END)."
+  "Render a card PART: (title . STRING), (region BEG END), or (title-and-region ...)."
   (pcase part
     (`(title . ,s)
      (and (stringp s) (not (string-empty-p s)) (list (eabp-text s 'title))))
+    (`(title-and-region ,title ,beg . ,rest)
+     (let* ((end (if (consp rest) (car rest) rest))
+            (title-nodes (and (stringp title) (not (string-empty-p title))
+                              (list (eabp-text title 'title))))
+            (eabp-line-numbers nil)
+            (eabp-buffer-monospace nil)
+            (region-nodes (when (and (integerp beg) (integerp end) (< beg end))
+                            (eabp-buffer-render-region (current-buffer) beg end))))
+       (append title-nodes region-nodes)))
     (`(region ,beg . ,rest)
      (let ((end (if (consp rest) (car rest) rest))
            (eabp-line-numbers nil)
-           ;; Flashcard prose, not code — render in the proportional face,
-           ;; not the generic renderer's monospace default.
            (eabp-buffer-monospace nil))
        (when (and (integerp beg) (integerp end) (< beg end))
          (eabp-buffer-render-region (current-buffer) beg end))))
@@ -229,14 +242,89 @@ heading-level layouts: heading-as-front + body-as-back, and explicit
   "Question and (when REVEALED) answer nodes for a `card' ITEM.
 ITEM is `(card SIDE)'; SIDE (default `back') is the hidden answer."
   (condition-case nil
-      (let ((parts (glasspane-srs--card-parts (or (cadr item) 'back))))
-        (append
-         (or (glasspane-srs--part-nodes (car parts))
-             (list (eabp-text "(no question)" 'caption)))
-         (when revealed
-           (cons (eabp-divider)
-                 (or (glasspane-srs--part-nodes (cdr parts))
-                     (list (eabp-text "(no answer)" 'caption)))))))
+      (let* ((parts (glasspane-srs--card-parts (or (cadr item) 'back)))
+             (open (format "^[ \t]*:%s:[ \t]*$"
+                           (regexp-opt glasspane-srs--noise-drawers)))
+             (overlays nil)
+             ;; Save the real buffer-local value so we can restore it.
+             ;; We must use setq (not let) because `invisible-p' is a C
+             ;; function that reads the buffer struct directly and never
+             ;; sees Lisp-level dynamic bindings.
+             (orig-invis-spec buffer-invisibility-spec))
+        (unwind-protect
+            (progn
+              ;; Build a clean spec: remove fold-related entries so folded
+              ;; body text renders.
+              (setq buffer-invisibility-spec
+                    (if (listp orig-invis-spec)
+                        (cl-remove-if
+                         (lambda (x)
+                           (memq (if (consp x) (car x) x)
+                                 '(outline org-fold-outline
+                                   org-fold-drawer org-fold-block)))
+                         orig-invis-spec)
+                      orig-invis-spec))
+              (add-to-invisibility-spec 'glasspane-srs-hide)
+              ;; Hide noise drawers (PROPERTIES / SRSITEMS / LOGBOOK)
+              ;; with our own overlays.
+              (save-excursion
+                (goto-char (point-min))
+                (while (re-search-forward open nil t)
+                  (let ((dbeg (match-beginning 0))
+                        (dend (save-excursion
+                                (and (re-search-forward
+                                      "^[ \t]*:END:[ \t]*$" nil t)
+                                     (min (1+ (line-end-position))
+                                          (point-max))))))
+                    (if (null dend)
+                        (goto-char (line-end-position))
+                      (let ((ov (make-overlay dbeg dend)))
+                        (overlay-put ov 'invisible 'glasspane-srs-hide)
+                        (push ov overlays)
+                        (goto-char dend))))))
+              ;; Hide org link brackets and targets using `display'
+              ;; overlays.  The renderer checks (get-char-property pos
+              ;; 'display) and when it's an empty string the span is
+              ;; skipped entirely.  This is more reliable than the
+              ;; `invisible' property which depends on the C-level
+              ;; `invisible-p' and can be disrupted by font-lock.
+              (save-excursion
+                (goto-char (point-min))
+                ;; Descriptive links: [[target][description]]
+                (while (re-search-forward
+                        "\\[\\[\\([^]]*\\)\\]\\[\\([^]]*\\)\\]\\]" nil t)
+                  (let ((ov1 (make-overlay (match-beginning 0)
+                                           (match-beginning 2)))
+                        (ov2 (make-overlay (match-end 2)
+                                           (match-end 0))))
+                    (overlay-put ov1 'display "")
+                    (overlay-put ov2 'display "")
+                    (push ov1 overlays)
+                    (push ov2 overlays))))
+              (save-excursion
+                (goto-char (point-min))
+                ;; Plain links: [[target]]
+                (while (re-search-forward
+                        "\\[\\[\\([^]]*\\)\\]\\]" nil t)
+                  (let ((ov1 (make-overlay (match-beginning 0)
+                                           (match-beginning 1)))
+                        (ov2 (make-overlay (match-end 1)
+                                           (match-end 0))))
+                    (overlay-put ov1 'display "")
+                    (overlay-put ov2 'display "")
+                    (push ov1 overlays)
+                    (push ov2 overlays))))
+              ;; Render parts
+              (append
+               (or (glasspane-srs--part-nodes (car parts))
+                   (list (eabp-text "(no question)" 'caption)))
+               (when revealed
+                 (cons (eabp-divider)
+                       (or (glasspane-srs--part-nodes (cdr parts))
+                           (list (eabp-text "(no answer)" 'caption)))))))
+          ;; Restore original spec and clean up overlays.
+          (setq buffer-invisibility-spec orig-invis-spec)
+          (mapc #'delete-overlay overlays)))
     (error (list (eabp-text "Couldn't lay out this card." 'caption)))))
 
 (defun glasspane-srs--cloze-content (item revealed)

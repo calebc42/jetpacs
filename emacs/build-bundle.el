@@ -61,6 +61,7 @@
                     "apps/glasspane/glasspane-notes.el"
                     "apps/glasspane/glasspane-srs.el"
                     "apps/glasspane/glasspane-demo.el"
+                    "apps/glasspane/glasspane-gallery.el"
                     "apps/glasspane/glasspane-config.el"
                     "apps/glasspane/glasspane.el"))
        ;; FEATURES: every feature the bundle satisfies.  glasspane.el also

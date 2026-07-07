@@ -38,6 +38,7 @@
 (require 'eabp-complete)
 (require 'eabp-sync)
 (require 'glasspane-demo)
+(require 'glasspane-gallery)
 (require 'glasspane-config)
 (require 'glasspane-journal)
 (require 'glasspane-views)
@@ -1868,6 +1869,13 @@ records the last-fired time."
     (should (equal "text" (alist-get 't parsed)))
     (should (equal "hi" (alist-get 'text parsed)))
     (should (equal "title" (alist-get 'style parsed)))))
+
+(ert-deftest glasspane-gallery-body-lints-clean ()
+  "The interactive gallery composes to a wire-valid spec across chart kinds."
+  (dolist (glasspane-gallery--kind '("line" "bar" "area" "sparkline"))
+    (should-not (eabp-lint-spec (glasspane-gallery--body))))
+  (dolist (lvl '(0.0 0.5 1.0))
+    (should-not (eabp-lint-spec (glasspane-gallery--gauge lvl)))))
 
 (ert-deftest eabp-lint-passes-visualization ()
   "Chart and canvas specs lint clean and round-trip (Phase D)."

@@ -2698,19 +2698,15 @@ its own `...')."
   (eabp-tests--with-fake-org-srs
     (with-temp-buffer
       (org-mode)
+      ;; A real entry, including org-srs's own drawers, so plain-org meta
+      ;; skipping is exercised (no card-region mocks).
       (insert "* What does the Gaussian integral evaluate to?\n"
               ":PROPERTIES:\n:ID: gauss\n:END:\n"
+              ":SRSITEMS:\n#+NAME: srsitem:gauss::card::back\n| ! | ts |\n:END:\n"
               "√π — a multi-line\nanswer body that\nwraps across lines.\n")
-      (let* ((buf (current-buffer))
-             (h-beg (progn (goto-char (point-min)) (line-beginning-position)))
-             (h-end (line-end-position))
-             (c-beg (save-excursion (goto-char (point-min))
-                                    (org-end-of-meta-data t) (point)))
-             (c-end (point-max)))
+      (let ((buf (current-buffer)))
         (cl-letf (((symbol-function 'org-srs-item-marker)
-                   (lambda (&rest _) (copy-marker h-beg)))
-                  ((symbol-function 'org-srs-item-card-regions)
-                   (lambda () (cl-values (cons h-beg h-end) (cons c-beg c-end)))))
+                   (lambda (&rest _) (copy-marker (point-min)))))
           (let ((q (json-serialize
                     (eabp-tests--canon
                      (apply #'eabp-column
@@ -2719,33 +2715,29 @@ its own `...')."
             (should (string-search "Gaussian integral" q))
             (should-not (string-search "answer body" q))
             (should-not (string-search "..." q))
-            (should-not (string-search "* What" q)))   ; star dropped
+            (should-not (string-search "* What" q))     ; star dropped
+            (should-not (string-search "SRSITEMS" q)))  ; drawer skipped
           (let ((a (json-serialize
                     (eabp-tests--canon
                      (apply #'eabp-column
                             (glasspane-srs--item-nodes '((card back) "gauss" buf) t)))
                     :null-object :null :false-object :false)))
             (should (string-search "answer body" a))
-            (should-not (string-search "..." a))))))))
+            (should (string-search "wraps across lines" a))
+            (should-not (string-search "..." a))
+            (should-not (string-search "SRSITEMS" a))))))))
 
 (ert-deftest glasspane-srs-card-frontback-excises-and-strips ()
-  "A Front/Back card shows only the question (answer excised) until
-revealed; the revealed answer drops the structural `Back' heading."
+  "A Front/Back card shows only the question until revealed; the
+revealed answer is the Back child's body, without its heading line."
   (eabp-tests--with-fake-org-srs
     (with-temp-buffer
       (org-mode)
-      (insert "* Term\nQuestion text here.\n** Back\nThe answer text.\n")
-      (let* ((buf (current-buffer))
-             (c-beg (save-excursion (goto-char (point-min))
-                                    (org-end-of-meta-data t) (point)))
-             (b-beg (save-excursion (goto-char (point-min))
-                                    (search-forward "** Back")
-                                    (line-beginning-position)))
-             (c-end (point-max)))
+      (insert "* Term\n:PROPERTIES:\n:ID: t\n:END:\n"
+              "Question text here.\n** Back\nThe answer text.\n")
+      (let ((buf (current-buffer)))
         (cl-letf (((symbol-function 'org-srs-item-marker)
-                   (lambda (&rest _) (copy-marker (point-min))))
-                  ((symbol-function 'org-srs-item-card-regions)
-                   (lambda () (cl-values (cons c-beg c-end) (cons b-beg c-end)))))
+                   (lambda (&rest _) (copy-marker (point-min)))))
           (let ((q (json-serialize
                     (eabp-tests--canon
                      (apply #'eabp-column
@@ -2764,7 +2756,8 @@ revealed; the revealed answer drops the structural `Back' heading."
 
 (ert-deftest glasspane-srs-cloze-blank-then-reveal ()
   "A cloze renders the sentence with the reviewed span blanked and the
-other cloze's text as context; revealing shows the answer."
+other cloze's text as context; revealing shows the answer.  Only
+`org-srs-item-cloze-collect' is mocked — bounds come from plain org."
   (eabp-tests--with-fake-org-srs
     (with-temp-buffer
       (org-mode)
@@ -2776,15 +2769,9 @@ other cloze's text as context; revealing shows the answer."
                         (list 'h1 (match-beginning 0) (match-end 0) "a moth")))
              (c2 (progn (goto-char (point-min))
                         (search-forward "{{h2}{1947}}")
-                        (list 'h2 (match-beginning 0) (match-end 0) "1947")))
-             (c-beg (save-excursion (goto-char (point-min))
-                                    (org-end-of-meta-data t) (point))))
+                        (list 'h2 (match-beginning 0) (match-end 0) "1947"))))
         (cl-letf (((symbol-function 'org-srs-item-marker)
                    (lambda (&rest _) (copy-marker (point-min))))
-                  ((symbol-function 'org-srs-entry-end-of-meta-data)
-                   (lambda (&rest _) (goto-char c-beg)))
-                  ((symbol-function 'org-srs-entry-end-position)
-                   (lambda (&rest _) (point-max)))
                   ((symbol-function 'org-srs-item-cloze-collect)
                    (lambda (&rest _) (list c1 c2))))
           (let ((q (json-serialize

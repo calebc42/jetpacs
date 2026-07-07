@@ -48,10 +48,7 @@
 (declare-function org-srs-item-create "org-srs-item")
 (declare-function org-srs-item-marker "org-srs-item")
 (declare-function org-srs-item-call-with-current "org-srs-item")
-(declare-function org-srs-item-card-regions "org-srs-item-card")
 (declare-function org-srs-item-cloze-collect "org-srs-item-cloze")
-(declare-function org-srs-entry-end-of-meta-data "org-srs-entry")
-(declare-function org-srs-entry-end-position "org-srs-entry")
 (declare-function org-srs-log-beginning-of-drawer "org-srs-log")
 (declare-function org-srs-log-end-of-drawer "org-srs-log")
 (declare-function org-srs-log-hide-drawer "org-srs-log")
@@ -158,69 +155,98 @@ invalidates, so the count follows ratings without a per-render scan."
   "Drawers hidden from the fallback render: org metadata plus org-srs's
 review log (`org-srs-log-drawer-name' is SRSITEMS).")
 
-(defun glasspane-srs--heading-region-p (beg end)
-  "Non-nil when [BEG, END) is exactly one heading line."
+;; Card layouts are computed with plain org (not org-srs's region
+;; helpers): under a subtree narrowing those helpers return *entry*-scoped
+;; positions that collapse to empty answers.  This is predictable and
+;; testable without org-srs installed.
+
+(defun glasspane-srs--child-body (base title child-re)
+  "Body region (BEG . END) of the direct child named TITLE, or nil.
+BASE is the entry's outline level (point-min is its heading);
+CHILD-RE matches level BASE+1 headings.  The region starts after the
+child's own heading and meta-data, so it carries no `*' stars."
   (save-excursion
-    (goto-char beg)
-    (and (org-at-heading-p)
-         (= beg (line-beginning-position))
-         (<= end (line-end-position)))))
+    (goto-char (point-min))
+    (let (region)
+      (while (and (not region) (re-search-forward child-re nil t))
+        (goto-char (match-beginning 0))
+        (when (and (eql (org-current-level) (1+ base))
+                   (string-equal-ignore-case
+                    (or (org-get-heading t t t t) "") title))
+          (setq region
+                (cons (save-excursion (org-end-of-meta-data t) (point))
+                      (save-excursion (org-end-of-subtree t t) (point)))))
+        (goto-char (match-end 0)))
+      region)))
 
-(defun glasspane-srs--render-span (beg end)
-  "Render buffer span [BEG, END) as clean nodes, or nil.
-A leading org heading line is dropped: in a card region it is only the
-structural `Front'/`Back' label, never the answer text."
-  (when (and beg end (< beg end))
-    (let ((start (save-excursion
-                   (goto-char beg)
-                   (if (and (org-at-heading-p) (= beg (line-beginning-position)))
-                       (min end (1+ (line-end-position)))
-                     beg)))
-          (eabp-line-numbers nil))
-      (when (< start end)
-        (eabp-buffer-render-region (current-buffer) start end)))))
+(defun glasspane-srs--card-parts (side)
+  "Return (QUESTION . ANSWER) parts for the narrowed heading entry.
+Each part is (title . STRING) or (region BEG . END).  SIDE is the
+reviewed (hidden answer) side, `front' or `back'.  Handles the common
+heading-level layouts: heading-as-front + body-as-back, and explicit
+`Front'/`Back' children."
+  (goto-char (point-min))
+  (let* ((base (or (org-current-level) 1))
+         (title (or (org-get-heading t t t t) ""))
+         (child-re (format "^\\*\\{%d\\}[ \t]" (1+ base)))
+         (meta-end (save-excursion (goto-char (point-min))
+                                   (org-end-of-meta-data t) (point)))
+         (first-child (save-excursion
+                        (goto-char meta-end)
+                        (if (re-search-forward child-re nil t)
+                            (line-beginning-position)
+                          (point-max))))
+         (front (glasspane-srs--child-body base "Front" child-re))
+         (back (glasspane-srs--child-body base "Back" child-re))
+         (front-face
+          (cond (front (cons 'region front))
+                ((and back (< meta-end first-child))
+                 (list 'region meta-end first-child))
+                (t (cons 'title title))))
+         (back-face
+          (cond (back (cons 'region back))
+                (t (list 'region meta-end (point-max))))))
+    (if (eq side 'front)
+        (cons back-face front-face)
+      (cons front-face back-face))))
 
-(defun glasspane-srs--region-nodes (region &optional excise)
-  "Clean nodes for REGION (a (BEG . END) cons), or nil.
-A whole-heading REGION renders as its plain title (no stars).  When
-EXCISE (another (BEG . END)) lies inside REGION it is cut out — the
-answer half of a card whose front region spans the back."
-  (when region
-    (let ((beg (car region)) (end (cdr region)))
-      (cond
-       ((glasspane-srs--heading-region-p beg end)
-        (list (eabp-text (org-get-heading t t t t) 'title)))
-       ((and excise (<= beg (car excise)) (<= (cdr excise) end))
-        (append (glasspane-srs--render-span beg (car excise))
-                (glasspane-srs--render-span (cdr excise) end)))
-       (t (glasspane-srs--render-span beg end))))))
+(defun glasspane-srs--part-nodes (part)
+  "Render a card PART: (title . STRING) or (region BEG END)/(region BEG . END)."
+  (pcase part
+    (`(title . ,s)
+     (and (stringp s) (not (string-empty-p s)) (list (eabp-text s 'title))))
+    (`(region ,beg . ,rest)
+     (let ((end (if (consp rest) (car rest) rest))
+           (eabp-line-numbers nil))
+       (when (and (integerp beg) (integerp end) (< beg end))
+         (eabp-buffer-render-region (current-buffer) beg end))))
+    (_ nil)))
 
 (defun glasspane-srs--card-content (item revealed)
   "Question and (when REVEALED) answer nodes for a `card' ITEM.
 ITEM is `(card SIDE)'; SIDE (default `back') is the hidden answer."
   (condition-case nil
-      (cl-multiple-value-bind (front back) (org-srs-item-card-regions)
-        (let* ((side (or (cadr item) 'back))
-               (answer (if (eq side 'front) front back))
-               (question (if (eq side 'front) back front)))
-          (append
-           (or (glasspane-srs--region-nodes question answer)
-               (list (eabp-text "(no question text)" 'caption)))
-           (when revealed
-             (cons (eabp-divider)
-                   (or (glasspane-srs--region-nodes answer)
-                       (list (eabp-text "(no answer text)" 'caption))))))))
+      (let ((parts (glasspane-srs--card-parts (or (cadr item) 'back))))
+        (append
+         (or (glasspane-srs--part-nodes (car parts))
+             (list (eabp-text "(no question)" 'caption)))
+         (when revealed
+           (cons (eabp-divider)
+                 (or (glasspane-srs--part-nodes (cdr parts))
+                     (list (eabp-text "(no answer)" 'caption)))))))
     (error (list (eabp-text "Couldn't lay out this card." 'caption)))))
 
 (defun glasspane-srs--cloze-content (item revealed)
   "Nodes for a `cloze' ITEM: the sentence with the reviewed blank.
 ITEM is `(cloze CLOZE-ID)'.  The reviewed cloze shows as `[hint]' /
-`[…]' until REVEALED; other clozes show their text as context."
+`[…]' until REVEALED; other clozes show their text as context.  Bounds
+come from plain org; only `org-srs-item-cloze-collect' is org-srs."
   (condition-case nil
       (let* ((target (cadr item))
-             (beg (progn (org-srs-entry-end-of-meta-data t) (point)))
-             (end (org-srs-entry-end-position))
-             (clozes (sort (org-srs-item-cloze-collect beg end)
+             (beg (save-excursion (goto-char (point-min))
+                                  (org-end-of-meta-data t) (point)))
+             (end (point-max))
+             (clozes (sort (copy-sequence (org-srs-item-cloze-collect beg end))
                            (lambda (a b) (< (cadr a) (cadr b)))))
              (pos beg) (parts nil))
         (dolist (cz clozes)
@@ -392,19 +418,16 @@ its log row and a `rating' column, the simulator runs."
                     "then pull to refresh.")))
 
 (defun glasspane-srs--top-actions ()
-  "Session top-bar actions: undo (when available), postpone, suspend, quit."
+  "Session top-bar actions — kept to the two that read at a glance:
+undo (only after a rating) and close.  Postpone/suspend are niche and
+their icons weren't legible; they stay as `srs.*' actions for a future
+labelled menu rather than cluttering the bar."
   (delq nil
         (list
          (when glasspane-srs--undo
            (eabp-icon-button "undo"
                              (eabp-action "srs.undo" :when-offline "drop")
                              :content-description "Undo last rating"))
-         (eabp-icon-button "update"
-                           (eabp-action "srs.postpone" :when-offline "drop")
-                           :content-description "Postpone a day")
-         (eabp-icon-button "block"
-                           (eabp-action "srs.suspend" :when-offline "drop")
-                           :content-description "Suspend this card")
          (eabp-icon-button "close"
                            (eabp-action "srs.quit" :when-offline "drop")
                            :content-description "End review"))))

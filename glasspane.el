@@ -10536,11 +10536,15 @@ ready for the companion's `reminders.set' frame."
           (replace-match (glasspane-org--timestamp-string) t t nil 1))
         
         (goto-char (point-min))
-        ;; Add #+CREATED if missing
-        (unless (re-search-forward "^[ \t]*#\\+CREATED:" nil t)
-          (goto-char (point-min))
-          (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
-            (forward-line 1))
+        ;; Add #+CREATED to titled note files only.  Inserting front
+        ;; matter into a plain org buffer (agenda file, table, config)
+        ;; grows it at the top and invalidates the buffer positions any
+        ;; in-flight position-based action was rendered with, so gate on
+        ;; a #+TITLE — the marker of a note document.
+        (when (and (not (re-search-forward "^[ \t]*#\\+CREATED:" nil t))
+                   (progn (goto-char (point-min))
+                          (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)))
+          (forward-line 1)
           (insert (format "#+CREATED: %s\n" (glasspane-org--timestamp-string))))))))
 
 (add-hook 'before-save-hook #'glasspane-org--before-save-timestamps)
@@ -12461,10 +12465,13 @@ The one part of a timestamp the date-stamp chip can't display."
 KEY renders without org's colons.  ID is shown read-only (editing it
 breaks links); every other value is an inline input whose submit runs
 `heading.prop-set' — submitting an empty value removes the property."
-  (let* ((buf (marker-buffer (glasspane-org--resolve-ref ref)))
-         (allowed (with-current-buffer buf
-                    (org-with-wide-buffer (goto-char pos)
-                      (org-property-get-allowed-values pos key))))
+  (let* ((marker (ignore-errors (glasspane-org--resolve-ref ref)))
+         (buf (and marker (marker-buffer marker)))
+         (allowed (and buf
+                       (with-current-buffer buf
+                         (org-with-wide-buffer (goto-char pos)
+                           (ignore-errors
+                             (org-property-get-allowed-values pos key))))))
          (is-boolean (or (equal allowed '("t" "nil")) (equal allowed '("true" "false"))
                          (string-match-p "\\?" key)))
          (is-date (or (string-match-p "_DATE\\|_TIME\\'" key)

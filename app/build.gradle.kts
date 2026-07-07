@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -39,6 +41,48 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+}
+
+// The onboarding wizard hands a phone-only user (no PC, no adb) the 827 KB
+// glasspane.el bundle and the token-substituted starter init — both too large
+// or too fiddly for the clipboard. Stage them from the repo root into a
+// generated assets dir wired through the Variant API, so they ship inside the
+// APK (read back with AssetManager at runtime) and the copy is ordered before
+// asset merge automatically.
+abstract class StageGlasspaneAssets : DefaultTask() {
+    @get:org.gradle.api.tasks.InputFiles
+    abstract val sources: org.gradle.api.file.ConfigurableFileCollection
+
+    @get:org.gradle.api.tasks.OutputDirectory
+    abstract val outputDir: org.gradle.api.file.DirectoryProperty
+
+    @org.gradle.api.tasks.TaskAction
+    fun stage() {
+        val out = outputDir.get().asFile
+        out.mkdirs()
+        sources.files.forEach { it.copyTo(File(out, it.name), overwrite = true) }
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val stage = tasks.register(
+            "stage${variant.name.replaceFirstChar(Char::uppercase)}GlasspaneAssets",
+            StageGlasspaneAssets::class,
+        ) {
+            sources.from(
+                rootProject.file("glasspane.el"),
+                rootProject.file("docs/starter-init.el"),
+                // Demo-only extras (eabp-core + the tiny Tier-1 sample), shipped
+                // so the wizard can install them separately. Likely temporary —
+                // drop these two lines and the "Demo bundles" card in
+                // Onboarding.kt to remove.
+                rootProject.file("eabp-core.el"),
+                rootProject.file("emacs/apps/eabp-hello.el"),
+            )
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(stage, StageGlasspaneAssets::outputDir)
     }
 }
 

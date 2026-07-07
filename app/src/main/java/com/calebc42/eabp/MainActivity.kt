@@ -258,7 +258,7 @@ private fun BridgeScreen() {
             // over a cached dashboard — otherwise a stale surface from a pre-auth
             // session would hide the token the user needs to pair.
             if (dashboardRecord == null || !pairedEver) {
-                PairingScreen()
+                OnboardingFlow()
             } else {
             val spec = dashboardRecord.resolveSpec(currentView)
             RenderChildren(
@@ -324,7 +324,7 @@ private fun actionIntent(context: Context, action: JSONObject, revision: Int): I
     }
 
 @Composable
-private fun PairingScreen() {
+internal fun PairingScreen() {
     val isConnected by EabpRuntime.connected.collectAsState()
 
     Column(
@@ -378,7 +378,7 @@ private fun PairingScreen() {
  * from someone holding an unlocked phone.
  */
 @Composable
-private fun PairingTokenBlock(modifier: Modifier = Modifier) {
+internal fun PairingTokenBlock(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val token = remember { EabpAuth.token(context) }
     val setqLine = "(setq eabp-auth-token \"$token\")"

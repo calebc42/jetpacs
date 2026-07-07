@@ -4,6 +4,13 @@
      permissions merge in from the :eabp library manifest. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Onboarding writes glasspane.el into /sdcard/Documents. On API 29+
+         that goes through MediaStore (no permission needed); this covers the
+         legacy direct-file path on API 24-28 only. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher_glasspane"

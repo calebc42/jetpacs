@@ -534,6 +534,13 @@ warnings — wrong arity, unused lexical variables, undefined functions."
     found))
 
 (with-eval-after-load 'eglot
+  (add-hook 'eglot-managed-mode-hook
+            (lambda ()
+              (when (eglot-current-server)
+                (when-let* ((buf-file (buffer-file-name))
+                            (file (eabp-sync--session-for-path buf-file)))
+                  (eabp-sync--arm-diagnostics file)))))
+
   (cl-defmethod eglot-handle-notification :after
     (_server (_method (eql textDocument/publishDiagnostics))
              &key uri &allow-other-keys)

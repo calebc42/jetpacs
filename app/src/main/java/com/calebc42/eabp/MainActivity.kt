@@ -23,7 +23,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cable
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,7 +45,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import com.calebc42.eabp.ui.theme.EabpTheme
@@ -244,13 +252,14 @@ private fun BridgeScreen() {
     val connected by EabpRuntime.connected.collectAsState()
     val pairedEver by EabpRuntime.pairedEver.collectAsState()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Until an Emacs has paired at least once, the pairing screen wins even
-        // over a cached dashboard — otherwise a stale surface from a pre-auth
-        // session would hide the token the user needs to pair.
-        if (dashboardRecord == null || !pairedEver) {
-            PairingScreen()
-        } else {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Until an Emacs has paired at least once, the pairing screen wins even
+            // over a cached dashboard — otherwise a stale surface from a pre-auth
+            // session would hide the token the user needs to pair.
+            if (dashboardRecord == null || !pairedEver) {
+                PairingScreen()
+            } else {
             val spec = dashboardRecord.resolveSpec(currentView)
             RenderChildren(
                 spec.optJSONArray("children"),
@@ -265,6 +274,7 @@ private fun BridgeScreen() {
             }
         }
     }
+}
 
     val dialogSpec by EabpRuntime.dialogState.currentDialog.collectAsState()
     if (dialogSpec != null) {
@@ -315,11 +325,26 @@ private fun actionIntent(context: Context, action: JSONObject, revision: Int): I
 
 @Composable
 private fun PairingScreen() {
-    Column(modifier = Modifier.padding(16.dp)) {
+    val isConnected by EabpRuntime.connected.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Cable,
+            contentDescription = null,
+            modifier = Modifier
+                .size(64.dp)
+                .padding(bottom = 16.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+
         Text("Waiting for Emacs…", style = MaterialTheme.typography.headlineMedium)
-        // The companion is the server and can only listen — Emacs is the client
-        // and must dial in. Until it does, taps here are queued and Emacs sees
-        // nothing.
+        
         Text(
             "The bridge is listening. Pair Emacs (on this device) by adding the " +
                     "line below to your init, then:\n\n" +
@@ -327,12 +352,20 @@ private fun PairingScreen() {
                     "    M-x eabp-connect\n\n" +
                     "Watch *Messages* for \"EABP: handshake ok\". This screen updates " +
                     "automatically once the handshake completes.",
-            style = MaterialTheme.typography.bodyMedium
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 16.dp, bottom = 32.dp),
+            textAlign = TextAlign.Center
         )
 
-        PairingTokenBlock(modifier = Modifier.padding(top = 16.dp))
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            PairingTokenBlock(modifier = Modifier.padding(24.dp))
+        }
 
-        val isConnected by EabpRuntime.connected.collectAsState()
+        Spacer(modifier = Modifier.height(32.dp))
         StatusRow("Connection", if (isConnected) "Connected" else "Listening", isConnected)
     }
 }
@@ -349,16 +382,16 @@ private fun PairingTokenBlock(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val token = remember { EabpAuth.token(context) }
     val setqLine = "(setq eabp-auth-token \"$token\")"
-    Column(modifier = modifier) {
-        Text("Pairing token", style = MaterialTheme.typography.labelLarge)
-        Text(token, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace)
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Pairing token", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+        Text(token, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 8.dp))
         Text(
             setqLine,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
             modifier = Modifier
-                .padding(top = 4.dp)
                 .clickable {
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("eabp-token", setqLine))
@@ -368,11 +401,11 @@ private fun PairingTokenBlock(modifier: Modifier = Modifier) {
                 }
         )
         Text(
-            "Tap the line to copy it. Any app on this phone can reach the " +
-                    "bridge port; only a paired Emacs completes the handshake.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp)
+            "Tap the line to copy it. Any app on this phone can reach the bridge port; only a paired Emacs completes the handshake.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 16.dp)
         )
     }
 }

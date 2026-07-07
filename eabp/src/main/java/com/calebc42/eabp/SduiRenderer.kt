@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -100,8 +102,12 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
     when (type) {
         // ── Layout containers ────────────────────────────────────────────
         "column" -> {
+            val scrollable = node.optBoolean("scroll", false)
+            val mod = baseModifier.fillMaxWidth().let {
+                if (scrollable) it.verticalScroll(rememberScrollState()) else it
+            }
             Column(
-                modifier = baseModifier.fillMaxWidth(),
+                modifier = mod,
                 verticalArrangement = Arrangement.spacedBy(node.optInt("spacing", 8).dp)
             ) {
                 WeightedChildren(node.optJSONArray("children"), surfaceId, revision, dispatch) { weight ->
@@ -450,6 +456,8 @@ private fun SduiCollapsible(
     var expanded by expandedState
     val header = node.optJSONObject("header")
     val longTapAction = node.optJSONObject("on_long_tap")
+    val swipeJson = node.optJSONObject("on_swipe")
+    var swipeOffset by remember { mutableFloatStateOf(0f) }
 
     // A single chevron that rotates between right (collapsed) and
     // down (expanded), and a vertically-expanding reveal, so folding
@@ -464,6 +472,27 @@ private fun SduiCollapsible(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .then(
+                    if (swipeJson != null) {
+                        Modifier
+                            .pointerInput(swipeJson) {
+                                detectHorizontalDragGestures(
+                                    onDragEnd = {
+                                        if (swipeOffset < -150f || swipeOffset > 150f) {
+                                            dispatch(swipeJson)
+                                        }
+                                        swipeOffset = 0f
+                                    },
+                                    onDragCancel = { swipeOffset = 0f },
+                                    onHorizontalDrag = { change, dragAmount ->
+                                        change.consume()
+                                        swipeOffset += dragAmount
+                                    }
+                                )
+                            }
+                            .offset { androidx.compose.ui.unit.IntOffset(swipeOffset.roundToInt(), 0) }
+                    } else Modifier
+                )
                 .then(
                     if (longTapAction != null) {
                         @OptIn(ExperimentalFoundationApi::class)

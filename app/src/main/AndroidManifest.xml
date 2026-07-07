@@ -6,9 +6,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher_glasspane"
+        android:icon="@mipmap/ic_launcher_glasspane"
         android:label="@string/app_name"
-        android:roundIcon="@drawable/ic_launcher_glasspane"
+        android:roundIcon="@mipmap/ic_launcher_glasspane"
         android:supportsRtl="true"
         android:theme="@style/Theme.Eabp">
         <!-- ^ Match your existing theme name from themes.xml if it differs. -->

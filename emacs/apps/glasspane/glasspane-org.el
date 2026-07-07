@@ -704,5 +704,53 @@ ready for the companion's `reminders.set' frame."
                     items))))))
     (cl-subseq (nreverse items) 0 (min n (length items)))))
 
+;; ─── Automated Timestamps ───────────────────────────────────────────────────
+
+(defun glasspane-org--timestamp-string ()
+  "Return the current time formatted as an inactive Org timestamp."
+  (format-time-string "[%Y-%m-%d %a %H:%M]"))
+
+(defun glasspane-org--before-save-timestamps ()
+  "Update #+MODIFIED and ensure #+CREATED at the file level on save."
+  (when (derived-mode-p 'org-mode)
+    (save-excursion
+      (save-restriction
+        (widen)
+        (goto-char (point-min))
+        ;; Update #+MODIFIED if present
+        (when (re-search-forward "^[ \t]*#\\+MODIFIED:[ \t]*\\(.*\\)$" nil t)
+          (replace-match (glasspane-org--timestamp-string) t t nil 1))
+        
+        (goto-char (point-min))
+        ;; Add #+CREATED if missing
+        (unless (re-search-forward "^[ \t]*#\\+CREATED:" nil t)
+          (goto-char (point-min))
+          (when (re-search-forward "^[ \t]*#\\+TITLE:.*$" nil t)
+            (forward-line 1))
+          (insert (format "#+CREATED: %s\n" (glasspane-org--timestamp-string))))))))
+
+(add-hook 'before-save-hook #'glasspane-org--before-save-timestamps)
+
+(defun glasspane-org--heading-created-property ()
+  "Add a :CREATED: property to new headings."
+  (org-set-property "CREATED" (glasspane-org--timestamp-string)))
+
+(add-hook 'org-insert-heading-hook #'glasspane-org--heading-created-property)
+
+(defun glasspane-org--heading-modified-property (property &rest _)
+  "Update :MODIFIED: property when any other property changes."
+  (when (and (stringp property)
+             (not (equal property "MODIFIED"))
+             (not (equal property "CREATED")))
+    (let ((org-property-changed-functions nil))
+      (org-set-property "MODIFIED" (glasspane-org--timestamp-string)))))
+
+(add-hook 'org-property-changed-functions #'glasspane-org--heading-modified-property)
+
+(add-hook 'org-after-todo-state-change-hook
+          (lambda ()
+            (let ((org-property-changed-functions nil))
+              (org-set-property "MODIFIED" (glasspane-org--timestamp-string)))))
+
 (provide 'glasspane-org)
 ;;; glasspane-org.el ends here

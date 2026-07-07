@@ -133,7 +133,9 @@ Long-pressing the header opens the heading detail view when FILE is available."
                       (eabp-markup (plist-get n :line) :syntax "org")
                       (glasspane-org-reader--content-nodes n file)
                       :on-long-tap (when ref
-                                     (eabp-action "heading.tap" :args ref)))))
+                                     (eabp-action "heading.tap" :args ref))
+                      :on-swipe (when ref
+                                  (eabp-action "heading.todo-cycle" :args ref)))))
 
 ;; ─── Entry points ───────────────────────────────────────────────────────────────
 

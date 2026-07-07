@@ -1043,17 +1043,37 @@ The one part of a timestamp the date-stamp chip can't display."
 KEY renders without org's colons.  ID is shown read-only (editing it
 breaks links); every other value is an inline input whose submit runs
 `heading.prop-set' — submitting an empty value removes the property."
-  (eabp-row
-   (eabp-box (list (eabp-text key 'label)) :weight 2)
-   (eabp-box
-    (list (if (equal key "ID")
-              (eabp-text value 'caption nil nil t)
-            (eabp-text-input (format "prop-%s/%s" pos key)
-                             :value value
-                             :single-line t
-                             :on-submit (eabp-action "heading.prop-set"
-                                                     :args (cons `(name . ,key) ref)))))
-    :weight 3)))
+  (let* ((buf (marker-buffer (glasspane-org--resolve-ref ref)))
+         (allowed (with-current-buffer buf
+                    (org-with-wide-buffer (goto-char pos)
+                      (org-property-get-allowed-values pos key))))
+         (is-boolean (or (equal allowed '("t" "nil")) (equal allowed '("true" "false"))
+                         (string-match-p "\\?" key)))
+         (is-date (or (string-match-p "_DATE\\|_TIME\\'" key)
+                      (member key '("CREATED" "SCHEDULED" "DEADLINE"))))
+         (action (eabp-action "heading.prop-set" :args (cons `(name . ,key) ref))))
+    (eabp-row
+     (eabp-box (list (eabp-text key 'label)) :weight 2)
+     (eabp-box
+      (list (cond
+             ((equal key "ID")
+              (eabp-text value 'caption nil nil t))
+             (is-boolean
+              (eabp-switch (format "prop-%s/%s" pos key)
+                           :value (member value '("t" "true" "1"))
+                           :on-toggle action))
+             ((and allowed (listp allowed))
+              (eabp-enum-list (format "prop-%s/%s" pos key) allowed
+                              :value (list value)
+                              :on-select action))
+             (is-date
+              (eabp-date-button value action :value value))
+             (t
+              (eabp-text-input (format "prop-%s/%s" pos key)
+                               :value value
+                               :single-line t
+                               :on-submit action))))
+      :weight 3))))
 
 (defun glasspane-org--format-clock-time (start end)
   (condition-case nil
@@ -1905,7 +1925,14 @@ Returns non-nil on success; messages and returns nil on failure."
   ;; args. An empty value deletes the property.
   (lambda (args _)
     (let* ((name (alist-get 'name args))
-           (value (string-trim (or (alist-get 'value args) "")))
+           (raw-val (alist-get 'value args))
+           (value (cond
+                   ((eq raw-val t) "t")
+                   ((memq raw-val '(nil :json-false)) "nil")
+                   ((vectorp raw-val) (if (> (length raw-val) 0) (aref raw-val 0) ""))
+                   ((listp raw-val) (if raw-val (car raw-val) ""))
+                   ((stringp raw-val) (string-trim raw-val))
+                   (t (format "%s" raw-val))))
            (ok (and (stringp name) (not (string-empty-p name))
                     (glasspane-ui--at-ref
                      args
@@ -1996,7 +2023,8 @@ Returns non-nil on success; messages and returns nil on failure."
 (eabp-settings-register-section
  "Org Agenda"
  '((org-agenda-span :label "Agenda span")
-   (org-deadline-warning-days :label "Deadline warning days")))
+   (org-deadline-warning-days :label "Deadline warning days")
+   (org-extend-today-until :label "Extend today until (hour)")))
 (eabp-settings-register-section
  "Org Editing & Display"
  '((org-startup-folded :label "Initial folding")
@@ -2004,12 +2032,22 @@ Returns non-nil on success; messages and returns nil on failure."
    (org-hide-emphasis-markers :label "Hide emphasis markers")
    (org-return-follows-link :label "Enter follows links")
    (glasspane-babel-timeout :label "Babel run timeout (s)")))
+(eabp-settings-register-section
+ "User Defaults"
+ '((user-full-name :label "Author (Name)")
+   (user-mail-address :label "Email")))
+(eabp-settings-register-section
+ "Calendar & Location"
+ '((calendar-week-start-day :label "Week start day (0=Sun, 1=Mon)")
+   (calendar-latitude :label "Latitude (e.g. 40.7)")
+   (calendar-longitude :label "Longitude (e.g. -74.0)")))
 
 ;; Org-derived views are memoised; per the cache contract every mutation
 ;; must drop the memo or the phone keeps rendering stale data.
 (add-hook 'eabp-settings-after-set-hook
           (lambda (sym _value)
-            (when (string-prefix-p "org-" (symbol-name sym))
+            (when (or (string-prefix-p "org-" (symbol-name sym))
+                      (string-prefix-p "calendar-" (symbol-name sym)))
               (glasspane-org-cache-invalidate))))
 
 (defalias 'glasspane-ui--customize-save #'eabp-settings-save-variable
@@ -2683,14 +2721,27 @@ orgro sparse-filter parity item."
           (eabp-shell-notify (format "Cannot open properties: %s" (or file "no file")))
         (condition-case err
             (let* ((buf (or (get-file-buffer file) (find-file-noselect file)))
-                   (kwds (with-current-buffer buf (org-collect-keywords '("TITLE" "CATEGORY" "FILETAGS"))))
+                   (kwds (with-current-buffer buf (org-collect-keywords '("TITLE" "CATEGORY" "FILETAGS" "TODO" "SEQ_TODO" "TYP_TODO" "STARTUP" "AUTHOR" "EMAIL" "DATE" "ARCHIVE"))))
                    (title (car (alist-get "TITLE" kwds nil nil #'equal)))
                    (category (car (alist-get "CATEGORY" kwds nil nil #'equal)))
                    (filetags-str (car (alist-get "FILETAGS" kwds nil nil #'equal)))
                    (filetags (when filetags-str (split-string filetags-str ":" t "[ \t\n\r]+")))
-                   (available-tags (seq-uniq (append filetags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist)))))
+                   (available-tags (seq-uniq (append filetags (mapcar (lambda (x) (if (consp x) (car x) x)) org-tag-alist))))
+                   (todo-str (or (car (alist-get "TODO" kwds nil nil #'equal))
+                                 (car (alist-get "SEQ_TODO" kwds nil nil #'equal))
+                                 (car (alist-get "TYP_TODO" kwds nil nil #'equal))))
+                   (todo-parts (if todo-str (split-string todo-str "|") nil))
+                   (todo-active (if todo-str (mapconcat #'identity (split-string (car todo-parts) "[ \t]+" t) ", ") ""))
+                   (todo-finished (if (and todo-parts (cadr todo-parts))
+                                      (mapconcat #'identity (split-string (cadr todo-parts) "[ \t]+" t) ", ")
+                                    ""))
+                   (startup (car (alist-get "STARTUP" kwds nil nil #'equal)))
+                   (author (car (alist-get "AUTHOR" kwds nil nil #'equal)))
+                   (email (car (alist-get "EMAIL" kwds nil nil #'equal)))
+                   (date (car (alist-get "DATE" kwds nil nil #'equal)))
+                   (archive (car (alist-get "ARCHIVE" kwds nil nil #'equal))))
               (eabp-send-dialog
-               (eabp-column
+               (eabp-scroll-column
                 (eabp-text "File Properties" 'title)
                 (eabp-text (file-name-nondirectory file) 'caption)
                 (eabp-text-input "file-prop-title" :label "Title" :value title :single-line t)
@@ -2698,6 +2749,16 @@ orgro sparse-filter parity item."
                 (eabp-text "File Tags" 'caption nil nil nil nil 8)
                 (eabp-enum-list "file-prop-tags" available-tags
                                 :value filetags :multi-select t :allow-add t)
+                (eabp-text "TODO Sequence" 'caption nil nil nil nil 8)
+                (eabp-text-input "file-prop-todo-active" :label "Active States" :value todo-active :single-line t)
+                (eabp-text-input "file-prop-todo-finished" :label "Finished States" :value todo-finished :single-line t)
+                (eabp-text "Metadata" 'caption nil nil nil nil 8)
+                (eabp-text-input "file-prop-author" :label "Author" :value author :single-line t)
+                (eabp-text-input "file-prop-email" :label "Email" :value email :single-line t)
+                (eabp-text-input "file-prop-date" :label "Date" :value date :single-line t)
+                (eabp-text "Options" 'caption nil nil nil nil 8)
+                (eabp-text-input "file-prop-startup" :label "Startup" :value startup :single-line t)
+                (eabp-text-input "file-prop-archive" :label "Archive" :value archive :single-line t)
                 (eabp-row
                  (eabp-spacer :weight 1)
                  (eabp-button "Cancel" (eabp-action "dialog.dismiss") :variant "text")
@@ -2716,7 +2777,19 @@ orgro sparse-filter parity item."
            (tags (cond
                   ((vectorp tags-val) (append tags-val nil))
                   ((listp tags-val) tags-val)
-                  (t nil))))
+                  (t nil)))
+           (todo-active (eabp-ui-state "file-prop-todo-active"))
+           (todo-finished (eabp-ui-state "file-prop-todo-finished"))
+           (todo-str (let ((a (when (stringp todo-active) (string-join (split-string todo-active "[ \t]*,[ \t]*" t) " ")))
+                           (f (when (stringp todo-finished) (string-join (split-string todo-finished "[ \t]*,[ \t]*" t) " "))))
+                       (if (and a f (not (string-empty-p a)) (not (string-empty-p f)))
+                           (concat a " | " f)
+                         (or a f))))
+           (startup (eabp-ui-state "file-prop-startup"))
+           (author (eabp-ui-state "file-prop-author"))
+           (email (eabp-ui-state "file-prop-email"))
+           (date (eabp-ui-state "file-prop-date"))
+           (archive (eabp-ui-state "file-prop-archive")))
       (with-current-buffer buf
         (save-excursion
           (save-restriction
@@ -2736,7 +2809,13 @@ orgro sparse-filter parity item."
                                     (insert (format "#+%s: %s\n" kwd val)))))))
               (funcall update-kwd "TITLE" title)
               (funcall update-kwd "FILETAGS" (when tags (concat ":" (string-join tags ":") ":")))
-              (funcall update-kwd "CATEGORY" category))
+              (funcall update-kwd "CATEGORY" category)
+              (funcall update-kwd "TODO" todo-str)
+              (funcall update-kwd "STARTUP" startup)
+              (funcall update-kwd "AUTHOR" author)
+              (funcall update-kwd "EMAIL" email)
+              (funcall update-kwd "DATE" date)
+              (funcall update-kwd "ARCHIVE" archive))
             (let ((glasspane-org--inhibit-save-refresh t)
                   (save-silently t))
               (save-buffer)))))

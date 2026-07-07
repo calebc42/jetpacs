@@ -597,6 +597,10 @@ ignored — a scrolling row has no bounded width to distribute."
   "A vertical column of CHILDREN nodes."
   (eabp--node "column" 'children (vconcat children)))
 
+(defun eabp-scroll-column (&rest children)
+  "A vertically scrollable column of CHILDREN nodes."
+  (eabp--node "column" 'children (vconcat children) 'scroll t))
+
 (cl-defun eabp-box (children &key alignment padding weight on-tap)
   "A Box wrapping CHILDREN."
   (eabp--node "box"
@@ -650,10 +654,10 @@ first flagged child wins."
               'padding padding
               'weight weight))
 
-(cl-defun eabp-collapsible (id header children &key collapsed on-long-tap)
+(cl-defun eabp-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.
 HEADER is the always-visible node shown next to the chevron; CHILDREN
-\(a list of nodes) are revealed when expanded. COLLAPSED non-nil starts
+(a list of nodes) are revealed when expanded. COLLAPSED non-nil starts
 folded. Folding happens entirely on-device — no action round-trip.
 ON-LONG-TAP, when non-nil, is an action dispatched on long-press of
 the header (used by the org reader to open the heading detail view)."
@@ -662,7 +666,8 @@ the header (used by the org reader to open the heading detail view)."
               'header header
               'children (vconcat children)
               'collapsed (and collapsed t)
-              'on_long_tap on-long-tap))
+              'on_long_tap on-long-tap
+              'on_swipe on-swipe))
 
 (cl-defun eabp-reorderable-list (items &key on-reorder)
   "A drag-reorderable list of ITEMS.
@@ -5867,6 +5872,13 @@ warnings — wrong arity, unused lexical variables, undefined functions."
     found))
 
 (with-eval-after-load 'eglot
+  (add-hook 'eglot-managed-mode-hook
+            (lambda ()
+              (when (eglot-current-server)
+                (when-let* ((buf-file (buffer-file-name))
+                            (file (eabp-sync--session-for-path buf-file)))
+                  (eabp-sync--arm-diagnostics file)))))
+
   (cl-defmethod eglot-handle-notification :after
     (_server (_method (eql textDocument/publishDiagnostics))
              &key uri &allow-other-keys)

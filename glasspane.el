@@ -855,6 +855,71 @@ fill given the image fills the available width, as before."
               'aspect_ratio aspect-ratio
               'content_scale (and content-scale (format "%s" content-scale))))
 
+;; ─── Visualization ladder (SPEC §9) ──────────────────────────────────────────
+
+(defun eabp--chart-point (p)
+  "Normalize chart point P to a {y} / {x,y} node.
+P is a number (→ {y}), or a two-element list/cons (X Y) (→ {x,y})."
+  (cond ((numberp p) (eabp--node nil 'y p))
+        ((consp p) (eabp--node nil 'x (car p) 'y (if (consp (cdr p)) (cadr p) (cdr p))))
+        (t (eabp--node nil 'y 0))))
+
+(cl-defun eabp-chart-series (points &key label color)
+  "One chart series over POINTS (numbers, or (X Y) pairs).
+LABEL and COLOR (hex or theme token) are optional."
+  (eabp--node nil
+              'label label
+              'color color
+              'points (vconcat (mapcar #'eabp--chart-point points))))
+
+(cl-defun eabp-chart (series &key kind height y-range summary on-point-tap)
+  "A data-driven chart of SERIES (a list from `eabp-chart-series').
+KIND is \"line\" (default), \"bar\", \"area\", or \"sparkline\".  HEIGHT is
+in dp; Y-RANGE is (MIN MAX); SUMMARY is the accessibility label;
+ON-POINT-TAP fires with the tapped point injected as `value'.  Rung 1 of
+the visualization ladder — data in, polished chart out, no draw ops."
+  (eabp--node "chart"
+              'series (vconcat series)
+              'kind (and kind (format "%s" kind))
+              'height height
+              'y_range (and y-range (vconcat y-range))
+              'summary summary
+              'on_point_tap on-point-tap))
+
+(cl-defun eabp-canvas (width height ops)
+  "A canvas of WIDTH×HEIGHT dp rendering OPS (a list of draw-op nodes).
+Ops come from `eabp-draw-line'/`-rect'/`-circle'/`-path'/`-text';
+coordinates are in the WIDTH×HEIGHT space.  Rung 2 — the elisp-only
+escape hatch for visuals no curated node covers."
+  (eabp--node "canvas" 'width width 'height height 'ops (vconcat ops)))
+
+(cl-defun eabp-draw-line (x1 y1 x2 y2 &key color stroke)
+  "A canvas line op from (X1 Y1) to (X2 Y2)."
+  (eabp--node nil 'op "line" 'x1 x1 'y1 y1 'x2 x2 'y2 y2
+              'color color 'stroke stroke))
+
+(cl-defun eabp-draw-rect (x y w h &key color fill stroke radius)
+  "A canvas rect op at (X Y) of size W×H; FILL vs stroked; ROUNDED by RADIUS."
+  (eabp--node nil 'op "rect" 'x x 'y y 'w w 'h h 'color color
+              'fill (and fill t) 'stroke stroke 'radius radius))
+
+(cl-defun eabp-draw-circle (cx cy r &key color fill stroke)
+  "A canvas circle op centred (CX CY) of radius R; FILL vs stroked."
+  (eabp--node nil 'op "circle" 'cx cx 'cy cy 'r r 'color color
+              'fill (and fill t) 'stroke stroke))
+
+(cl-defun eabp-draw-path (points &key color fill stroke closed)
+  "A canvas path op over POINTS (a list of (X Y) pairs); FILL/CLOSED optional."
+  (eabp--node nil 'op "path"
+              'points (vconcat (mapcar (lambda (p) (vector (nth 0 p) (nth 1 p))) points))
+              'color color 'fill (and fill t) 'stroke stroke
+              'closed (and closed t)))
+
+(cl-defun eabp-draw-text (x y text &key color size align)
+  "A canvas text op drawing TEXT at (X Y); ALIGN is start/center/end."
+  (eabp--node nil 'op "text" 'x x 'y y 'text text 'color color 'size size
+              'align (and align (format "%s" align))))
+
 (cl-defun eabp-icon-button (icon action &key content-description padding)
   "An icon button."
   (eabp--node "icon_button"
@@ -1203,7 +1268,7 @@ stays app-agnostic: the app opts an editor into the affordance."
 (defconst eabp-lint-node-types
   '("text" "rich_text" "row" "flow_row" "column" "box" "surface"
     "lazy_column" "spacer" "divider" "card" "collapsible"
-    "reorderable_list" "table" "icon" "image" "date_stamp"
+    "reorderable_list" "table" "chart" "canvas" "icon" "image" "date_stamp"
     "section_header" "empty_state" "progress" "menu" "button"
     "icon_button" "chip" "assist_chip" "text_input" "editor" "checkbox"
     "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
@@ -1219,7 +1284,9 @@ companion gates on `eabp-node-supported-p' instead.")
 
 (defconst eabp-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
-    width height fill_fraction aspect_ratio min max steps)
+    width height fill_fraction aspect_ratio min max steps
+    ;; canvas draw-op coordinates
+    x y w h r cx cy x1 y1 x2 y2 radius stroke)
   "Attributes whose value must be a number.")
 
 (defconst eabp-lint--color-attrs '(color bg)

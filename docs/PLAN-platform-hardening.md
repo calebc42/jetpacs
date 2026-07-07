@@ -1,8 +1,22 @@
 # Plan: platform hardening — make eabp-core a foundation others build on
 
-**STATUS (2026-07-07): Phases A + B + C DONE; Phase D next.** Produced from
-an audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/` (the
+**STATUS (2026-07-07): Phases A–D DONE; Phase E next.** Produced from an
+audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/` (the
 `:eabp` renderer), `test/widgets.golden`, and the existing plan docs.
+
+Phase D landed 2026-07-07 (Tasks 11–13) — the visualization ladder:
+- Rung 1 `chart` (`SduiChart.kt`, elisp `eabp-chart`/`eabp-chart-series`):
+  data-in, animated Canvas draw, closed `kind` enum
+  (line/bar/area/sparkline), `on_point_tap` value injection, a11y summary.
+- Rung 2 `canvas` (`SduiCanvas.kt`, elisp `eabp-canvas` + `eabp-draw-*`):
+  a closed draw-op interpreter (line/rect/circle/path/text) in node-local
+  coords, no animation/interaction, unknown ops skipped.
+- Rung 3 `docs/CONTRIBUTING-NODES.md`: the Kotlin-contribution checklist +
+  the "earns a curated primitive" rule (the alternative path, never
+  required of app authors).
+- Both nodes in `SDUI_NODE_TYPES` + `eabp-lint-node-types`; golden +2
+  (53–54); SPEC §9 Visualization family added. Suite 132 / 127 green
+  (same 5 pre-existing); `:eabp` Kotlin compiles clean.
 
 Phase C landed 2026-07-07 (Tasks 5–10): `row`/`column`/`flow_row` take
 `:spacing` and `:align` (splitter `eabp--children-and-opts` keeps

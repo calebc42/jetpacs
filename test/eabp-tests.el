@@ -1536,7 +1536,18 @@ rich renderers (native table, babel run button)."
      (eabp-surface (list leaf) :width 120 :height 40 :fill-fraction 0.5
                    :border (eabp-border :width 2 :color "#888"))
      (eabp-image "http://x" :width 100 :height 80 :aspect-ratio 1.5
-                 :content-scale "crop"))))
+                 :content-scale "crop")
+     ;; Phase D — visualization ladder
+     (eabp-chart (list (eabp-chart-series '(1 3 2 5) :label "a" :color "#4C6FFF")
+                       (eabp-chart-series '(2 2 4 3)))
+                 :kind "line" :height 160 :y-range '(0 6) :summary "trend"
+                 :on-point-tap act)
+     (eabp-canvas 100 60
+                  (list (eabp-draw-line 0 0 100 60 :color "#888" :stroke 2)
+                        (eabp-draw-rect 10 10 30 20 :fill t :color "primary" :radius 4)
+                        (eabp-draw-circle 70 30 15 :color "#E64980")
+                        (eabp-draw-path '((0 60) (50 0) (100 60)) :closed t :fill t)
+                        (eabp-draw-text 50 30 "hi" :align "center" :size 10))))))
 
 (defun eabp-tests--widget-lines ()
   (let ((i -1))
@@ -1857,6 +1868,19 @@ records the last-fired time."
     (should (equal "text" (alist-get 't parsed)))
     (should (equal "hi" (alist-get 'text parsed)))
     (should (equal "title" (alist-get 'style parsed)))))
+
+(ert-deftest eabp-lint-passes-visualization ()
+  "Chart and canvas specs lint clean and round-trip (Phase D)."
+  (let ((chart (eabp-chart (list (eabp-chart-series '(1 2 3) :color "#4C6FFF"))
+                           :kind "bar" :on-point-tap (eabp-action "p.tap")))
+        (canvas (eabp-canvas 80 40
+                             (list (eabp-draw-line 0 0 80 40 :stroke 2)
+                                   (eabp-draw-circle 40 20 10 :fill t :color "primary")
+                                   (eabp-draw-text 10 20 "hi" :align "center")))))
+    (should-not (eabp-lint-spec chart))
+    (should-not (eabp-lint-spec canvas))
+    (should (equal "chart" (alist-get 't (eabp-render-to-json chart))))
+    (should (equal "canvas" (alist-get 't (eabp-render-to-json canvas))))))
 
 (ert-deftest eabp-lint-types-cover-golden ()
   "Every `t' the constructors emit (per widgets.golden) is a known lint type.

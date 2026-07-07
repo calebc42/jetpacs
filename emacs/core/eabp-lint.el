@@ -32,7 +32,7 @@
 (defconst eabp-lint-node-types
   '("text" "rich_text" "row" "flow_row" "column" "box" "surface"
     "lazy_column" "spacer" "divider" "card" "collapsible"
-    "reorderable_list" "table" "icon" "image" "date_stamp"
+    "reorderable_list" "table" "chart" "canvas" "icon" "image" "date_stamp"
     "section_header" "empty_state" "progress" "menu" "button"
     "icon_button" "chip" "assist_chip" "text_input" "editor" "checkbox"
     "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
@@ -48,7 +48,9 @@ companion gates on `eabp-node-supported-p' instead.")
 
 (defconst eabp-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
-    width height fill_fraction aspect_ratio min max steps)
+    width height fill_fraction aspect_ratio min max steps
+    ;; canvas draw-op coordinates
+    x y w h r cx cy x1 y1 x2 y2 radius stroke)
   "Attributes whose value must be a number.")
 
 (defconst eabp-lint--color-attrs '(color bg)

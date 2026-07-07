@@ -319,6 +319,17 @@ constructor, kept honest by the ERT suite. Summary by family:
   `editor` (full editor: save/undo header, optional `syntax`, gutter
   `line_numbers`, `complete` for the completion strip, `chromeless`,
   `publish_state`, and a server-chosen `toolbar` — `"org"` today).
+- **Visualization** (the ladder): `chart` — data-driven, the client emits
+  `series` of `points` and picks a `kind` (`line`/`bar`/`area`/`sparkline`);
+  the companion draws it animated and theme-coloured, dispatching
+  `on_point_tap` with the tapped point. A closed enum on purpose — a need
+  outside this shape belongs on `canvas`, not a new `chart` attribute.
+  `canvas` — the escape hatch: `{width, height, ops}` where each op is a
+  closed, data-only draw primitive (`line`/`rect`/`circle`/`path`/`text`)
+  in the node's coordinate space. No animation, no interaction (those earn
+  a curated primitive); unknown ops are skipped, never fatal. Both are
+  additive nodes — negotiate them via `node_types` (§3) and fall back
+  (e.g. a `table`) on a companion that predates them.
 - **Chrome**: `scaffold` (top_bar / bottom_bar / fab / drawer / snackbar /
   pull-to-refresh), `top_bar`, `bottom_bar` + `nav_item`, `drawer` +
   `drawer_item`, `fab`.

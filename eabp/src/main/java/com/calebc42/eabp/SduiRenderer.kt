@@ -98,6 +98,8 @@ val SDUI_NODE_TYPES: Set<String> = setOf(
     // Content
     "text", "rich_text", "date_stamp", "menu", "section_header",
     "empty_state", "icon", "image", "progress",
+    // Visualization
+    "chart", "canvas",
     // Input
     "text_input", "editor", "checkbox", "switch", "enum_list",
     "date_button", "time_button", "slider", "button", "icon_button",
@@ -363,6 +365,8 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             ReorderableList(node = node, dispatch = dispatch, modifier = baseModifier)
         }
         "table" -> SduiTable(node, baseModifier, dispatch)
+        "chart" -> SduiChart(node, baseModifier, dispatch)
+        "canvas" -> SduiCanvas(node, baseModifier)
 
         // ── Content nodes (SduiContentNodes.kt) ─────────────────────────
         "text" -> SduiText(node, baseModifier)

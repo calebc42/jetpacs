@@ -51,3 +51,5 @@
 50 {"align":"center","children":[{"t":"text","text":"leaf"},{"t":"text","text":"leaf"}],"spacing":6,"t":"column"}
 51 {"border":{"color":"#888","width":2},"children":[{"t":"text","text":"leaf"}],"fill_fraction":0.5,"height":40,"t":"surface","width":120}
 52 {"aspect_ratio":1.5,"content_scale":"crop","height":80,"t":"image","url":"http://x","width":100}
+53 {"height":160,"kind":"line","on_point_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"series":[{"color":"#4C6FFF","label":"a","points":[{"y":1},{"y":3},{"y":2},{"y":5}]},{"points":[{"y":2},{"y":2},{"y":4},{"y":3}]}],"summary":"trend","t":"chart","y_range":[0,6]}
+54 {"height":60,"ops":[{"color":"#888","op":"line","stroke":2,"x1":0,"x2":100,"y1":0,"y2":60},{"color":"primary","fill":true,"h":20,"op":"rect","radius":4,"w":30,"x":10,"y":10},{"color":"#E64980","cx":70,"cy":30,"op":"circle","r":15},{"closed":true,"fill":true,"op":"path","points":[[0,60],[50,0],[100,60]]},{"align":"center","op":"text","size":10,"text":"hi","x":50,"y":30}],"t":"canvas","width":100}

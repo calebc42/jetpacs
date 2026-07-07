@@ -19,17 +19,22 @@
 
 ;;; ── Glasspane bundle ─────────────────────────────────────────────────
 ;; The single-file bundle lives at ~/.emacs.d/elisp/glasspane.el.  A
-;; newer copy staged in Downloads (by deploy.ps1, a file manager, or a
-;; browser download) is adopted automatically at startup.
+;; newer staged copy is adopted automatically at startup: the companion
+;; app's onboarding writes it to /sdcard/Documents, and deploy.ps1 (a
+;; dev machine) stages it to /sdcard/Download.  Both slots are checked
+;; and the most-recent copy wins, so either delivery path just works.
 (add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
-(let ((staged "/sdcard/Download/glasspane.el")
+(let ((staged (seq-filter #'file-readable-p
+                          '("/sdcard/Documents/glasspane.el"
+                            "/sdcard/Download/glasspane.el")))
       (installed (expand-file-name "elisp/glasspane.el" user-emacs-directory)))
-  (when (and (file-readable-p staged)
-             (or (not (file-exists-p installed))
-                 (file-newer-than-file-p staged installed)))
-    (make-directory (file-name-directory installed) t)
-    (copy-file staged installed t)
-    (message "glasspane: adopted new bundle from Downloads")))
+  (dolist (s staged)
+    (when (or (not (file-exists-p installed))
+              (file-newer-than-file-p s installed))
+      (make-directory (file-name-directory installed) t)
+      (copy-file s installed t)
+      (message "glasspane: adopted new bundle from %s"
+               (file-name-directory s)))))
 (require 'glasspane)
 
 ;; First run writes Glasspane's managed org defaults into

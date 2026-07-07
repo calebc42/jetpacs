@@ -2245,14 +2245,21 @@ with the new states.  Returns non-nil when persisting succeeded."
   (lambda (args _)
     (let ((link (alist-get 'link args)))
       (when (and (stringp link) (not (string-empty-p link)))
-        (condition-case err
-            (progn
-              (org-link-open-from-string link)
-              (eabp-shell-notify (format "Opened %s" link)))
-          (error
-           (eabp-shell-notify
-            (format "Couldn't open %s: %s" link (error-message-string err)))))
-        (eabp-shell-push)))))
+        (let ((navigated nil))
+          (condition-case err
+              (progn
+                (org-link-open-from-string link)
+                (eabp-shell-notify (format "Opened %s" link))
+                (when (derived-mode-p 'org-mode)
+                  (setq glasspane-ui--detail-ref (glasspane-org--heading-ref))
+                  (setq glasspane-ui--detail-read-mode t)
+                  (setq navigated t)))
+            (error
+             (eabp-shell-notify
+              (format "Couldn't open %s: %s" link (error-message-string err)))))
+          (if navigated
+              (eabp-shell-push nil :switch-to "detail")
+            (eabp-shell-push)))))))
 
 (eabp-defaction "checkbox.toggle"
   ;; Toggle a checkbox in an org file from the reader view.  The companion

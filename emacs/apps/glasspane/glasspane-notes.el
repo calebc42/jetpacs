@@ -114,15 +114,20 @@ so the brackets must be part of it)."
 Dropped wholesale by the cache seam.")
 
 (defun glasspane-notes--note-card (note)
-  "A tappable card for NOTE (opens its file in the editor)."
-  (eabp-card
-   (list (eabp-column
-          (eabp-text (vulpea-note-title note) 'body)
-          (eabp-text (file-name-nondirectory (vulpea-note-path note))
-                     'caption)))
-   :on-tap (eabp-action "files.open"
-                        :args `((file . ,(vulpea-note-path note)))
-                        :when-offline "drop")))
+  "A tappable card for NOTE (opens its heading in the detail view)."
+  (let* ((id (and (fboundp 'vulpea-note-id) (vulpea-note-id note)))
+         (path (vulpea-note-path note))
+         (title (vulpea-note-title note))
+         (ref (delq nil
+                    (list (when (and id (stringp id) (not (string-empty-p id))) `(id . ,id))
+                          (when path `(file . ,path))
+                          (when title `(headline . ,title))))))
+    (eabp-card
+     (list (eabp-column
+            (eabp-text title 'body)
+            (eabp-text (file-name-nondirectory path) 'caption)))
+     :on-tap (when ref
+               (eabp-action "heading.tap" :args ref :when-offline "drop")))))
 
 (defun glasspane-notes--mention-card (mention note-id)
   "A card for MENTION (a :note :path :line :context plist).
@@ -132,13 +137,18 @@ back to the note's title/aliases otherwise.  The path prefers the
 plist's own :path, with the mentioning note's file as backstop."
   (let* ((source (plist-get mention :note))
          (path (or (plist-get mention :path)
-                   (and source (vulpea-note-path source)))))
+                   (and source (vulpea-note-path source))))
+         (id (and source (fboundp 'vulpea-note-id) (vulpea-note-id source)))
+         (title (if source (vulpea-note-title source)
+                  (file-name-nondirectory (or path ""))))
+         (ref (delq nil
+                    (list (when (and id (stringp id) (not (string-empty-p id))) `(id . ,id))
+                          (when path `(file . ,path))
+                          (when title `(headline . ,title))))))
     (eabp-card
      (list
       (eabp-column
-       (eabp-text (if source (vulpea-note-title source)
-                    (file-name-nondirectory (or path "")))
-                  'body)
+       (eabp-text title 'body)
        (eabp-text (or (plist-get mention :context) "") 'caption)
        (eabp-row
         (eabp-spacer :weight 1)
@@ -150,9 +160,8 @@ plist's own :path, with the mentioning note's file as backstop."
                                           (matched . ,(plist-get mention :matched)))
                                   :when-offline "queue")
                      :variant "text" :icon "link"))))
-     :on-tap (when path
-               (eabp-action "files.open" :args `((file . ,path))
-                            :when-offline "drop")))))
+     :on-tap (when ref
+               (eabp-action "heading.tap" :args ref :when-offline "drop")))))
 
 (defun glasspane-notes--ref-id (ref)
   "REF's org ID: carried in the ref, or read from the heading itself.

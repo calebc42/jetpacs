@@ -89,7 +89,19 @@ BODY is a list of UI-tree nodes."
 ;; ─── Surface senders ─────────────────────────────────────────────────────────
 
 (defun eabp-surface-update (surface revision spec &optional ttl-s stale-spec current-view)
-  "Send a `surface.update' for SURFACE at REVISION with SPEC."
+  "Send a `surface.update' for SURFACE at REVISION with SPEC.
+When `eabp-lint-on-push' is set (and eabp-lint is loaded), SPEC is
+validated first and any invalid node replaced by a visible error node,
+so one bad subtree degrades instead of blanking the whole push."
+  (when (and (bound-and-true-p eabp-lint-on-push)
+             (fboundp 'eabp-lint-spec))
+    (let ((problems (eabp-lint-spec spec)))
+      (when problems
+        (dolist (p problems)
+          (display-warning 'eabp (format "surface %s spec lint: %s @ %S"
+                                         surface (cdr p) (car p))
+                           :warning))
+        (setq spec (eabp-lint-sanitize-spec spec)))))
   (eabp-send "surface.update"
              (append `((surface . ,surface) (revision . ,revision) (spec . ,spec))
                      (when ttl-s     `((ttl_s . ,ttl-s)))

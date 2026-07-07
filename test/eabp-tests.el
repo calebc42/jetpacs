@@ -26,6 +26,7 @@
 (require 'eabp-apps)
 (require 'eabp-automations)
 (require 'eabp-widgets)
+(require 'eabp-lint)
 (require 'eabp-shell)
 (require 'glasspane-org)
 (require 'eabp-keymap)
@@ -1799,6 +1800,80 @@ records the last-fired time."
   "The API/protocol version constants exist for third-party compatibility checks."
   (should (stringp eabp-api-version))
   (should (integerp eabp-protocol-version)))
+
+;; ─── Spec linter (Phase B / Task 4) ──────────────────────────────────────────
+
+(ert-deftest eabp-lint-passes-valid-specs ()
+  "A tree built from the constructors lints clean."
+  (should-not
+   (eabp-lint-spec
+    (eabp-column
+     (eabp-card (list (eabp-text "Title" 'headline)
+                      (eabp-rich-text (list (eabp-span "bold" :bold t))))
+                :on-tap (eabp-action "x.y" :args '((k . "v"))))
+     (eabp-row (eabp-button "Go" (eabp-action "a.b"))
+               (eabp-switch "s" :checked t :on-change (eabp-action "c.d")))))))
+
+(ert-deftest eabp-lint-flags-unknown-node ()
+  "An unknown `t' is reported."
+  (let ((problems (eabp-lint-spec (eabp--node "flisbo" 'text "x"))))
+    (should problems)
+    (should (string-match-p "unknown" (cdr (car problems))))))
+
+(ert-deftest eabp-lint-flags-bad-action ()
+  "An action with neither `action' nor `builtin', and a bad when_offline."
+  (should (eabp-lint-spec `((t . "button") (on_tap . ((args . ((k . "v"))))))))
+  (should (eabp-lint-spec `((t . "button")
+                            (on_tap . ((action . "a.b") (when_offline . "sometimes")))))))
+
+(ert-deftest eabp-lint-flags-nonserializable-and-typed-attrs ()
+  "A symbol attr value and a non-numeric padding are caught before the wire."
+  (should (eabp-lint-spec `((t . "text") (text . some-symbol))))
+  (should (eabp-lint-spec `((t . "text") (text . "ok") (padding . "lots"))))
+  (should (eabp-lint-spec `((t . "surface") (children . []) (color . "#GGG")))))
+
+(ert-deftest eabp-lint-sanitize-isolates-bad-subtree ()
+  "Sanitizing replaces only the invalid node, keeping siblings intact."
+  (let* ((spec (eabp-column
+                (eabp-text "keep me" 'body)
+                (eabp--node "bogus" 'text "drop me")))
+         (clean (eabp-lint-sanitize-spec spec))
+         (kids (alist-get 'children clean)))   ; a vector (constructors vconcat)
+    (should-not (eabp-lint-spec clean))          ; sanitized tree is valid
+    (should (equal "text" (alist-get 't (elt kids 0))))
+    (should (equal "empty_state" (alist-get 't (elt kids 1))))))  ; bogus → error node
+
+(ert-deftest eabp-render-to-json-roundtrips ()
+  "The headless harness serializes and parses a spec back to the wire shape."
+  (let ((parsed (eabp-render-to-json (eabp-text "hi" 'title))))
+    (should (equal "text" (alist-get 't parsed)))
+    (should (equal "hi" (alist-get 'text parsed)))
+    (should (equal "title" (alist-get 'style parsed)))))
+
+(ert-deftest eabp-lint-types-cover-golden ()
+  "Every `t' the constructors emit (per widgets.golden) is a known lint type.
+Guards against a new constructor shipping a node the linter — and, by the
+mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
+  (let ((golden (expand-file-name "widgets.golden" eabp-tests--dir))
+        (seen nil))
+    (with-temp-buffer
+      (insert-file-contents golden)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (string-trim (buffer-substring (line-beginning-position)
+                                                   (line-end-position)))))
+          (when (and (> (length line) 0)
+                     ;; lines are "NN {json}" — drop the leading index
+                     (string-match "{.*}" line))
+            (let* ((json (match-string 0 line))
+                   (obj (ignore-errors
+                          (json-parse-string json :object-type 'alist)))
+                   (ty (and obj (alist-get 't obj))))
+              (when ty (cl-pushnew ty seen :test #'equal)))))
+        (forward-line 1)))
+    (should seen)                       ; sanity: we actually parsed some
+    (dolist (ty seen)
+      (should (member ty eabp-lint-node-types)))))
 
 (ert-deftest eabp-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."

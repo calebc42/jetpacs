@@ -27,6 +27,7 @@
        ;; graph.
        (core-files '("core/eabp.el"
                      "core/eabp-widgets.el"
+                     "core/eabp-lint.el"
                      "core/eabp-surfaces.el"
                      "core/eabp-triggers.el"
                      "core/eabp-device.el"

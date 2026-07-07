@@ -1,8 +1,22 @@
 # Plan: platform hardening — make eabp-core a foundation others build on
 
-**STATUS (2026-07-07): Phase A (the gate) DONE; Phase B next.** Produced
-from an audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/`
-(the `:eabp` renderer), `test/widgets.golden`, and the existing plan docs.
+**STATUS (2026-07-07): Phases A + B DONE; Phase C next.** Produced from an
+audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/` (the
+`:eabp` renderer), `test/widgets.golden`, and the existing plan docs.
+
+Phase B landed 2026-07-07 (**Task 4**): new `emacs/core/eabp-lint.el` —
+`eabp-lint-spec` (validate a node tree: unknown `t`, malformed actions,
+non-serializable / mistyped attrs), `eabp-render-to-json` (headless wire
+round-trip so views are ERT-able with no phone), and `eabp-lint-sanitize-spec`
+behind the opt-in `eabp-lint-on-push` (invalid node → inline `empty_state`
+error, wired into `eabp-surface-update`). `eabp-lint-node-types` mirrors
+`SDUI_NODE_TYPES`; the drift test `eabp-lint-types-cover-golden` fails if a
+constructor ships a `t` the linter/renderer don't know. 7 tests added (131
+total, all core green). Added to `build-bundle.el` + `core-load-test.el`.
+The deferred Phase-A acceptance tests are now cheap follow-ups on this base
+(the golden drift test already covers the elisp↔renderer node-type sync;
+still open: a Kotlin-side `NODE_TYPES` unit test and an `API-STABILITY.md`
+`fboundp` sweep).
 
 Phase A landed 2026-07-07:
 - **Task 1** — `eabp-api-version` (defconst "1.0.0") + `eabp-protocol-version`

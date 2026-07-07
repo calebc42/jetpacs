@@ -15,7 +15,7 @@
                                (file-name-directory
                                 (or load-file-name buffer-file-name))))
 
-(dolist (feature '(eabp eabp-widgets eabp-surfaces eabp-triggers
+(dolist (feature '(eabp eabp-widgets eabp-lint eabp-surfaces eabp-triggers
                    eabp-device eabp-minibuffer eabp-buffer eabp-shell
                    eabp-apps eabp-tablist eabp-comint eabp-transient
                    eabp-keymap eabp-sync eabp-complete eabp-settings

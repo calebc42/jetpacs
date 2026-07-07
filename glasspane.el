@@ -46,8 +46,17 @@ listens; Emacs dials in here."
   :type 'integer :group 'eabp)
 
 (defcustom eabp-protocol-version 1
-  "EABP protocol version this client speaks."
+  "EABP protocol version this client speaks.
+This is the wire/vocabulary version — the envelope `v' and the SPEC's
+version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'eabp)
+
+(defconst eabp-api-version "1.0.0"
+  "Semver of the Tier 1 elisp API surface (constructors + seams).
+Independent of `eabp-protocol-version' (the wire).  A third-party Tier 1
+requires the core and checks this: minor bumps are additive and safe,
+major bumps may remove a symbol one minor cycle after it is marked
+obsolete.  The frozen public-symbol list lives in docs/API-STABILITY.md.")
 
 (defcustom eabp-wants
   '("surfaces.widget" "surfaces.notification" "surfaces.dialog"
@@ -320,6 +329,25 @@ Layers gate their pushes on this: a companion that doesn't grant
        (member capability (alist-get 'granted eabp--session))
        t))
 
+(defun eabp-node-supported-p (node-type)
+  "Non-nil when the connected companion renders NODE-TYPE (string or symbol).
+Reads the welcome's `node_types' catalog (SPEC §3, §9).  A Tier 1 gates
+a newer node on this and renders a fallback when it is unsupported:
+
+  (if (eabp-node-supported-p \\='chart)
+      (my/chart data)
+    (my/chart-fallback-table data))
+
+Returns non-nil PERMISSIVELY when the companion sent no catalog at all —
+an older companion predating node negotiation must not be treated as
+supporting nothing.  Support is positive knowledge only: a present
+catalog that omits NODE-TYPE returns nil."
+  (let ((catalog (alist-get 'node_types eabp--session))
+        (name (if (symbolp node-type) (symbol-name node-type) node-type)))
+    (cond ((null eabp--session) nil)   ; not connected
+          ((null catalog) t)           ; companion predates negotiation
+          (t (and (seq-contains-p catalog name) t)))))
+
 (defun eabp-device-caps ()
   "Capability names invocable via `eabp-capability-invoke', or nil.
 From the welcome's `device' report; empty until a session with the
@@ -425,7 +453,7 @@ reconnect (with backoff) is what makes the bridge feel always-on."
   (eabp-send
    "session.hello"
    `((protocol . ,eabp-protocol-version)
-     (client   . ,(format "emacs/%s eabp.el/0.1" emacs-version))
+     (client   . ,(format "emacs/%s eabp.el/%s" emacs-version eabp-api-version))
      (wants    . ,(vconcat eabp-wants)))))
 
 (defun eabp--make-process ()

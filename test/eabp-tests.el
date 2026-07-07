@@ -1778,6 +1778,28 @@ records the last-fired time."
     (should-not (eabp-device-caps))
     (should-not (eabp-device-can-p "exact_alarms"))))
 
+(ert-deftest eabp-node-supported-negotiation ()
+  "`eabp-node-supported-p' gates on the welcome's node catalog, permissively."
+  ;; A present catalog is positive knowledge: listed = yes, omitted = no.
+  (let ((eabp--session '((node_types . ["text" "row" "chart"]))))
+    (should (eabp-node-supported-p 'chart))
+    (should (eabp-node-supported-p "text"))
+    (should-not (eabp-node-supported-p 'canvas))
+    (should-not (eabp-node-supported-p "slider")))
+  ;; An older companion sends no catalog: treat every node as supported
+  ;; (negotiation is positive knowledge, never a denylist).
+  (let ((eabp--session '((granted . ("capabilities")))))
+    (should (eabp-node-supported-p 'chart))
+    (should (eabp-node-supported-p 'anything-at-all)))
+  ;; Not connected: unsupported (nothing renders anywhere).
+  (let ((eabp--session nil))
+    (should-not (eabp-node-supported-p 'text))))
+
+(ert-deftest eabp-api-version-bound ()
+  "The API/protocol version constants exist for third-party compatibility checks."
+  (should (stringp eabp-api-version))
+  (should (integerp eabp-protocol-version)))
+
 (ert-deftest eabp-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."
   (let ((eabp--pending (make-hash-table :test 'equal))

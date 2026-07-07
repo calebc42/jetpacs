@@ -72,6 +72,31 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
+ * Every node type this build renders — the exact set of `when (type)`
+ * cases in [SduiNode], published to the client in `session.welcome` as
+ * `node_types` (SPEC §3, §9) so a newer client can detect a node this
+ * companion predates and render a fallback instead of relying on the
+ * unknown-node degradation.
+ *
+ * INVARIANT: this set and the `when` in [SduiNode] change together. The
+ * `SduiRendererNodeTypesTest` fails if a `when` case is added without a
+ * matching entry here.
+ */
+val SDUI_NODE_TYPES: Set<String> = setOf(
+    // Layout containers
+    "column", "row", "box", "surface", "card", "collapsible",
+    "lazy_column", "flow_row", "divider", "spacer", "scaffold",
+    "reorderable_list", "table",
+    // Content
+    "text", "rich_text", "date_stamp", "menu", "section_header",
+    "empty_state", "icon", "image", "progress",
+    // Input
+    "text_input", "editor", "checkbox", "switch", "enum_list",
+    "date_button", "time_button", "button", "icon_button", "chip",
+    "assist_chip",
+)
+
+/**
  * The SDUI dispatcher: routes a spec node by its `t` discriminator.
  *
  * Layout containers and trivial one-liner controls render inline here;
@@ -431,6 +456,18 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                     contentDescription = desc.ifEmpty { null },
                     modifier = baseModifier.fillMaxWidth()
                 )
+            }
+        }
+
+        // Forward-compat (SPEC §12): a node type this build doesn't know —
+        // e.g. a newer client using a node this companion predates. Render
+        // its `children` if it has any (a new *container* degrades to a plain
+        // stack of its contents instead of vanishing) or nothing if it's a
+        // leaf. Never a crash. Node-vocabulary negotiation (the welcome's
+        // `node_types`) lets a client avoid reaching here at all.
+        else -> {
+            node.optJSONArray("children")?.let { children ->
+                RenderChildren(children, surfaceId, revision, dispatch)
             }
         }
     }

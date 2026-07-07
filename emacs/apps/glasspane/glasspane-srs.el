@@ -217,7 +217,10 @@ heading-level layouts: heading-as-front + body-as-back, and explicit
      (and (stringp s) (not (string-empty-p s)) (list (eabp-text s 'title))))
     (`(region ,beg . ,rest)
      (let ((end (if (consp rest) (car rest) rest))
-           (eabp-line-numbers nil))
+           (eabp-line-numbers nil)
+           ;; Flashcard prose, not code — render in the proportional face,
+           ;; not the generic renderer's monospace default.
+           (eabp-buffer-monospace nil))
        (when (and (integerp beg) (integerp end) (< beg end))
          (eabp-buffer-render-region (current-buffer) beg end))))
     (_ nil)))
@@ -264,7 +267,7 @@ come from plain org; only `org-srs-item-cloze-collect' is org-srs."
 (defun glasspane-srs--fallback-content ()
   "Render the narrowed entry cleanly for an unknown item type.
 Drawers and gutter line numbers stripped; transient overlays only."
-  (let ((eabp-line-numbers nil) (overlays nil)
+  (let ((eabp-line-numbers nil) (eabp-buffer-monospace nil) (overlays nil)
         (open (format "^[ \t]*:%s:[ \t]*$"
                       (regexp-opt glasspane-srs--noise-drawers))))
     (unwind-protect
@@ -488,10 +491,18 @@ Best-effort: a snapshot failure must not block the rating."
       (when (and kw glasspane-srs--current)
         (glasspane-srs--push-undo glasspane-srs--current)
         (glasspane-srs--engine
-          ;; No session ⇒ org-srs-review-item is unbound; nil makes
-          ;; `org-srs-review-rate' rate the item passed in ARGS instead.
-          (let ((org-srs-review-item nil))
-            (apply #'org-srs-review-rate kw glasspane-srs--current)))
+          ;; `org-srs-review-rate' assumes a session: it reads a
+          ;; buffer-local schedule offset from `(current-buffer)', which
+          ;; the session normally makes the item's buffer.  Driving it in
+          ;; the background we must set that up ourselves — current-buffer
+          ;; = the item's buffer, and org-srs-review-item nil so it rates
+          ;; the item passed in ARGS.  (Missed, the offset assert fails,
+          ;; the rating never persists, and the card loops forever.)
+          (let ((buf (marker-buffer
+                      (apply #'org-srs-item-marker glasspane-srs--current)))
+                (org-srs-review-item nil))
+            (with-current-buffer buf
+              (apply #'org-srs-review-rate kw glasspane-srs--current))))
         (glasspane-org-cache-invalidate)
         (glasspane-srs--advance)))
     (eabp-shell-push)))

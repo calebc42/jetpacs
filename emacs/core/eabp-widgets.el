@@ -83,14 +83,36 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
               'on_tap on-tap
               'mono (and mono t)))
 
-(defun eabp-row (&rest children)
-  "A horizontal row of CHILDREN nodes."
-  (eabp--node "row" 'children (vconcat children)))
+(defun eabp--children-and-opts (args)
+  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
+Child nodes are alists, never keywords, so the first keyword in ARGS
+marks the start of a trailing options plist.  Lets the `&rest'-children
+constructors take options without breaking `(eabp-row a b c)' callers."
+  (let ((i (cl-position-if #'keywordp args)))
+    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
+      (cons args nil))))
 
-(defun eabp-flow-row (&rest children)
-  "A horizontal row of CHILDREN that wraps onto new lines when full.
-The right container for chip/tag rows, which overflow a plain `eabp-row'."
-  (eabp--node "flow_row" 'children (vconcat children)))
+(defun eabp-row (&rest args)
+  "A horizontal row of child nodes.
+ARGS is child nodes, optionally followed by keywords: :spacing (dp
+between children), :align (cross-axis \"top\"/\"center\"/\"bottom\"),
+and :scroll (pan sideways on overflow)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "row"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'align (plist-get (cdr split) :align)
+                'scroll (and (plist-get (cdr split) :scroll) t))))
+
+(defun eabp-flow-row (&rest args)
+  "A horizontal row of children that wraps onto new lines when full.
+The right container for chip/tag rows, which overflow a plain `eabp-row'.
+Optional trailing keywords: :spacing and :run-spacing (dp)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "flow_row"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'run_spacing (plist-get (cdr split) :run-spacing))))
 
 (defun eabp-scroll-row (&rest children)
   "A horizontal row of CHILDREN that pans sideways when it overflows.
@@ -99,36 +121,63 @@ use it for chip rails that must stay on one row.  Child weights are
 ignored — a scrolling row has no bounded width to distribute."
   (eabp--node "row" 'children (vconcat children) 'scroll t))
 
-(defun eabp-column (&rest children)
-  "A vertical column of CHILDREN nodes."
-  (eabp--node "column" 'children (vconcat children)))
+(defun eabp-column (&rest args)
+  "A vertical column of child nodes.
+ARGS is child nodes, optionally followed by keywords: :spacing (dp
+between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
+and :scroll (make the column scroll vertically)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "column"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'align (plist-get (cdr split) :align)
+                'scroll (and (plist-get (cdr split) :scroll) t))))
 
 (defun eabp-scroll-column (&rest children)
   "A vertically scrollable column of CHILDREN nodes."
   (eabp--node "column" 'children (vconcat children) 'scroll t))
 
-(cl-defun eabp-box (children &key alignment padding weight on-tap)
-  "A Box wrapping CHILDREN."
+(cl-defun eabp-border (&key (width 1) color)
+  "A border spec of WIDTH dp in COLOR (hex or theme token).
+Pass as the :border of `eabp-box' / `eabp-surface' / `eabp-card'."
+  (eabp--node nil 'width width 'color color))
+
+(cl-defun eabp-box (children &key alignment padding weight on-tap
+                             width height fill-fraction border)
+  "A Box wrapping CHILDREN.
+WIDTH/HEIGHT fix the box size (dp); FILL-FRACTION (0.0-1.0) sets it to a
+fraction of the parent width; BORDER is an `eabp-border' spec."
   (eabp--node "box"
               'children (vconcat children)
               'alignment alignment
               'padding padding
               'weight weight
-              'on_tap on-tap))
+              'on_tap on-tap
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
-(cl-defun eabp-surface (children &key color shape elevation padding fill)
+(cl-defun eabp-surface (children &key color shape elevation padding fill
+                                 width height fill-fraction border)
   "A Surface wrapping CHILDREN.
 COLOR is a hex string or a theme token (\"primary\", \"surface_container\",
 \"primary_container\", …) that adapts to the device's light/dark theme.
 SHAPE is \"rounded\", \"rounded_small\", or \"circle\".  FILL stretches the
-surface to full width (e.g. zebra rows in a list)."
+surface to full width (e.g. zebra rows in a list).  WIDTH/HEIGHT fix the
+size (dp), FILL-FRACTION (0.0-1.0) sets a fraction of parent width, and
+BORDER is an `eabp-border' spec stroked with SHAPE."
   (eabp--node "surface"
               'children (vconcat children)
               'color color
               'shape shape
               'elevation elevation
               'padding padding
-              'fill (and fill t)))
+              'fill (and fill t)
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
 (defun eabp-lazy-column (&rest children)
   "A scrollable column of CHILDREN."
@@ -151,14 +200,21 @@ first flagged child wins."
   "A horizontal divider."
   (eabp--node "divider"))
 
-(cl-defun eabp-card (children &key on-tap padding weight on-swipe)
-  "An elevated card wrapping CHILDREN."
+(cl-defun eabp-card (children &key on-tap padding weight on-swipe
+                              width height fill-fraction border)
+  "An elevated card wrapping CHILDREN.
+WIDTH/HEIGHT fix the size (dp), FILL-FRACTION (0.0-1.0) sets a fraction
+of parent width, and BORDER is an `eabp-border' spec."
   (eabp--node "card"
               'children (vconcat children)
               'on_tap on-tap
               'on_swipe on-swipe
               'padding padding
-              'weight weight))
+              'weight weight
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
 (cl-defun eabp-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.
@@ -262,12 +318,85 @@ picker (\"YYYY-MM-DD\")."
 time injected into its args as `value' (\"HH:MM\"). VALUE seeds the picker."
   (eabp--node "time_button" 'label label 'on_pick on-pick 'value value))
 
-(cl-defun eabp-image (url &key content-description padding)
-  "An image loaded from URL (an http(s) URL or a readable file:// path)."
+(cl-defun eabp-image (url &key content-description padding
+                          width height aspect-ratio content-scale)
+  "An image loaded from URL (an http(s) URL or a readable file:// path).
+WIDTH/HEIGHT fix the size (dp); ASPECT-RATIO (w/h) constrains it;
+CONTENT-SCALE is \"fit\" (default), \"crop\", or \"fill\".  With no width or
+fill given the image fills the available width, as before."
   (eabp--node "image"
               'url url
               'content_description content-description
-              'padding padding))
+              'padding padding
+              'width width
+              'height height
+              'aspect_ratio aspect-ratio
+              'content_scale (and content-scale (format "%s" content-scale))))
+
+;; ─── Visualization ladder (SPEC §9) ──────────────────────────────────────────
+
+(defun eabp--chart-point (p)
+  "Normalize chart point P to a {y} / {x,y} node.
+P is a number (→ {y}), or a two-element list/cons (X Y) (→ {x,y})."
+  (cond ((numberp p) (eabp--node nil 'y p))
+        ((consp p) (eabp--node nil 'x (car p) 'y (if (consp (cdr p)) (cadr p) (cdr p))))
+        (t (eabp--node nil 'y 0))))
+
+(cl-defun eabp-chart-series (points &key label color)
+  "One chart series over POINTS (numbers, or (X Y) pairs).
+LABEL and COLOR (hex or theme token) are optional."
+  (eabp--node nil
+              'label label
+              'color color
+              'points (vconcat (mapcar #'eabp--chart-point points))))
+
+(cl-defun eabp-chart (series &key kind height y-range summary on-point-tap)
+  "A data-driven chart of SERIES (a list from `eabp-chart-series').
+KIND is \"line\" (default), \"bar\", \"area\", or \"sparkline\".  HEIGHT is
+in dp; Y-RANGE is (MIN MAX); SUMMARY is the accessibility label;
+ON-POINT-TAP fires with the tapped point injected as `value'.  Rung 1 of
+the visualization ladder — data in, polished chart out, no draw ops."
+  (eabp--node "chart"
+              'series (vconcat series)
+              'kind (and kind (format "%s" kind))
+              'height height
+              'y_range (and y-range (vconcat y-range))
+              'summary summary
+              'on_point_tap on-point-tap))
+
+(cl-defun eabp-canvas (width height ops)
+  "A canvas of WIDTH×HEIGHT dp rendering OPS (a list of draw-op nodes).
+Ops come from `eabp-draw-line'/`-rect'/`-circle'/`-path'/`-text';
+coordinates are in the WIDTH×HEIGHT space.  Rung 2 — the elisp-only
+escape hatch for visuals no curated node covers."
+  (eabp--node "canvas" 'width width 'height height 'ops (vconcat ops)))
+
+(cl-defun eabp-draw-line (x1 y1 x2 y2 &key color stroke)
+  "A canvas line op from (X1 Y1) to (X2 Y2)."
+  (eabp--node nil 'op "line" 'x1 x1 'y1 y1 'x2 x2 'y2 y2
+              'color color 'stroke stroke))
+
+(cl-defun eabp-draw-rect (x y w h &key color fill stroke radius)
+  "A canvas rect op at (X Y) of size W×H; FILL vs stroked; ROUNDED by RADIUS."
+  (eabp--node nil 'op "rect" 'x x 'y y 'w w 'h h 'color color
+              'fill (and fill t) 'stroke stroke 'radius radius))
+
+(cl-defun eabp-draw-circle (cx cy r &key color fill stroke)
+  "A canvas circle op centred (CX CY) of radius R; FILL vs stroked."
+  (eabp--node nil 'op "circle" 'cx cx 'cy cy 'r r 'color color
+              'fill (and fill t) 'stroke stroke))
+
+(cl-defun eabp-draw-path (points &key color fill stroke closed)
+  "A canvas path op over POINTS (a list of (X Y) pairs); FILL/CLOSED optional."
+  (eabp--node nil 'op "path"
+              'points (vconcat (mapcar (lambda (p) (vector (nth 0 p) (nth 1 p))) points))
+              'color color 'fill (and fill t) 'stroke stroke
+              'closed (and closed t)))
+
+(cl-defun eabp-draw-text (x y text &key color size align)
+  "A canvas text op drawing TEXT at (X Y); ALIGN is start/center/end."
+  (eabp--node nil 'op "text" 'x x 'y y 'text text 'color color 'size size
+              'align (and align (format "%s" align))))
 
 (cl-defun eabp-icon-button (icon action &key content-description padding)
   "An icon button."
@@ -350,6 +479,19 @@ changes."
               'label label
               'on_change on-change
               'padding padding))
+
+(cl-defun eabp-slider (id on-change &key value min max steps)
+  "A continuous slider identified by ID.
+ON-CHANGE fires once on release with the position injected into args as
+`value'.  VALUE seeds the position; MIN/MAX bound the range (default
+0.0/1.0); STEPS, when > 0, makes the slider discrete."
+  (eabp--node "slider"
+              'id id
+              'on_change on-change
+              'value value
+              'min min
+              'max max
+              'steps steps))
 
 ;; ─── Display ─────────────────────────────────────────────────────────────────
 

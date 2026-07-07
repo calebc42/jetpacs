@@ -46,8 +46,17 @@ listens; Emacs dials in here."
   :type 'integer :group 'eabp)
 
 (defcustom eabp-protocol-version 1
-  "EABP protocol version this client speaks."
+  "EABP protocol version this client speaks.
+This is the wire/vocabulary version — the envelope `v' and the SPEC's
+version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'eabp)
+
+(defconst eabp-api-version "1.0.0"
+  "Semver of the Tier 1 elisp API surface (constructors + seams).
+Independent of `eabp-protocol-version' (the wire).  A third-party Tier 1
+requires the core and checks this: minor bumps are additive and safe,
+major bumps may remove a symbol one minor cycle after it is marked
+obsolete.  The frozen public-symbol list lives in docs/API-STABILITY.md.")
 
 (defcustom eabp-wants
   '("surfaces.widget" "surfaces.notification" "surfaces.dialog"
@@ -320,6 +329,25 @@ Layers gate their pushes on this: a companion that doesn't grant
        (member capability (alist-get 'granted eabp--session))
        t))
 
+(defun eabp-node-supported-p (node-type)
+  "Non-nil when the connected companion renders NODE-TYPE (string or symbol).
+Reads the welcome's `node_types' catalog (SPEC §3, §9).  A Tier 1 gates
+a newer node on this and renders a fallback when it is unsupported:
+
+  (if (eabp-node-supported-p \\='chart)
+      (my/chart data)
+    (my/chart-fallback-table data))
+
+Returns non-nil PERMISSIVELY when the companion sent no catalog at all —
+an older companion predating node negotiation must not be treated as
+supporting nothing.  Support is positive knowledge only: a present
+catalog that omits NODE-TYPE returns nil."
+  (let ((catalog (alist-get 'node_types eabp--session))
+        (name (if (symbolp node-type) (symbol-name node-type) node-type)))
+    (cond ((null eabp--session) nil)   ; not connected
+          ((null catalog) t)           ; companion predates negotiation
+          (t (and (seq-contains-p catalog name) t)))))
+
 (defun eabp-device-caps ()
   "Capability names invocable via `eabp-capability-invoke', or nil.
 From the welcome's `device' report; empty until a session with the
@@ -425,7 +453,7 @@ reconnect (with backoff) is what makes the bridge feel always-on."
   (eabp-send
    "session.hello"
    `((protocol . ,eabp-protocol-version)
-     (client   . ,(format "emacs/%s eabp.el/0.1" emacs-version))
+     (client   . ,(format "emacs/%s eabp.el/%s" emacs-version eabp-api-version))
      (wants    . ,(vconcat eabp-wants)))))
 
 (defun eabp--make-process ()
@@ -577,14 +605,36 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
               'on_tap on-tap
               'mono (and mono t)))
 
-(defun eabp-row (&rest children)
-  "A horizontal row of CHILDREN nodes."
-  (eabp--node "row" 'children (vconcat children)))
+(defun eabp--children-and-opts (args)
+  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
+Child nodes are alists, never keywords, so the first keyword in ARGS
+marks the start of a trailing options plist.  Lets the `&rest'-children
+constructors take options without breaking `(eabp-row a b c)' callers."
+  (let ((i (cl-position-if #'keywordp args)))
+    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
+      (cons args nil))))
 
-(defun eabp-flow-row (&rest children)
-  "A horizontal row of CHILDREN that wraps onto new lines when full.
-The right container for chip/tag rows, which overflow a plain `eabp-row'."
-  (eabp--node "flow_row" 'children (vconcat children)))
+(defun eabp-row (&rest args)
+  "A horizontal row of child nodes.
+ARGS is child nodes, optionally followed by keywords: :spacing (dp
+between children), :align (cross-axis \"top\"/\"center\"/\"bottom\"),
+and :scroll (pan sideways on overflow)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "row"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'align (plist-get (cdr split) :align)
+                'scroll (and (plist-get (cdr split) :scroll) t))))
+
+(defun eabp-flow-row (&rest args)
+  "A horizontal row of children that wraps onto new lines when full.
+The right container for chip/tag rows, which overflow a plain `eabp-row'.
+Optional trailing keywords: :spacing and :run-spacing (dp)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "flow_row"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'run_spacing (plist-get (cdr split) :run-spacing))))
 
 (defun eabp-scroll-row (&rest children)
   "A horizontal row of CHILDREN that pans sideways when it overflows.
@@ -593,36 +643,63 @@ use it for chip rails that must stay on one row.  Child weights are
 ignored — a scrolling row has no bounded width to distribute."
   (eabp--node "row" 'children (vconcat children) 'scroll t))
 
-(defun eabp-column (&rest children)
-  "A vertical column of CHILDREN nodes."
-  (eabp--node "column" 'children (vconcat children)))
+(defun eabp-column (&rest args)
+  "A vertical column of child nodes.
+ARGS is child nodes, optionally followed by keywords: :spacing (dp
+between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
+and :scroll (make the column scroll vertically)."
+  (let* ((split (eabp--children-and-opts args)))
+    (eabp--node "column"
+                'children (vconcat (car split))
+                'spacing (plist-get (cdr split) :spacing)
+                'align (plist-get (cdr split) :align)
+                'scroll (and (plist-get (cdr split) :scroll) t))))
 
 (defun eabp-scroll-column (&rest children)
   "A vertically scrollable column of CHILDREN nodes."
   (eabp--node "column" 'children (vconcat children) 'scroll t))
 
-(cl-defun eabp-box (children &key alignment padding weight on-tap)
-  "A Box wrapping CHILDREN."
+(cl-defun eabp-border (&key (width 1) color)
+  "A border spec of WIDTH dp in COLOR (hex or theme token).
+Pass as the :border of `eabp-box' / `eabp-surface' / `eabp-card'."
+  (eabp--node nil 'width width 'color color))
+
+(cl-defun eabp-box (children &key alignment padding weight on-tap
+                             width height fill-fraction border)
+  "A Box wrapping CHILDREN.
+WIDTH/HEIGHT fix the box size (dp); FILL-FRACTION (0.0-1.0) sets it to a
+fraction of the parent width; BORDER is an `eabp-border' spec."
   (eabp--node "box"
               'children (vconcat children)
               'alignment alignment
               'padding padding
               'weight weight
-              'on_tap on-tap))
+              'on_tap on-tap
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
-(cl-defun eabp-surface (children &key color shape elevation padding fill)
+(cl-defun eabp-surface (children &key color shape elevation padding fill
+                                 width height fill-fraction border)
   "A Surface wrapping CHILDREN.
 COLOR is a hex string or a theme token (\"primary\", \"surface_container\",
 \"primary_container\", …) that adapts to the device's light/dark theme.
 SHAPE is \"rounded\", \"rounded_small\", or \"circle\".  FILL stretches the
-surface to full width (e.g. zebra rows in a list)."
+surface to full width (e.g. zebra rows in a list).  WIDTH/HEIGHT fix the
+size (dp), FILL-FRACTION (0.0-1.0) sets a fraction of parent width, and
+BORDER is an `eabp-border' spec stroked with SHAPE."
   (eabp--node "surface"
               'children (vconcat children)
               'color color
               'shape shape
               'elevation elevation
               'padding padding
-              'fill (and fill t)))
+              'fill (and fill t)
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
 (defun eabp-lazy-column (&rest children)
   "A scrollable column of CHILDREN."
@@ -645,14 +722,21 @@ first flagged child wins."
   "A horizontal divider."
   (eabp--node "divider"))
 
-(cl-defun eabp-card (children &key on-tap padding weight on-swipe)
-  "An elevated card wrapping CHILDREN."
+(cl-defun eabp-card (children &key on-tap padding weight on-swipe
+                              width height fill-fraction border)
+  "An elevated card wrapping CHILDREN.
+WIDTH/HEIGHT fix the size (dp), FILL-FRACTION (0.0-1.0) sets a fraction
+of parent width, and BORDER is an `eabp-border' spec."
   (eabp--node "card"
               'children (vconcat children)
               'on_tap on-tap
               'on_swipe on-swipe
               'padding padding
-              'weight weight))
+              'weight weight
+              'width width
+              'height height
+              'fill_fraction fill-fraction
+              'border border))
 
 (cl-defun eabp-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.
@@ -756,12 +840,85 @@ picker (\"YYYY-MM-DD\")."
 time injected into its args as `value' (\"HH:MM\"). VALUE seeds the picker."
   (eabp--node "time_button" 'label label 'on_pick on-pick 'value value))
 
-(cl-defun eabp-image (url &key content-description padding)
-  "An image loaded from URL (an http(s) URL or a readable file:// path)."
+(cl-defun eabp-image (url &key content-description padding
+                          width height aspect-ratio content-scale)
+  "An image loaded from URL (an http(s) URL or a readable file:// path).
+WIDTH/HEIGHT fix the size (dp); ASPECT-RATIO (w/h) constrains it;
+CONTENT-SCALE is \"fit\" (default), \"crop\", or \"fill\".  With no width or
+fill given the image fills the available width, as before."
   (eabp--node "image"
               'url url
               'content_description content-description
-              'padding padding))
+              'padding padding
+              'width width
+              'height height
+              'aspect_ratio aspect-ratio
+              'content_scale (and content-scale (format "%s" content-scale))))
+
+;; ─── Visualization ladder (SPEC §9) ──────────────────────────────────────────
+
+(defun eabp--chart-point (p)
+  "Normalize chart point P to a {y} / {x,y} node.
+P is a number (→ {y}), or a two-element list/cons (X Y) (→ {x,y})."
+  (cond ((numberp p) (eabp--node nil 'y p))
+        ((consp p) (eabp--node nil 'x (car p) 'y (if (consp (cdr p)) (cadr p) (cdr p))))
+        (t (eabp--node nil 'y 0))))
+
+(cl-defun eabp-chart-series (points &key label color)
+  "One chart series over POINTS (numbers, or (X Y) pairs).
+LABEL and COLOR (hex or theme token) are optional."
+  (eabp--node nil
+              'label label
+              'color color
+              'points (vconcat (mapcar #'eabp--chart-point points))))
+
+(cl-defun eabp-chart (series &key kind height y-range summary on-point-tap)
+  "A data-driven chart of SERIES (a list from `eabp-chart-series').
+KIND is \"line\" (default), \"bar\", \"area\", or \"sparkline\".  HEIGHT is
+in dp; Y-RANGE is (MIN MAX); SUMMARY is the accessibility label;
+ON-POINT-TAP fires with the tapped point injected as `value'.  Rung 1 of
+the visualization ladder — data in, polished chart out, no draw ops."
+  (eabp--node "chart"
+              'series (vconcat series)
+              'kind (and kind (format "%s" kind))
+              'height height
+              'y_range (and y-range (vconcat y-range))
+              'summary summary
+              'on_point_tap on-point-tap))
+
+(cl-defun eabp-canvas (width height ops)
+  "A canvas of WIDTH×HEIGHT dp rendering OPS (a list of draw-op nodes).
+Ops come from `eabp-draw-line'/`-rect'/`-circle'/`-path'/`-text';
+coordinates are in the WIDTH×HEIGHT space.  Rung 2 — the elisp-only
+escape hatch for visuals no curated node covers."
+  (eabp--node "canvas" 'width width 'height height 'ops (vconcat ops)))
+
+(cl-defun eabp-draw-line (x1 y1 x2 y2 &key color stroke)
+  "A canvas line op from (X1 Y1) to (X2 Y2)."
+  (eabp--node nil 'op "line" 'x1 x1 'y1 y1 'x2 x2 'y2 y2
+              'color color 'stroke stroke))
+
+(cl-defun eabp-draw-rect (x y w h &key color fill stroke radius)
+  "A canvas rect op at (X Y) of size W×H; FILL vs stroked; ROUNDED by RADIUS."
+  (eabp--node nil 'op "rect" 'x x 'y y 'w w 'h h 'color color
+              'fill (and fill t) 'stroke stroke 'radius radius))
+
+(cl-defun eabp-draw-circle (cx cy r &key color fill stroke)
+  "A canvas circle op centred (CX CY) of radius R; FILL vs stroked."
+  (eabp--node nil 'op "circle" 'cx cx 'cy cy 'r r 'color color
+              'fill (and fill t) 'stroke stroke))
+
+(cl-defun eabp-draw-path (points &key color fill stroke closed)
+  "A canvas path op over POINTS (a list of (X Y) pairs); FILL/CLOSED optional."
+  (eabp--node nil 'op "path"
+              'points (vconcat (mapcar (lambda (p) (vector (nth 0 p) (nth 1 p))) points))
+              'color color 'fill (and fill t) 'stroke stroke
+              'closed (and closed t)))
+
+(cl-defun eabp-draw-text (x y text &key color size align)
+  "A canvas text op drawing TEXT at (X Y); ALIGN is start/center/end."
+  (eabp--node nil 'op "text" 'x x 'y y 'text text 'color color 'size size
+              'align (and align (format "%s" align))))
 
 (cl-defun eabp-icon-button (icon action &key content-description padding)
   "An icon button."
@@ -844,6 +1001,19 @@ changes."
               'label label
               'on_change on-change
               'padding padding))
+
+(cl-defun eabp-slider (id on-change &key value min max steps)
+  "A continuous slider identified by ID.
+ON-CHANGE fires once on release with the position injected into args as
+`value'.  VALUE seeds the position; MIN/MAX bound the range (default
+0.0/1.0); STEPS, when > 0, makes the slider discrete."
+  (eabp--node "slider"
+              'id id
+              'on_change on-change
+              'value value
+              'min min
+              'max max
+              'steps steps))
 
 ;; ─── Display ─────────────────────────────────────────────────────────────────
 
@@ -1061,6 +1231,233 @@ stays app-agnostic: the app opts an editor into the affordance."
 ;;; eabp-widgets.el ends here
 
 ;;; ==================================================================
+;;; BEGIN core/eabp-lint.el
+;;; ==================================================================
+
+;;; eabp-lint.el --- validate SDUI specs before the wire -*- lexical-binding: t; -*-
+
+;; A spec is a tree of alists built by the `eabp-widgets.el' constructors
+;; and serialized to JSON by `eabp--encode'.  A malformed node — an
+;; unknown `t', a non-serializable attribute value, a broken action —
+;; either renders as nothing on the companion or, worse, makes
+;; `json-serialize' throw and blanks the *whole* push.  This module lets a
+;; Tier 1 catch those before they reach the wire:
+;;
+;;   `eabp-lint-spec'       — return a list of problems for a spec (nil = clean).
+;;   `eabp-render-to-json'  — serialize + parse a spec headless (the wire
+;;                            round-trip, so views are testable with no phone).
+;;   `eabp-lint-on-push'    — when set, `eabp-surface-update' replaces each
+;;                            invalid node in place with a visible error node,
+;;                            so one bad subtree degrades instead of the push.
+;;
+;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
+;; (SduiRenderer.kt) and `test/widgets.golden'; the drift test
+;; `eabp-lint-types-cover-golden' fails if a constructor emits a `t' not
+;; listed here.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'json)
+
+;; `eabp--node' lives in eabp-widgets, which loads before this file (bundle
+;; order and the core-load test). Declared so an isolated byte-compile of
+;; this file alone stays warning-clean.
+(declare-function eabp--node "eabp-widgets" (type &rest kvs))
+
+(defconst eabp-lint-node-types
+  '("text" "rich_text" "row" "flow_row" "column" "box" "surface"
+    "lazy_column" "spacer" "divider" "card" "collapsible"
+    "reorderable_list" "table" "chart" "canvas" "icon" "image" "date_stamp"
+    "section_header" "empty_state" "progress" "menu" "button"
+    "icon_button" "chip" "assist_chip" "text_input" "editor" "checkbox"
+    "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
+  "Node `t' discriminators the reference companion renders.
+Mirror of `SDUI_NODE_TYPES' in SduiRenderer.kt.  A `t' outside this set
+is almost always a typo; a Tier 1 deliberately targeting an extended
+companion gates on `eabp-node-supported-p' instead.")
+
+(defconst eabp-lint--action-keys
+  '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
+    nav_action on_long_tap on_swipe on_add_row on_add_col)
+  "Node keys whose value is an embedded action object (SPEC §9).")
+
+(defconst eabp-lint--numeric-attrs
+  '(padding weight spacing run_spacing elevation size min_lines max_lines
+    width height fill_fraction aspect_ratio min max steps
+    ;; canvas draw-op coordinates
+    x y w h r cx cy x1 y1 x2 y2 radius stroke)
+  "Attributes whose value must be a number.")
+
+(defconst eabp-lint--color-attrs '(color bg)
+  "Attributes whose value must be a hex string or a theme token.")
+
+;; ─── Shape predicates ────────────────────────────────────────────────────────
+
+(defun eabp-lint--alist-p (x)
+  "Non-nil when X is a non-empty proper list of conses (a node/subspec)."
+  (and (consp x) (proper-list-p x) (cl-every #'consp x)))
+
+(defun eabp-lint--node-seq-p (x)
+  "Non-nil when X is a non-empty list or vector whose elements are all alists.
+This is how children, spans, items, rows, and cells are distinguished
+from a single nested node and from plain scalar sequences (a vector of
+strings like table `aligns' is not a node sequence)."
+  (let ((elts (cond ((vectorp x) (append x nil))
+                    ((proper-list-p x) x)
+                    (t 'bad))))
+    (and (listp elts) elts (cl-every #'eabp-lint--alist-p elts))))
+
+;; ─── Validation ──────────────────────────────────────────────────────────────
+
+(defun eabp-lint--check-action (val path report)
+  "Validate embedded action VAL at PATH, reporting via REPORT."
+  (if (not (eabp-lint--alist-p val))
+      (funcall report path (format "action must be an object: %S" val))
+    (let ((action (alist-get 'action val))
+          (builtin (alist-get 'builtin val))
+          (wo (alist-get 'when_offline val))
+          (args-cell (assq 'args val)))
+      (cond ((and action builtin)
+             (funcall report path "action has both `action' and `builtin'"))
+            ((and (not action) (not builtin))
+             (funcall report path "action has neither `action' nor `builtin'"))
+            ((and action (not (stringp action)))
+             (funcall report path (format "action name must be a string: %S" action)))
+            ((and builtin (not (stringp builtin)))
+             (funcall report path (format "builtin name must be a string: %S" builtin))))
+      (when (and wo (not (member wo '("queue" "drop" "wake"))))
+        (funcall report path (format "invalid when_offline: %S" wo)))
+      (when (and args-cell (cdr args-cell) (not (eabp-lint--alist-p (cdr args-cell))))
+        (funcall report path "action `args' must be an object")))))
+
+(defun eabp-lint--check-color (key val path report)
+  "Validate color attribute KEY=VAL at PATH via REPORT."
+  (cond ((not (stringp val))
+         (funcall report path (format "%s must be a string: %S" key val)))
+        ((and (string-prefix-p "#" val)
+              (not (string-match-p "\\`#[0-9A-Fa-f]\\{3,8\\}\\'" val)))
+         (funcall report path (format "%s is not a valid hex colour: %S" key val)))))
+
+(defun eabp-lint--check-scalar (key val path report)
+  "Report at PATH via REPORT when scalar KEY=VAL is not JSON-serializable."
+  (unless (or (stringp val) (numberp val) (vectorp val)
+              (memq val '(t :false :null)) (null val))
+    (funcall report path
+             (format "%s has a non-serializable value: %S" key val))))
+
+(defun eabp-lint--walk (node path report)
+  "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
+  (when (assq 't node)
+    (let ((type (alist-get 't node)))
+      (unless (and (stringp type) (member type eabp-lint-node-types))
+        (funcall report path (format "unknown or invalid node type: %S" type)))))
+  (dolist (pair node)
+    (let* ((key (car pair)) (val (cdr pair)) (kpath (cons key path)))
+      (cond
+       ((eq key 't) nil)
+       ((memq key eabp-lint--action-keys)
+        (eabp-lint--check-action val kpath report))
+       ((eabp-lint--node-seq-p val)
+        (let ((i 0))
+          (dolist (child (append val nil))
+            (eabp-lint--walk child (cons i kpath) report)
+            (setq i (1+ i)))))
+       ((eabp-lint--alist-p val)
+        (eabp-lint--walk val kpath report))
+       ((memq key eabp-lint--numeric-attrs)
+        (unless (numberp val)
+          (funcall report kpath (format "%s must be a number: %S" key val))))
+       ((memq key eabp-lint--color-attrs)
+        (eabp-lint--check-color key val kpath report))
+       (t (eabp-lint--check-scalar key val kpath report))))))
+
+;;;###autoload
+(defun eabp-lint-spec (spec)
+  "Return a list of (PATH . PROBLEM) describing problems in SPEC, nil if clean.
+PATH is the root-to-node list of keys (and child indices) locating the
+problem; PROBLEM is a human-readable string.  A Tier 1 runs this in its
+own ERT tests to keep its views wire-valid without a companion attached."
+  (let (problems)
+    (if (not (eabp-lint--alist-p spec))
+        (push (cons nil (format "spec is not a node object: %S" spec)) problems)
+      (eabp-lint--walk
+       spec nil
+       (lambda (path msg) (push (cons (reverse path) msg) problems))))
+    (nreverse problems)))
+
+;; ─── Headless render harness ─────────────────────────────────────────────────
+
+;;;###autoload
+(defun eabp-render-to-json (spec &optional object-type)
+  "Serialize SPEC to JSON and parse it back — the wire round-trip, headless.
+Returns the parsed structure (OBJECT-TYPE defaults to `alist'), which is
+exactly what the companion receives, so a Tier 1 can assert on its views
+in batch with no phone.  Signals the same error a live push would if SPEC
+is not serializable."
+  (json-parse-string
+   (json-serialize spec :null-object :null :false-object :false)
+   :object-type (or object-type 'alist)
+   :null-object :null :false-object :false))
+
+;; ─── On-push guard (opt-in) ──────────────────────────────────────────────────
+
+(defcustom eabp-lint-on-push nil
+  "When non-nil, validate every surface spec before it is sent.
+Invalid nodes are replaced in place by a visible error node, so one bad
+subtree degrades to a message instead of a blank or dropped push.  Off by
+default: it walks the whole tree on every push, needless once a Tier 1 is
+known-good.  A development and test aid."
+  :type 'boolean :group 'eabp)
+
+(defun eabp-lint--error-node (msg)
+  "An inline error node carrying MSG (an `empty_state')."
+  (eabp--node "empty_state" 'icon "error" 'title "Invalid UI" 'caption msg))
+
+(defun eabp-lint--node-serializable-p (node)
+  "Non-nil when NODE's own scalar attributes are JSON-serializable.
+Container and action values are validated by recursion, not here."
+  (cl-every
+   (lambda (pair)
+     (let ((key (car pair)) (val (cdr pair)))
+       (or (memq key eabp-lint--action-keys)
+           (eabp-lint--node-seq-p val)
+           (eabp-lint--alist-p val)
+           (stringp val) (numberp val) (vectorp val)
+           (memq val '(t :false :null)) (null val))))
+   node))
+
+(defun eabp-lint-sanitize-spec (node)
+  "Return NODE with each structurally-invalid descendant replaced by an error node.
+An unknown `t' or a node with a non-serializable own attribute becomes an
+`empty_state' error node; valid containers are recursed so only the bad
+subtree is lost."
+  (cond
+   ((not (eabp-lint--alist-p node)) node)
+   ((let ((ty (and (assq 't node) (alist-get 't node))))
+      (and ty (not (and (stringp ty) (member ty eabp-lint-node-types)))))
+    (eabp-lint--error-node (format "unknown node type: %s" (alist-get 't node))))
+   ((not (eabp-lint--node-serializable-p node))
+    (eabp-lint--error-node "node has an invalid attribute value"))
+   (t
+    (mapcar
+     (lambda (pair)
+       (let ((key (car pair)) (val (cdr pair)))
+         (cond
+          ((memq key eabp-lint--action-keys) pair)
+          ((eabp-lint--node-seq-p val)
+           (cons key (if (vectorp val)
+                         (vconcat (mapcar #'eabp-lint-sanitize-spec (append val nil)))
+                       (mapcar #'eabp-lint-sanitize-spec val))))
+          ((eabp-lint--alist-p val)
+           (cons key (eabp-lint-sanitize-spec val)))
+          (t pair))))
+     node))))
+
+(provide 'eabp-lint)
+;;; eabp-lint.el ends here
+
+;;; ==================================================================
 ;;; BEGIN core/eabp-surfaces.el
 ;;; ==================================================================
 
@@ -1155,7 +1552,19 @@ BODY is a list of UI-tree nodes."
 ;; ─── Surface senders ─────────────────────────────────────────────────────────
 
 (defun eabp-surface-update (surface revision spec &optional ttl-s stale-spec current-view)
-  "Send a `surface.update' for SURFACE at REVISION with SPEC."
+  "Send a `surface.update' for SURFACE at REVISION with SPEC.
+When `eabp-lint-on-push' is set (and eabp-lint is loaded), SPEC is
+validated first and any invalid node replaced by a visible error node,
+so one bad subtree degrades instead of blanking the whole push."
+  (when (and (bound-and-true-p eabp-lint-on-push)
+             (fboundp 'eabp-lint-spec))
+    (let ((problems (eabp-lint-spec spec)))
+      (when problems
+        (dolist (p problems)
+          (display-warning 'eabp (format "surface %s spec lint: %s @ %S"
+                                         surface (cdr p) (car p))
+                           :warning))
+        (setq spec (eabp-lint-sanitize-spec spec)))))
   (eabp-send "surface.update"
              (append `((surface . ,surface) (revision . ,revision) (spec . ,spec))
                      (when ttl-s     `((ttl_s . ,ttl-s)))
@@ -1175,6 +1584,60 @@ BODY is a list of UI-tree nodes."
 (defvar eabp-action-handlers (make-hash-table :test 'equal)
   "Map of action name (string) -> function called with (ARGS PAYLOAD).")
 
+;; ─── Registration ownership (multi-tenant collision detection) ───────────────
+
+(defvar eabp-current-owner nil
+  "The app/module id currently registering handlers, views, or settings.
+Bound by `with-eabp-owner' and `eabp-defapp'.  nil = anonymous (core).
+Threaded through the registration seams so two coexisting Tier 1s can't
+silently clobber each other's action, view, or settings name.")
+
+(defcustom eabp-strict-namespaces nil
+  "When non-nil, a cross-owner registration collision signals an error.
+Off by default: collisions warn (via `display-warning') so a mistake is
+visible without breaking a load.  Turn on to fail closed."
+  :type 'boolean :group 'eabp)
+
+(defvar eabp--registration-owners (make-hash-table :test 'equal)
+  "Map of \"KIND:NAME\" -> owner id, backing `eabp--claim'.")
+
+(defun eabp--claim (kind name)
+  "Attribute KIND:NAME to `eabp-current-owner'; warn on a cross-owner clash.
+Same-owner re-registration (the live-reload case) is silent.  A clash is
+when a DIFFERENT explicit owner already holds the name.  Returns NAME."
+  (when (and name eabp-current-owner)
+    (let* ((key (format "%s:%s" kind name))
+           (prev (gethash key eabp--registration-owners)))
+      (when (and prev (not (equal prev eabp-current-owner)))
+        (let ((msg (format "%s %S is claimed by both `%s' and `%s'"
+                           kind name prev eabp-current-owner)))
+          (if eabp-strict-namespaces
+              (error "EABP namespace collision: %s" msg)
+            (display-warning 'eabp msg :warning))))
+      (puthash key eabp-current-owner eabp--registration-owners)))
+  name)
+
+(defmacro with-eabp-owner (id &rest body)
+  "Run BODY with `eabp-current-owner' bound to ID (a string).
+Wrap a Tier 1's registrations so its actions/views/settings are
+attributed to it and cross-owner collisions are detected."
+  (declare (indent 1) (debug (form body)))
+  `(let ((eabp-current-owner ,id)) ,@body))
+
+(defun eabp--owned-names (kind owner)
+  "List the NAMEs of KIND currently attributed to OWNER."
+  (let (names)
+    (maphash (lambda (key val)
+               (when (and (equal val owner)
+                          (string-prefix-p (concat kind ":") key))
+                 (push (substring key (1+ (length kind))) names)))
+             eabp--registration-owners)
+    names))
+
+(defun eabp--unclaim (kind name)
+  "Drop the ownership record for KIND:NAME."
+  (remhash (format "%s:%s" kind name) eabp--registration-owners))
+
 (defvar eabp--last-action-time 0
   "`float-time' of the most recent dispatched action.
 Lets async continuations of a phone-initiated flow (e.g. git calling back
@@ -1182,7 +1645,11 @@ into Emacs for a commit message after `magit-commit' already returned)
 distinguish themselves from desktop-initiated activity.")
 
 (defun eabp-defaction (name fn)
-  "Register FN as the handler for action NAME."
+  "Register FN as the handler for action NAME.
+Attributes NAME to `eabp-current-owner' (see `with-eabp-owner'); a
+cross-owner re-registration warns (or errors under
+`eabp-strict-namespaces')."
+  (eabp--claim "action" name)
   (puthash name fn eabp-action-handlers))
 
 (defun eabp--on-action (payload _frame)
@@ -1226,6 +1693,15 @@ command runs instead of raw-reading a confirmation char (another hang)."
 (defun eabp-on-state-change (id fn)
   "Register FN to handle state.changed for widget ID."
   (puthash id fn eabp--state-handlers))
+
+(defun eabp-on-state-change-clear (prefix)
+  "Remove all state.changed subscriptions whose id starts with PREFIX.
+The subscription counterpart to `eabp-ui-state-clear'; used by
+`eabp-app-unregister' so a torn-down app leaves no live callbacks."
+  (let (keys)
+    (maphash (lambda (k _v) (when (string-prefix-p prefix k) (push k keys)))
+             eabp--state-handlers)
+    (dolist (k keys) (remhash k eabp--state-handlers))))
 
 (defvar eabp--ui-state (make-hash-table :test 'equal)
   "Global map of widget id -> current value, updated by `state.changed'.")
@@ -3447,6 +3923,7 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
                     (assoc-delete-all name eabp-shell-views))
               (lambda (a b)
                 (< (plist-get (cdr a) :order) (plist-get (cdr b) :order)))))
+  (eabp--claim "view" name)
   (eabp-shell--schedule-repush)
   name)
 
@@ -3848,6 +4325,11 @@ orders keep registration order."
       (when (and owner (not (equal owner id)))
         (message "EABP apps: view %s is claimed by both %s and %s"
                  v owner id))))
+  ;; Attribute the app's views to it in the ownership registry, so
+  ;; cross-app collisions are caught and `eabp-app-unregister' can find
+  ;; them (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
+  (let ((eabp-current-owner id))
+    (dolist (v views) (eabp--claim "view" v)))
   (setq eabp-apps--registry
         (sort (append (assoc-delete-all id eabp-apps--registry)
                       (list (cons id (list :label (or label (capitalize id))
@@ -3862,6 +4344,31 @@ orders keep registration order."
   "Unregister app ID (its views fall back to showing everywhere)."
   (setq eabp-apps--registry (assoc-delete-all id eabp-apps--registry))
   (eabp-shell--schedule-repush))
+
+(defun eabp-app-unregister (id)
+  "Tear down everything owned by app ID: its actions, views, and settings.
+Removes the registrations attributed to ID (through `with-eabp-owner' /
+`eabp-defapp'), drops their ownership records, clears UI-state keyed
+under the app's id prefix, and removes the app from the launcher.  For
+clean live reload and genuine uninstall — no stale handlers accumulate.
+Registrations a Tier 1 made without an owner are not tracked and are not
+torn down (wrap them in `with-eabp-owner' to make them removable)."
+  (dolist (name (eabp--owned-names "action" id))
+    (remhash name eabp-action-handlers)
+    (eabp--unclaim "action" name))
+  (dolist (name (eabp--owned-names "view" id))
+    (eabp-shell-remove-view name)
+    (eabp--unclaim "view" name))
+  (dolist (title (eabp--owned-names "settings" id))
+    (when (fboundp 'eabp-settings-remove-section)
+      (eabp-settings-remove-section title))
+    (eabp--unclaim "settings" title))
+  ;; Drop UI-state and its subscriptions keyed under the app's id prefix.
+  (eabp-ui-state-clear (concat id "."))
+  (eabp-on-state-change-clear (concat id "."))
+  (eabp-apps-remove id)
+  (eabp-shell--schedule-repush)
+  id)
 
 (defun eabp-apps--owner (view-name)
   "The id of the app claiming VIEW-NAME, or nil when unclaimed."
@@ -6375,10 +6882,15 @@ ENTRIES is a list of (SYMBOL . PLIST) — see `eabp-settings-registry'.
 Also registers the state.changed handlers the entries' switch widgets
 publish through, so a queued toggle can replay before the settings
 screen has ever rendered this session."
+  (when (fboundp 'eabp--claim) (eabp--claim "settings" title))
   (setq eabp-settings-registry
         (append (assoc-delete-all title eabp-settings-registry)
                 (list (cons title entries))))
   (eabp-settings--register-state-handlers (list (cons title entries))))
+
+(defun eabp-settings-remove-section (title)
+  "Unregister the settings section TITLE (used by `eabp-app-unregister')."
+  (setq eabp-settings-registry (assoc-delete-all title eabp-settings-registry)))
 
 (defun eabp-settings--entry (sym)
   "Registry entry for SYM, or nil if SYM is not exposed."
@@ -16528,6 +17040,166 @@ Returns the directory the files were written to."
 ;;; glasspane-demo.el ends here
 
 ;;; ==================================================================
+;;; BEGIN apps/glasspane/glasspane-gallery.el
+;;; ==================================================================
+
+;;; glasspane-gallery.el --- Interactive widget-primitives gallery -*- lexical-binding: t; -*-
+
+;; A live demo of the platform's rendering primitives — charts, the canvas
+;; interpreter, slider, sizing/border/spacing — wired together so the
+;; interactive loop is visible: the slider drives a canvas gauge, chips
+;; switch the chart kind, tapping a chart point reports its value.  Reached
+;; from the drawer ("Widget Gallery"), the `demo.gallery' action, or
+;; `M-x glasspane-demo-gallery' — the newest of the demo commands next to
+;; `glasspane-demo-setup'.
+;;
+;; Everything here is composed from core `eabp-*' constructors: it is also
+;; the worked example that a whole visual surface is Elisp, no Kotlin.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'eabp-widgets)
+(require 'eabp-shell)
+(require 'eabp-surfaces)
+
+(defvar glasspane-gallery--open nil
+  "Non-nil while the gallery overlay is showing.")
+(defvar glasspane-gallery--kind "line"
+  "The chart kind the gallery currently renders.")
+(defvar glasspane-gallery--level 0.5
+  "The gauge value (0.0-1.0) the slider last set.")
+
+;; ─── Canvas gauge (geometry computed here, drawn by the canvas node) ─────────
+
+(defun glasspane-gallery--arc-points (cx cy r a0 a1 n)
+  "N+1 points along the arc A0→A1 degrees, centre (CX CY), radius R.
+Screen y grows downward, so a top semicircle spans 180°→0°."
+  (cl-loop for i from 0 to n
+           for a = (+ a0 (* (- a1 a0) (/ (float i) n)))
+           for rad = (degrees-to-radians a)
+           collect (list (+ cx (* r (cos rad))) (- cy (* r (sin rad))))))
+
+(defun glasspane-gallery--gauge (level)
+  "A semicircular canvas gauge filled to LEVEL (0.0-1.0)."
+  (let* ((w 240) (h 132) (cx 120) (cy 116) (r 95)
+         (end (- 180 (* 180 (max 0.0 (min 1.0 level)))))
+         (na (degrees-to-radians end))
+         (nx (+ cx (* r 0.9 (cos na))))
+         (ny (- cy (* r 0.9 (sin na)))))
+    (eabp-canvas
+     w h
+     (list (eabp-draw-path (glasspane-gallery--arc-points cx cy r 180 0 44)
+                           :color "#8888aa" :stroke 12)
+           (eabp-draw-path (glasspane-gallery--arc-points cx cy r 180 end 44)
+                           :color "#00A676" :stroke 12)
+           (eabp-draw-line cx cy nx ny :color "#E64980" :stroke 3)
+           (eabp-draw-circle cx cy 7 :fill t :color "#E64980")
+           (eabp-draw-text cx 74 (format "%d%%" (round (* 100 level)))
+                           :align "center" :size 28 :color "primary")))))
+
+;; ─── Body ────────────────────────────────────────────────────────────────────
+
+(defun glasspane-gallery--kind-chips ()
+  "A chip rail selecting `glasspane-gallery--kind'."
+  (apply #'eabp-flow-row
+         (append
+          (mapcar (lambda (k)
+                    (eabp-chip k
+                               :selected (equal k glasspane-gallery--kind)
+                               :on-tap (eabp-action "demo.gallery.kind"
+                                                    :args (list (cons 'kind k)))))
+                  '("line" "bar" "area" "sparkline"))
+          (list :spacing 8))))
+
+(defun glasspane-gallery--body ()
+  "The scrollable gallery content (a `lazy_column', so it scrolls)."
+  (eabp-lazy-column
+   (eabp-section-header "Chart — tap a point, switch the kind")
+   (glasspane-gallery--kind-chips)
+   (eabp-chart
+    (list (eabp-chart-series '(3 7 4 9 6 8 5) :label "alpha" :color "#4C6FFF")
+          (eabp-chart-series '(5 4 6 5 7 5 8) :label "beta"))
+    :kind glasspane-gallery--kind :height 150 :summary "two sample series"
+    :on-point-tap (eabp-action "demo.gallery.point"))
+   (eabp-divider)
+   (eabp-section-header "Slider → live canvas gauge")
+   (eabp-slider "gallery.level" (eabp-action "demo.gallery.level")
+                :value glasspane-gallery--level :min 0.0 :max 1.0)
+   (glasspane-gallery--gauge glasspane-gallery--level)
+   (eabp-divider)
+   (eabp-section-header "Sizing · border · spacing · align")
+   (eabp-row
+    (eabp-surface (list (eabp-text "100×64"))
+                  :width 100 :height 64
+                  :border (eabp-border :width 2 :color "primary"))
+    (eabp-surface (list (eabp-text "rounded, fills rest"))
+                  :height 64 :color "surface_container" :shape "rounded"
+                  :fill-fraction 1.0)
+    :spacing 12 :align "center")
+   (eabp-spacer :height 12)))
+
+(defun glasspane-gallery--view (snackbar)
+  "The gallery as a back-arrow nav view."
+  (eabp-shell-nav-view "Widget Gallery" (glasspane-gallery--body)
+                       :snackbar snackbar))
+
+;; ─── Actions ─────────────────────────────────────────────────────────────────
+
+(eabp-defaction "demo.gallery"
+  (lambda (_args _payload)
+    (setq glasspane-gallery--open t)
+    (eabp-shell-push nil :switch-to "gallery")))
+
+(eabp-defaction "demo.gallery.kind"
+  (lambda (args _payload)
+    (setq glasspane-gallery--kind (or (alist-get 'kind args) "line"))
+    (eabp-shell-push)))
+
+(eabp-defaction "demo.gallery.level"
+  (lambda (args _payload)
+    (setq glasspane-gallery--level (or (alist-get 'value args) 0.5))
+    (eabp-shell-push)))
+
+(eabp-defaction "demo.gallery.point"
+  (lambda (args _payload)
+    (let ((v (alist-get 'value args)))
+      (when (fboundp 'eabp-shell-notify)
+        (eabp-shell-notify (format "point %s = %s"
+                                   (alist-get 'index v) (alist-get 'y v)))))
+    (eabp-shell-push)))
+
+;; ─── Registration ────────────────────────────────────────────────────────────
+
+(eabp-shell-define-view "gallery"
+  :builder #'glasspane-gallery--view
+  :when (lambda () glasspane-gallery--open)
+  :overlay (lambda () glasspane-gallery--open)
+  :order 120)
+
+;; Landing on any real view closes the overlay (mirrors the detail drill-in).
+(add-hook 'eabp-shell-view-switched-hook
+          (lambda (_view) (setq glasspane-gallery--open nil)))
+
+(eabp-shell-add-drawer-item
+ 65 (lambda () (eabp-drawer-item "insights" "Widget Gallery"
+                                 (eabp-action "demo.gallery"))))
+
+;;;###autoload
+(defun glasspane-demo-gallery ()
+  "Open the interactive widget-primitives gallery on the connected phone.
+The newest of the demo commands (see also `glasspane-demo-setup')."
+  (interactive)
+  (setq glasspane-gallery--open t)
+  (if (and (fboundp 'eabp-connected-p) (eabp-connected-p))
+      (progn (eabp-shell-push nil :switch-to "gallery")
+             (message "Widget gallery opened on the phone"))
+    (message "EABP: not connected — connect a phone, then reopen")))
+
+(provide 'glasspane-gallery)
+;;; glasspane-gallery.el ends here
+
+;;; ==================================================================
 ;;; BEGIN apps/glasspane/glasspane-config.el
 ;;; ==================================================================
 
@@ -16707,6 +17379,7 @@ rewritten."
 (require 'glasspane-automations)
 (require 'glasspane-notes)
 (require 'glasspane-srs)
+(require 'glasspane-gallery)
 (require 'glasspane-config)
 
 ;; Load the app-managed defaults (capture templates, agenda wiring) if

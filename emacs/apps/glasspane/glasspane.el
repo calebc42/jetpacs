@@ -18,6 +18,7 @@
 (require 'glasspane-automations)
 (require 'glasspane-notes)
 (require 'glasspane-srs)
+(require 'glasspane-gallery)
 (require 'glasspane-config)
 
 ;; Load the app-managed defaults (capture templates, agenda wiring) if

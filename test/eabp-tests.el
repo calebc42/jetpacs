@@ -26,6 +26,7 @@
 (require 'eabp-apps)
 (require 'eabp-automations)
 (require 'eabp-widgets)
+(require 'eabp-lint)
 (require 'eabp-shell)
 (require 'glasspane-org)
 (require 'eabp-keymap)
@@ -37,6 +38,7 @@
 (require 'eabp-complete)
 (require 'eabp-sync)
 (require 'glasspane-demo)
+(require 'glasspane-gallery)
 (require 'glasspane-config)
 (require 'glasspane-journal)
 (require 'glasspane-views)
@@ -1527,7 +1529,26 @@ rich renderers (native table, babel run button)."
       :aligns '("start" "end") :on-add-row act :on-add-col act :padding 2)
      (eabp-table
       (list (eabp-table-row (list (eabp-table-cell (list (eabp-span "a")))))))
-     (eabp-scroll-row leaf leaf))))
+     (eabp-scroll-row leaf leaf)
+     ;; Phase C — composition knobs
+     (eabp-slider "vol" act :value 0.3 :min 0.0 :max 1.0 :steps 10)
+     (eabp-row leaf leaf :spacing 4 :align "top")
+     (eabp-column leaf leaf :spacing 6 :align "center")
+     (eabp-surface (list leaf) :width 120 :height 40 :fill-fraction 0.5
+                   :border (eabp-border :width 2 :color "#888"))
+     (eabp-image "http://x" :width 100 :height 80 :aspect-ratio 1.5
+                 :content-scale "crop")
+     ;; Phase D — visualization ladder
+     (eabp-chart (list (eabp-chart-series '(1 3 2 5) :label "a" :color "#4C6FFF")
+                       (eabp-chart-series '(2 2 4 3)))
+                 :kind "line" :height 160 :y-range '(0 6) :summary "trend"
+                 :on-point-tap act)
+     (eabp-canvas 100 60
+                  (list (eabp-draw-line 0 0 100 60 :color "#888" :stroke 2)
+                        (eabp-draw-rect 10 10 30 20 :fill t :color "primary" :radius 4)
+                        (eabp-draw-circle 70 30 15 :color "#E64980")
+                        (eabp-draw-path '((0 60) (50 0) (100 60)) :closed t :fill t)
+                        (eabp-draw-text 50 30 "hi" :align "center" :size 10))))))
 
 (defun eabp-tests--widget-lines ()
   (let ((i -1))
@@ -1777,6 +1798,163 @@ records the last-fired time."
     (should-not (eabp-granted-p "capabilities"))
     (should-not (eabp-device-caps))
     (should-not (eabp-device-can-p "exact_alarms"))))
+
+(ert-deftest eabp-node-supported-negotiation ()
+  "`eabp-node-supported-p' gates on the welcome's node catalog, permissively."
+  ;; A present catalog is positive knowledge: listed = yes, omitted = no.
+  (let ((eabp--session '((node_types . ["text" "row" "chart"]))))
+    (should (eabp-node-supported-p 'chart))
+    (should (eabp-node-supported-p "text"))
+    (should-not (eabp-node-supported-p 'canvas))
+    (should-not (eabp-node-supported-p "slider")))
+  ;; An older companion sends no catalog: treat every node as supported
+  ;; (negotiation is positive knowledge, never a denylist).
+  (let ((eabp--session '((granted . ("capabilities")))))
+    (should (eabp-node-supported-p 'chart))
+    (should (eabp-node-supported-p 'anything-at-all)))
+  ;; Not connected: unsupported (nothing renders anywhere).
+  (let ((eabp--session nil))
+    (should-not (eabp-node-supported-p 'text))))
+
+(ert-deftest eabp-api-version-bound ()
+  "The API/protocol version constants exist for third-party compatibility checks."
+  (should (stringp eabp-api-version))
+  (should (integerp eabp-protocol-version)))
+
+;; ─── Spec linter (Phase B / Task 4) ──────────────────────────────────────────
+
+(ert-deftest eabp-lint-passes-valid-specs ()
+  "A tree built from the constructors lints clean."
+  (should-not
+   (eabp-lint-spec
+    (eabp-column
+     (eabp-card (list (eabp-text "Title" 'headline)
+                      (eabp-rich-text (list (eabp-span "bold" :bold t))))
+                :on-tap (eabp-action "x.y" :args '((k . "v"))))
+     (eabp-row (eabp-button "Go" (eabp-action "a.b"))
+               (eabp-switch "s" :checked t :on-change (eabp-action "c.d")))))))
+
+(ert-deftest eabp-lint-flags-unknown-node ()
+  "An unknown `t' is reported."
+  (let ((problems (eabp-lint-spec (eabp--node "flisbo" 'text "x"))))
+    (should problems)
+    (should (string-match-p "unknown" (cdr (car problems))))))
+
+(ert-deftest eabp-lint-flags-bad-action ()
+  "An action with neither `action' nor `builtin', and a bad when_offline."
+  (should (eabp-lint-spec `((t . "button") (on_tap . ((args . ((k . "v"))))))))
+  (should (eabp-lint-spec `((t . "button")
+                            (on_tap . ((action . "a.b") (when_offline . "sometimes")))))))
+
+(ert-deftest eabp-lint-flags-nonserializable-and-typed-attrs ()
+  "A symbol attr value and a non-numeric padding are caught before the wire."
+  (should (eabp-lint-spec `((t . "text") (text . some-symbol))))
+  (should (eabp-lint-spec `((t . "text") (text . "ok") (padding . "lots"))))
+  (should (eabp-lint-spec `((t . "surface") (children . []) (color . "#GGG")))))
+
+(ert-deftest eabp-lint-sanitize-isolates-bad-subtree ()
+  "Sanitizing replaces only the invalid node, keeping siblings intact."
+  (let* ((spec (eabp-column
+                (eabp-text "keep me" 'body)
+                (eabp--node "bogus" 'text "drop me")))
+         (clean (eabp-lint-sanitize-spec spec))
+         (kids (alist-get 'children clean)))   ; a vector (constructors vconcat)
+    (should-not (eabp-lint-spec clean))          ; sanitized tree is valid
+    (should (equal "text" (alist-get 't (elt kids 0))))
+    (should (equal "empty_state" (alist-get 't (elt kids 1))))))  ; bogus → error node
+
+(ert-deftest eabp-render-to-json-roundtrips ()
+  "The headless harness serializes and parses a spec back to the wire shape."
+  (let ((parsed (eabp-render-to-json (eabp-text "hi" 'title))))
+    (should (equal "text" (alist-get 't parsed)))
+    (should (equal "hi" (alist-get 'text parsed)))
+    (should (equal "title" (alist-get 'style parsed)))))
+
+(ert-deftest glasspane-gallery-body-lints-clean ()
+  "The interactive gallery composes to a wire-valid spec across chart kinds."
+  (dolist (glasspane-gallery--kind '("line" "bar" "area" "sparkline"))
+    (should-not (eabp-lint-spec (glasspane-gallery--body))))
+  (dolist (lvl '(0.0 0.5 1.0))
+    (should-not (eabp-lint-spec (glasspane-gallery--gauge lvl)))))
+
+(ert-deftest eabp-lint-passes-visualization ()
+  "Chart and canvas specs lint clean and round-trip (Phase D)."
+  (let ((chart (eabp-chart (list (eabp-chart-series '(1 2 3) :color "#4C6FFF"))
+                           :kind "bar" :on-point-tap (eabp-action "p.tap")))
+        (canvas (eabp-canvas 80 40
+                             (list (eabp-draw-line 0 0 80 40 :stroke 2)
+                                   (eabp-draw-circle 40 20 10 :fill t :color "primary")
+                                   (eabp-draw-text 10 20 "hi" :align "center")))))
+    (should-not (eabp-lint-spec chart))
+    (should-not (eabp-lint-spec canvas))
+    (should (equal "chart" (alist-get 't (eabp-render-to-json chart))))
+    (should (equal "canvas" (alist-get 't (eabp-render-to-json canvas))))))
+
+;; ─── Multi-tenant ownership (Phase E) ─────────────────────────────────────────
+
+(ert-deftest eabp-owner-collision-detection ()
+  "Same-owner re-registration is silent; a cross-owner clash errors under strict."
+  (let ((eabp-action-handlers (make-hash-table :test 'equal))
+        (eabp--registration-owners (make-hash-table :test 'equal))
+        (eabp-strict-namespaces nil))
+    ;; Same owner re-registers freely — the live-reload case.
+    (with-eabp-owner "appA" (eabp-defaction "app.a.do" #'ignore))
+    (with-eabp-owner "appA" (eabp-defaction "app.a.do" #'ignore))
+    (should (equal "appA" (gethash "action:app.a.do" eabp--registration-owners)))
+    ;; A different owner claiming the same name errors when strict.
+    (let ((eabp-strict-namespaces t))
+      (should-error
+       (with-eabp-owner "appB" (eabp-defaction "app.a.do" #'ignore))))
+    ;; The strict refusal left the original owner and handler intact.
+    (should (equal "appA" (gethash "action:app.a.do" eabp--registration-owners)))))
+
+(ert-deftest eabp-app-unregister-teardown ()
+  "`eabp-app-unregister' removes the app's owned actions, views, and state."
+  (let ((eabp-action-handlers (make-hash-table :test 'equal))
+        (eabp--registration-owners (make-hash-table :test 'equal))
+        (eabp-shell-views nil)
+        (eabp-apps--registry nil)
+        (eabp--ui-state (make-hash-table :test 'equal))
+        (eabp--state-handlers (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'eabp-shell--schedule-repush) #'ignore))
+      (with-eabp-owner "marks"
+        (eabp-defaction "marks.jump" #'ignore)
+        (eabp-shell-define-view "marks" :builder #'ignore))
+      (eabp-ui-state-put "marks.q" "hi")
+      (eabp-on-state-change "marks.q" #'ignore)
+      (should (gethash "marks.jump" eabp-action-handlers))
+      (should (assoc "marks" eabp-shell-views))
+      (eabp-app-unregister "marks")
+      (should-not (gethash "marks.jump" eabp-action-handlers))
+      (should-not (assoc "marks" eabp-shell-views))
+      (should-not (eabp-ui-state "marks.q"))
+      (should-not (gethash "marks.q" eabp--state-handlers))
+      (should-not (gethash "action:marks.jump" eabp--registration-owners)))))
+
+(ert-deftest eabp-lint-types-cover-golden ()
+  "Every `t' the constructors emit (per widgets.golden) is a known lint type.
+Guards against a new constructor shipping a node the linter — and, by the
+mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
+  (let ((golden (expand-file-name "widgets.golden" eabp-tests--dir))
+        (seen nil))
+    (with-temp-buffer
+      (insert-file-contents golden)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (string-trim (buffer-substring (line-beginning-position)
+                                                   (line-end-position)))))
+          (when (and (> (length line) 0)
+                     ;; lines are "NN {json}" — drop the leading index
+                     (string-match "{.*}" line))
+            (let* ((json (match-string 0 line))
+                   (obj (ignore-errors
+                          (json-parse-string json :object-type 'alist)))
+                   (ty (and obj (alist-get 't obj))))
+              (when ty (cl-pushnew ty seen :test #'equal)))))
+        (forward-line 1)))
+    (should seen)                       ; sanity: we actually parsed some
+    (dolist (ty seen)
+      (should (member ty eabp-lint-node-types)))))
 
 (ert-deftest eabp-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."

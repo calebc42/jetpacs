@@ -255,6 +255,12 @@ class EabpConnection(
                 put("server_proof",
                     EabpAuth.hmacHex(token, "eabp1:server:$clientNonce:$serverNonce"))
                 put("granted", JSONArray(granted))
+                // The node-vocabulary catalog (SPEC §3, §9): every widget
+                // node this build can render. Always present (rendering
+                // app:* surfaces is core, not a negotiated capability) so a
+                // newer client can gate a too-new node and render a fallback
+                // rather than have it silently degrade on an old companion.
+                put("node_types", JSONArray(SDUI_NODE_TYPES.sorted()))
                 // The device report (SPEC §10–§11): what capability.invoke
                 // can do here, the permission map so elisp degrades
                 // gracefully instead of invoking blind, and the trigger-type

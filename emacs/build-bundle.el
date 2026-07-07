@@ -27,6 +27,7 @@
        ;; graph.
        (core-files '("core/eabp.el"
                      "core/eabp-widgets.el"
+                     "core/eabp-lint.el"
                      "core/eabp-surfaces.el"
                      "core/eabp-triggers.el"
                      "core/eabp-device.el"
@@ -60,6 +61,7 @@
                     "apps/glasspane/glasspane-notes.el"
                     "apps/glasspane/glasspane-srs.el"
                     "apps/glasspane/glasspane-demo.el"
+                    "apps/glasspane/glasspane-gallery.el"
                     "apps/glasspane/glasspane-config.el"
                     "apps/glasspane/glasspane.el"))
        ;; FEATURES: every feature the bundle satisfies.  glasspane.el also

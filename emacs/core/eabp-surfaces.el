@@ -89,7 +89,19 @@ BODY is a list of UI-tree nodes."
 ;; ─── Surface senders ─────────────────────────────────────────────────────────
 
 (defun eabp-surface-update (surface revision spec &optional ttl-s stale-spec current-view)
-  "Send a `surface.update' for SURFACE at REVISION with SPEC."
+  "Send a `surface.update' for SURFACE at REVISION with SPEC.
+When `eabp-lint-on-push' is set (and eabp-lint is loaded), SPEC is
+validated first and any invalid node replaced by a visible error node,
+so one bad subtree degrades instead of blanking the whole push."
+  (when (and (bound-and-true-p eabp-lint-on-push)
+             (fboundp 'eabp-lint-spec))
+    (let ((problems (eabp-lint-spec spec)))
+      (when problems
+        (dolist (p problems)
+          (display-warning 'eabp (format "surface %s spec lint: %s @ %S"
+                                         surface (cdr p) (car p))
+                           :warning))
+        (setq spec (eabp-lint-sanitize-spec spec)))))
   (eabp-send "surface.update"
              (append `((surface . ,surface) (revision . ,revision) (spec . ,spec))
                      (when ttl-s     `((ttl_s . ,ttl-s)))
@@ -109,6 +121,60 @@ BODY is a list of UI-tree nodes."
 (defvar eabp-action-handlers (make-hash-table :test 'equal)
   "Map of action name (string) -> function called with (ARGS PAYLOAD).")
 
+;; ─── Registration ownership (multi-tenant collision detection) ───────────────
+
+(defvar eabp-current-owner nil
+  "The app/module id currently registering handlers, views, or settings.
+Bound by `with-eabp-owner' and `eabp-defapp'.  nil = anonymous (core).
+Threaded through the registration seams so two coexisting Tier 1s can't
+silently clobber each other's action, view, or settings name.")
+
+(defcustom eabp-strict-namespaces nil
+  "When non-nil, a cross-owner registration collision signals an error.
+Off by default: collisions warn (via `display-warning') so a mistake is
+visible without breaking a load.  Turn on to fail closed."
+  :type 'boolean :group 'eabp)
+
+(defvar eabp--registration-owners (make-hash-table :test 'equal)
+  "Map of \"KIND:NAME\" -> owner id, backing `eabp--claim'.")
+
+(defun eabp--claim (kind name)
+  "Attribute KIND:NAME to `eabp-current-owner'; warn on a cross-owner clash.
+Same-owner re-registration (the live-reload case) is silent.  A clash is
+when a DIFFERENT explicit owner already holds the name.  Returns NAME."
+  (when (and name eabp-current-owner)
+    (let* ((key (format "%s:%s" kind name))
+           (prev (gethash key eabp--registration-owners)))
+      (when (and prev (not (equal prev eabp-current-owner)))
+        (let ((msg (format "%s %S is claimed by both `%s' and `%s'"
+                           kind name prev eabp-current-owner)))
+          (if eabp-strict-namespaces
+              (error "EABP namespace collision: %s" msg)
+            (display-warning 'eabp msg :warning))))
+      (puthash key eabp-current-owner eabp--registration-owners)))
+  name)
+
+(defmacro with-eabp-owner (id &rest body)
+  "Run BODY with `eabp-current-owner' bound to ID (a string).
+Wrap a Tier 1's registrations so its actions/views/settings are
+attributed to it and cross-owner collisions are detected."
+  (declare (indent 1) (debug (form body)))
+  `(let ((eabp-current-owner ,id)) ,@body))
+
+(defun eabp--owned-names (kind owner)
+  "List the NAMEs of KIND currently attributed to OWNER."
+  (let (names)
+    (maphash (lambda (key val)
+               (when (and (equal val owner)
+                          (string-prefix-p (concat kind ":") key))
+                 (push (substring key (1+ (length kind))) names)))
+             eabp--registration-owners)
+    names))
+
+(defun eabp--unclaim (kind name)
+  "Drop the ownership record for KIND:NAME."
+  (remhash (format "%s:%s" kind name) eabp--registration-owners))
+
 (defvar eabp--last-action-time 0
   "`float-time' of the most recent dispatched action.
 Lets async continuations of a phone-initiated flow (e.g. git calling back
@@ -116,7 +182,11 @@ into Emacs for a commit message after `magit-commit' already returned)
 distinguish themselves from desktop-initiated activity.")
 
 (defun eabp-defaction (name fn)
-  "Register FN as the handler for action NAME."
+  "Register FN as the handler for action NAME.
+Attributes NAME to `eabp-current-owner' (see `with-eabp-owner'); a
+cross-owner re-registration warns (or errors under
+`eabp-strict-namespaces')."
+  (eabp--claim "action" name)
   (puthash name fn eabp-action-handlers))
 
 (defun eabp--on-action (payload _frame)
@@ -160,6 +230,15 @@ command runs instead of raw-reading a confirmation char (another hang)."
 (defun eabp-on-state-change (id fn)
   "Register FN to handle state.changed for widget ID."
   (puthash id fn eabp--state-handlers))
+
+(defun eabp-on-state-change-clear (prefix)
+  "Remove all state.changed subscriptions whose id starts with PREFIX.
+The subscription counterpart to `eabp-ui-state-clear'; used by
+`eabp-app-unregister' so a torn-down app leaves no live callbacks."
+  (let (keys)
+    (maphash (lambda (k _v) (when (string-prefix-p prefix k) (push k keys)))
+             eabp--state-handlers)
+    (dolist (k keys) (remhash k eabp--state-handlers))))
 
 (defvar eabp--ui-state (make-hash-table :test 'equal)
   "Global map of widget id -> current value, updated by `state.changed'.")

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
@@ -335,13 +337,20 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             val label = node.optString("label")
             val actionJson = node.optJSONObject("on_tap")
             val variant = node.optString("variant", "filled")
-            val content = @Composable { Text(label) }
+            // Single line, ellipsis over wrap: a weight-constrained row of
+            // buttons (the SRS ratings) must never break a label mid-word
+            // ("Agai\nn").  Trimmed horizontal padding lets short labels
+            // like "Again" fit their slot without truncating.
+            val content = @Composable {
+                Text(label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            }
+            val pad = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
 
             when (variant) {
-                "text" -> TextButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier) { content() }
-                "outlined" -> OutlinedButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier) { content() }
-                "tonal" -> FilledTonalButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier) { content() }
-                else -> Button(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier) { content() }
+                "text" -> TextButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier, contentPadding = pad) { content() }
+                "outlined" -> OutlinedButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier, contentPadding = pad) { content() }
+                "tonal" -> FilledTonalButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier, contentPadding = pad) { content() }
+                else -> Button(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier, contentPadding = pad) { content() }
             }
         }
         "icon_button" -> {

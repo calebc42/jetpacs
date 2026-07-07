@@ -2638,26 +2638,28 @@ exactly these, so the phone must show the ellipsis, never the answer."
       (should-not (string-search "Answer text" json))
       (should-not (string-search "Folded text" json)))))
 
+(defvar eabp-tests--srs-items nil "The mocked pending queue (item-args).")
+(defvar eabp-tests--srs-rated nil "Ratings recorded by the mock engine.")
+
 (defmacro eabp-tests--with-fake-org-srs (&rest body)
-  "Run BODY with the org-srs seam mocked.
-Exposes `reviewing', `pending', and `rated' (a recorder) to BODY via
-dynamic closure variables established with `cl-letf'."
+  "Run BODY with a minimal org-srs *engine* mock.
+`eabp-tests--srs-items' is the pending queue (a list of item-args);
+`eabp-tests--srs-rated' records ratings.  Session state is reset per
+invocation; per-item positions (markers, regions, clozes) are mocked
+in individual tests where needed."
   (declare (indent 0))
   `(let ((glasspane-srs--available t)
-         (glasspane-srs--buffer nil)
-         (eabp-tests--srs-reviewing nil)
-         (eabp-tests--srs-pending nil)
-         (eabp-tests--srs-rated nil))
-     (cl-letf (((symbol-function 'org-srs-reviewing-p)
-                (lambda () eabp-tests--srs-reviewing))
-               ((symbol-function 'org-srs-item-confirm-pending-p)
-                (lambda () eabp-tests--srs-pending))
-               ((symbol-function 'org-srs-item-confirm-command)
-                (lambda () nil))
-               ((symbol-function 'org-srs-review-pending-items)
+         (glasspane-srs--active nil)
+         (glasspane-srs--current nil)
+         (glasspane-srs--revealed nil)
+         (glasspane-srs--undo nil)
+         (eabp-tests--srs-items nil)
+         (eabp-tests--srs-rated nil)
+         (eabp-shell--snackbar nil))
+     (cl-letf (((symbol-function 'org-srs-review-pending-items)
                 (lambda (&optional _) eabp-tests--srs-items))
                ((symbol-function 'org-srs-review-rate)
-                (lambda (rating) (push rating eabp-tests--srs-rated)))
+                (lambda (rating &rest _) (push rating eabp-tests--srs-rated)))
                ((symbol-function 'org-srs-item-call-with-current)
                 (lambda (thunk &rest _) (funcall thunk)))
                ((symbol-function 'org-srs-table-goto-column)
@@ -2669,11 +2671,6 @@ dynamic closure variables established with `cl-letf'."
                ((symbol-function 'eabp-shell-push)
                 (cl-function (lambda (&optional _tab &key _switch-to)))))
        ,@body)))
-
-(defvar eabp-tests--srs-reviewing nil)
-(defvar eabp-tests--srs-pending nil)
-(defvar eabp-tests--srs-rated nil)
-(defvar eabp-tests--srs-items nil)
 
 (ert-deftest glasspane-srs-idle-view ()
   "Between sessions the view shows the due count and the start button;
@@ -2693,60 +2690,173 @@ zero due shows the caught-up empty state."
                   :null-object :null :false-object :false)))
       (should (string-search "All caught up" json)))))
 
-(ert-deftest glasspane-srs-question-then-answer ()
-  "Question state: hidden answer + Show answer.  Answer state: the four
-rating buttons with predicted intervals."
+(ert-deftest glasspane-srs-card-clean-multiline-answer ()
+  "A card whose answer is a multi-line body renders the clean question
+title (no stars) with the answer omitted until revealed — and NO stray
+ellipsis dots (the on-device bug where each wrapped answer line showed
+its own `...')."
   (eabp-tests--with-fake-org-srs
     (with-temp-buffer
-      (insert "What is the capital of France?\nParis\n")
-      (let ((ov (make-overlay 31 36)))      ; "Paris"
-        (overlay-put ov 'display "..."))
-      (setq-local org-srs-review-item '((card back) "test-id"))
-      (setq glasspane-srs--buffer (current-buffer)
-            eabp-tests--srs-reviewing t
-            eabp-tests--srs-pending #'org-srs-item-confirm-command)
-      (let ((json (json-serialize
-                   (eabp-tests--canon (glasspane-srs--view nil))
-                   :null-object :null :false-object :false)))
-        (should (string-search "capital of France" json))
-        (should-not (string-search "Paris" json))
-        (should (string-search "Show answer" json))
-        (should (string-search "srs.answer.show" json))
-        (should-not (string-search "srs.rate" json)))
-      ;; Reveal: overlay dropped, ratings shown with intervals.
-      (delete-overlay (car (overlays-in (point-min) (point-max))))
-      (setq eabp-tests--srs-pending nil)
-      (let ((json (json-serialize
-                   (eabp-tests--canon (glasspane-srs--view nil))
-                   :null-object :null :false-object :false)))
-        (should (string-search "Paris" json))
-        (dolist (label '("Again" "Hard" "Good" "Easy"))
-          (should (string-search label json)))
-        (should (string-search "srs.rate" json))
-        (should (string-search "10m" json))     ; :again 600s
-        (should-not (string-search "Show answer" json))))))
+      (org-mode)
+      (insert "* What does the Gaussian integral evaluate to?\n"
+              ":PROPERTIES:\n:ID: gauss\n:END:\n"
+              "√π — a multi-line\nanswer body that\nwraps across lines.\n")
+      (let* ((buf (current-buffer))
+             (h-beg (progn (goto-char (point-min)) (line-beginning-position)))
+             (h-end (line-end-position))
+             (c-beg (save-excursion (goto-char (point-min))
+                                    (org-end-of-meta-data t) (point)))
+             (c-end (point-max)))
+        (cl-letf (((symbol-function 'org-srs-item-marker)
+                   (lambda (&rest _) (copy-marker h-beg)))
+                  ((symbol-function 'org-srs-item-card-regions)
+                   (lambda () (cl-values (cons h-beg h-end) (cons c-beg c-end)))))
+          (let ((q (json-serialize
+                    (eabp-tests--canon
+                     (apply #'eabp-column
+                            (glasspane-srs--item-nodes '((card back) "gauss" buf) nil)))
+                    :null-object :null :false-object :false)))
+            (should (string-search "Gaussian integral" q))
+            (should-not (string-search "answer body" q))
+            (should-not (string-search "..." q))
+            (should-not (string-search "* What" q)))   ; star dropped
+          (let ((a (json-serialize
+                    (eabp-tests--canon
+                     (apply #'eabp-column
+                            (glasspane-srs--item-nodes '((card back) "gauss" buf) t)))
+                    :null-object :null :false-object :false)))
+            (should (string-search "answer body" a))
+            (should-not (string-search "..." a))))))))
 
-(ert-deftest glasspane-srs-rate-dispatches ()
-  "srs.rate maps the wire name to the rating keyword in the review
-buffer; unknown ratings are ignored; rating before the reveal answers
-with a snackbar instead of rating blind."
+(ert-deftest glasspane-srs-card-frontback-excises-and-strips ()
+  "A Front/Back card shows only the question (answer excised) until
+revealed; the revealed answer drops the structural `Back' heading."
   (eabp-tests--with-fake-org-srs
     (with-temp-buffer
-      (setq glasspane-srs--buffer (current-buffer)
-            eabp-tests--srs-reviewing t)
-      (eabp--on-action '((action . "srs.rate")
-                         (args . ((rating . "good")))) nil)
-      (should (equal eabp-tests--srs-rated '(:good)))
-      (eabp--on-action '((action . "srs.rate")
-                         (args . ((rating . "amazing")))) nil)
-      (should (equal eabp-tests--srs-rated '(:good)))
-      ;; Question still pending → refuse with feedback.
-      (setq eabp-tests--srs-pending #'org-srs-item-confirm-command
-            eabp-shell--snackbar nil)
-      (eabp--on-action '((action . "srs.rate")
-                         (args . ((rating . "easy")))) nil)
-      (should (equal eabp-tests--srs-rated '(:good)))
-      (should (string-search "Show the answer" (or eabp-shell--snackbar ""))))))
+      (org-mode)
+      (insert "* Term\nQuestion text here.\n** Back\nThe answer text.\n")
+      (let* ((buf (current-buffer))
+             (c-beg (save-excursion (goto-char (point-min))
+                                    (org-end-of-meta-data t) (point)))
+             (b-beg (save-excursion (goto-char (point-min))
+                                    (search-forward "** Back")
+                                    (line-beginning-position)))
+             (c-end (point-max)))
+        (cl-letf (((symbol-function 'org-srs-item-marker)
+                   (lambda (&rest _) (copy-marker (point-min))))
+                  ((symbol-function 'org-srs-item-card-regions)
+                   (lambda () (cl-values (cons c-beg c-end) (cons b-beg c-end)))))
+          (let ((q (json-serialize
+                    (eabp-tests--canon
+                     (apply #'eabp-column
+                            (glasspane-srs--item-nodes '((card back) "t" buf) nil)))
+                    :null-object :null :false-object :false)))
+            (should (string-search "Question text" q))
+            (should-not (string-search "answer text" q))
+            (should-not (string-search "Back" q)))
+          (let ((a (json-serialize
+                    (eabp-tests--canon
+                     (apply #'eabp-column
+                            (glasspane-srs--item-nodes '((card back) "t" buf) t)))
+                    :null-object :null :false-object :false)))
+            (should (string-search "answer text" a))
+            (should-not (string-search "Back" a))))))))   ; heading line stripped
+
+(ert-deftest glasspane-srs-cloze-blank-then-reveal ()
+  "A cloze renders the sentence with the reviewed span blanked and the
+other cloze's text as context; revealing shows the answer."
+  (eabp-tests--with-fake-org-srs
+    (with-temp-buffer
+      (org-mode)
+      (insert "* The first computer bug\n:PROPERTIES:\n:ID: bug\n:END:\n"
+              "operators taped {{h1}{a moth}} into the log in {{h2}{1947}}.\n")
+      (let* ((buf (current-buffer))
+             (c1 (progn (goto-char (point-min))
+                        (search-forward "{{h1}{a moth}}")
+                        (list 'h1 (match-beginning 0) (match-end 0) "a moth")))
+             (c2 (progn (goto-char (point-min))
+                        (search-forward "{{h2}{1947}}")
+                        (list 'h2 (match-beginning 0) (match-end 0) "1947")))
+             (c-beg (save-excursion (goto-char (point-min))
+                                    (org-end-of-meta-data t) (point))))
+        (cl-letf (((symbol-function 'org-srs-item-marker)
+                   (lambda (&rest _) (copy-marker (point-min))))
+                  ((symbol-function 'org-srs-entry-end-of-meta-data)
+                   (lambda (&rest _) (goto-char c-beg)))
+                  ((symbol-function 'org-srs-entry-end-position)
+                   (lambda (&rest _) (point-max)))
+                  ((symbol-function 'org-srs-item-cloze-collect)
+                   (lambda (&rest _) (list c1 c2))))
+          (let ((q (json-serialize
+                    (eabp-tests--canon
+                     (apply #'eabp-column
+                            (glasspane-srs--item-nodes '((cloze h1) "bug" buf) nil)))
+                    :null-object :null :false-object :false)))
+            (should (string-search "operators taped" q))
+            (should (string-search "1947" q))          ; other cloze = context
+            (should-not (string-search "a moth" q))    ; reviewed = blanked
+            (should (string-search "[" q)))
+          (let ((a (json-serialize
+                    (eabp-tests--canon
+                     (apply #'eabp-column
+                            (glasspane-srs--item-nodes '((cloze h1) "bug" buf) t)))
+                    :null-object :null :false-object :false)))
+            (should (string-search "a moth" a))))))))
+
+(ert-deftest glasspane-srs-flow-advances ()
+  "The self-managed loop: start loads the first pending item; Show
+answer is a pure flag (no confirm call); rating records and advances to
+the next pending item; an unknown rating is ignored; a drained queue
+lands on the done state; quit clears."
+  (eabp-tests--with-fake-org-srs
+    (let ((confirm-touched nil))
+      (cl-letf (((symbol-function 'org-srs-item-confirm-command)
+                 (lambda (&rest _) (setq confirm-touched t)))
+                ((symbol-function 'org-srs-item-confirm-pending-p)
+                 (lambda (&rest _) (setq confirm-touched t) nil)))
+        (setq eabp-tests--srs-items '(((card back) "a" nil) ((card back) "b" nil)))
+        (eabp--on-action '((action . "srs.review.start")) nil)
+        (should glasspane-srs--active)
+        (should (equal glasspane-srs--current '((card back) "a" nil)))
+        (should-not glasspane-srs--revealed)
+        ;; Show answer: pure UI flag, no org-srs confirm machinery touched.
+        (eabp--on-action '((action . "srs.answer.show")) nil)
+        (should glasspane-srs--revealed)
+        (should-not confirm-touched)
+        ;; Rate: records, advances to the next pending item.
+        (setq eabp-tests--srs-items '(((card back) "b" nil)))
+        (eabp--on-action '((action . "srs.rate") (args . ((rating . "good")))) nil)
+        (should (equal eabp-tests--srs-rated '(:good)))
+        (should (equal glasspane-srs--current '((card back) "b" nil)))
+        (should-not glasspane-srs--revealed)
+        ;; Unknown rating: ignored.
+        (eabp--on-action '((action . "srs.rate") (args . ((rating . "meh")))) nil)
+        (should (equal eabp-tests--srs-rated '(:good)))
+        ;; Queue drains → done state (active, no current); quit clears.
+        (setq eabp-tests--srs-items nil)
+        (eabp--on-action '((action . "srs.rate") (args . ((rating . "easy")))) nil)
+        (should (equal eabp-tests--srs-rated '(:easy :good)))
+        (should-not glasspane-srs--current)
+        (should glasspane-srs--active)
+        (eabp--on-action '((action . "srs.quit")) nil)
+        (should-not glasspane-srs--active)))))
+
+(ert-deftest glasspane-srs-rate-binds-review-item ()
+  "srs.rate binds `org-srs-review-item' to nil so the session-less real
+`org-srs-review-rate' takes its explicit-args path instead of reading a
+void variable (the on-device loop: rating errored, so the card never
+rescheduled and kept reappearing)."
+  (eabp-tests--with-fake-org-srs
+    (let ((seen 'unset))
+      (cl-letf (((symbol-function 'org-srs-review-rate)
+                 (lambda (_rating &rest _)
+                   (setq seen (if (boundp 'org-srs-review-item)
+                                  org-srs-review-item 'void)))))
+        (setq glasspane-srs--active t
+              glasspane-srs--current '((card back) "a" nil)
+              glasspane-srs--revealed t)
+        (eabp--on-action '((action . "srs.rate") (args . ((rating . "good")))) nil)
+        (should (eq seen nil))))))
 
 (ert-deftest glasspane-srs-item-create-at-ref ()
   "srs.item.create resolves the ref and runs org-srs-item-create with

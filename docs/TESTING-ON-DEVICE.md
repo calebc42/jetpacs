@@ -246,21 +246,26 @@ performance.
       `card` → snackbar "Review item created"; the entry gains the srs
       drawer (check in the editor).  Cancel the picker → "Cancelled",
       nothing written.
-- [ ] **Review flow:** drawer → Review shows "N items due" → Start
-      review → the item renders with the answer as "..." (card) —
-      answers must never be readable in question state; "Show answer"
-      reveals in place; the four rating buttons appear with predicted
-      intervals ("10m · 1d · …"); rating advances to the next item;
-      the session ends on "All caught up".
-- [ ] **Cloze:** cloze an entry on the desktop side
-      (`org-srs-item-cloze-dwim` + `org-srs-item-cloze-update`), review
-      from the phone — the cloze shows as its hint/ellipsis until
-      revealed.
-- [ ] **Top actions:** postpone (item leaves the queue for tomorrow),
-      suspend (heading gets commented), undo (appears only after a
-      rating; restores the previous log row), quit (back to the idle
-      screen; due count reflects work done).
-- [ ] **Desktop mirror:** start a review in on-device Emacs directly —
-      the phone view follows along (the confirm/finish hooks repush).
+- [ ] **Review flow (clean render — the 2026-07-06 rework):** drawer →
+      Review → Start. Cards render as clean content, NOT the raw org
+      buffer — no heading stars, no `:PROPERTIES:`/`:SRSITEMS:` drawers,
+      no gutter line numbers, and crucially **no scattered `...` dots**
+      on a multi-line answer. Question shows only the prompt; "Show
+      answer" reveals in place; four rating buttons appear with
+      predicted intervals ("10m · 1d · …"); rating advances to the next
+      item; the queue empties to "All caught up" → Done.
+- [ ] **The three demo cards specifically** (`glasspane-demo-setup-org`):
+      the *Gaussian integral* card (multi-line body answer — was dots),
+      the *Mass–energy* Front/Back card (answer strips the `Back`
+      label), and the *first computer bug* **cloze** (shows the sentence
+      with `[…]` for the blank and the other cloze as context, reveals
+      the answer, and **advances** instead of looping).
+- [ ] **No stray toasts:** no "Continue with M-x…", "No event to add",
+      or "Review done" chips during review (engine calls run with
+      `inhibit-message`).
+- [ ] **Top actions:** postpone (item leaves the queue a day), suspend
+      (heading gets commented, card leaves), undo (appears only after a
+      rating; restores that card's log and re-presents it with the
+      answer shown), quit (back to idle; due count reflects work done).
 - [ ] **Settings:** Settings → Review shows "New cards per day" /
       "Max reviews per day" and edits persist through Customize.

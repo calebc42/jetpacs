@@ -14816,32 +14816,33 @@ must not nest a link inside a link."
 ;;; glasspane-srs.el --- Spaced repetition over org-srs -*- lexical-binding: t; -*-
 
 ;; The Tier 1 skin for org-srs (PKM plan: SRS = org-srs, decided
-;; 2026-07-05): a Review drawer destination that drives a full review
-;; session from the phone — question, one-tap reveal, the four FSRS
-;; ratings with predicted intervals — plus "Make flashcard" on the
+;; 2026-07-05): a Review drawer destination plus "Make flashcard" on the
 ;; heading detail view.
 ;;
-;; The load-bearing trick: org-srs hides answers with OVERLAYS (ellipsis
-;; `display' for card backs, hint overlays for clozes) and org-fold, in
-;; a buffer narrowed to the item.  The Tier 0 generic renderer reads
-;; `invisible' and `display' through `get-char-property' — overlays
-;; included — so `eabp-buffer-render' on the review buffer reproduces
-;; the question/answer state faithfully for every item type, current and
-;; future.  (The rich org reader reads text, not overlays; it would leak
-;; answers.)
+;; Design — org-srs as an ENGINE, not a mirrored session.  An earlier
+;; version puppeteered org-srs's live, window-centric review session
+;; (`org-srs-review-start' → `switch-to-buffer' + window asserts) and
+;; rendered the raw review buffer; on the phone that produced broken
+;; cards (per-line ellipsis dots on multi-line answers, raw org stars,
+;; cloze cards that looped without revealing) and stray message toasts.
 ;;
-;; The review flow mirrors org-srs's own touchscreen UI
-;; (org-srs-ui-mouse.el): `org-srs-item-confirm-pending-p' decides
-;; question vs answer, the pending confirm command is the reveal, and
-;; `org-srs-review-rate' advances.  Wire-driven review REQUIRES the
-;; command-style confirm (`org-srs-item-confirm-command', the upstream
-;; Android recommendation) — the default `read-key' would block the
-;; bridge — so the session-driving handlers bind it; rating advances
-;; synchronously, so the binding covers the next item's display too.
+;; Instead we drive org-srs entirely in the background and render our own
+;; clean cards:
+;;   - The queue is `org-srs-review-pending-items' — the same set org-srs
+;;     itself pulls each step; we show its first element and re-fetch
+;;     after every rating (so `Again' cards reappear and the queue empties
+;;     naturally).  No session, no continue-hook loop.
+;;   - Rating is `org-srs-review-rate' with EXPLICIT item args, which
+;;     routes through `org-srs-item-with-current' (a `with-current-buffer'
+;;     + marker) — no window, no selected-buffer coupling.
+;;   - The question/answer are extracted per item type (card regions,
+;;     cloze spans) and rendered with our widgets: reveal is a plain UI
+;;     flag, so nothing depends on org-srs's confirm state machine.
+;;   - Undo keeps its own small stack of log-drawer snapshots (org-srs's
+;;     own undo history is only set up by the session we don't run).
 ;;
-;; Everything degrades to absent when org-srs isn't installed: no
-;; drawer entry, no detail section, no settings.  The starter init
-;; installs it from MELPA.
+;; Native-Emacs review coherence is a non-goal (this skin is for the
+;; phone).  Everything degrades to absent when org-srs isn't installed.
 
 ;;; Code:
 
@@ -14856,29 +14857,29 @@ must not nest a link inside a link."
 (require 'eabp-settings)
 (require 'glasspane-org)
 
-(declare-function org-srs-review-start "org-srs-review")
-(declare-function org-srs-review-quit "org-srs-review")
-(declare-function org-srs-review-next "org-srs-review")
-(declare-function org-srs-review-postpone "org-srs-review")
-(declare-function org-srs-review-suspend "org-srs-review")
 (declare-function org-srs-review-pending-items "org-srs-review")
-(declare-function org-srs-reviewing-p "org-srs-review")
+(declare-function org-srs-review-postpone "org-srs-review")
 (declare-function org-srs-review-rate "org-srs-review-rate")
-(declare-function org-srs-review-undo "org-srs-review-undo")
-(declare-function org-srs-item-confirm-pending-p "org-srs-item")
-(declare-function org-srs-item-confirm-command "org-srs-item")
-(declare-function org-srs-item-call-with-current "org-srs-item")
 (declare-function org-srs-item-create "org-srs-item")
+(declare-function org-srs-item-marker "org-srs-item")
+(declare-function org-srs-item-call-with-current "org-srs-item")
+(declare-function org-srs-item-card-regions "org-srs-item-card")
+(declare-function org-srs-item-cloze-collect "org-srs-item-cloze")
+(declare-function org-srs-entry-end-of-meta-data "org-srs-entry")
+(declare-function org-srs-entry-end-position "org-srs-entry")
+(declare-function org-srs-log-beginning-of-drawer "org-srs-log")
+(declare-function org-srs-log-end-of-drawer "org-srs-log")
+(declare-function org-srs-log-hide-drawer "org-srs-log")
 (declare-function org-srs-table-goto-column "org-srs-table")
 (declare-function org-srs-stats-intervals "org-srs-stats-interval")
 (declare-function org-srs-time-seconds-desc "org-srs-time")
 
-;; org-srs dynamic variables the handlers reference or bind; the bare
-;; defvars mark them special so byte-compilation keeps the bindings
-;; dynamic (org-srs itself may not be loaded at compile time).
-(defvar org-srs-item-confirm)
+;; `org-srs-review-rate' reads this dynamic var to decide whether it is
+;; mid-session; outside a session it is unbound, so we bind it to nil to
+;; take the explicit-item-args path.  The bare defvar marks it special
+;; so the `let' below binds dynamically even when byte-compiled without
+;; org-srs loaded.
 (defvar org-srs-review-item)
-(defvar org-srs-review-undo-history)
 
 (defcustom glasspane-srs-source nil
   "The review scope: a file or directory org-srs reviews over.
@@ -14906,73 +14907,195 @@ org-srs mid-session only needs a refresh."
 
 ;; ─── Session state ───────────────────────────────────────────────────────────
 
-(defvar glasspane-srs--buffer nil
-  "The buffer of the item under review, or nil outside a session.
-org-srs keeps session state buffer-local; this is the phone's handle
-to it, captured on each item display (the next item may live in a
-different file).")
+(defvar glasspane-srs--active nil
+  "Non-nil while a review is in progress on the phone.")
 
-(defun glasspane-srs--reviewing-p ()
-  "Non-nil while a phone-visible review session is active."
-  (and (buffer-live-p glasspane-srs--buffer)
-       (fboundp 'org-srs-reviewing-p)
-       (with-current-buffer glasspane-srs--buffer
-         (org-srs-reviewing-p))))
+(defvar glasspane-srs--current nil
+  "The item-args `(ITEM ID BUFFER)' under review, or nil.
+Nil while a session is active means the queue drained (the done
+screen); ITEM is `(card SIDE)' or `(cloze CLOZE-ID)'.")
 
-(defun glasspane-srs--answer-pending-p ()
-  "Non-nil when the current item awaits its reveal (question state)."
-  (and (glasspane-srs--reviewing-p)
-       (with-current-buffer glasspane-srs--buffer
-         (and (org-srs-item-confirm-pending-p) t))))
+(defvar glasspane-srs--revealed nil
+  "Non-nil once the answer for `glasspane-srs--current' is shown.
+A pure UI flag — the reveal never touches org-srs.")
 
-(defun glasspane-srs--on-item-display (&rest _)
-  "Track the item buffer: each display may land in a new file."
-  (setq glasspane-srs--buffer (current-buffer)))
+(defvar glasspane-srs--undo nil
+  "Stack of (ITEM-ARGS . LOG-STRING) snapshots for `srs.undo'.
+Each entry is the item's SRSITEMS log-drawer text captured just
+before that item was rated.")
 
-(defun glasspane-srs--on-finish ()
-  "Session over: drop the handle and re-render."
-  (setq glasspane-srs--buffer nil)
-  (eabp-shell--schedule-repush))
+(defmacro glasspane-srs--engine (&rest body)
+  "Run BODY (org-srs engine calls) quietly, returning its value or nil.
+Messages are suppressed so org-srs's and the user's `message's don't
+surface as Glasspane toasts; a signal becomes a snackbar, never a
+crash — a review tap that silently dies is a bug class."
+  (declare (indent 0) (debug t))
+  `(condition-case err
+       (let ((inhibit-message t) (message-log-max nil))
+         ,@body)
+     (error
+      (eabp-shell-notify (format "Review: %s" (error-message-string err)))
+      nil)))
 
-;; The same three hooks org-srs's own touch UI redraws on — they also
-;; mirror desktop-driven reviews to the phone.  Registering on org-srs
-;; hook symbols before org-srs loads is fine: `add-hook' creates the
-;; variable and the later defvar keeps it.
-(add-hook 'org-srs-item-before-review-hook #'glasspane-srs--on-item-display)
-(add-hook 'org-srs-item-before-confirm-hook
-          (lambda (&rest _) (eabp-shell--schedule-repush)))
-(add-hook 'org-srs-item-after-confirm-hook
-          (lambda (&rest _) (eabp-shell--schedule-repush)))
-(add-hook 'org-srs-review-finish-hook #'glasspane-srs--on-finish)
+(defmacro glasspane-srs--quietly (&rest body)
+  "Run BODY with messages suppressed, returning its value or nil on error.
+The render-time counterpart of `glasspane-srs--engine': a failure while
+building a view must NOT raise a snackbar (only actions do that)."
+  (declare (indent 0) (debug t))
+  `(let ((inhibit-message t) (message-log-max nil))
+     (ignore-errors ,@body)))
 
-(defmacro glasspane-srs--in-review (&rest body)
-  "Run BODY driving the current review session.
-Puts the review buffer in the selected window first (org-srs's
-navigation asserts the two agree — it is a window-centric UI), binds
-the command-style confirm, and turns signals into snackbars: a tap
-that silently does nothing is a bug class, not an outcome."
-  (declare (indent 0))
-  `(if (not (glasspane-srs--reviewing-p))
-       (eabp-shell-notify "No review in progress")
-     (condition-case err
-         (let ((org-srs-item-confirm #'org-srs-item-confirm-command))
-           (switch-to-buffer glasspane-srs--buffer nil t)
-           ,@body)
-       (error (eabp-shell-notify
-               (format "Review: %s" (error-message-string err)))))))
+(defun glasspane-srs--next-item ()
+  "The first pending item over the source, or nil when none remain."
+  (car (org-srs-review-pending-items (glasspane-srs--source))))
 
-;; ─── Due counts ──────────────────────────────────────────────────────────────
+(defun glasspane-srs--advance ()
+  "Load the next pending item and clear the reveal flag.
+`--current' nil afterward means the queue drained."
+  (setq glasspane-srs--current (glasspane-srs--quietly (glasspane-srs--next-item))
+        glasspane-srs--revealed nil))
+
+;; ─── Due count (idle screen) ─────────────────────────────────────────────────
 
 (defun glasspane-srs--due-count ()
   "Items a session over the configured source would show now, or nil.
 Memoised through the org cache seam — every mutating srs.* action
 invalidates, so the count follows ratings without a per-render scan."
   (when (glasspane-srs-available-p)
-    (condition-case nil
-        (glasspane-org--with-cache
-            (glasspane-org--cache-key 'srs-due (glasspane-srs--source))
-          (length (org-srs-review-pending-items (glasspane-srs--source))))
-      (error nil))))
+    (glasspane-srs--quietly
+      (glasspane-org--with-cache
+          (glasspane-org--cache-key 'srs-due (glasspane-srs--source))
+        (length (org-srs-review-pending-items (glasspane-srs--source)))))))
+
+;; ─── Content extraction & clean rendering ────────────────────────────────────
+
+(defconst glasspane-srs--noise-drawers '("PROPERTIES" "SRSITEMS" "LOGBOOK")
+  "Drawers hidden from the fallback render: org metadata plus org-srs's
+review log (`org-srs-log-drawer-name' is SRSITEMS).")
+
+(defun glasspane-srs--heading-region-p (beg end)
+  "Non-nil when [BEG, END) is exactly one heading line."
+  (save-excursion
+    (goto-char beg)
+    (and (org-at-heading-p)
+         (= beg (line-beginning-position))
+         (<= end (line-end-position)))))
+
+(defun glasspane-srs--render-span (beg end)
+  "Render buffer span [BEG, END) as clean nodes, or nil.
+A leading org heading line is dropped: in a card region it is only the
+structural `Front'/`Back' label, never the answer text."
+  (when (and beg end (< beg end))
+    (let ((start (save-excursion
+                   (goto-char beg)
+                   (if (and (org-at-heading-p) (= beg (line-beginning-position)))
+                       (min end (1+ (line-end-position)))
+                     beg)))
+          (eabp-line-numbers nil))
+      (when (< start end)
+        (eabp-buffer-render-region (current-buffer) start end)))))
+
+(defun glasspane-srs--region-nodes (region &optional excise)
+  "Clean nodes for REGION (a (BEG . END) cons), or nil.
+A whole-heading REGION renders as its plain title (no stars).  When
+EXCISE (another (BEG . END)) lies inside REGION it is cut out — the
+answer half of a card whose front region spans the back."
+  (when region
+    (let ((beg (car region)) (end (cdr region)))
+      (cond
+       ((glasspane-srs--heading-region-p beg end)
+        (list (eabp-text (org-get-heading t t t t) 'title)))
+       ((and excise (<= beg (car excise)) (<= (cdr excise) end))
+        (append (glasspane-srs--render-span beg (car excise))
+                (glasspane-srs--render-span (cdr excise) end)))
+       (t (glasspane-srs--render-span beg end))))))
+
+(defun glasspane-srs--card-content (item revealed)
+  "Question and (when REVEALED) answer nodes for a `card' ITEM.
+ITEM is `(card SIDE)'; SIDE (default `back') is the hidden answer."
+  (condition-case nil
+      (cl-multiple-value-bind (front back) (org-srs-item-card-regions)
+        (let* ((side (or (cadr item) 'back))
+               (answer (if (eq side 'front) front back))
+               (question (if (eq side 'front) back front)))
+          (append
+           (or (glasspane-srs--region-nodes question answer)
+               (list (eabp-text "(no question text)" 'caption)))
+           (when revealed
+             (cons (eabp-divider)
+                   (or (glasspane-srs--region-nodes answer)
+                       (list (eabp-text "(no answer text)" 'caption))))))))
+    (error (list (eabp-text "Couldn't lay out this card." 'caption)))))
+
+(defun glasspane-srs--cloze-content (item revealed)
+  "Nodes for a `cloze' ITEM: the sentence with the reviewed blank.
+ITEM is `(cloze CLOZE-ID)'.  The reviewed cloze shows as `[hint]' /
+`[…]' until REVEALED; other clozes show their text as context."
+  (condition-case nil
+      (let* ((target (cadr item))
+             (beg (progn (org-srs-entry-end-of-meta-data t) (point)))
+             (end (org-srs-entry-end-position))
+             (clozes (sort (org-srs-item-cloze-collect beg end)
+                           (lambda (a b) (< (cadr a) (cadr b)))))
+             (pos beg) (parts nil))
+        (dolist (cz clozes)
+          (cl-destructuring-bind (id cbeg cend text &optional hint) cz
+            (push (buffer-substring-no-properties pos cbeg) parts)
+            (push (cond ((not (equal id target)) text)
+                        (revealed text)
+                        (t (format "[%s]" (or hint "…"))))
+                  parts)
+            (setq pos cend)))
+        (push (buffer-substring-no-properties pos end) parts)
+        (list (eabp-text (string-trim (apply #'concat (nreverse parts))) 'body)))
+    (error (list (eabp-text "Couldn't lay out this cloze." 'caption)))))
+
+(defun glasspane-srs--fallback-content ()
+  "Render the narrowed entry cleanly for an unknown item type.
+Drawers and gutter line numbers stripped; transient overlays only."
+  (let ((eabp-line-numbers nil) (overlays nil)
+        (open (format "^[ \t]*:%s:[ \t]*$"
+                      (regexp-opt glasspane-srs--noise-drawers))))
+    (unwind-protect
+        (progn
+          (add-to-invisibility-spec 'glasspane-srs-hide)
+          (save-excursion
+            (goto-char (point-min))
+            (while (re-search-forward open nil t)
+              (let ((dbeg (match-beginning 0))
+                    (dend (save-excursion
+                            (and (re-search-forward "^[ \t]*:END:[ \t]*$" nil t)
+                                 (min (1+ (line-end-position)) (point-max))))))
+                (if (null dend)
+                    (goto-char (line-end-position))
+                  (let ((ov (make-overlay dbeg dend)))
+                    (overlay-put ov 'invisible 'glasspane-srs-hide)
+                    (push ov overlays))
+                  (goto-char dend)))))
+          (eabp-buffer-render (current-buffer)))
+      (mapc #'delete-overlay overlays)
+      (remove-from-invisibility-spec 'glasspane-srs-hide))))
+
+(defun glasspane-srs--item-nodes (item-args revealed)
+  "Clean card nodes for ITEM-ARGS (`(ITEM ID BUFFER)'), REVEALED or not.
+Resolves the item's marker in the background — no window, no session —
+narrows to its entry, and dispatches on the item type."
+  (let* ((item (car item-args))
+         (type (car item))
+         (marker (glasspane-srs--quietly (apply #'org-srs-item-marker item-args))))
+    (if (not (and (markerp marker) (marker-buffer marker)))
+        (list (eabp-text "Couldn't load this card." 'caption))
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (save-restriction
+            (widen)
+            (goto-char marker)
+            (org-back-to-heading-or-point-min)
+            (unless (org-before-first-heading-p) (org-narrow-to-subtree))
+            (pcase type
+              ('card (glasspane-srs--card-content item revealed))
+              ('cloze (glasspane-srs--cloze-content item revealed))
+              (_ (glasspane-srs--fallback-content)))))))))
 
 ;; ─── Rating chrome ───────────────────────────────────────────────────────────
 
@@ -14985,18 +15108,15 @@ invalidates, so the count follows ratings without a per-render scan."
 
 (defun glasspane-srs--intervals ()
   "Predicted next intervals as a (:again SECS …) plist, or nil.
-The org-srs-ui-mouse recipe: with point on the item's log row, the
-`rating' column present means the simulator can run."
-  (when (glasspane-srs--reviewing-p)
-    (with-current-buffer glasspane-srs--buffer
-      (when-let ((item (and (local-variable-p 'org-srs-review-item)
-                            org-srs-review-item)))
-        (ignore-errors
-          (apply #'org-srs-item-call-with-current
-                 (lambda ()
-                   (when (org-srs-table-goto-column 'rating)
-                     (org-srs-stats-intervals)))
-                 item))))))
+The org-srs-ui-mouse recipe, over the current item args: with point on
+its log row and a `rating' column, the simulator runs."
+  (when glasspane-srs--current
+    (glasspane-srs--quietly
+      (apply #'org-srs-item-call-with-current
+             (lambda ()
+               (when (org-srs-table-goto-column 'rating)
+                 (org-srs-stats-intervals)))
+             glasspane-srs--current))))
 
 (defun glasspane-srs--format-interval (seconds)
   "SECONDS as a short \"3d 2h\" description (two components max)."
@@ -15038,23 +15158,25 @@ The org-srs-ui-mouse recipe: with point on the item's log row, the
 
 ;; ─── The view ────────────────────────────────────────────────────────────────
 
-(defun glasspane-srs--card-nodes ()
-  "The current item, rendered faithfully — overlays carry the hiding."
-  (with-current-buffer glasspane-srs--buffer
-    (save-excursion (eabp-buffer-render))))
-
 (defun glasspane-srs--session-body ()
-  "The active-session screen: the item plus reveal or rating controls."
-  (apply #'eabp-lazy-column
-         (append
-          (glasspane-srs--card-nodes)
-          (list (eabp-spacer :height 8) (eabp-divider))
-          (if (glasspane-srs--answer-pending-p)
+  "The active-session screen: the card, then reveal or rating controls."
+  (if (null glasspane-srs--current)
+      (eabp-empty-state
+       :icon "school" :title "All caught up"
+       :caption "Review complete."
+       :action-label "Done"
+       :on-tap (eabp-action "srs.quit" :when-offline "drop"))
+    (apply #'eabp-lazy-column
+           (append
+            (glasspane-srs--item-nodes glasspane-srs--current
+                                       glasspane-srs--revealed)
+            (list (eabp-spacer :height 8) (eabp-divider))
+            (if glasspane-srs--revealed
+                (glasspane-srs--rating-controls)
               (list (eabp-button "Show answer"
                                  (eabp-action "srs.answer.show"
                                               :when-offline "drop")
-                                 :variant "filled" :icon "visibility"))
-            (glasspane-srs--rating-controls)))))
+                                 :variant "filled" :icon "visibility")))))))
 
 (defun glasspane-srs--idle-body ()
   "The between-sessions screen: due summary and the start button."
@@ -15085,35 +15207,34 @@ The org-srs-ui-mouse recipe: with point on the item's log row, the
                     "then pull to refresh.")))
 
 (defun glasspane-srs--top-actions ()
-  "Session top-bar actions: undo (when possible), postpone, suspend, quit."
+  "Session top-bar actions: undo (when available), postpone, suspend, quit."
   (delq nil
         (list
-         (when (and (boundp 'org-srs-review-undo-history)
-                    org-srs-review-undo-history)
+         (when glasspane-srs--undo
            (eabp-icon-button "undo"
                              (eabp-action "srs.undo" :when-offline "drop")
                              :content-description "Undo last rating"))
          (eabp-icon-button "update"
                            (eabp-action "srs.postpone" :when-offline "drop")
-                           :content-description "Postpone this item")
+                           :content-description "Postpone a day")
          (eabp-icon-button "block"
                            (eabp-action "srs.suspend" :when-offline "drop")
-                           :content-description "Suspend this item")
+                           :content-description "Suspend this card")
          (eabp-icon-button "close"
                            (eabp-action "srs.quit" :when-offline "drop")
                            :content-description "End review"))))
 
 (defun glasspane-srs--view (snackbar)
   "The Review screen for the current session state."
-  (let ((reviewing (glasspane-srs--reviewing-p)))
-    (eabp-shell-nav-view
-     "Review"
-     (cond
-      ((not (glasspane-srs-available-p)) (glasspane-srs--install-body))
-      (reviewing (glasspane-srs--session-body))
-      (t (glasspane-srs--idle-body)))
-     :actions (when reviewing (glasspane-srs--top-actions))
-     :snackbar snackbar)))
+  (eabp-shell-nav-view
+   "Review"
+   (cond
+    ((not (glasspane-srs-available-p)) (glasspane-srs--install-body))
+    (glasspane-srs--active (glasspane-srs--session-body))
+    (t (glasspane-srs--idle-body)))
+   :actions (when (and glasspane-srs--active glasspane-srs--current)
+              (glasspane-srs--top-actions))
+   :snackbar snackbar))
 
 (eabp-shell-define-view "srs" :builder #'glasspane-srs--view :order 78)
 
@@ -15127,68 +15248,100 @@ The org-srs-ui-mouse recipe: with point on the item's log row, the
 
 (eabp-defaction "srs.review.start"
   (lambda (_args _)
-    (cond
-     ((not (glasspane-srs-available-p))
-      (eabp-shell-notify "org-srs is not installed"))
-     ((glasspane-srs--reviewing-p))     ; already running: just re-render
-     (t
-      (condition-case err
-          ;; org-srs navigates via the selected window; keep the two in
-          ;; agreement from the very first item.
-          (with-current-buffer (window-buffer)
-            (let ((org-srs-item-confirm #'org-srs-item-confirm-command))
-              (org-srs-review-start (glasspane-srs--source))))
-        (error (eabp-shell-notify
-                (format "Review: %s" (error-message-string err)))))))
+    (if (not (glasspane-srs-available-p))
+        (eabp-shell-notify "org-srs is not installed")
+      (setq glasspane-srs--active t glasspane-srs--undo nil)
+      (glasspane-srs--advance))
     (eabp-shell-push nil :switch-to "srs")))
 
 (eabp-defaction "srs.answer.show"
   (lambda (_args _)
-    (glasspane-srs--in-review
-      (when-let ((cmd (org-srs-item-confirm-pending-p)))
-        (funcall cmd)))
+    (when glasspane-srs--current (setq glasspane-srs--revealed t))
     (eabp-shell-push)))
+
+(defun glasspane-srs--push-undo (item-args)
+  "Snapshot ITEM-ARGS's log drawer onto the undo stack (capped).
+Best-effort: a snapshot failure must not block the rating."
+  (glasspane-srs--quietly
+    (let ((marker (apply #'org-srs-item-marker item-args)))
+      (with-current-buffer (marker-buffer marker)
+        (org-with-wide-buffer
+         (goto-char marker)
+         (let ((log (buffer-substring-no-properties
+                     (progn (org-srs-log-beginning-of-drawer) (point))
+                     (progn (org-srs-log-end-of-drawer) (point)))))
+           (push (cons item-args log) glasspane-srs--undo)
+           (when (nthcdr 20 glasspane-srs--undo)
+             (setcdr (nthcdr 19 glasspane-srs--undo) nil))))))))
 
 (eabp-defaction "srs.rate"
   (lambda (args _)
-    (let* ((name (alist-get 'rating args))
-           (rating (cadr (assoc name glasspane-srs--ratings))))
-      (when rating
-        (glasspane-srs--in-review
-          (when (glasspane-srs--answer-pending-p)
-            (user-error "Show the answer before rating"))
-          (org-srs-review-rate rating))
-        ;; Review logs live in the org files the views memoise.
+    (let ((kw (cadr (assoc (alist-get 'rating args) glasspane-srs--ratings))))
+      (when (and kw glasspane-srs--current)
+        (glasspane-srs--push-undo glasspane-srs--current)
+        (glasspane-srs--engine
+          ;; No session ⇒ org-srs-review-item is unbound; nil makes
+          ;; `org-srs-review-rate' rate the item passed in ARGS instead.
+          (let ((org-srs-review-item nil))
+            (apply #'org-srs-review-rate kw glasspane-srs--current)))
         (glasspane-org-cache-invalidate)
-        (eabp-shell-push)))))
+        (glasspane-srs--advance)))
+    (eabp-shell-push)))
 
 (eabp-defaction "srs.quit"
   (lambda (_args _)
-    (glasspane-srs--in-review
-      (org-srs-review-quit))
-    (setq glasspane-srs--buffer nil)
+    (setq glasspane-srs--active nil glasspane-srs--current nil
+          glasspane-srs--revealed nil glasspane-srs--undo nil)
     (eabp-shell-push)))
 
 (eabp-defaction "srs.postpone"
   (lambda (_args _)
-    (glasspane-srs--in-review
-      (org-srs-review-postpone)
-      (org-srs-review-next))
-    (glasspane-org-cache-invalidate)
+    (when glasspane-srs--current
+      (glasspane-srs--engine
+        (apply #'org-srs-review-postpone '(1 :day) glasspane-srs--current))
+      (glasspane-org-cache-invalidate)
+      (glasspane-srs--advance))
     (eabp-shell-push)))
 
 (eabp-defaction "srs.suspend"
   (lambda (_args _)
-    (glasspane-srs--in-review
-      (org-srs-review-suspend))
-    (glasspane-org-cache-invalidate)
+    (when glasspane-srs--current
+      (glasspane-srs--engine
+        (let ((marker (apply #'org-srs-item-marker glasspane-srs--current)))
+          (with-current-buffer (marker-buffer marker)
+            (save-excursion
+              (save-restriction
+                (widen)
+                (goto-char marker)
+                (org-back-to-heading t)
+                (unless (org-in-commented-heading-p) (org-toggle-comment))
+                (let ((save-silently t)) (save-buffer)))))))
+      (glasspane-org-cache-invalidate)
+      (glasspane-srs--advance))
     (eabp-shell-push)))
 
 (eabp-defaction "srs.undo"
+  ;; org-srs's own undo history is set up only by the session we don't
+  ;; run, so we restore the item's log drawer from our own snapshot and
+  ;; re-present the card (answer shown) for a fresh rating.
   (lambda (_args _)
-    (glasspane-srs--in-review
-      (org-srs-review-undo))
-    (glasspane-org-cache-invalidate)
+    (if-let ((snap (pop glasspane-srs--undo)))
+        (progn
+          (glasspane-srs--engine
+            (let* ((item-args (car snap))
+                   (marker (apply #'org-srs-item-marker item-args)))
+              (with-current-buffer (marker-buffer marker)
+                (org-with-wide-buffer
+                 (goto-char marker)
+                 (delete-region
+                  (progn (org-srs-log-beginning-of-drawer) (point))
+                  (progn (org-srs-log-end-of-drawer) (point)))
+                 (insert (cdr snap))
+                 (org-srs-log-hide-drawer)
+                 (let ((save-silently t)) (save-buffer))))))
+          (glasspane-org-cache-invalidate)
+          (setq glasspane-srs--current (car snap) glasspane-srs--revealed t))
+      (eabp-shell-notify "Nothing to undo"))
     (eabp-shell-push)))
 
 ;; ─── Authoring: Make flashcard on the heading detail view ───────────────────

@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -191,6 +192,47 @@ private fun BridgeScreen() {
             }
             else -> context.sendBroadcast(actionIntent(context, action, dashboardRecord?.revision ?: 0))
         }
+    }
+
+    val activeViewKey = remember(dashboardRecord, currentView) {
+        if (dashboardRecord == null) null
+        else {
+            val views = dashboardRecord.spec.optJSONObject("views")
+            if (views == null) null
+            else {
+                currentView?.takeIf { views.has(it) }
+                    ?: dashboardRecord.spec.optString("initial_view").takeIf { it.isNotEmpty() && views.has(it) }
+                    ?: views.keys().asSequence().firstOrNull()
+            }
+        }
+    }
+
+    var viewStack by remember { mutableStateOf(listOf<String>()) }
+
+    LaunchedEffect(activeViewKey) {
+        if (activeViewKey != null) {
+            val views = dashboardRecord?.spec?.optJSONObject("views")
+            val initial = dashboardRecord?.spec?.optString("initial_view")?.takeIf { it.isNotEmpty() && views?.has(it) == true }
+                ?: views?.keys()?.asSequence()?.firstOrNull()
+            
+            if (activeViewKey == initial) {
+                viewStack = listOf(activeViewKey)
+            } else if (viewStack.lastOrNull() != activeViewKey) {
+                if (viewStack.size > 1 && activeViewKey == viewStack[viewStack.size - 2]) {
+                    viewStack = viewStack.dropLast(1)
+                } else {
+                    viewStack = viewStack + activeViewKey
+                }
+            }
+        }
+    }
+
+    BackHandler(enabled = viewStack.size > 1) {
+        val previousView = viewStack[viewStack.size - 2]
+        dispatch(JSONObject().apply {
+            put("builtin", "view.switch")
+            put("view", previousView)
+        })
     }
 
     // PATCH: the dashboard's view spec is ALREADY a `scaffold` node, which the

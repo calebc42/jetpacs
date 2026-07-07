@@ -177,6 +177,27 @@ defining actions. In short:
    native dialogs on the phone. Write handlers as if the user were at the
    keyboard.
 
+### 7. Owning your registrations (optional, for coexistence)
+
+If your Tier 1 might share a session with another, wrap its registrations
+so its names are attributed to it:
+
+```elisp
+(with-eabp-owner "marks"
+  (eabp-defaction "marks.jump" #'my/jump)
+  (eabp-shell-define-view "marks" :builder #'my/marks-body :tab '(:icon "bookmark")))
+```
+
+Two payoffs. First, if another app registers the same action, view, or
+settings name, you get a warning (or an error under
+`eabp-strict-namespaces`) instead of a silent clobber — actions are the
+wire's security boundary, so a collision is worth surfacing. Same-owner
+re-registration stays silent, so `eval-buffer` during live development is
+never noisy. Second, `(eabp-app-unregister "marks")` then tears down
+everything owned by the app — its actions, views, settings sections, and
+UI-state — in one call, for clean live reload or a genuine uninstall.
+`eabp-defapp` already attributes its `:views` to the app id.
+
 ## Shipping it
 
 A Tier 1 is an ordinary Emacs package that requires the core features it

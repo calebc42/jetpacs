@@ -56,6 +56,7 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
                     (assoc-delete-all name eabp-shell-views))
               (lambda (a b)
                 (< (plist-get (cdr a) :order) (plist-get (cdr b) :order)))))
+  (eabp--claim "view" name)
   (eabp-shell--schedule-repush)
   name)
 

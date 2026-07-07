@@ -37,15 +37,21 @@ Content: `eabp-text` `eabp-markup` `eabp-rich-text` `eabp-span`
 `eabp-section-header` `eabp-empty-state` `eabp-progress`.
 
 Layout: `eabp-row` `eabp-flow-row` `eabp-scroll-row` `eabp-column`
-`eabp-scroll-column` `eabp-box` `eabp-surface` `eabp-card`
+`eabp-scroll-column` `eabp-box` `eabp-surface` `eabp-card` `eabp-border`
 `eabp-lazy-column` `eabp-scroll-here` `eabp-spacer` `eabp-collapsible`
 `eabp-reorderable-list` `eabp-table` `eabp-table-row` `eabp-table-rule`
-`eabp-table-cell`.
+`eabp-table-cell`. (`row`/`column`/`flow-row` take trailing `:spacing`/
+`:align`/`:scroll` keywords; `box`/`surface`/`card` take
+`:width`/`:height`/`:fill-fraction`/`:border`.)
 
 Input: `eabp-button` `eabp-icon-button` `eabp-chip` `eabp-assist-chip`
-`eabp-menu` `eabp-menu-item` `eabp-checkbox` `eabp-switch`
+`eabp-menu` `eabp-menu-item` `eabp-checkbox` `eabp-switch` `eabp-slider`
 `eabp-text-input` `eabp-enum-list` `eabp-date-button` `eabp-time-button`
 `eabp-editor`.
+
+Visualization: `eabp-chart` `eabp-chart-series` `eabp-canvas`
+`eabp-draw-line` `eabp-draw-rect` `eabp-draw-circle` `eabp-draw-path`
+`eabp-draw-text`.
 
 Chrome: `eabp-scaffold` `eabp-top-bar` `eabp-bottom-bar` `eabp-nav-item`
 `eabp-drawer` `eabp-drawer-item` `eabp-fab`.
@@ -64,9 +70,18 @@ Home-surface composition: `eabp-widget-item` `eabp-widget-divider`
 
 ### Actions & state (`eabp-surfaces.el`)
 
-`eabp-defaction` `eabp-on-state-change` `eabp-ui-state`
-`eabp-ui-state-put` `eabp-ui-state-clear` `eabp-surface-push`
-`eabp-surface-remove`.
+`eabp-defaction` `eabp-on-state-change` `eabp-on-state-change-clear`
+`eabp-ui-state` `eabp-ui-state-put` `eabp-ui-state-clear`
+`eabp-surface-push` `eabp-surface-remove`.
+
+### Multi-tenant ownership (`eabp-surfaces.el`, `eabp-apps.el`)
+
+`with-eabp-owner` `eabp-app-unregister` — plus the customization var
+`eabp-strict-namespaces`. Wrap a Tier 1's registrations in
+`(with-eabp-owner "my-app" …)` so its actions/views/settings are
+attributed to it; then a cross-owner name collision warns (or errors
+under `eabp-strict-namespaces`), and `eabp-app-unregister` tears the app
+down cleanly for live reload or uninstall.
 
 ### The shell / app seams
 
@@ -89,7 +104,7 @@ Files/editor (`eabp-files.el`): `eabp-files-editor-body-functions`
 `eabp-files-open-hook` `eabp-files-after-save-hook`.
 
 Settings (`eabp-settings.el`): `eabp-settings-register-section`
-`eabp-settings-after-set-hook`.
+`eabp-settings-remove-section` `eabp-settings-after-set-hook`.
 
 ### Validation (`eabp-lint.el`)
 

@@ -1882,6 +1882,47 @@ records the last-fired time."
     (should (equal "chart" (alist-get 't (eabp-render-to-json chart))))
     (should (equal "canvas" (alist-get 't (eabp-render-to-json canvas))))))
 
+;; ─── Multi-tenant ownership (Phase E) ─────────────────────────────────────────
+
+(ert-deftest eabp-owner-collision-detection ()
+  "Same-owner re-registration is silent; a cross-owner clash errors under strict."
+  (let ((eabp-action-handlers (make-hash-table :test 'equal))
+        (eabp--registration-owners (make-hash-table :test 'equal))
+        (eabp-strict-namespaces nil))
+    ;; Same owner re-registers freely — the live-reload case.
+    (with-eabp-owner "appA" (eabp-defaction "app.a.do" #'ignore))
+    (with-eabp-owner "appA" (eabp-defaction "app.a.do" #'ignore))
+    (should (equal "appA" (gethash "action:app.a.do" eabp--registration-owners)))
+    ;; A different owner claiming the same name errors when strict.
+    (let ((eabp-strict-namespaces t))
+      (should-error
+       (with-eabp-owner "appB" (eabp-defaction "app.a.do" #'ignore))))
+    ;; The strict refusal left the original owner and handler intact.
+    (should (equal "appA" (gethash "action:app.a.do" eabp--registration-owners)))))
+
+(ert-deftest eabp-app-unregister-teardown ()
+  "`eabp-app-unregister' removes the app's owned actions, views, and state."
+  (let ((eabp-action-handlers (make-hash-table :test 'equal))
+        (eabp--registration-owners (make-hash-table :test 'equal))
+        (eabp-shell-views nil)
+        (eabp-apps--registry nil)
+        (eabp--ui-state (make-hash-table :test 'equal))
+        (eabp--state-handlers (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'eabp-shell--schedule-repush) #'ignore))
+      (with-eabp-owner "marks"
+        (eabp-defaction "marks.jump" #'ignore)
+        (eabp-shell-define-view "marks" :builder #'ignore))
+      (eabp-ui-state-put "marks.q" "hi")
+      (eabp-on-state-change "marks.q" #'ignore)
+      (should (gethash "marks.jump" eabp-action-handlers))
+      (should (assoc "marks" eabp-shell-views))
+      (eabp-app-unregister "marks")
+      (should-not (gethash "marks.jump" eabp-action-handlers))
+      (should-not (assoc "marks" eabp-shell-views))
+      (should-not (eabp-ui-state "marks.q"))
+      (should-not (gethash "marks.q" eabp--state-handlers))
+      (should-not (gethash "action:marks.jump" eabp--registration-owners)))))
+
 (ert-deftest eabp-lint-types-cover-golden ()
   "Every `t' the constructors emit (per widgets.golden) is a known lint type.
 Guards against a new constructor shipping a node the linter — and, by the

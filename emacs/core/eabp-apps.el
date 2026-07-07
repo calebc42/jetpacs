@@ -43,6 +43,11 @@ orders keep registration order."
       (when (and owner (not (equal owner id)))
         (message "EABP apps: view %s is claimed by both %s and %s"
                  v owner id))))
+  ;; Attribute the app's views to it in the ownership registry, so
+  ;; cross-app collisions are caught and `eabp-app-unregister' can find
+  ;; them (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
+  (let ((eabp-current-owner id))
+    (dolist (v views) (eabp--claim "view" v)))
   (setq eabp-apps--registry
         (sort (append (assoc-delete-all id eabp-apps--registry)
                       (list (cons id (list :label (or label (capitalize id))
@@ -57,6 +62,31 @@ orders keep registration order."
   "Unregister app ID (its views fall back to showing everywhere)."
   (setq eabp-apps--registry (assoc-delete-all id eabp-apps--registry))
   (eabp-shell--schedule-repush))
+
+(defun eabp-app-unregister (id)
+  "Tear down everything owned by app ID: its actions, views, and settings.
+Removes the registrations attributed to ID (through `with-eabp-owner' /
+`eabp-defapp'), drops their ownership records, clears UI-state keyed
+under the app's id prefix, and removes the app from the launcher.  For
+clean live reload and genuine uninstall — no stale handlers accumulate.
+Registrations a Tier 1 made without an owner are not tracked and are not
+torn down (wrap them in `with-eabp-owner' to make them removable)."
+  (dolist (name (eabp--owned-names "action" id))
+    (remhash name eabp-action-handlers)
+    (eabp--unclaim "action" name))
+  (dolist (name (eabp--owned-names "view" id))
+    (eabp-shell-remove-view name)
+    (eabp--unclaim "view" name))
+  (dolist (title (eabp--owned-names "settings" id))
+    (when (fboundp 'eabp-settings-remove-section)
+      (eabp-settings-remove-section title))
+    (eabp--unclaim "settings" title))
+  ;; Drop UI-state and its subscriptions keyed under the app's id prefix.
+  (eabp-ui-state-clear (concat id "."))
+  (eabp-on-state-change-clear (concat id "."))
+  (eabp-apps-remove id)
+  (eabp-shell--schedule-repush)
+  id)
 
 (defun eabp-apps--owner (view-name)
   "The id of the app claiming VIEW-NAME, or nil when unclaimed."

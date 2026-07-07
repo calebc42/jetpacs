@@ -1584,6 +1584,60 @@ so one bad subtree degrades instead of blanking the whole push."
 (defvar eabp-action-handlers (make-hash-table :test 'equal)
   "Map of action name (string) -> function called with (ARGS PAYLOAD).")
 
+;; ─── Registration ownership (multi-tenant collision detection) ───────────────
+
+(defvar eabp-current-owner nil
+  "The app/module id currently registering handlers, views, or settings.
+Bound by `with-eabp-owner' and `eabp-defapp'.  nil = anonymous (core).
+Threaded through the registration seams so two coexisting Tier 1s can't
+silently clobber each other's action, view, or settings name.")
+
+(defcustom eabp-strict-namespaces nil
+  "When non-nil, a cross-owner registration collision signals an error.
+Off by default: collisions warn (via `display-warning') so a mistake is
+visible without breaking a load.  Turn on to fail closed."
+  :type 'boolean :group 'eabp)
+
+(defvar eabp--registration-owners (make-hash-table :test 'equal)
+  "Map of \"KIND:NAME\" -> owner id, backing `eabp--claim'.")
+
+(defun eabp--claim (kind name)
+  "Attribute KIND:NAME to `eabp-current-owner'; warn on a cross-owner clash.
+Same-owner re-registration (the live-reload case) is silent.  A clash is
+when a DIFFERENT explicit owner already holds the name.  Returns NAME."
+  (when (and name eabp-current-owner)
+    (let* ((key (format "%s:%s" kind name))
+           (prev (gethash key eabp--registration-owners)))
+      (when (and prev (not (equal prev eabp-current-owner)))
+        (let ((msg (format "%s %S is claimed by both `%s' and `%s'"
+                           kind name prev eabp-current-owner)))
+          (if eabp-strict-namespaces
+              (error "EABP namespace collision: %s" msg)
+            (display-warning 'eabp msg :warning))))
+      (puthash key eabp-current-owner eabp--registration-owners)))
+  name)
+
+(defmacro with-eabp-owner (id &rest body)
+  "Run BODY with `eabp-current-owner' bound to ID (a string).
+Wrap a Tier 1's registrations so its actions/views/settings are
+attributed to it and cross-owner collisions are detected."
+  (declare (indent 1) (debug (form body)))
+  `(let ((eabp-current-owner ,id)) ,@body))
+
+(defun eabp--owned-names (kind owner)
+  "List the NAMEs of KIND currently attributed to OWNER."
+  (let (names)
+    (maphash (lambda (key val)
+               (when (and (equal val owner)
+                          (string-prefix-p (concat kind ":") key))
+                 (push (substring key (1+ (length kind))) names)))
+             eabp--registration-owners)
+    names))
+
+(defun eabp--unclaim (kind name)
+  "Drop the ownership record for KIND:NAME."
+  (remhash (format "%s:%s" kind name) eabp--registration-owners))
+
 (defvar eabp--last-action-time 0
   "`float-time' of the most recent dispatched action.
 Lets async continuations of a phone-initiated flow (e.g. git calling back
@@ -1591,7 +1645,11 @@ into Emacs for a commit message after `magit-commit' already returned)
 distinguish themselves from desktop-initiated activity.")
 
 (defun eabp-defaction (name fn)
-  "Register FN as the handler for action NAME."
+  "Register FN as the handler for action NAME.
+Attributes NAME to `eabp-current-owner' (see `with-eabp-owner'); a
+cross-owner re-registration warns (or errors under
+`eabp-strict-namespaces')."
+  (eabp--claim "action" name)
   (puthash name fn eabp-action-handlers))
 
 (defun eabp--on-action (payload _frame)
@@ -1635,6 +1693,15 @@ command runs instead of raw-reading a confirmation char (another hang)."
 (defun eabp-on-state-change (id fn)
   "Register FN to handle state.changed for widget ID."
   (puthash id fn eabp--state-handlers))
+
+(defun eabp-on-state-change-clear (prefix)
+  "Remove all state.changed subscriptions whose id starts with PREFIX.
+The subscription counterpart to `eabp-ui-state-clear'; used by
+`eabp-app-unregister' so a torn-down app leaves no live callbacks."
+  (let (keys)
+    (maphash (lambda (k _v) (when (string-prefix-p prefix k) (push k keys)))
+             eabp--state-handlers)
+    (dolist (k keys) (remhash k eabp--state-handlers))))
 
 (defvar eabp--ui-state (make-hash-table :test 'equal)
   "Global map of widget id -> current value, updated by `state.changed'.")
@@ -3856,6 +3923,7 @@ drill-in over the current tab).  ORDER sorts views and bottom-bar items."
                     (assoc-delete-all name eabp-shell-views))
               (lambda (a b)
                 (< (plist-get (cdr a) :order) (plist-get (cdr b) :order)))))
+  (eabp--claim "view" name)
   (eabp-shell--schedule-repush)
   name)
 
@@ -4257,6 +4325,11 @@ orders keep registration order."
       (when (and owner (not (equal owner id)))
         (message "EABP apps: view %s is claimed by both %s and %s"
                  v owner id))))
+  ;; Attribute the app's views to it in the ownership registry, so
+  ;; cross-app collisions are caught and `eabp-app-unregister' can find
+  ;; them (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
+  (let ((eabp-current-owner id))
+    (dolist (v views) (eabp--claim "view" v)))
   (setq eabp-apps--registry
         (sort (append (assoc-delete-all id eabp-apps--registry)
                       (list (cons id (list :label (or label (capitalize id))
@@ -4271,6 +4344,31 @@ orders keep registration order."
   "Unregister app ID (its views fall back to showing everywhere)."
   (setq eabp-apps--registry (assoc-delete-all id eabp-apps--registry))
   (eabp-shell--schedule-repush))
+
+(defun eabp-app-unregister (id)
+  "Tear down everything owned by app ID: its actions, views, and settings.
+Removes the registrations attributed to ID (through `with-eabp-owner' /
+`eabp-defapp'), drops their ownership records, clears UI-state keyed
+under the app's id prefix, and removes the app from the launcher.  For
+clean live reload and genuine uninstall — no stale handlers accumulate.
+Registrations a Tier 1 made without an owner are not tracked and are not
+torn down (wrap them in `with-eabp-owner' to make them removable)."
+  (dolist (name (eabp--owned-names "action" id))
+    (remhash name eabp-action-handlers)
+    (eabp--unclaim "action" name))
+  (dolist (name (eabp--owned-names "view" id))
+    (eabp-shell-remove-view name)
+    (eabp--unclaim "view" name))
+  (dolist (title (eabp--owned-names "settings" id))
+    (when (fboundp 'eabp-settings-remove-section)
+      (eabp-settings-remove-section title))
+    (eabp--unclaim "settings" title))
+  ;; Drop UI-state and its subscriptions keyed under the app's id prefix.
+  (eabp-ui-state-clear (concat id "."))
+  (eabp-on-state-change-clear (concat id "."))
+  (eabp-apps-remove id)
+  (eabp-shell--schedule-repush)
+  id)
 
 (defun eabp-apps--owner (view-name)
   "The id of the app claiming VIEW-NAME, or nil when unclaimed."
@@ -6784,10 +6882,15 @@ ENTRIES is a list of (SYMBOL . PLIST) — see `eabp-settings-registry'.
 Also registers the state.changed handlers the entries' switch widgets
 publish through, so a queued toggle can replay before the settings
 screen has ever rendered this session."
+  (when (fboundp 'eabp--claim) (eabp--claim "settings" title))
   (setq eabp-settings-registry
         (append (assoc-delete-all title eabp-settings-registry)
                 (list (cons title entries))))
   (eabp-settings--register-state-handlers (list (cons title entries))))
+
+(defun eabp-settings-remove-section (title)
+  "Unregister the settings section TITLE (used by `eabp-app-unregister')."
+  (setq eabp-settings-registry (assoc-delete-all title eabp-settings-registry)))
 
 (defun eabp-settings--entry (sym)
   "Registry entry for SYM, or nil if SYM is not exposed."

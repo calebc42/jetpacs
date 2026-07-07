@@ -59,10 +59,15 @@ ENTRIES is a list of (SYMBOL . PLIST) — see `eabp-settings-registry'.
 Also registers the state.changed handlers the entries' switch widgets
 publish through, so a queued toggle can replay before the settings
 screen has ever rendered this session."
+  (when (fboundp 'eabp--claim) (eabp--claim "settings" title))
   (setq eabp-settings-registry
         (append (assoc-delete-all title eabp-settings-registry)
                 (list (cons title entries))))
   (eabp-settings--register-state-handlers (list (cons title entries))))
+
+(defun eabp-settings-remove-section (title)
+  "Unregister the settings section TITLE (used by `eabp-app-unregister')."
+  (setq eabp-settings-registry (assoc-delete-all title eabp-settings-registry)))
 
 (defun eabp-settings--entry (sym)
   "Registry entry for SYM, or nil if SYM is not exposed."

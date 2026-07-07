@@ -1,8 +1,24 @@
 # Plan: platform hardening — make eabp-core a foundation others build on
 
-**STATUS (2026-07-07): Phases A–D DONE; Phase E next.** Produced from an
-audit of `emacs/core/`, `eabp/src/main/java/com/calebc42/eabp/` (the
-`:eabp` renderer), `test/widgets.golden`, and the existing plan docs.
+**STATUS (2026-07-07): Phases A–E DONE; only Phase F (repo split) remains.**
+Produced from an audit of `emacs/core/`,
+`eabp/src/main/java/com/calebc42/eabp/` (the `:eabp` renderer),
+`test/widgets.golden`, and the existing plan docs.
+
+Phase E landed 2026-07-07 (Tasks 14–15) — multi-tenant hardening:
+- Ownership machinery in `eabp-surfaces.el`: `eabp-current-owner`,
+  `with-eabp-owner`, `eabp--claim` (warn / error-under-
+  `eabp-strict-namespaces` on a cross-owner name clash, silent same-owner
+  re-registration for live reload). Wired into `eabp-defaction`,
+  `eabp-shell-define-view`, `eabp-settings-register-section`, and
+  `eabp-defapp` (attributes its `:views`).
+- `eabp-app-unregister` tears down an app's owned actions, views, settings
+  sections, and UI-state/subscriptions in one call (live reload +
+  uninstall). `eabp-settings-remove-section` and `eabp-on-state-change-clear`
+  added to support it.
+- 2 tests (collision + teardown); API-STABILITY + BUILDING-TIER1 (§7)
+  updated. Suite 134 / 129 green (same 5 pre-existing); pure elisp, no
+  Kotlin/wire change.
 
 Phase D landed 2026-07-07 (Tasks 11–13) — the visualization ladder:
 - Rung 1 `chart` (`SduiChart.kt`, elisp `eabp-chart`/`eabp-chart-series`):

@@ -5,6 +5,14 @@ Produced from an audit of `emacs/core/`,
 `eabp/src/main/java/com/calebc42/eabp/` (the `:eabp` renderer),
 `test/widgets.golden`, and the existing plan docs.
 
+**VERIFIED (2026-07-09):** full suite green on Emacs 30.1 — 135/135 main +
+54/54 primitives, core-isolation guard OK, bundles current. The "5
+pre-existing failures" cited in the phase records below (glasspane
+org-table / vulpea-notes / detail) were an **environment artifact on the
+2026-07-07 authoring machine** (org/vulpea version skew), not defects — they
+pass on 30.1 and in CI. The green/failing counts in the phase notes are kept
+as-written for historical record; this note is the correct baseline.
+
 Phase E landed 2026-07-07 (Tasks 14–15) — multi-tenant hardening:
 - Ownership machinery in `eabp-surfaces.el`: `eabp-current-owner`,
   `with-eabp-owner`, `eabp--claim` (warn / error-under-

@@ -17298,7 +17298,7 @@ the directory as the app's, not yours."
 ;; only appears for languages loaded here.
 (org-babel-do-load-languages
  'org-babel-load-languages
- '((emacs-lisp . t) (shell . t)))
+ '((emacs-lisp . t) (shell . t) (python . t)))
 "))
   "Alist of (FILENAME . CONTENT) written by `glasspane-config-sync'.")
 

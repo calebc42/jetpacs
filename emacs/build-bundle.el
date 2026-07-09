@@ -5,14 +5,13 @@
 ;;
 ;;   emacs --batch -l emacs/build-bundle.el
 ;;
-;; Outputs:
-;;   eabp-core.el  — the EABP foundation only (emacs/core/): transport,
-;;                   shell, generic renderers, minibuffer bridge, editor
-;;                   sync/completion, settings machinery.  What a third-
-;;                   party Tier 1 depends on.
-;;   glasspane.el  — the core plus the reference apps (emacs/apps/):
-;;                   the Glasspane org app, the magit pie, the package
-;;                   browser, the customize browser, the demo tour.
+;; Output:
+;;   eabp-core.el  — the EABP foundation (emacs/core/): transport, shell,
+;;                   generic renderers, minibuffer bridge, editor
+;;                   sync/completion, settings machinery.  What a third-party
+;;                   Tier 1 (the Glasspane app in its own repo, and others)
+;;                   depends on.  The Glasspane app bundle is built by the
+;;                   glasspane repo's own build-bundle.el, which requires this.
 ;;
 ;; The files are emitted in dependency order. Because every source ends with
 ;; a `(provide 'FEATURE)', the inter-file `(require ...)' forms become no-ops
@@ -45,30 +44,6 @@
                      "core/eabp-files.el"
                      "core/eabp-witheditor.el"
                      "core/eabp-emacs-ui.el"))
-       (app-files '("apps/eabp-package-browser.el"
-                    "apps/eabp-customize.el"
-                    "apps/eabp-tools.el"
-                    "apps/eabp-automations.el"
-                    "apps/eabp-magit.el"
-                    "apps/glasspane/glasspane-org.el"
-                    "apps/glasspane/glasspane-org-rich.el"
-                    "apps/glasspane/glasspane-org-reader.el"
-                    "apps/glasspane/glasspane-clock.el"
-                    "apps/glasspane/glasspane-ui.el"
-                    "apps/glasspane/glasspane-journal.el"
-                    "apps/glasspane/glasspane-views.el"
-                    "apps/glasspane/glasspane-automations.el"
-                    "apps/glasspane/glasspane-notes.el"
-                    "apps/glasspane/glasspane-srs.el"
-                    "apps/glasspane/glasspane-demo.el"
-                    "apps/glasspane/glasspane-gallery.el"
-                    "apps/glasspane/glasspane-config.el"
-                    "apps/glasspane/glasspane.el"))
-       ;; FEATURES: every feature the bundle satisfies.  glasspane.el also
-       ;; provides `eabp-core' because it is a strict superset — otherwise a
-       ;; later (require 'eabp-core) in someone's init hunts the load-path
-       ;; and a stale sibling eabp-core.el silently overrides the bundle's
-       ;; fresher definitions.
        (emit (lambda (out features summary files)
                (with-temp-file out
                  (insert (format ";;; %s --- %s -*- lexical-binding: t; -*-\n"
@@ -93,10 +68,6 @@
                (message "Wrote %s" out))))
   (funcall emit (expand-file-name "../eabp-core.el" here)
            '(eabp-core) "EABP core client, single-file bundle"
-           core-files)
-  (funcall emit (expand-file-name "../glasspane.el" here)
-           '(eabp-core glasspane)
-           "Glasspane Emacs client (EABP core + reference apps), single-file bundle"
-           (append core-files app-files)))
+           core-files))
 
 ;;; build-bundle.el ends here

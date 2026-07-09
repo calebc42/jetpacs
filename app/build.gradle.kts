@@ -72,14 +72,16 @@ androidComponents {
             StageGlasspaneAssets::class,
         ) {
             sources.from(
-                rootProject.file("glasspane.el"),
                 rootProject.file("docs/starter-init.el"),
-                // Demo-only extras (eabp-core + the tiny Tier-1 sample), shipped
-                // so the wizard can install them separately. Likely temporary —
-                // drop these two lines and the "Demo bundles" card in
-                // Onboarding.kt to remove.
+                // The eabp foundation bundle + the tiny Tier-1 sample the wizard
+                // can install to demo the core on its own.
                 rootProject.file("eabp-core.el"),
                 rootProject.file("emacs/apps/eabp-hello.el"),
+                // TODO(repo-split): glasspane.el moved to the separate glasspane
+                // repo, so it is no longer staged here. The Onboarding "Install
+                // glasspane.el" card degrades to an error until the next task
+                // (generic eabp onboarding + cross-repo Glasspane delivery)
+                // rewires how the companion delivers a Tier-1 app bundle.
             )
         }
         variant.sources.assets?.addGeneratedSourceDirectory(stage, StageGlasspaneAssets::outputDir)

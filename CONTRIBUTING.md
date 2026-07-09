@@ -61,15 +61,14 @@ however good the feature.
    actions get documented in SPEC §5, in their module's namespace.
 2. **The core is org-free.** `emacs/core/` must load without org or any
    app feature — `test/core-load-test.el` enforces it. Org knowledge
-   lives in `emacs/apps/glasspane/`.
+   lives in the Glasspane app (its own repo).
 3. **The Kotlin mirror: protocol → `:eabp`, opinion → `:app`.** The
    library names no host class — app launches go through `EabpLaunch`,
    editor toolbars through the `EabpToolbars` registry. If your library
    change needs to know about Glasspane, it's cut at the wrong altitude.
-4. **Bundles are generated.** Root `eabp-core.el` and `glasspane.el`
-   come from `emacs --batch -l emacs/build-bundle.el` — never edit them
-   by hand; regenerate after any `emacs/` source change and commit the
-   result.
+4. **The bundle is generated.** Root `eabp-core.el` comes from
+   `emacs --batch -l emacs/build-bundle.el` — never edit it by hand;
+   regenerate after any `emacs/` source change and commit the result.
 5. **The goldens are the wire truth.** `test/widgets.golden` is the
    machine-checked shape of every node constructor; `test/frames.golden`
    pins the trigger/capability frame payloads (SPEC §10–§11). Regenerate

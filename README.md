@@ -41,25 +41,26 @@ inversion `emacsclient` uses on the desktop.
 
 ## The foundation and the reference app
 
-This repo is **two things with a hard boundary between them**, and the
-boundary is enforced by the build on both sides:
+This repo is **the EABP foundation + its Android companion**. The
+Glasspane reference Tier 1 lives in its own repo (it `(require 's this
+core); the boundary is enforced by the build on both sides:
 
-- **EABP, the foundation** — a written protocol
+- **EABP, the foundation** (this repo) — a written protocol
   ([docs/SPEC.md](docs/SPEC.md)), the core Emacs client
   (`emacs/core/`, bundled as `eabp-core.el`), and the app-agnostic
-  Android renderer (the `:eabp` Gradle library in `eabp/`). The
-  foundation renders *any* buffer, palettes *any* keymap, bridges *any*
-  minibuffer prompt, and gives apps a shell (tabs, drawer, snackbar), an
-  editor bridge (completion, diagnostics, eldoc), and a schema-driven
-  settings machinery. It contains no org code and names no host app —
-  a guard test enforces the first, the module boundary the second.
+  Android renderer + companion (the `:eabp` Gradle library in `eabp/`
+  and the `:app` companion shell). The foundation renders *any* buffer,
+  palettes *any* keymap, bridges *any* minibuffer prompt, and gives apps
+  a shell (tabs, drawer, snackbar), an editor bridge (completion,
+  diagnostics, eldoc), and a schema-driven settings machinery. It
+  contains no org code and names no host app — a guard test enforces the
+  first, the module boundary the second. `emacs/apps/eabp-hello.el` is
+  the minimal worked Tier-1 example.
 - **Glasspane, the reference Tier 1** — one opinionated org app built on
-  those seams (`emacs/apps/glasspane/`, bundled with the core as
-  `glasspane.el`; the Android shell — branding, launcher activity, org
-  capture tile, org keyboard toolbar — is the `:app` module), plus two
-  smaller worked examples: a curated magit radial menu and a package
-  browser. Glasspane exists to prove the foundation and to be copied
-  from — not to be the one true mobile Emacs.
+  those seams, in the **separate `glasspane` repo** (pure elisp; it
+  vendors this repo as a submodule and `(require 's `eabp-core`). It
+  exists to prove the foundation and to be copied from — not to be the
+  one true mobile Emacs.
 
 The tier model, module map, and every extension seam are documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). If you want to build your
@@ -150,37 +151,34 @@ companion**. The companion listens; Emacs dials in.
 
 Requires Emacs 28+ (for the C-level JSON functions).
 
-**Option A — single-file bundle (simplest).** Grab a pre-built bundle
-from the repo root, drop it somewhere on your `load-path`, and load it
-from your `init.el`:
+**Option A — single-file bundle (simplest).** Grab the pre-built
+foundation bundle from the repo root, drop it somewhere on your
+`load-path`, and load it from your `init.el`:
 
-- [`glasspane.el`](glasspane.el) — the full reference experience
-  (foundation + org app):
+- [`eabp-core.el`](eabp-core.el) — the EABP foundation, for building or
+  running a Tier 1:
 
   ```elisp
   (add-to-list 'load-path "~/.emacs.d/elisp") ; wherever you put the file
-  (require 'glasspane)
-  ```
-
-- [`eabp-core.el`](eabp-core.el) — the foundation only, for building or
-  running a different Tier 1:
-
-  ```elisp
   (require 'eabp-core)
   ```
+
+  For the full Glasspane org-app experience, also install `glasspane.el`
+  from the separate [`glasspane`](../glasspane) repo and
+  `(require 'glasspane)` after `eabp-core` (it depends on this core).
+  `emacs/apps/eabp-hello.el` is the minimal Tier-1 example bundled here.
 
 **Option B — the individual sources.** Clone the repo and put the source
 directories on your `load-path`:
 
 ```elisp
 (add-to-list 'load-path "~/src/eabp/emacs/core")
-(add-to-list 'load-path "~/src/eabp/emacs/apps")           ; magit pie, package browser
-(add-to-list 'load-path "~/src/eabp/emacs/apps/glasspane") ; the org app
-(require 'glasspane)   ; or just the core features you want
+(add-to-list 'load-path "~/src/eabp/emacs/apps")   ; eabp-hello, the minimal example
+(require 'eabp-core)   ; or just the core features you want
 ```
 
-> The bundles are generated from the sources by `emacs/build-bundle.el`.
-> Regenerate them with `emacs --batch -l emacs/build-bundle.el` after
+> The bundle is generated from the sources by `emacs/build-bundle.el`.
+> Regenerate it with `emacs --batch -l emacs/build-bundle.el` after
 > editing.
 
 ### 2. Build and install the companion APK

@@ -323,8 +323,17 @@ private fun actionIntent(context: Context, action: JSONObject, revision: Int): I
         putExtra(ActionReceiver.EXTRA_ACTION, action.toString())
     }
 
+/** Generic pairing guidance, used when the screen is shown outside onboarding. */
+private const val DEFAULT_PAIR_INSTRUCTIONS =
+    "The bridge is listening. Pair Emacs (on this device) by adding the " +
+        "line below to your init, then:\n\n" +
+        "    (require 'glasspane)\n" +
+        "    M-x eabp-connect\n\n" +
+        "Watch *Messages* for \"EABP: handshake ok\". This screen updates " +
+        "automatically once the handshake completes."
+
 @Composable
-internal fun PairingScreen() {
+internal fun PairingScreen(instructions: String = DEFAULT_PAIR_INSTRUCTIONS) {
     val isConnected by EabpRuntime.connected.collectAsState()
 
     Column(
@@ -346,12 +355,7 @@ internal fun PairingScreen() {
         Text("Waiting for Emacs…", style = MaterialTheme.typography.headlineMedium)
         
         Text(
-            "The bridge is listening. Pair Emacs (on this device) by adding the " +
-                    "line below to your init, then:\n\n" +
-                    "    (require 'glasspane)\n" +
-                    "    M-x eabp-connect\n\n" +
-                    "Watch *Messages* for \"EABP: handshake ok\". This screen updates " +
-                    "automatically once the handshake completes.",
+            instructions,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 16.dp, bottom = 32.dp),
             textAlign = TextAlign.Center

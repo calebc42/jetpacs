@@ -11,10 +11,12 @@ import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,13 +25,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Rocket
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -37,12 +42,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -96,6 +103,13 @@ private const val EARLY_INIT_SNIPPET = """;; 1. REDIRECT HOME TO TERMUX
 
 /** Minimal bootstrap for a user keeping their own init — just the essentials. */
 private fun byoSnippet(token: String): String = """;; Glasspane companion bootstrap — add to your own init.el.
+;;
+;; Optional packages that unlock Glasspane features — install them with your
+;; own package manager (MELPA). Each feature degrades to absent when missing,
+;; so none are required to pair:
+;;   org-ql   — saved queries as table / board / calendar views
+;;   org-srs  — spaced-repetition review
+;;   vulpea   — wikilink autocomplete, backlinks & unlinked mentions
 (add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
 (let ((staged (seq-filter #'file-readable-p
                           '("/sdcard/Documents/glasspane.el"
@@ -177,6 +191,31 @@ private fun installAssetToDocuments(context: Context, name: String): String {
     }
 }
 
+/**
+ * The on-disk path of a previously-installed asset [name] in the public
+ * Documents dir, or null if none is there. Mirrors [installAssetToDocuments]'s
+ * two storage paths so a re-run can show an already-installed state.
+ */
+private fun findInstalledBundle(context: Context, name: String): String? {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val resolver = context.contentResolver
+        val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        resolver.query(
+            collection,
+            arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/%", name),
+            null,
+        )?.use { c -> if (c.moveToFirst()) return "/sdcard/Documents/$name" }
+        return null
+    } else {
+        @Suppress("DEPRECATION")
+        val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), name)
+        return if (file.exists()) file.absolutePath else null
+    }
+}
+
 @Composable
 internal fun OnboardingFlow() {
     var step by remember { mutableStateOf(OnbStep.WELCOME) }
@@ -202,18 +241,39 @@ internal fun OnboardingFlow() {
             onBack = { step = if (byo) OnbStep.WELCOME else OnbStep.TERMUX },
         )
         OnbStep.PAIR -> Box(Modifier.fillMaxSize()) {
-            PairingScreen()
+            PairingScreen(instructions = pairInstructions(byo))
             BackChip(
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp),
                 onClick = { step = OnbStep.DELIVER },
+            )
+            StepDots(
+                index = if (byo) 2 else 3,
+                total = if (byo) 2 else 3,
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 12.dp),
             )
         }
     }
 }
 
+/** Path-aware pairing guidance for the final onboarding step. */
+private fun pairInstructions(byo: Boolean): String =
+    if (byo) {
+        "You added the Glasspane bootstrap to your own init.\n\n" +
+            "Restart Emacs (or re-evaluate your init) — it loads Glasspane and " +
+            "connects automatically. If it doesn't, run M-x eabp-connect.\n\n" +
+            "This screen updates the moment the handshake completes."
+    } else {
+        "Your init.el is ready, with the pairing token already in it.\n\n" +
+            "Just start Emacs — it loads Glasspane and connects automatically. " +
+            "There are no commands to run.\n\n" +
+            "This screen updates the moment the handshake completes."
+    }
+
 @Composable
 private fun StepScaffold(
     onBack: (() -> Unit)?,
+    index: Int = 0,
+    total: Int = 0,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -228,7 +288,30 @@ private fun StepScaffold(
                 BackChip(onClick = onBack)
                 Spacer(Modifier.height(8.dp))
             }
+            if (total > 0) {
+                StepDots(index, total, Modifier.align(Alignment.CenterHorizontally))
+                Spacer(Modifier.height(16.dp))
+            }
             content()
+        }
+    }
+}
+
+/** A row of [total] progress dots with the first [index] filled (current = last filled). */
+@Composable
+private fun StepDots(index: Int, total: Int, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        repeat(total) { i ->
+            val done = i < index
+            Box(
+                Modifier
+                    .size(if (i == index - 1) 10.dp else 8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (done) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+            )
         }
     }
 }
@@ -276,7 +359,8 @@ private fun WelcomeStep(onChoose: (Boolean) -> Unit, onSkipToPair: () -> Unit) {
 
 @Composable
 private fun TermuxStep(onAnswer: (Boolean) -> Unit, onBack: () -> Unit) {
-    StepScaffold(onBack = onBack) {
+    // Reached only on the guided (non-BYO) path: step 1 of 3 (termux → deliver → pair).
+    StepScaffold(onBack = onBack, index = 1, total = 3) {
         Text("Is Emacs sharing a signature with Termux?", style = MaterialTheme.typography.titleMedium)
         Text(
             "If your Emacs APK is signed to share Termux's identity, it can run Termux's " +
@@ -300,6 +384,18 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     val context = LocalContext.current
     val token = remember { EabpAuth.token(context) }
     var installResult by remember { mutableStateOf<String?>(null) }
+    var glasspaneInstalled by remember { mutableStateOf(false) }
+
+    // On (re-)entry, detect an already-installed bundle so a repeat run reflects
+    // that state instead of pretending nothing happened.
+    LaunchedEffect(Unit) {
+        if (!glasspaneInstalled) {
+            findInstalledBundle(context, "glasspane.el")?.let {
+                glasspaneInstalled = true
+                if (installResult == null) installResult = "Already installed at $it"
+            }
+        }
+    }
 
     // SAF fallback: let the user save the bundle anywhere if Documents fails
     // or they'd rather choose the folder themselves.
@@ -329,7 +425,13 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     ) { granted ->
         installResult = if (granted) {
             runCatching { installAssetToDocuments(context, pendingInstall) }
-                .fold({ "Installed to $it" }, { "Install failed: ${it.message}" })
+                .fold(
+                    {
+                        if (pendingInstall == "glasspane.el") glasspaneInstalled = true
+                        "Installed to $it"
+                    },
+                    { "Install failed: ${it.message}" },
+                )
         } else {
             "Storage permission denied — use \"Save elsewhere…\" instead."
         }
@@ -345,11 +447,17 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             storagePerm.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
             installResult = runCatching { installAssetToDocuments(context, name) }
-                .fold({ "Installed to $it" }, { "Install failed: ${it.message}" })
+                .fold(
+                    {
+                        if (name == "glasspane.el") glasspaneInstalled = true
+                        "Installed to $it"
+                    },
+                    { "Install failed: ${it.message}" },
+                )
         }
     }
 
-    StepScaffold(onBack = onBack) {
+    StepScaffold(onBack = onBack, index = if (byo) 1 else 2, total = if (byo) 2 else 3) {
         Text("Copy these onto your device", style = MaterialTheme.typography.headlineSmall)
         Text(
             "Glasspane can't write into Emacs's private folders (Android sandboxing), so " +
@@ -376,7 +484,8 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             title = if (byo) "Bootstrap → your init.el" else "Starter init.el",
             body = if (byo) {
                 "You keep your own init — just add these lines (bundle adopt, require, " +
-                    "and your pairing token) somewhere in it."
+                    "and your pairing token) somewhere in it. The snippet also lists " +
+                    "optional packages (org-ql, org-srs, vulpea) that unlock more features."
             } else {
                 "A complete starter init, with your pairing token already filled in. " +
                     "Paste it as your whole init.el."
@@ -395,8 +504,19 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                 )
-                Button(onClick = { installAsset("glasspane.el") }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Install to Documents")
+                if (glasspaneInstalled) {
+                    FilledTonalButton(
+                        onClick = { installAsset("glasspane.el") },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("Installed — reinstall")
+                    }
+                } else {
+                    Button(onClick = { installAsset("glasspane.el") }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Install to Documents")
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
@@ -461,6 +581,7 @@ private fun SnippetCard(
     copyText: String,
 ) {
     val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         Column(Modifier.padding(16.dp)) {
             Text("$number. $title", style = MaterialTheme.typography.titleMedium)
@@ -482,11 +603,17 @@ private fun SnippetCard(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                 )
             }
-            Button(
-                onClick = { copyToClipboard(context, "glasspane-$number", copyText) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Copy snippet")
+            val onCopy = { copyToClipboard(context, "glasspane-$number", copyText); copied = true }
+            if (copied) {
+                FilledTonalButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Copied — copy again")
+                }
+            } else {
+                Button(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+                    Text("Copy snippet")
+                }
             }
         }
     }

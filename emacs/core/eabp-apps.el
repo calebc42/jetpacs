@@ -38,14 +38,10 @@ PLIST keys: :label :icon :views (list of shell view names) :order.")
 LABEL and ICON draw the app's launcher-home card; the first :tab view
 in VIEWS is the app's landing tab.  ORDER sorts home cards; equal
 orders keep registration order."
-  (dolist (v views)
-    (let ((owner (eabp-apps--owner v)))
-      (when (and owner (not (equal owner id)))
-        (message "EABP apps: view %s is claimed by both %s and %s"
-                 v owner id))))
   ;; Attribute the app's views to it in the ownership registry, so
-  ;; cross-app collisions are caught and `eabp-app-unregister' can find
-  ;; them (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
+  ;; cross-app collisions are caught (`eabp--claim' warns, or errors under
+  ;; `eabp-strict-namespaces') and `eabp-app-unregister' can find them
+  ;; (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
   (let ((eabp-current-owner id))
     (dolist (v views) (eabp--claim "view" v)))
   (setq eabp-apps--registry

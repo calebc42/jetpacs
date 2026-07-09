@@ -72,6 +72,14 @@ strings like table `aligns' is not a node sequence)."
                     (t 'bad))))
     (and (listp elts) elts (cl-every #'eabp-lint--alist-p elts))))
 
+(defun eabp-lint--serializable-scalar-p (val)
+  "Non-nil when VAL is a JSON-serializable scalar.
+A string, number, vector, the boolean/null keywords, or nil — the leaf
+values `json-serialize' accepts.  Containers and actions are validated by
+recursion, not here."
+  (or (stringp val) (numberp val) (vectorp val)
+      (memq val '(t :false :null)) (null val)))
+
 ;; ─── Validation ──────────────────────────────────────────────────────────────
 
 (defun eabp-lint--check-action (val path report)
@@ -105,8 +113,7 @@ strings like table `aligns' is not a node sequence)."
 
 (defun eabp-lint--check-scalar (key val path report)
   "Report at PATH via REPORT when scalar KEY=VAL is not JSON-serializable."
-  (unless (or (stringp val) (numberp val) (vectorp val)
-              (memq val '(t :false :null)) (null val))
+  (unless (eabp-lint--serializable-scalar-p val)
     (funcall report path
              (format "%s has a non-serializable value: %S" key val))))
 
@@ -187,8 +194,7 @@ Container and action values are validated by recursion, not here."
        (or (memq key eabp-lint--action-keys)
            (eabp-lint--node-seq-p val)
            (eabp-lint--alist-p val)
-           (stringp val) (numberp val) (vectorp val)
-           (memq val '(t :false :null)) (null val))))
+           (eabp-lint--serializable-scalar-p val))))
    node))
 
 (defun eabp-lint-sanitize-spec (node)

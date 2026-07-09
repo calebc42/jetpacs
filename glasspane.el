@@ -177,6 +177,12 @@ are encoded as UTF-8."
                                                     message 'utf-8 t))
                                       nil nil t)))))
 
+(defun eabp--paired-p ()
+  "Non-nil when a non-empty pairing token is configured.
+When nil the bridge runs unpaired: the companion is not challenged and any
+welcome is accepted (the legacy path — the companion won't send one anyway)."
+  (and (stringp eabp-auth-token) (not (string-empty-p eabp-auth-token))))
+
 (defun eabp--auth-nonce ()
   "A fresh nonce (64 hex chars).  Needs uniqueness, not secrecy."
   (secure-hash 'sha256 (format "%s:%s:%s:%s"
@@ -189,8 +195,7 @@ are encoded as UTF-8."
     (cond
      ((not (stringp snonce))
       (message "EABP: malformed auth challenge"))
-     ((not (and (stringp eabp-auth-token)
-                (not (string-empty-p eabp-auth-token))))
+     ((not (eabp--paired-p))
       (message (concat "EABP: pairing required — open the companion app, tap "
                        "the (setq eabp-auth-token ...) line on its pairing "
                        "screen, add it to your init, and reconnect")))
@@ -210,8 +215,7 @@ Fails closed: once a token is configured, a welcome without a valid
 proof — a companion that skipped the challenge, or a rogue app squatting
 the port — is refused.  With no token configured, any welcome passes
 \(the unpaired legacy path; the companion won't send one anyway)."
-  (or (not (and (stringp eabp-auth-token)
-                (not (string-empty-p eabp-auth-token))))
+  (or (not (eabp--paired-p))
       (and eabp--auth-server-nonce eabp--auth-client-nonce
            (equal (alist-get 'server_proof payload)
                   (eabp--hmac-sha256-hex
@@ -1308,6 +1312,14 @@ strings like table `aligns' is not a node sequence)."
                     (t 'bad))))
     (and (listp elts) elts (cl-every #'eabp-lint--alist-p elts))))
 
+(defun eabp-lint--serializable-scalar-p (val)
+  "Non-nil when VAL is a JSON-serializable scalar.
+A string, number, vector, the boolean/null keywords, or nil — the leaf
+values `json-serialize' accepts.  Containers and actions are validated by
+recursion, not here."
+  (or (stringp val) (numberp val) (vectorp val)
+      (memq val '(t :false :null)) (null val)))
+
 ;; ─── Validation ──────────────────────────────────────────────────────────────
 
 (defun eabp-lint--check-action (val path report)
@@ -1341,8 +1353,7 @@ strings like table `aligns' is not a node sequence)."
 
 (defun eabp-lint--check-scalar (key val path report)
   "Report at PATH via REPORT when scalar KEY=VAL is not JSON-serializable."
-  (unless (or (stringp val) (numberp val) (vectorp val)
-              (memq val '(t :false :null)) (null val))
+  (unless (eabp-lint--serializable-scalar-p val)
     (funcall report path
              (format "%s has a non-serializable value: %S" key val))))
 
@@ -1423,8 +1434,7 @@ Container and action values are validated by recursion, not here."
        (or (memq key eabp-lint--action-keys)
            (eabp-lint--node-seq-p val)
            (eabp-lint--alist-p val)
-           (stringp val) (numberp val) (vectorp val)
-           (memq val '(t :false :null)) (null val))))
+           (eabp-lint--serializable-scalar-p val))))
    node))
 
 (defun eabp-lint-sanitize-spec (node)
@@ -4320,14 +4330,10 @@ PLIST keys: :label :icon :views (list of shell view names) :order.")
 LABEL and ICON draw the app's launcher-home card; the first :tab view
 in VIEWS is the app's landing tab.  ORDER sorts home cards; equal
 orders keep registration order."
-  (dolist (v views)
-    (let ((owner (eabp-apps--owner v)))
-      (when (and owner (not (equal owner id)))
-        (message "EABP apps: view %s is claimed by both %s and %s"
-                 v owner id))))
   ;; Attribute the app's views to it in the ownership registry, so
-  ;; cross-app collisions are caught and `eabp-app-unregister' can find
-  ;; them (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
+  ;; cross-app collisions are caught (`eabp--claim' warns, or errors under
+  ;; `eabp-strict-namespaces') and `eabp-app-unregister' can find them
+  ;; (see with-eabp-owner / eabp--claim in eabp-surfaces.el).
   (let ((eabp-current-owner id))
     (dolist (v views) (eabp--claim "view" v)))
   (setq eabp-apps--registry

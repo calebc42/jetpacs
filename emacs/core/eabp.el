@@ -164,6 +164,12 @@ are encoded as UTF-8."
                                                     message 'utf-8 t))
                                       nil nil t)))))
 
+(defun eabp--paired-p ()
+  "Non-nil when a non-empty pairing token is configured.
+When nil the bridge runs unpaired: the companion is not challenged and any
+welcome is accepted (the legacy path — the companion won't send one anyway)."
+  (and (stringp eabp-auth-token) (not (string-empty-p eabp-auth-token))))
+
 (defun eabp--auth-nonce ()
   "A fresh nonce (64 hex chars).  Needs uniqueness, not secrecy."
   (secure-hash 'sha256 (format "%s:%s:%s:%s"
@@ -176,8 +182,7 @@ are encoded as UTF-8."
     (cond
      ((not (stringp snonce))
       (message "EABP: malformed auth challenge"))
-     ((not (and (stringp eabp-auth-token)
-                (not (string-empty-p eabp-auth-token))))
+     ((not (eabp--paired-p))
       (message (concat "EABP: pairing required — open the companion app, tap "
                        "the (setq eabp-auth-token ...) line on its pairing "
                        "screen, add it to your init, and reconnect")))
@@ -197,8 +202,7 @@ Fails closed: once a token is configured, a welcome without a valid
 proof — a companion that skipped the challenge, or a rogue app squatting
 the port — is refused.  With no token configured, any welcome passes
 \(the unpaired legacy path; the companion won't send one anyway)."
-  (or (not (and (stringp eabp-auth-token)
-                (not (string-empty-p eabp-auth-token))))
+  (or (not (eabp--paired-p))
       (and eabp--auth-server-nonce eabp--auth-client-nonce
            (equal (alist-get 'server_proof payload)
                   (eabp--hmac-sha256-hex

@@ -108,9 +108,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * External-entry trampoline: agenda-widget row taps (`heading.tap`), the
-     * widget's + button and the QS tile (`org.capture.show`) open the app
-     * with an action embedded. Rebroadcast through ActionReceiver so it
+     * External-entry trampoline: widget row taps, the widget header's
+     * server-driven `header_action` button, and in-app QS tiles open the
+     * app with an action embedded (all composed by the loaded Tier 1 —
+     * this shell hardcodes none). Rebroadcast through ActionReceiver so it
      * shares the live/queue pipeline; Emacs answers by pushing the target
      * view or dialog into the now-visible app. Offline, the action queues
      * and the app opens on the cached view.

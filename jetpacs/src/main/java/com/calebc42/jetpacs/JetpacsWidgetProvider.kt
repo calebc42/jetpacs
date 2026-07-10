@@ -48,7 +48,7 @@ class JetpacsWidgetProvider : AppWidgetProvider() {
         // intents only stay distinct through the request code.
         private const val REQUEST_OPEN_APP = 2001
         private const val REQUEST_REFRESH = 2002
-        private const val REQUEST_CAPTURE = 2003
+        private const val REQUEST_HEADER_ACTION = 2003
         private const val REQUEST_VIEW_SELECT = 2005
         private const val REQUEST_LIST_TEMPLATE = 2300
 
@@ -146,37 +146,54 @@ class JetpacsWidgetProvider : AppWidgetProvider() {
                 actionIntent(context, "dashboard.refresh", null,
                     REQUEST_REFRESH, revision, whenOffline = "wake"))
 
-            // Capture needs a keyboard, so it trampolines into the app and
-            // opens the template picker there.
-            views.setOnClickPendingIntent(
-                R.id.widget_capture,
-                trampolineIntent(context, "org.capture.show", null,
-                    REQUEST_CAPTURE, revision))
+            // The header "+" button is server-driven data (SPEC §4
+            // `header_action`), so the library carries no app opinion about
+            // what it does. It trampolines into the app because header
+            // actions are for flows that need the visible app (capture
+            // needs a keyboard). Read from the top-level spec, not the
+            // resolved view: chrome is view-independent.
+            wireHeaderAction(views, context, SURFACE, record?.spec, revision)
             return views
         }
 
         /**
          * An action that must land in a visible app (navigation, dialogs):
-         * open the host app with the action embedded; its launcher activity
-         * rebroadcasts through ActionReceiver on arrival (the JetpacsLaunch
-         * extras contract).
+         * open the host app with the pushed ACTION embedded verbatim; its
+         * launcher activity rebroadcasts through ActionReceiver on arrival
+         * (the JetpacsLaunch extras contract). SURFACE keys the intent's
+         * data URI: extras don't count toward PendingIntent identity, so
+         * per-surface header actions must stay distinct through the data.
          */
         private fun trampolineIntent(
             context: Context,
-            actionName: String,
-            args: JSONObject?,
-            requestCode: Int,
+            surface: String,
+            action: JSONObject,
             revision: Int
         ): PendingIntent {
-            val actionJson = JSONObject().apply {
-                put("action", actionName)
-                put("when_offline", "queue")
-                if (args != null) put("args", args)
-            }
-            val intent = JetpacsLaunch.openAppIntent(context, actionJson.toString(), revision)
+            val intent = JetpacsLaunch.openAppIntent(context, action.toString(), revision)
+                .apply { data = Uri.fromParts("jetpacswidget", surface, "header") }
             return PendingIntent.getActivity(
-                context, requestCode, intent,
+                context, REQUEST_HEADER_ACTION, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
+
+        /** Show or hide the header "+" from SPEC's top-level `header_action`. */
+        internal fun wireHeaderAction(
+            views: RemoteViews,
+            context: Context,
+            surface: String,
+            spec: JSONObject?,
+            revision: Int
+        ) {
+            val headerAction = spec?.optJSONObject("header_action")
+            if (headerAction != null) {
+                views.setViewVisibility(R.id.widget_header_action, View.VISIBLE)
+                views.setOnClickPendingIntent(
+                    R.id.widget_header_action,
+                    trampolineIntent(context, surface, headerAction, revision))
+            } else {
+                views.setViewVisibility(R.id.widget_header_action, View.GONE)
+            }
         }
 
         /** A broadcast action that never opens the app (refresh). */

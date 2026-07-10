@@ -1,6 +1,5 @@
 <resources>
     <string name="app_name">Jetpacs</string>
-    <string name="tile_capture_label">Org Capture</string>
 
     <!-- Rebrands of the :jetpacs library defaults (app resources win the
          resource merge). Keep keys in sync with the library's

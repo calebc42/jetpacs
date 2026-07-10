@@ -19,9 +19,5 @@
     <string name="widget_custom_label_3">Jetpacs slot 3</string>
     <string name="widget_custom_label_4">Jetpacs slot 4</string>
     <string name="widget_custom_label_5">Jetpacs slot 5</string>
-    <string name="widget_capture">New capture</string>
-    <string name="widget_clock_label">Org Clock</string>
-    <string name="widget_clock_description">Quick clock in/out shortcuts for the Org clock. Taps queue when Emacs is offline.</string>
-    <string name="widget_clock_in_last">Clock in (last)</string>
-    <string name="widget_clock_out">Clock out</string>
+    <string name="widget_header_action">Add</string>
 </resources>

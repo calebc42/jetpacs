@@ -96,9 +96,12 @@ abstract class JetpacsCustomWidgetProvider : AppWidgetProvider() {
                     // whatever app hosts the bridge.
                     ?: context.applicationInfo.loadLabel(context.packageManager).toString())
 
-            // The refresh/capture header buttons are agenda-widget chrome.
+            // The refresh button is agenda-widget chrome; the "+" button is
+            // server-driven (SPEC §4 `header_action`), same as the agenda
+            // widget's.
             views.setViewVisibility(R.id.widget_refresh, View.GONE)
-            views.setViewVisibility(R.id.widget_capture, View.GONE)
+            JetpacsWidgetProvider.wireHeaderAction(
+                views, context, surface, record?.spec, record?.revision ?: -1)
 
             views.setRemoteAdapter(
                 R.id.widget_list,

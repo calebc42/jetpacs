@@ -100,12 +100,12 @@ SPEC §11), the widget providers + tile slots, `RadialMenu` /
 plus their manifest entries, permissions, and widget resources, which
 merge into any host app.
 
-**`app/` — the reference companion shell** (Glasspane-branded today):
-`MainActivity` (pairing screen, dashboard host, share/widget
-trampoline), `CaptureTileService`, theme/branding, and string overrides
-that rebrand the library's host-neutral defaults (app resources win the
-merge). A third-party companion is this module re-imagined: depend on
-`:jetpacs`, provide your own identity.
+**`app/` — the reference companion shell**: `MainActivity` (pairing
+screen, dashboard host, share/widget trampoline), onboarding,
+theme/branding, and string overrides that rebrand the library's
+host-neutral defaults (app resources win the merge). A third-party
+companion is this module re-imagined: depend on `:jetpacs`, provide
+your own identity.
 
 **The two seams that keep the library host-agnostic** (the rule: the
 library names no host class):
@@ -212,9 +212,10 @@ of your own? This table doubles as your build map — see
 
 Divergence rule: a behavior with no SPEC home gets spec'd or removed —
 the 2026-07-05 audit found one (the `value` injection on change
-callbacks) and spec'd it into §9. The only org knowledge outside
-`:app` remains **none**, and the org keyboard toolbar left Kotlin
-entirely: it is elisp data in the glasspane repo, interpreted by the
-library's `SduiToolbar` (§9 "Editor toolbars"). `:app`'s
-`CaptureTileService` is the one org-aware Kotlin class left, flagged
-for the same treatment.
+callbacks) and spec'd it into §9. Org knowledge in Kotlin is now
+**zero**, in both modules: the org keyboard toolbar is elisp data
+interpreted by `SduiToolbar` (§9 "Editor toolbars"), the agenda
+widget's header button dispatches a server-pushed `header_action`
+(§4), and the org-clock widget and org-capture QS tile became
+elisp-composed `widget:customN` / `tile:customN` slot pushes in the
+glasspane repo (see `docs/PLAN-decouple-org-surfaces.md`).

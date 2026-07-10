@@ -13,9 +13,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher_glasspane"
+        android:icon="@mipmap/ic_launcher_jetpacs"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_glasspane"
+        android:roundIcon="@mipmap/ic_launcher_jetpacs"
         android:supportsRtl="true"
         android:theme="@style/Theme.Jetpacs">
         <!-- ^ Match your existing theme name from themes.xml if it differs. -->
@@ -31,7 +31,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Share sheet → org capture. -->
+            <!-- Share sheet → the app-agnostic share.text action; whatever
+                 Tier 1 is loaded decides what receiving text means. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -39,19 +40,9 @@
             </intent-filter>
         </activity>
 
-        <!-- Quick Settings tile: one-tap org capture — a Glasspane opinion,
-             so it lives in the shell, not the library. exported + the bind
-             permission are both required for the system to host the tile. -->
-        <service
-            android:name=".CaptureTileService"
-            android:exported="true"
-            android:icon="@drawable/ic_widget_add"
-            android:label="@string/tile_capture_label"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
+        <!-- QS tiles are elisp-composed: the library's tile:customN slots
+             (TileSlots.kt) render whatever the loaded app pushes, so this
+             shell declares no tiles of its own. -->
 
     </application>
 

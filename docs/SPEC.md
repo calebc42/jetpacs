@@ -139,6 +139,17 @@ surface.remove   {surface}
   `view.switch` builtin, so navigation never round-trips. `current_view`
   on the update forces the companion onto a view — used only when the push
   *is* the navigation; background refreshes must never yank the user.
+- **Widget surfaces.** A `widget:*` spec (or each of its views) carries
+  `title`, `items` (rows of the home-widget row schema, emitted by the
+  `jetpacs-widget-item` / `jetpacs-widget-divider` constructors), and
+  optional `empty` (the no-rows caption).
+  One **top-level** key — a sibling of `views`/`initial_view`, since
+  chrome is view-independent — is `header_action`: an ordinary §5 action
+  object rendered as the widget header's "+" button. Tapping it opens
+  the app with the action embedded (header actions are for flows that
+  need the visible app, e.g. a capture dialog needs a keyboard); the
+  object dispatches verbatim, `when_offline` included. Absent, the
+  button is hidden. The companion hardcodes no header action of its own.
 
 ## 5. Events: the semantic-action boundary
 

@@ -75,7 +75,7 @@
             android:contentDescription="@string/widget_refresh" />
 
         <ImageButton
-            android:id="@+id/widget_capture"
+            android:id="@+id/widget_header_action"
             android:layout_width="30dp"
             android:layout_height="30dp"
             android:layout_marginStart="2dp"
@@ -84,7 +84,7 @@
             android:scaleType="fitCenter"
             android:src="@drawable/ic_widget_add"
             android:tint="@color/widget_text_primary"
-            android:contentDescription="@string/widget_capture" />
+            android:contentDescription="@string/widget_header_action" />
 
     </LinearLayout>
 

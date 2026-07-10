@@ -269,18 +269,6 @@
                 android:resource="@xml/jetpacs_custom_widget_info" />
         </receiver>
 
-        <receiver
-            android:name="com.calebc42.jetpacs.JetpacsClockWidgetProvider"
-            android:label="@string/widget_clock_label"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/jetpacs_clock_widget_info" />
-        </receiver>
-
     </application>
 
 </manifest>

@@ -102,11 +102,10 @@ merge into any host app.
 
 **`app/` — the reference companion shell** (Glasspane-branded today):
 `MainActivity` (pairing screen, dashboard host, share/widget
-trampoline), `CaptureTileService`, `OrgEditToolbar`, theme/branding, and
-string overrides that rebrand the library's host-neutral defaults (app
-resources win the merge). A third-party companion is this module
-re-imagined: depend on `:jetpacs`, provide your own identity, register
-your own toolbars.
+trampoline), `CaptureTileService`, theme/branding, and string overrides
+that rebrand the library's host-neutral defaults (app resources win the
+merge). A third-party companion is this module re-imagined: depend on
+`:jetpacs`, provide your own identity.
 
 **The two seams that keep the library host-agnostic** (the rule: the
 library names no host class):
@@ -114,9 +113,14 @@ library names no host class):
 - `JetpacsLaunch` — "open the app" resolves the host's launcher activity
   via the package manager and carries the trampoline-extras contract
   the host's activity must honor.
-- `JetpacsToolbars` — editor toolbars are host-registered by name; the
-  library ships none. Glasspane registers `"org"` → `OrgEditToolbar`.
-  An unregistered name renders nothing (the unknown-node rule).
+- `JetpacsToolbars` — the native-alternative seam for editor toolbars.
+  The default path is data: an editor spec's `toolbar` array is
+  interpreted by the library's `SduiToolbar` (SPEC §9 "Editor
+  toolbars"), so apps compose toolbars in elisp with zero Kotlin. A
+  host that wants richer native behaviour registers a composable here
+  by name and the spec selects it as a string; nothing ships
+  registered, and an unregistered name renders nothing (the
+  unknown-node rule).
 
 ## The seams (how Tier 1 plugs in)
 
@@ -200,6 +204,7 @@ of your own? This table doubles as your build map — see
 | `ReminderScheduler` (replace-set, reboot persistence) | §7 |
 | `EditorSync` / completion / diagnostics / eldoc / fontify | §8 |
 | `SduiRenderer` + node files (shapes pinned by `test/widgets.golden`) | §9 |
+| `SduiToolbar` (data-driven editor toolbars, snippet placeholders) | §9 "Editor toolbars" |
 | `DeviceCapabilities` (catalog + perm map), `JetpacsRuntime.keepScreenOn` | §10 |
 | `TriggerHost` / `TriggerAlarmReceiver` / `BootReceiver` (types, throttle, hysteresis, `on_fire`, reboot rearm) | §11 |
 | `EmacsWaker` | §5 (`wake` policy), execution model above |
@@ -208,5 +213,8 @@ of your own? This table doubles as your build map — see
 Divergence rule: a behavior with no SPEC home gets spec'd or removed —
 the 2026-07-05 audit found one (the `value` injection on change
 callbacks) and spec'd it into §9. The only org knowledge outside
-`:app` remains **none**; `:app`'s `OrgEditToolbar` is the single
-org-aware Kotlin class, opt-in by toolbar name (§9 `editor`).
+`:app` remains **none**, and the org keyboard toolbar left Kotlin
+entirely: it is elisp data in the glasspane repo, interpreted by the
+library's `SduiToolbar` (§9 "Editor toolbars"). `:app`'s
+`CaptureTileService` is the one org-aware Kotlin class left, flagged
+for the same treatment.

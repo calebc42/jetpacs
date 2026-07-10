@@ -621,6 +621,31 @@ accordingly). An un-pushed slot shows as a grayed-out tile."
 
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
+(cl-defun jetpacs-toolbar-item (icon label &key snippet placement line
+                                on-tap long-press menu)
+  "One item in a data-driven editor toolbar (SPEC §9 \"Editor toolbars\").
+ICON names the chip glyph and LABEL is its short text.  Exactly one op
+per item: SNIPPET is text the companion inserts locally, with the closed
+placeholder set ${selection} ${cursor} ${input:Prompt} ${date} ${time}
+\(unknown ${...} tokens insert literally); LINE is a builtin line op —
+\"promote\", \"demote\", \"move-up\", or \"move-down\"; ON-TAP is an
+ordinary action object dispatched to Emacs (the escape hatch); MENU is a
+list of sub-items (this constructor with nil ICON) shown as a dropdown —
+menus don't nest.  PLACEMENT refines SNIPPET: \"cursor\" (default),
+\"line-start\" (prefix the cursor's line, deduped), or \"block\" (own
+line\(s)).  LONG-PRESS is a secondary op — an item (nil ICON and LABEL)
+carrying one of SNIPPET/LINE/ON-TAP.  Pass the item list to
+`jetpacs-editor' :toolbar; `jetpacs-lint-spec' validates the vocabulary."
+  (jetpacs--node nil
+              'icon icon
+              'label label
+              'snippet snippet
+              'placement placement
+              'line line
+              'on_tap on-tap
+              'long_press long-press
+              'menu (and menu (vconcat menu))))
+
 (cl-defun jetpacs-editor (id value &key on-save read-only syntax line-numbers
                           complete chromeless publish-state toolbar)
   "A full-height plain-text editor node.
@@ -638,9 +663,12 @@ compactly instead of full-height — an inline field with the full bridge
 \(completion, squiggles, doc line), e.g. the eval REPL input.
 PUBLISH-STATE emits debounced `state.changed' with the text under ID,
 so button-driven forms can read it back from `jetpacs-ui-state'.
-TOOLBAR names a keyboard-adjacent formatting toolbar the client should
-attach (\"org\" today); nil for none.  Server-driven so the renderer
-stays app-agnostic: the app opts an editor into the affordance."
+TOOLBAR attaches a keyboard-adjacent formatting toolbar: a list of
+`jetpacs-toolbar-item's the companion interprets as data (the default
+path), or a string naming a host-registered native toolbar (the Kotlin
+alternative — the reference companion registers none); nil for none.
+Server-driven so the renderer stays app-agnostic: the app opts an
+editor into the affordance."
   (jetpacs--node "editor"
               'id id
               'value value
@@ -651,7 +679,9 @@ stays app-agnostic: the app opts an editor into the affordance."
               'complete (and complete t)
               'chromeless (and chromeless t)
               'publish_state (and publish-state t)
-              'toolbar toolbar))
+              'toolbar (if (and toolbar (listp toolbar))
+                           (vconcat toolbar)
+                         toolbar)))
 
 (cl-defun jetpacs-scaffold (&key top-bar fab body bottom-bar floating-toolbar snackbar drawer on-refresh)
   "The standard app frame."

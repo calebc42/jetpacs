@@ -81,10 +81,12 @@ Apps set their per-file-type editor state here (e.g. reader-first).")
 Apps whose views memoise data derived from files drop caches here.")
 
 (defvar jetpacs-files-editor-toolbar-function #'ignore
-  "Function of FILE returning the editor toolbar name to request, or nil.
-Apps point this at their file-type mapping (e.g. \"org\" for org files)
-so the toolbar choice ships in the editor spec instead of being inferred
-client-side.")
+  "Function of FILE returning the editor toolbar to request, or nil.
+Either a list of `jetpacs-toolbar-item's the companion interprets as data
+\(SPEC §9 \"Editor toolbars\", the default path) or a string naming a
+host-registered native toolbar.  Apps point this at their file-type
+mapping so the toolbar choice ships in the editor spec instead of being
+inferred client-side.")
 
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 

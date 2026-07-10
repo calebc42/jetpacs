@@ -11,8 +11,9 @@ import androidx.compose.ui.unit.dp
 
 /**
  * A small chip-button for keyboard-adjacent toolbars. Shared vocabulary:
- * the renderer's editor chrome (SduiScaffold) and host-registered toolbars
- * (e.g. Glasspane's OrgEditToolbar in :app) both build from it.
+ * the renderer's editor chrome (SduiScaffold), the data-driven toolbar
+ * interpreter (SduiToolbar), and host-registered native toolbars
+ * (JetpacsToolbars) all build from it.
  */
 @Composable
 fun ToolbarChip(

@@ -752,7 +752,12 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
                         (jetpacs-draw-rect 10 10 30 20 :fill t :color "primary" :radius 4)
                         (jetpacs-draw-circle 70 30 15 :color "#E64980")
                         (jetpacs-draw-path '((0 60) (50 0) (100 60)) :closed t :fill t)
-                        (jetpacs-draw-text 50 30 "hi" :align "center" :size 10))))))
+                        (jetpacs-draw-text 50 30 "hi" :align "center" :size 10)))
+     ;; Data-driven editor toolbar (SPEC §9 "Editor toolbars")
+     (jetpacs-toolbar-item "code" "Src"
+                        :snippet "#+begin_src ${input:Language}\n${cursor}\n#+end_src"
+                        :placement "block"
+                        :long-press (jetpacs-toolbar-item nil nil :line "promote")))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -1068,6 +1073,67 @@ records the last-fired time."
     (should-not (jetpacs-lint-spec canvas))
     (should (equal "chart" (alist-get 't (jetpacs-render-to-json chart))))
     (should (equal "canvas" (alist-get 't (jetpacs-render-to-json canvas))))))
+
+;; ─── Data-driven editor toolbars (SPEC §9 "Editor toolbars") ─────────────────
+
+(ert-deftest jetpacs-toolbar-item-shape ()
+  "Toolbar items emit the closed §9 vocabulary; nil options are dropped."
+  (should (equal '((icon . "format_bold") (label . "B")
+                   (snippet . "*${selection}*"))
+                 (jetpacs-toolbar-item "format_bold" "B"
+                                    :snippet "*${selection}*")))
+  ;; Menu sub-items ride as a vector; a nil icon is dropped.
+  (let* ((sub (jetpacs-toolbar-item nil "* H1" :snippet "* "
+                                 :placement "line-start"))
+         (item (jetpacs-toolbar-item "title" "H" :menu (list sub))))
+    (should-not (assq 'icon sub))
+    (should (equal (vector sub) (alist-get 'menu item))))
+  ;; The editor emits a toolbar list as a vector; a string passes through.
+  (should (vectorp (alist-get 'toolbar
+                              (jetpacs-editor "f.org" ""
+                                           :toolbar (list (jetpacs-toolbar-item
+                                                           "up" "^" :line "move-up"))))))
+  (should (equal "org" (alist-get 'toolbar
+                                  (jetpacs-editor "f.org" "" :toolbar "org")))))
+
+(ert-deftest jetpacs-lint-toolbar-vocabulary ()
+  "A full valid toolbar lints clean; op-set and enum violations are flagged."
+  (should-not
+   (jetpacs-lint-spec
+    (jetpacs-editor "f.org" "" :toolbar
+                 (list (jetpacs-toolbar-item "format_bold" "B"
+                                          :snippet "*${selection}*")
+                       (jetpacs-toolbar-item "arrow_upward" "^" :line "move-up")
+                       (jetpacs-toolbar-item "title" "H" :menu
+                                          (list (jetpacs-toolbar-item
+                                                 nil "* H1" :snippet "* "
+                                                 :placement "line-start")))
+                       (jetpacs-toolbar-item "schedule" "TS" :snippet "[${date}]"
+                                          :long-press (jetpacs-toolbar-item
+                                                       nil nil :snippet "<${date}>"))
+                       (jetpacs-toolbar-item "bolt" "M-x"
+                                          :on-tap (jetpacs-action "x.y"))))))
+  (cl-flet ((lint-one (item)
+              (jetpacs-lint-spec (jetpacs-editor "f.org" "" :toolbar (list item)))))
+    ;; Two op fields on one item.
+    (should (lint-one (jetpacs-toolbar-item "a" "b" :snippet "x" :line "promote")))
+    ;; No op field at all.
+    (should (lint-one (jetpacs-toolbar-item "a" "b")))
+    ;; Bad placement enum, and placement without snippet.
+    (should (lint-one (jetpacs-toolbar-item "a" "b" :snippet "x"
+                                         :placement "floating")))
+    (should (lint-one (jetpacs-toolbar-item "a" "b" :line "promote"
+                                         :placement "cursor")))
+    ;; Bad builtin line op.
+    (should (lint-one (jetpacs-toolbar-item "a" "b" :line "sideways")))
+    ;; Menus don't nest.
+    (should (lint-one (jetpacs-toolbar-item "a" "b" :menu
+                                         (list (jetpacs-toolbar-item
+                                                nil "s" :menu
+                                                (list (jetpacs-toolbar-item
+                                                       nil "x" :line "promote")))))))
+    ;; A broken embedded action is still the generic walk's catch.
+    (should (lint-one (jetpacs-toolbar-item "a" "b" :on-tap '((args . ((k . "v")))))))))
 
 ;; ─── Multi-tenant ownership (Phase E) ─────────────────────────────────────────
 

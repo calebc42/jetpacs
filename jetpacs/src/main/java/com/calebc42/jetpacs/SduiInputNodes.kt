@@ -222,9 +222,12 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     val chrome = !node.optBoolean("chromeless", false)
     // Syntax defaults to the file's extension when Emacs doesn't say.
     val syntax = node.optString("syntax").ifEmpty { syntaxForPath(id) }
-    // The formatting toolbar is server-driven: the spec names it (or omits
-    // it), so this renderer carries no per-app file-type knowledge.
-    val toolbar = node.optString("toolbar")
+    // The formatting toolbar is server-driven: the spec composes it as data
+    // (an item array, SPEC §9 "Editor toolbars"), names a host-registered
+    // native one, or omits it — this renderer carries no per-app file-type
+    // knowledge either way.
+    val toolbarItems = node.optJSONArray("toolbar")
+    val toolbar = if (toolbarItems == null) node.optString("toolbar") else ""
 
     val specValue = node.optString("value", "")
     val state = remember(id) { TextFieldState(specValue) }
@@ -613,11 +616,16 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         }
         // Server-requested formatting toolbar — sits at the bottom of the
         // editor, just above the soft keyboard (keyboard-adjacent, à la
-        // Orgro). Toolbars are host-registered ([JetpacsToolbars]); the library
-        // ships none, and an unregistered name renders nothing — the same
-        // forward-compat rule as unknown widget nodes.
-        if (toolbar.isNotEmpty() && !readOnly) {
-            JetpacsToolbars.Render(toolbar, readValue, applyValue)
+        // Orgro). The array form is data the server composed, interpreted
+        // locally ([SduiToolbar]); the string form names a host-registered
+        // native toolbar ([JetpacsToolbars]) — the library ships none, and
+        // an unregistered name renders nothing, the same forward-compat rule
+        // as unknown widget nodes.
+        if (!readOnly) when {
+            toolbarItems != null ->
+                SduiToolbar(toolbarItems, readValue, applyValue, dispatch)
+            toolbar.isNotEmpty() ->
+                JetpacsToolbars.Render(toolbar, readValue, applyValue)
         }
     }
 }

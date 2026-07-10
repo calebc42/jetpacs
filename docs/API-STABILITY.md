@@ -47,7 +47,7 @@ Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip`
 `jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`
 `jetpacs-text-input` `jetpacs-enum-list` `jetpacs-date-button` `jetpacs-time-button`
-`jetpacs-editor`.
+`jetpacs-editor` `jetpacs-toolbar-item`.
 
 Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
 `jetpacs-draw-line` `jetpacs-draw-rect` `jetpacs-draw-circle` `jetpacs-draw-path`

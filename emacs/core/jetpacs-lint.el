@@ -56,6 +56,15 @@ companion gates on `jetpacs-node-supported-p' instead.")
 (defconst jetpacs-lint--color-attrs '(color bg)
   "Attributes whose value must be a hex string or a theme token.")
 
+(defconst jetpacs-lint--toolbar-ops '(snippet line on_tap menu)
+  "The op fields of an editor toolbar item — exactly one per item (SPEC §9).")
+
+(defconst jetpacs-lint--toolbar-placements '("cursor" "line-start" "block")
+  "Valid `placement' values on a toolbar snippet item.")
+
+(defconst jetpacs-lint--toolbar-line-ops '("promote" "demote" "move-up" "move-down")
+  "Valid builtin `line' op names on a toolbar item.")
+
 ;; ─── Shape predicates ────────────────────────────────────────────────────────
 
 (defun jetpacs-lint--alist-p (x)
@@ -117,6 +126,41 @@ recursion, not here."
     (funcall report path
              (format "%s has a non-serializable value: %S" key val))))
 
+(defun jetpacs-lint--check-toolbar-item (item path report &optional no-menu)
+  "Validate toolbar-item vocabulary for ITEM at PATH via REPORT (SPEC §9).
+Checks the closed op set — exactly one of snippet/line/on_tap/menu —
+and the placement/line enums, recursing into `menu' sub-items and
+`long_press' with NO-MENU set (menus don't nest).  Action shape and
+scalar serializability are the generic walk's job, not repeated here."
+  (if (not (jetpacs-lint--alist-p item))
+      (funcall report path (format "toolbar item must be an object: %S" item))
+    (let ((ops (cl-remove-if-not (lambda (k) (assq k item))
+                                 jetpacs-lint--toolbar-ops)))
+      (unless (= (length ops) 1)
+        (funcall report path
+                 (format "toolbar item needs exactly one of %s, has %s"
+                         jetpacs-lint--toolbar-ops (or ops "none"))))
+      (when (and no-menu (assq 'menu item))
+        (funcall report path "menu cannot nest inside menu or long_press"))
+      (when-let ((cell (assq 'placement item)))
+        (unless (member (cdr cell) jetpacs-lint--toolbar-placements)
+          (funcall report path (format "invalid placement: %S" (cdr cell))))
+        (unless (assq 'snippet item)
+          (funcall report path "placement is only valid with snippet")))
+      (when-let ((cell (assq 'line item)))
+        (unless (member (cdr cell) jetpacs-lint--toolbar-line-ops)
+          (funcall report path (format "invalid line op: %S" (cdr cell)))))
+      (when-let ((menu (cdr (assq 'menu item))))
+        (when (jetpacs-lint--node-seq-p menu)
+          (let ((i 0))
+            (dolist (sub (append menu nil))
+              (jetpacs-lint--check-toolbar-item sub (cons i (cons 'menu path))
+                                                report t)
+              (setq i (1+ i))))))
+      (when-let ((lp (cdr (assq 'long_press item))))
+        (jetpacs-lint--check-toolbar-item lp (cons 'long_press path)
+                                          report t)))))
+
 (defun jetpacs-lint--walk (node path report)
   "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
   (when (assq 't node)
@@ -129,6 +173,14 @@ recursion, not here."
        ((eq key 't) nil)
        ((memq key jetpacs-lint--action-keys)
         (jetpacs-lint--check-action val kpath report))
+       ;; An editor's data-driven toolbar: vocabulary checks per item, then
+       ;; the generic walk for actions and scalar serializability.
+       ((and (eq key 'toolbar) (jetpacs-lint--node-seq-p val))
+        (let ((i 0))
+          (dolist (item (append val nil))
+            (jetpacs-lint--check-toolbar-item item (cons i kpath) report)
+            (jetpacs-lint--walk item (cons i kpath) report)
+            (setq i (1+ i)))))
        ((jetpacs-lint--node-seq-p val)
         (let ((i 0))
           (dolist (child (append val nil))

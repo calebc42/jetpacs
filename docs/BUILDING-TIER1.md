@@ -168,11 +168,43 @@ it about a file type without the core learning anything:
 - `jetpacs-files-editor-body-functions` — return a replacement body for FILE
   (Glasspane returns its foldable org reader), or nil to keep the editor.
 - `jetpacs-files-editor-actions-functions` — add top-bar buttons for FILE.
-- `jetpacs-files-editor-toolbar-function` — name a keyboard toolbar the
-  companion should attach (`"org"` is the one the reference companion
-  ships).
+- `jetpacs-files-editor-toolbar-function` — return a keyboard toolbar the
+  companion should attach: a list of `jetpacs-toolbar-item`s (data the
+  companion interprets locally — no Kotlin, no Emacs round-trip per tap),
+  or a string naming a toolbar the host registered natively (the
+  reference companion registers none).
 - `jetpacs-files-open-hook` / `jetpacs-files-after-save-hook` — set per-type
   state on open; drop caches after a phone-side save.
+
+**Your own keyboard toolbar** is a few items (SPEC §9 "Editor
+toolbars"): each carries exactly one op — `:snippet` (local insertion
+with `${selection}`/`${cursor}`/`${input:Prompt}`/`${date}`/`${time}`
+placeholders and optional `:placement`), `:line` (builtin
+promote/demote/move-up/move-down), `:on-tap` (any action — the Emacs
+escape hatch), or `:menu` (a dropdown of sub-items):
+
+```elisp
+(defun my-md-toolbar ()
+  (list
+   (jetpacs-toolbar-item "format_bold" "B" :snippet "**${selection}**")
+   (jetpacs-toolbar-item "format_list_bulleted" "•"
+                      :snippet "- " :placement "line-start")
+   (jetpacs-toolbar-item "title" "H" :menu
+                      (list (jetpacs-toolbar-item nil "# H1"
+                                               :snippet "# " :placement "line-start")
+                            (jetpacs-toolbar-item nil "## H2"
+                                               :snippet "## " :placement "line-start")))
+   (jetpacs-toolbar-item "schedule" "TS" :snippet "${date}"
+                      :long-press (jetpacs-toolbar-item nil nil :snippet "${time}"))))
+
+(add-function :before-until jetpacs-files-editor-toolbar-function
+              (lambda (file)
+                (and (string-suffix-p ".md" file) (my-md-toolbar))))
+```
+
+`jetpacs-lint-spec` validates the item vocabulary in your tests, and the
+whole toolbar rides the ordinary `:toolbar` key of `jetpacs-editor`, so
+detail views outside the Files tab attach it the same way.
 
 ### 6. Settings
 

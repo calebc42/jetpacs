@@ -318,7 +318,9 @@ constructor, kept honest by the ERT suite. Summary by family:
   `date_button` / `time_button` (native pickers),
   `editor` (full editor: save/undo header, optional `syntax`, gutter
   `line_numbers`, `complete` for the completion strip, `chromeless`,
-  `publish_state`, and a server-chosen `toolbar` — `"org"` today).
+  `publish_state`, and a server-chosen `toolbar` — a string naming a
+  host-registered native toolbar, or an array of data-driven toolbar
+  items; see "Editor toolbars" below).
 - **Visualization** (the ladder): `chart` — data-driven, the client emits
   `series` of `points` and picks a `kind` (`line`/`bar`/`area`/`sparkline`);
   the companion draws it animated and theme-coloured, dispatching
@@ -335,6 +337,55 @@ constructor, kept honest by the ERT suite. Summary by family:
   `drawer_item`, `fab`.
 - **Notification specs** add `meta` (channel, ongoing, category, priority,
   `chronometer: {base_ms}`) above a body of content nodes.
+
+### Editor toolbars
+
+`editor`'s `toolbar` attribute is **string | array**:
+
+- **string** — the name of a host-registered native toolbar
+  (`JetpacsToolbars` in the companion; the Kotlin-alternative path per
+  the ladder doctrine, §9 visualization family). The library registers
+  none; an unknown name renders nothing.
+- **array of toolbar items** — the data-driven form. The companion
+  interprets the items locally (`SduiToolbar`); every op is one minimal
+  splice on the buffer = one undo step, no Emacs round-trip. Each item:
+
+  | key | value |
+  |---|---|
+  | `icon` | icon name for the chip |
+  | `label` | short chip label |
+  | `snippet` | *op:* text to insert (placeholders below) |
+  | `line` | *op:* builtin line op — `promote` \| `demote` \| `move-up` \| `move-down` |
+  | `on_tap` | *op:* an ordinary §5 action object — the Emacs escape hatch |
+  | `menu` | *op:* array of sub-items (`label` + exactly one of `snippet`/`line`/`on_tap`; menus don't nest) |
+  | `placement` | optional, `snippet` only: `cursor` (default) \| `line-start` \| `block` |
+  | `long_press` | optional secondary op: an object with exactly one of `snippet`/`line`/`on_tap` |
+
+  Exactly **one** op field (`snippet`/`line`/`on_tap`/`menu`) per item
+  (`jetpacs-lint` enforces).
+
+  **Snippet placeholders** (closed, companion-local):
+
+  | token | behavior |
+  |---|---|
+  | `${selection}` | replaced by the current selection; the result stays selected. With an empty selection the cursor lands there — so `*${selection}*` reproduces both wrap-selection branches |
+  | `${cursor}` | explicit final cursor position (wins over `${selection}`'s cursor rule) |
+  | `${input:Prompt}` | one companion-local free-text dialog titled *Prompt*; the entry substitutes in (e.g. a src-block language). Preset choices are the app's `menu` items, not this |
+  | `${date}` | `YYYY-MM-DD Day` (companion clock) |
+  | `${time}` | `HH:MM` |
+
+  Rules: unknown `${…}` tokens insert **literally** (visible, never
+  fatal). `line-start` placement inserts at the start of the cursor's
+  line and no-ops when the line already starts with the literal prefix
+  (dedupe). `block` placement inserts the snippet on its own line(s),
+  adding newlines around it as needed; without `${cursor}` the cursor
+  lands after the block. A snippet without `${selection}` inserts at the
+  cursor and leaves any selection's text alone.
+
+  **Forward compat:** the array form is additive. An old companion that
+  predates it treats the value as an unknown toolbar name and renders no
+  toolbar; it never crashes. Emit via `jetpacs-toolbar-item` /
+  `jetpacs-editor :toolbar` and lint with `jetpacs-lint-spec`.
 
 ## 10. Device capabilities (optional)
 

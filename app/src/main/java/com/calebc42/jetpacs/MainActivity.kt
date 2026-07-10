@@ -58,11 +58,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Glasspane's app opinion: the org keyboard toolbar. The :jetpacs
-        // renderer ships no toolbars; hosts register theirs by name.
-        JetpacsToolbars.register("org") { value, onValueChange ->
-            OrgEditToolbar(value = value, onValueChange = onValueChange)
-        }
+        // Editor toolbars are server-driven data (SPEC §9 "Editor toolbars"):
+        // the app's elisp composes the items. JetpacsToolbars remains as the
+        // native-alternative seam — a host that wants a Kotlin toolbar
+        // registers it here by name; this shell ships none.
         BridgeService.start(this)
         // savedInstanceState guard: a rotation must not re-fire the share.
         if (savedInstanceState == null) {

@@ -16,11 +16,13 @@ and everything above it is one replaceable opinion.
   covers every package built on it.
 - **Tier 1 — apps and skins.** Opinionated, curated experiences built on
   the core seams: the [Glasspane](https://github.com/calebc42/glasspane)
-  org app, the magit radial menu, the package browser (all in the
-  glasspane repo; this repo ships `jetpacs-hello.el` as the minimal
-  example). This tier is the replaceable part — the whole point of the
-  project is that you can write your own (see
-  [BUILDING-TIER1.md](BUILDING-TIER1.md)).
+  org app and the magit radial menu (in the glasspane repo; this repo
+  ships `jetpacs-hello.el` as the minimal example). This tier is the
+  replaceable part — the whole point of the project is that you can
+  write your own (see [BUILDING-TIER1.md](BUILDING-TIER1.md)). Two
+  Tier-1-shaped skins ship in the core itself — the package browser and
+  the customize browser — because they are chrome every app's user
+  needs, not app opinion.
 
 Input follows the same split: the **command palette** is the Tier 0
 default for raw keymaps (machine-made labels want live filtering); the
@@ -51,6 +53,8 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-settings.el` | schema-driven settings from `defcustom` metadata; registry = the allowlist |
 | `jetpacs-files.el` | file browser (a dired skin) + plain editor + content search, root-confined; app hooks for file types |
 | `jetpacs-emacs-ui.el` | buffers / eval REPL / *Messages* views, M-x, imenu section drill-in, message→toast mirror |
+| `jetpacs-package-browser.el` | stock package browser (the tablist worked example): search/status chips, install/delete, archive refresh |
+| `jetpacs-customize.el` | customize browser over the defgroup tree; `customize.set`/`.reset` gated on `custom-variable-p` (SPEC §5) |
 
 The core is org-free by contract; `test/core-load-test.el` loads only
 this directory and fails if an app feature or org itself sneaks in.
@@ -64,11 +68,12 @@ complete app (~60 commented lines: one view, one action, one tab, one
 The real Tier-1 apps live in the
 **[glasspane repo](https://github.com/calebc42/glasspane)** (split
 2026-07-09): the Glasspane org app plus the bundled reference apps —
-the package browser (the tablist worked example), the customize
-browser, the tools hub, the automations view, and the magit pie. Its
-README carries their module map. That repo is also the worked example
-of *shipping* a Tier 1: pure elisp, this repo as a git submodule, its
-own app-only bundle.
+the tools hub, the automations view, and the magit pie. Its README
+carries their module map. That repo is also the worked example of
+*shipping* a Tier 1: pure elisp, this repo as a git submodule, its own
+app-only bundle. (The package and customize browsers moved into
+`emacs/core/` 2026-07-10 — they are pure clients of core seams and
+every app's users need them.)
 
 ### The bundle
 

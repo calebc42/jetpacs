@@ -8,7 +8,8 @@
 ;; Output:
 ;;   jetpacs-core.el  — the Jetpacs foundation (emacs/core/): transport, shell,
 ;;                   generic renderers, minibuffer bridge, editor
-;;                   sync/completion, settings machinery.  What a third-party
+;;                   sync/completion, settings machinery, and the stock
+;;                   package/customize browsers.  What a third-party
 ;;                   Tier 1 (the Glasspane app in its own repo, and others)
 ;;                   depends on.  The Glasspane app bundle is built by the
 ;;                   glasspane repo's own build-bundle.el, which requires this.
@@ -44,7 +45,9 @@
                      "core/jetpacs-settings.el"
                      "core/jetpacs-files.el"
                      "core/jetpacs-witheditor.el"
-                     "core/jetpacs-emacs-ui.el"))
+                     "core/jetpacs-emacs-ui.el"
+                     "core/jetpacs-package-browser.el"
+                     "core/jetpacs-customize.el"))
        (emit (lambda (out features summary files)
                (with-temp-file out
                  (insert (format ";;; %s --- %s -*- lexical-binding: t; -*-\n"

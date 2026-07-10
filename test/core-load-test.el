@@ -19,11 +19,11 @@
                    jetpacs-device jetpacs-minibuffer jetpacs-buffer jetpacs-shell
                    jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-transient
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
-                   jetpacs-files jetpacs-witheditor jetpacs-emacs-ui))
+                   jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
+                   jetpacs-package-browser jetpacs-customize))
   (require feature))
 
-(dolist (feature '(glasspane glasspane-ui glasspane-org jetpacs-magit
-                   jetpacs-package-browser))
+(dolist (feature '(glasspane glasspane-ui glasspane-org jetpacs-magit))
   (when (featurep feature)
     (error "Core pulled in app feature %s" feature)))
 
@@ -38,6 +38,8 @@
   (error "Shell has no files view"))
 (unless (assoc "eval" jetpacs-shell-views)
   (error "Shell has no eval view"))
+(unless (assoc "customize" jetpacs-shell-views)
+  (error "Shell has no customize view"))
 
 (message "Jetpacs core loads standalone: OK")
 

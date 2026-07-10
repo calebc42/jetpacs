@@ -66,8 +66,8 @@ Anything derived from `tabulated-list-mode` already renders as sortable
 cards. To specialize without replacing the walk, set entries in the three
 hook alists — header (filters, bulk actions), row (custom card), filter
 (which rows show). **The worked example is
-[`jetpacs-package-browser.el`](https://github.com/calebc42/glasspane/blob/main/emacs/apps/jetpacs-package-browser.el)**
-(in the glasspane repo, where the reference apps live): ~230 lines that
+[`jetpacs-package-browser.el`](../emacs/core/jetpacs-package-browser.el)**
+(it ships in the core as stock chrome): ~230 lines that
 turn the stock package menu into a searchable browser with
 install/delete — read it top to bottom, it demonstrates every hook plus
 the action rules below.

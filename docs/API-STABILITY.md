@@ -16,7 +16,7 @@ change signature incompatibly. Everything else is internal.
 
 1. **`--` means internal.** Any symbol with a double dash after the
    package prefix (`jetpacs--node`, `jetpacs-shell--schedule-repush`,
-   `glasspane-org--query`) is private: no stability promise, may change or
+   `jetpacs-lint--walk`) is private: no stability promise, may change or
    vanish in any release. Do not call it from a Tier 1. If you find
    yourself needing one, that is a bug report ("promote X to public"), not
    a dependency.

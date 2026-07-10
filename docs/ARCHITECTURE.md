@@ -15,9 +15,11 @@ and everything above it is one replaceable opinion.
   `transient` (layouts of infixes/suffixes). One renderer per framework
   covers every package built on it.
 - **Tier 1 — apps and skins.** Opinionated, curated experiences built on
-  the core seams: the Glasspane org app, the magit radial menu, the
-  package browser. This tier is the replaceable part — the whole point of
-  the project is that you can write your own (see
+  the core seams: the [Glasspane](https://github.com/calebc42/glasspane)
+  org app, the magit radial menu, the package browser (all in the
+  glasspane repo; this repo ships `jetpacs-hello.el` as the minimal
+  example). This tier is the replaceable part — the whole point of the
+  project is that you can write your own (see
   [BUILDING-TIER1.md](BUILDING-TIER1.md)).
 
 Input follows the same split: the **command palette** is the Tier 0
@@ -55,30 +57,25 @@ this directory and fails if an app feature or org itself sneaks in.
 
 ### `emacs/apps/` — Tier 1
 
-| module | role |
-|---|---|
-| `glasspane/glasspane-org.el` | org data extraction (agenda/tasks/clock/search), memoised behind `glasspane-org-cache-invalidate` |
-| `glasspane/glasspane-org-rich.el` | org → styled `rich_text` spans via `org-element` |
-| `glasspane/glasspane-org-reader.el` | foldable org outline → `collapsible` trees |
-| `glasspane/glasspane-clock.el` | org-clock chronometer notification |
-| `glasspane/glasspane-ui.el` | the org app: agenda/tasks/clock/search/detail/settings views + heading actions + capture + the read-mode sparse filter |
-| `glasspane/glasspane-journal.el` | daily-note landing surface: datetree journal tab, capture row, carried-over reschedule |
-| `glasspane/glasspane-views.el` | saved org-ql queries as views: table/board/calendar renderings over `glasspane-org--query` |
-| `glasspane/glasspane-automations.el` | automations as literate org: automations.org headings → trigger registrations (DONE = disabled) |
-| `glasspane/glasspane-notes.el` | vulpea bridge: `[[` wikilink capf in phone-editor shadows, detail-view backlinks + on-demand unlinked mentions, `link.materialize` |
-| `glasspane/glasspane-demo.el` | the mobile-IDE tour files |
-| `glasspane/glasspane.el` | aggregate entry point: `(require 'glasspane)` |
-| `jetpacs-magit.el` | curated magit radial menu (pure data + key dispatch) |
-| `jetpacs-package-browser.el` | package-menu skin for the tablist renderer — the worked example |
-| `jetpacs-customize.el` | customize browser: the defgroup tree + `custom-type` schemas as native controls (gate: `custom-variable-p`) |
-| `jetpacs-tools.el` | tools hub: bookmark/process/timer entry points (free via the tablist renderer), kill-ring browser, `M-x shell` entry |
-| `jetpacs-automations.el` | device-trigger management view (enable switches, last-fired, test-fire) over core jetpacs-triggers.el; settings-link satellite |
+This repo ships exactly one Tier 1: `jetpacs-hello.el`, the smallest
+complete app (~60 commented lines: one view, one action, one tab, one
+`jetpacs-defapp`), written to be loaded into a live session and mutated.
 
-### Bundles
+The real Tier-1 apps live in the
+**[glasspane repo](https://github.com/calebc42/glasspane)** (split
+2026-07-09): the Glasspane org app plus the bundled reference apps —
+the package browser (the tablist worked example), the customize
+browser, the tools hub, the automations view, and the magit pie. Its
+README carries their module map. That repo is also the worked example
+of *shipping* a Tier 1: pure elisp, this repo as a git submodule, its
+own app-only bundle.
 
-`emacs/build-bundle.el` emits two single-file bundles at the repo root:
-**`jetpacs-core.el`** (the foundation only — what a third-party Tier 1
-depends on) and **`glasspane.el`** (core + reference apps).
+### The bundle
+
+`emacs/build-bundle.el` emits one single-file bundle at the repo root:
+**`jetpacs-core.el`** — the foundation, what a third-party Tier 1
+depends on. App repos build their own bundles that open with
+`(require 'jetpacs-core)` (see Glasspane's `build-bundle.el`).
 
 ## Android side: two Gradle modules
 
@@ -103,10 +100,13 @@ SPEC §11), the widget providers + tile slots, `RadialMenu` /
 plus their manifest entries, permissions, and widget resources, which
 merge into any host app.
 
-**`app/` — the Glasspane shell**: `MainActivity` (pairing screen,
-dashboard host, share/widget trampoline), `CaptureTileService`,
-`OrgEditToolbar`, theme/branding, and string overrides that rebrand the
-library's host-neutral defaults (app resources win the merge).
+**`app/` — the reference companion shell** (Glasspane-branded today):
+`MainActivity` (pairing screen, dashboard host, share/widget
+trampoline), `CaptureTileService`, `OrgEditToolbar`, theme/branding, and
+string overrides that rebrand the library's host-neutral defaults (app
+resources win the merge). A third-party companion is this module
+re-imagined: depend on `:jetpacs`, provide your own identity, register
+your own toolbars.
 
 **The two seams that keep the library host-agnostic** (the rule: the
 library names no host class):

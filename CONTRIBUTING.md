@@ -16,6 +16,17 @@ signed-socket transport, more worked Tier 1 examples, and anything on
 queue, and its plan documents (`docs/PLAN-*.md`) break each item into
 self-contained tasks with files, pitfalls, and acceptance criteria.
 
+**Writing another companion?** [docs/SPEC.md](docs/SPEC.md) is the whole
+contract, and this repo hands you executable conformance fixtures for
+free: `test/widgets.golden` pins the exact JSON of every node the elisp
+side can emit, and `test/frames.golden` pins the trigger/capability
+frame payloads — parse them in your renderer's test suite and you are
+testing against the same truth the reference companion is held to.
+Unknown-node/unknown-attr tolerance (SPEC §12) is the only behavior we
+will insist on. The spec is an interface anyone may implement; a
+clean-room companion carries no license obligation from this repo (see
+README §License).
+
 If you build on the extension seams and something is missing or leaky,
 that's a bug in the foundation — file it as one.
 
@@ -46,7 +57,7 @@ emacs -Q --batch -l test/jetpacs-primitives-test.el -f ert-run-tests-batch-and-e
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly these, plus a check that
-the generated bundles are current.
+the generated `jetpacs-core.el` bundle is current.
 
 ## The standing rules
 
@@ -79,10 +90,12 @@ however good the feature.
    additive — unknown kinds/attrs are ignored, never fatal. If the
    Kotlin counterpart can't land in the same PR, the elisp side must
    degrade cleanly without it.
-6. **Org case conventions.** Keywords, blocks, and drawers are
-   recognized case-insensitively (bind `case-fold-search` explicitly);
-   TODO keywords and tags are case-sensitive; display preserves file
-   case. Every new org-syntax regex ships with a case test.
+6. **Org case conventions** *(applies to app repos — the core is
+   org-free, but the rule is ecosystem-wide, so it lives here too).*
+   Keywords, blocks, and drawers are recognized case-insensitively
+   (bind `case-fold-search` explicitly); TODO keywords and tags are
+   case-sensitive; display preserves file case. Every new org-syntax
+   regex ships with a case test.
 7. **The cache contract.** App views may memoise expensive extraction;
    every mutation path must invalidate — directly in the action handler,
    plus the shell's refresh hook for pull-to-refresh and queue drains.

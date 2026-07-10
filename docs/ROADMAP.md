@@ -1,14 +1,20 @@
 # Roadmap: unified prioritization across all plans
 
-**STATUS (2026-07-05): current.** This is the cross-plan ordering; the
-task bodies live in their plan docs. When this doc and a plan's
-internal sequencing disagree, **this doc wins** (the two deliberate
-overrides are marked ⚠ and justified inline).
+**STATUS (2026-07-09): spans both repos.** Written in the monorepo era;
+with the repo split the app-level horizons (the PKM/AUTO feature work
+in H3–H5) now belong to the
+[glasspane repo](https://github.com/calebc42/glasspane), which holds
+their plan documents. This repo's own queue is the foundation work:
+hardening follow-ups, the signed-socket transport, a second companion,
+MELPA packaging. The cross-plan ordering below is kept for context;
+when this doc and a plan's internal sequencing disagree, **this doc
+wins** (the two deliberate overrides are marked ⚠ and justified
+inline).
 
 Task references:
 - **PRIM n** — [PLAN-primitive-completeness.md](PLAN-primitive-completeness.md) (all phases done; residue only)
-- **AUTO n** — [PLAN-automation-and-launcher.md](PLAN-automation-and-launcher.md) (Tasks 1–13 + 14–19 = launcher track)
-- **PKM n** — [PLAN-pkm-conversion.md](PLAN-pkm-conversion.md) (Tasks 1–15 conversion, 16–18 KMP)
+- **AUTO n** — [PLAN-automation-and-launcher.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-automation-and-launcher.md) (glasspane repo; Tasks 1–13 + 14–19 = launcher track)
+- **PKM n** — [PLAN-pkm-conversion.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-pkm-conversion.md) (glasspane repo; Tasks 1–15 conversion, 16–18 KMP)
 - **ORGRO: item** — the orgro-parity backlog (LaTeX, sparse filter,
   org-crypt, org-protocol, link nav, timestamp tap-edit)
 
@@ -84,7 +90,9 @@ power + a time trigger) active; expectation is ≈0 delta over the
 existing FGS. H3 landed ahead of the measurement because the user was
 away from hardware and H3 is elisp-side value; the gate still blocks
 H4's heavier device integration. Protocol + the full pending
-acceptance list: [TESTING-ON-DEVICE.md](TESTING-ON-DEVICE.md).
+acceptance list:
+[TESTING-ON-DEVICE.md](https://github.com/calebc42/glasspane/blob/main/docs/TESTING-ON-DEVICE.md)
+(glasspane repo).
 
 ## Horizon 3 — daily-driver org value (self-serving PKM + orgro absorption)
 

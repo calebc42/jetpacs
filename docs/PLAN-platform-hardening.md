@@ -1,9 +1,14 @@
 # Plan: platform hardening — make jetpacs-core a foundation others build on
 
-**STATUS (2026-07-07): Phases A–E DONE; only Phase F (repo split) remains.**
-Produced from an audit of `emacs/core/`,
-`jetpacs/src/main/java/com/calebc42/jetpacs/` (the `:jetpacs` renderer),
-`test/widgets.golden`, and the existing plan docs.
+**STATUS (2026-07-09): ALL PHASES DONE — this plan is complete.** Phase F
+(the repo split) executed 2026-07-09: this repo is the standalone
+jetpacs foundation + companion; Glasspane lives in
+[its own repo](https://github.com/calebc42/glasspane) (pure elisp,
+vendoring this repo as a submodule; test partition 63 core / 72 app).
+The eabp → jetpacs rename landed the same day. Retained as the record
+of how the platform was hardened. Originally produced from an audit of
+`emacs/core/`, `jetpacs/src/main/java/com/calebc42/jetpacs/` (the
+`:jetpacs` renderer), `test/widgets.golden`, and the existing plan docs.
 
 **VERIFIED (2026-07-09):** full suite green on Emacs 30.1 — 135/135 main +
 54/54 primitives, core-isolation guard OK, bundles current. The "5

@@ -2,13 +2,40 @@
 
 The core (`jetpacs-core.el`) is deliberately unopinionated: it will render
 any buffer, palette any keymap, and bridge any prompt — but it has no
-idea what *your* workflow looks like. That layer is yours. Glasspane (the
-org app in `emacs/apps/glasspane/`) is one opinion; this guide is the map
-for writing another, at whatever size fits: a single buffer skin, a
-curated pie menu, or a full app with its own tabs.
+idea what *your* workflow looks like. That layer is yours.
+[Glasspane](https://github.com/calebc42/glasspane) (the org app, in its
+own repo) is one opinion; this guide is the map for writing another, at
+whatever size fits: a single buffer skin, a curated pie menu, or a full
+app with its own tabs.
 
 Everything below assumes `(require 'jetpacs-emacs-ui)` or the `jetpacs-core.el`
 bundle is loaded. Nothing here requires Glasspane.
+
+## Zero to Hello (five minutes)
+
+Prove the loop before reading further — a Tier 1 is developed *live*
+against a running phone, and feeling that loop is the best argument for
+building one:
+
+1. Install the companion APK and pair, per the
+   [README](../README.md#getting-started). Load `jetpacs-core.el` only —
+   no app.
+2. The phone shows the core tabs (Files / Eval / Tools). From **the
+   phone's own Eval tab** — or any Emacs REPL — evaluate:
+
+   ```elisp
+   (load "/path/to/jetpacs/emacs/apps/jetpacs-hello.el")
+   ```
+
+3. A **Hello** tab appears in the bottom bar, without a restart or an
+   explicit push. Open [`jetpacs-hello.el`](../emacs/apps/jetpacs-hello.el)
+   (~60 lines, heavily commented), change the card text, re-evaluate —
+   the phone follows.
+
+That file demonstrates the whole shape of a Tier 1: a view builder made
+of widget constructors, one allowlisted action, a tab registration, and
+an app identity. Everything else in this guide is that pattern at
+larger sizes.
 
 ## The extension surfaces, smallest first
 
@@ -39,10 +66,11 @@ Anything derived from `tabulated-list-mode` already renders as sortable
 cards. To specialize without replacing the walk, set entries in the three
 hook alists — header (filters, bulk actions), row (custom card), filter
 (which rows show). **The worked example is
-[`emacs/apps/jetpacs-package-browser.el`](../emacs/apps/jetpacs-package-browser.el)**:
-~230 lines that turn the stock package menu into a searchable browser
-with install/delete — read it top to bottom, it demonstrates every hook
-plus the action rules below.
+[`jetpacs-package-browser.el`](https://github.com/calebc42/glasspane/blob/main/emacs/apps/jetpacs-package-browser.el)**
+(in the glasspane repo, where the reference apps live): ~230 lines that
+turn the stock package menu into a searchable browser with
+install/delete — read it top to bottom, it demonstrates every hook plus
+the action rules below.
 
 ### 3. A curated pie menu
 
@@ -50,8 +78,9 @@ The command palette is the Tier 0 default for raw keymaps; the radial pie
 is reserved for menus with human-written labels and ≤ ~10 items. Live
 transient sessions get a pie automatically (jetpacs-keymap syncs it); for a
 hand-curated pie over a mode, see
-[`emacs/apps/jetpacs-magit.el`](../emacs/apps/jetpacs-magit.el) — pure data
-plus key dispatch through the existing allowlisted action.
+[`jetpacs-magit.el`](https://github.com/calebc42/glasspane/blob/main/emacs/apps/jetpacs-magit.el)
+(glasspane repo) — pure data plus key dispatch through the existing
+allowlisted action.
 
 ### 4. Shell views — your own tabs
 
@@ -204,4 +233,14 @@ A Tier 1 is an ordinary Emacs package that requires the core features it
 uses. Users load `jetpacs-core.el` (or the individual `emacs/core/` files)
 plus your package. If you want a single-file artifact, mimic
 `emacs/build-bundle.el` — concatenation in dependency order is the whole
-trick.
+trick. Glasspane's own
+[`build-bundle.el`](https://github.com/calebc42/glasspane/blob/main/emacs/build-bundle.el)
+is the worked example of an *app* bundle: app sources only, opening with
+`(require 'jetpacs-core)` instead of inlining the core.
+
+Distributing your app as its own repo? Copy Glasspane's shape wholesale —
+it vendors this repo as a git submodule for its load-path and CI, keeps
+zero Kotlin, and its
+[workflow](https://github.com/calebc42/glasspane/blob/main/.github/workflows/ci.yml)
+runs ERT against the submodule core with `submodules: recursive`. That
+whole repo exists to be copied from.

@@ -30,12 +30,12 @@ jobs:
       - name: Primitives ERT suite
         run: emacs -Q --batch -l test/jetpacs-primitives-test.el -f ert-run-tests-batch-and-exit
 
-      # Root jetpacs-core.el / glasspane.el are generated; a PR that edits
-      # emacs/ sources must ship regenerated bundles (CONTRIBUTING rule 4).
-      - name: Bundles are current
+      # Root jetpacs-core.el is generated; a PR that edits emacs/ sources
+      # must ship the regenerated bundle (CONTRIBUTING rule 4).
+      - name: Bundle is current
         run: |
           emacs --batch -l emacs/build-bundle.el
-          git diff --exit-code jetpacs-core.el glasspane.el
+          git diff --exit-code jetpacs-core.el
 
   android:
     name: Android (:jetpacs + :app)

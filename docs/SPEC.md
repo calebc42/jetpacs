@@ -319,7 +319,15 @@ constructor, kept honest by the ERT suite. Summary by family:
   card springs back (the server answers with the updated list); they
   supersede the legacy single-action `on_swipe`, and because an old
   companion renders no gesture, a swipe action must also be reachable
-  by tap or menu.
+  by tap or menu. `tabs` — an intra-view tab row over swipeable pages:
+  parallel `items` (`{label, icon?}`) and `children` (the pages),
+  `initial` index, `scrollable` for many tabs, `pager_only` to drop the
+  row for pure swipe-through content (e.g. flashcard review). Switching
+  is companion-local (the `view.switch` philosophy); optional
+  `on_change` dispatches with the settled page index injected as
+  `value`. An additive node — negotiate via `node_types` (§3); a
+  companion that predates it stacks the pages, so the documented
+  fallback is a chip row plus the selected child.
   `table` (org-table grid: `rows` of span-bearing `cells`, plus `rule`
   rows for hlines and `header` rows rendered emphasized; per-column
   `aligns` of `start`/`center`/`end`; columns size to their widest cell

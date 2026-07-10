@@ -40,9 +40,10 @@ Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 `jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-border`
 `jetpacs-lazy-column` `jetpacs-scroll-here` `jetpacs-spacer` `jetpacs-collapsible`
 `jetpacs-reorderable-list` `jetpacs-table` `jetpacs-table-row` `jetpacs-table-rule`
-`jetpacs-table-cell` `jetpacs-swipe-action`. (`row`/`column`/`flow-row` take
-trailing `:spacing`/`:align`/`:scroll` keywords; `box`/`surface`/`card`
-take `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
+`jetpacs-table-cell` `jetpacs-swipe-action` `jetpacs-tabs` `jetpacs-tab-item`.
+(`row`/`column`/`flow-row` take trailing `:spacing`/`:align`/`:scroll`
+keywords; `box`/`surface`/`card` take
+`:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
 `:swipe-start`/`:swipe-end`.)
 
 Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip`

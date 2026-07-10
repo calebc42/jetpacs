@@ -102,7 +102,7 @@ val SDUI_NODE_TYPES: Set<String> = setOf(
     // Layout containers
     "column", "row", "box", "surface", "card", "collapsible",
     "lazy_column", "flow_row", "divider", "spacer", "scaffold",
-    "reorderable_list", "table",
+    "reorderable_list", "table", "tabs",
     // Content
     "text", "rich_text", "date_stamp", "menu", "section_header",
     "empty_state", "icon", "image", "progress",
@@ -318,6 +318,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         }
         "collapsible" -> {
             SduiCollapsible(node, surfaceId, revision, baseModifier, dispatch)
+        }
+        "tabs" -> {
+            SduiTabs(node, surfaceId, revision, baseModifier, dispatch)
         }
         "lazy_column" -> {
             val children = node.optJSONArray("children")

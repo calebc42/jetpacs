@@ -763,7 +763,12 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
      (jetpacs-toolbar-item "code" "Src"
                         :snippet "#+begin_src ${input:Language}\n${cursor}\n#+end_src"
                         :placement "block"
-                        :long-press (jetpacs-toolbar-item nil nil :line "promote")))))
+                        :long-press (jetpacs-toolbar-item nil nil :line "promote"))
+     ;; Intra-view tabs over swipeable pages
+     (jetpacs-tabs (list (jetpacs-tab-item "Day" :icon "event")
+                      (jetpacs-tab-item "Week"))
+                (list leaf leaf)
+                :initial 1 :scrollable t :on-change act))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))

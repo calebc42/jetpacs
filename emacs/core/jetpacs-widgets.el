@@ -235,6 +235,31 @@ revealed background (hex; defaults to a theme container color)."
               'on_trigger action
               'color color))
 
+(cl-defun jetpacs-tab-item (label &key icon)
+  "One tab in a `jetpacs-tabs' row: LABEL with an optional ICON above it."
+  (jetpacs--node nil 'label label 'icon icon))
+
+(cl-defun jetpacs-tabs (items children &key initial scrollable pager-only
+                              on-change)
+  "An intra-view tab row over swipeable pages (SPEC §9 `tabs').
+ITEMS (from `jetpacs-tab-item') label the tabs; CHILDREN is the
+same-length list of page nodes.  Switching — tab tap or horizontal
+swipe — is companion-local and never round-trips, the `view.switch'
+philosophy; ON-CHANGE optionally dispatches on a settled page change
+with the new index injected into args as `value'.  INITIAL picks the
+starting page; SCROLLABLE lets many tabs pan instead of cramming;
+PAGER-ONLY drops the tab row entirely for pure swipe-through content
+\(flashcard review).  A companion that predates the node stacks all
+pages — gate on `jetpacs-node-supported-p' and fall back to a chip row
+plus the selected child."
+  (jetpacs--node "tabs"
+              'items (vconcat items)
+              'children (vconcat children)
+              'initial initial
+              'scrollable (and scrollable t)
+              'pager_only (and pager-only t)
+              'on_change on-change))
+
 (cl-defun jetpacs-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.
 HEADER is the always-visible node shown next to the chevron; CHILDREN

@@ -1,34 +1,26 @@
-;;; init.el --- Glasspane starter configuration -*- lexical-binding: t; -*-
+;;; init.el --- Jetpacs starter configuration -*- lexical-binding: t; -*-
 
-;; A minimal init for running Emacs with the Glasspane companion app on
+;; A minimal init for running Emacs with the Jetpacs companion app on
 ;; Android.  Copy it to ~/.emacs.d/init.el on the device (or use it as
-;; the seed for your own config).  Everything works with built-in Emacs
-;; alone; the two external packages (org-ql for the search tab, vulpea
-;; for backlinks and note completion) install themselves on the first
-;; launch with a network connection and are skipped gracefully offline —
-;; startup never breaks either way.
+;; the seed for your own config).  It sets up the foundation only:
+;; loading the core bundle, pairing, and phone ergonomics.  Everything
+;; works with built-in Emacs alone.
 ;;
-;; How the pieces divide:
-;;   - This file: getting the bundle loaded, pairing, phone basics.
-;;   - ~/.emacs.d/elisp/glasspane/: Glasspane's own opinionated org
-;;     defaults (capture templates, agenda wiring, babel languages),
-;;     written and kept current BY THE APP.  Don't edit those files —
-;;     anything you set here, after the (require 'glasspane) line, wins.
-;;   - M-x customize (saved to custom.el): settings changed from the
-;;     phone's Settings screen land here.
+;; Apps (Glasspane, orgzly-native, your own) ship as single .el bundles
+;; from their own projects.  To install one: download its bundle (your
+;; browser saves to Download), add its file name to the list below, add
+;; its `require', restart Emacs.  Each app's own starter init (in its
+;; repo) is the fuller alternative to this file.
 
-;;; ── The bundles: jetpacs core + the Glasspane app ────────────────────
-;; Two single-file bundles live in ~/.emacs.d/elisp/: jetpacs-core.el
-;; (the foundation) and glasspane.el (the org app — it `require's the
-;; core rather than inlining it, so both must be present).  Newer staged
-;; copies are adopted automatically at startup: the companion app's
-;; onboarding writes them to /sdcard/Documents, and the deploy scripts
-;; (a dev machine) stage to /sdcard/Download.  Both slots are checked
-;; and the most-recent copy wins, so either delivery path just works —
-;; and any other Tier-1 bundle you add to the list is adopted the same
-;; way.
+;;; ── The Jetpacs core bundle ──────────────────────────────────────────
+;; jetpacs-core.el lives at ~/.emacs.d/elisp/.  A newer staged copy is
+;; adopted automatically at startup: the companion app's onboarding
+;; writes it to /sdcard/Documents, the deploy scripts (a dev machine)
+;; stage to /sdcard/Download, and a browser download also lands in
+;; Download.  Both slots are checked and the most-recent copy wins —
+;; and every app bundle you add to the list is adopted the same way.
 (add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
-(dolist (bundle '("jetpacs-core.el" "glasspane.el"))
+(dolist (bundle '("jetpacs-core.el"))   ; add app bundles: "glasspane.el" …
   (let ((staged (seq-filter #'file-readable-p
                             (list (concat "/sdcard/Documents/" bundle)
                                   (concat "/sdcard/Download/" bundle))))
@@ -41,17 +33,13 @@
         (copy-file s installed t)
         (message "%s: adopted new bundle from %s"
                  bundle (file-name-directory s))))))
-(require 'glasspane)  ; pulls in jetpacs-core from the same directory
-
-;; First run writes Glasspane's managed org defaults into
-;; ~/.emacs.d/elisp/glasspane/ and loads them; later runs just load.
-;; Refresh them after an app update with M-x glasspane-config-sync.
-(glasspane-config-ensure)
+(require 'jetpacs-core)
+;; (require 'glasspane)  ; after adding its bundle to the list above
 
 ;;; ── Pairing ──────────────────────────────────────────────────────────
-;; Open the Glasspane app: its "Waiting for Emacs" screen shows a
-;; one-line (setq jetpacs-auth-token "...") — tap it to copy, then paste
-;; it below and restart Emacs (or eval the line).
+;; Open the Jetpacs app: its pairing screen shows a one-line
+;; (setq jetpacs-auth-token "...") — tap it to copy, then paste it below
+;; and restart Emacs (or eval the line).
 ;;
 ;; (setq jetpacs-auth-token "PASTE-YOUR-PAIRING-LINE-HERE")
 
@@ -80,9 +68,8 @@
   (global-set-key (kbd "<volume-down>") #'scroll-up-command))
 
 ;;; ── File hygiene ─────────────────────────────────────────────────────
-;; Keep clutter out of your org directory: backups and auto-saves in
-;; one place, no lock files (single-user device), auto-revert so edits
-;; from the phone appear in open buffers.
+;; Backups and auto-saves in one place, no lock files (single-user
+;; device), auto-revert so external edits appear in open buffers.
 (setq backup-directory-alist
       `(("." . ,(expand-file-name "backups/" user-emacs-directory)))
       backup-by-copying t
@@ -97,54 +84,11 @@
 (savehist-mode 1)
 (recentf-mode 1)
 
-;;; ── External packages: org-ql, vulpea, org-srs ───────────────────────
-;; All optional, all degrade cleanly:
-;;   - org-ql: the search tab understands the common queries on its own
-;;     (todo:/tags:/priority: tokens, free text, and sexps like
-;;     (and (todo "TODO") (tags "work"))); installing org-ql unlocks the
-;;     rest of the language — ts/clocked/property comparators and friends.
-;;   - vulpea (v2+): the note database behind backlinks, unlinked
-;;     mentions, and [[ note completion in the phone editor.  Without it
-;;     those sections simply don't appear.
-;;   - org-srs: spaced repetition (FSRS) behind the Review screen and
-;;     the detail view's "Make flashcard".  Without it the Review drawer
-;;     entry simply doesn't exist.
-;; Installs are attempted once per launch until they succeed; with no
-;; network nothing breaks.
-(require 'package)
-(add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
-(package-initialize)
-(dolist (pkg '(org-ql vulpea org-srs))
-  (unless (package-installed-p pkg)
-    (condition-case err
-        (progn
-          (unless package-archive-contents
-            (package-refresh-contents))
-          (package-install pkg))
-      (error (message "starter-init: %s install deferred (%s)"
-                      pkg (error-message-string err))))))
-(require 'org-ql nil t)
-
-;;; ── Notes database: vulpea ───────────────────────────────────────────
-;; vulpea keeps a SQLite index of the vault (titles, aliases, links) and
-;; watches `org-directory' for changes — including external ones from
-;; git or Syncthing.  Glasspane reads it for the detail view's backlinks
-;; and the editor's [[ completion; index updates stay off the save path.
-(when (require 'vulpea nil t)
-  (setq vulpea-db-sync-directories (list org-directory))
-  (vulpea-db-autosync-mode 1))
-
-;;; ── Spaced repetition: org-srs ───────────────────────────────────────
-;; The command-style confirm is what makes phone-driven review work (the
-;; default reads a key), and it is upstream's own recommendation for
-;; Emacs on Android.  The Review screen also binds it defensively.
-(when (require 'org-srs nil t)
-  (setq org-srs-item-confirm #'org-srs-item-confirm-command))
-
-;;; ── Try the demo ─────────────────────────────────────────────────────
-;; M-x glasspane-demo-setup-org writes a sample org corpus (tables,
-;; babel, LaTeX, agenda data, flashcards) into ~/org — note it
-;; overwrites the seven demo file names if they already exist.  With
-;; org-srs installed the flashcards register as live review items.
+;;; ── Try the hello demo ───────────────────────────────────────────────
+;; If the onboarding installed jetpacs-hello.el, evaluate this from the
+;; phone's Eval tab (or any REPL) on a connected session and watch a
+;; Hello tab appear live:
+;;
+;;   (load "/sdcard/Documents/jetpacs-hello.el")
 
 ;;; init.el ends here

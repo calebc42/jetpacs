@@ -327,7 +327,7 @@ private fun actionIntent(context: Context, action: JSONObject, revision: Int): I
 private const val DEFAULT_PAIR_INSTRUCTIONS =
     "The bridge is listening. Pair Emacs (on this device) by adding the " +
         "line below to your init, then:\n\n" +
-        "    (require 'glasspane)\n" +
+        "    (require 'jetpacs-core)\n" +
         "    M-x jetpacs-connect\n\n" +
         "Watch *Messages* for \"Jetpacs: handshake ok\". This screen updates " +
         "automatically once the handshake completes."

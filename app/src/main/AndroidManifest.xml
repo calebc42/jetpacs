@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Glasspane shell manifest: app identity only. The Jetpacs components
-     (bridge service, action plumbing, widgets, tiles, reminders) and their
-     permissions merge in from the :jetpacs library manifest. -->
+<!-- Reference companion shell manifest: app identity only. The Jetpacs
+     components (bridge service, action plumbing, widgets, tiles, reminders)
+     and their permissions merge in from the :jetpacs library manifest. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Onboarding writes glasspane.el into /sdcard/Documents. On API 29+
+    <!-- Onboarding writes jetpacs-core.el into /sdcard/Documents. On API 29+
          that goes through MediaStore (no permission needed); this covers the
          legacy direct-file path on API 24-28 only. -->
     <uses-permission

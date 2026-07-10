@@ -69,8 +69,13 @@ import java.io.File
  *
  *   - the small init snippets go on the clipboard to paste (well under the
  *     Android clipboard ceiling);
- *   - the 827 KB glasspane.el bundle (clipboard is hopeless) is written to
- *     /sdcard/Documents, the slot the starter init.el already adopts from.
+ *   - the jetpacs-core.el bundle (clipboard is hopeless) is written to
+ *     /sdcard/Documents, the slot the starter init.el adopts from.
+ *
+ * The companion onboards for the FOUNDATION only. Tier-1 apps (Glasspane,
+ * orgzly-native, yours) distribute their own single-file bundles from their
+ * own repos; the wizard explains the generic install path (download → the
+ * init's adopt list) without shipping or naming any app.
  */
 private enum class OnbStep { WELCOME, TERMUX, DELIVER, PAIR }
 
@@ -102,26 +107,25 @@ private const val EARLY_INIT_SNIPPET = """;; 1. REDIRECT HOME TO TERMUX
 """
 
 /** Minimal bootstrap for a user keeping their own init — just the essentials. */
-private fun byoSnippet(token: String): String = """;; Glasspane companion bootstrap — add to your own init.el.
+private fun byoSnippet(token: String): String = """;; Jetpacs companion bootstrap — add to your own init.el.
 ;;
-;; Optional packages that unlock Glasspane features — install them with your
-;; own package manager (MELPA). Each feature degrades to absent when missing,
-;; so none are required to pair:
-;;   org-ql   — saved queries as table / board / calendar views
-;;   org-srs  — spaced-repetition review
-;;   vulpea   — wikilink autocomplete, backlinks & unlinked mentions
+;; Adopts staged bundles from shared storage (this app installs
+;; jetpacs-core.el there; app bundles you download land in Download).
+;; Add each app's bundle file name to the list, then require its feature.
 (add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
-(let ((staged (seq-filter #'file-readable-p
-                          '("/sdcard/Documents/glasspane.el"
-                            "/sdcard/Download/glasspane.el")))
-      (installed (expand-file-name "elisp/glasspane.el" user-emacs-directory)))
-  (dolist (s staged)
-    (when (or (not (file-exists-p installed))
-              (file-newer-than-file-p s installed))
-      (make-directory (file-name-directory installed) t)
-      (copy-file s installed t))))
-(require 'glasspane)
-(glasspane-config-ensure)
+(dolist (bundle '("jetpacs-core.el"))   ; e.g. add "glasspane.el"
+  (let ((staged (seq-filter #'file-readable-p
+                            (list (concat "/sdcard/Documents/" bundle)
+                                  (concat "/sdcard/Download/" bundle))))
+        (installed (expand-file-name (concat "elisp/" bundle)
+                                     user-emacs-directory)))
+    (dolist (s staged)
+      (when (or (not (file-exists-p installed))
+                (file-newer-than-file-p s installed))
+        (make-directory (file-name-directory installed) t)
+        (copy-file s installed t)))))
+(require 'jetpacs-core)
+;; (require 'your-app)  ; after adding its bundle above
 (setq jetpacs-auth-token "$token")
 """
 
@@ -258,14 +262,14 @@ internal fun OnboardingFlow() {
 /** Path-aware pairing guidance for the final onboarding step. */
 private fun pairInstructions(byo: Boolean): String =
     if (byo) {
-        "You added the Glasspane bootstrap to your own init.\n\n" +
-            "Restart Emacs (or re-evaluate your init) — it loads Glasspane and " +
+        "You added the Jetpacs bootstrap to your own init.\n\n" +
+            "Restart Emacs (or re-evaluate your init) — it loads the core and " +
             "connects automatically. If it doesn't, run M-x jetpacs-connect.\n\n" +
             "This screen updates the moment the handshake completes."
     } else {
         "Your init.el is ready, with the pairing token already in it.\n\n" +
-            "Just start Emacs — it loads Glasspane and connects automatically. " +
-            "There are no commands to run.\n\n" +
+            "Just start Emacs — it loads the Jetpacs core and connects " +
+            "automatically. There are no commands to run.\n\n" +
             "This screen updates the moment the handshake completes."
     }
 
@@ -334,10 +338,11 @@ private fun WelcomeStep(onChoose: (Boolean) -> Unit, onSkipToPair: () -> Unit) {
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(56.dp).padding(bottom = 8.dp),
         )
-        Text("Set up Glasspane", style = MaterialTheme.typography.headlineMedium)
+        Text("Set up Jetpacs", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Glasspane is the phone face of an Emacs running on this device. " +
-                "Let's get Emacs configured and paired.",
+            "Jetpacs is the phone face of an Emacs running on this device — " +
+                "a foundation that Emacs apps plug into. Let's get Emacs " +
+                "configured and paired.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
         )
@@ -384,28 +389,28 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     val context = LocalContext.current
     val token = remember { JetpacsAuth.token(context) }
     var installResult by remember { mutableStateOf<String?>(null) }
-    var glasspaneInstalled by remember { mutableStateOf(false) }
+    var coreInstalled by remember { mutableStateOf(false) }
 
     // On (re-)entry, detect an already-installed bundle so a repeat run reflects
     // that state instead of pretending nothing happened.
     LaunchedEffect(Unit) {
-        if (!glasspaneInstalled) {
-            findInstalledBundle(context, "glasspane.el")?.let {
-                glasspaneInstalled = true
+        if (!coreInstalled) {
+            findInstalledBundle(context, "jetpacs-core.el")?.let {
+                coreInstalled = true
                 if (installResult == null) installResult = "Already installed at $it"
             }
         }
     }
 
-    // SAF fallback: let the user save the bundle anywhere if Documents fails
-    // or they'd rather choose the folder themselves.
+    // SAF fallback: let the user save the core bundle anywhere if Documents
+    // fails or they'd rather choose the folder themselves.
     val saf = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
         if (uri != null) {
             installResult = try {
                 context.contentResolver.openOutputStream(uri)?.use {
-                    it.write(readAsset(context, "glasspane.el"))
+                    it.write(readAsset(context, "jetpacs-core.el"))
                 }
                 "Saved. If the folder you chose isn't Documents or Download, edit init.el's " +
                     "adopt paths to point there."
@@ -417,7 +422,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
 
     // The asset a pending storage-permission grant should install, so the
     // legacy (API ≤ 28) request can resume the same file it was launched for.
-    var pendingInstall by remember { mutableStateOf("glasspane.el") }
+    var pendingInstall by remember { mutableStateOf("jetpacs-core.el") }
 
     // Legacy (API ≤ 28) needs the storage permission before a direct write.
     val storagePerm = rememberLauncherForActivityResult(
@@ -427,7 +432,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             runCatching { installAssetToDocuments(context, pendingInstall) }
                 .fold(
                     {
-                        if (pendingInstall == "glasspane.el") glasspaneInstalled = true
+                        if (pendingInstall == "jetpacs-core.el") coreInstalled = true
                         "Installed to $it"
                     },
                     { "Install failed: ${it.message}" },
@@ -449,7 +454,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             installResult = runCatching { installAssetToDocuments(context, name) }
                 .fold(
                     {
-                        if (name == "glasspane.el") glasspaneInstalled = true
+                        if (name == "jetpacs-core.el") coreInstalled = true
                         "Installed to $it"
                     },
                     { "Install failed: ${it.message}" },
@@ -460,7 +465,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     StepScaffold(onBack = onBack, index = if (byo) 1 else 2, total = if (byo) 2 else 3) {
         Text("Copy these onto your device", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Glasspane can't write into Emacs's private folders (Android sandboxing), so " +
+            "Jetpacs can't write into Emacs's private folders (Android sandboxing), so " +
                 "paste each snippet into the file named on its card, then install the bundle.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 6.dp, bottom = 16.dp),
@@ -484,8 +489,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             title = if (byo) "Bootstrap → your init.el" else "Starter init.el",
             body = if (byo) {
                 "You keep your own init — just add these lines (bundle adopt, require, " +
-                    "and your pairing token) somewhere in it. The snippet also lists " +
-                    "optional packages (org-ql, org-srs, vulpea) that unlock more features."
+                    "and your pairing token) somewhere in it."
             } else {
                 "A complete starter init, with your pairing token already filled in. " +
                     "Paste it as your whole init.el."
@@ -494,19 +498,19 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             copyText = if (byo) byoSnippet(token) else starterInit(context, token),
         )
 
-        // Install the bundle.
+        // Install the foundation bundle.
         Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
             Column(Modifier.padding(16.dp)) {
-                Text("$stepNo. Install glasspane.el", style = MaterialTheme.typography.titleMedium)
+                Text("$stepNo. Install jetpacs-core.el", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The 827 KB bundle is too big for the clipboard. This writes it to " +
+                    "The foundation bundle is too big for the clipboard. This writes it to " +
                         "/sdcard/Documents, where the init above adopts it on next launch.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                 )
-                if (glasspaneInstalled) {
+                if (coreInstalled) {
                     FilledTonalButton(
-                        onClick = { installAsset("glasspane.el") },
+                        onClick = { installAsset("jetpacs-core.el") },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -514,13 +518,13 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                         Text("Installed — reinstall")
                     }
                 } else {
-                    Button(onClick = { installAsset("glasspane.el") }, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { installAsset("jetpacs-core.el") }, modifier = Modifier.fillMaxWidth()) {
                         Text("Install to Documents")
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
-                    onClick = { saf.launch("glasspane.el") },
+                    onClick = { saf.launch("jetpacs-core.el") },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Save elsewhere…")
@@ -536,25 +540,33 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             }
         }
 
-        // Demo bundles — TEMPORARY (see build.gradle.kts asset staging). Lets
-        // jetpacs-core and the tiny Tier-1 sample be installed on their own for a
-        // live demo. Delete this card and the two asset lines to remove.
+        // Apps are not shipped by this companion — explain the generic path.
         Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
             Column(Modifier.padding(16.dp)) {
-                Text("Demo bundles (dev)", style = MaterialTheme.typography.titleMedium)
+                Text("Get apps", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Install the foundation-only core or the ~60-line Tier-1 sample to " +
-                        "/sdcard/Documents to demo them apart from Glasspane.",
+                    "Apps for Jetpacs (like Glasspane) ship as single .el bundles from " +
+                        "their own projects. Download one in your browser — it lands in " +
+                        "Download — then add its file name to the bundle list in your " +
+                        "init.el and restart Emacs. Each app's own instructions cover " +
+                        "the rest.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+
+        // The built-in demo: the smallest possible Tier-1 app.
+        Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Try the hello demo", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "jetpacs-hello.el is a complete app in ~60 lines. Install it, then — " +
+                        "once paired — evaluate this from the Eval tab to grow a Hello tab " +
+                        "live:\n\n(load \"/sdcard/Documents/jetpacs-hello.el\")",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                 )
-                OutlinedButton(
-                    onClick = { installAsset("jetpacs-core.el") },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Install jetpacs-core.el")
-                }
-                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = { installAsset("jetpacs-hello.el") },
                     modifier = Modifier.fillMaxWidth(),
@@ -603,7 +615,7 @@ private fun SnippetCard(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                 )
             }
-            val onCopy = { copyToClipboard(context, "glasspane-$number", copyText); copied = true }
+            val onCopy = { copyToClipboard(context, "jetpacs-$number", copyText); copied = true }
             if (copied) {
                 FilledTonalButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))

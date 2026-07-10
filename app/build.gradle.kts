@@ -44,13 +44,13 @@ android {
     }
 }
 
-// The onboarding wizard hands a phone-only user (no PC, no adb) the 827 KB
-// glasspane.el bundle and the token-substituted starter init — both too large
-// or too fiddly for the clipboard. Stage them from the repo root into a
+// The onboarding wizard hands a phone-only user (no PC, no adb) the
+// foundation bundle and the token-substituted starter init — too large or
+// too fiddly for the clipboard. Stage them from the repo root into a
 // generated assets dir wired through the Variant API, so they ship inside the
 // APK (read back with AssetManager at runtime) and the copy is ordered before
 // asset merge automatically.
-abstract class StageGlasspaneAssets : DefaultTask() {
+abstract class StageOnboardingAssets : DefaultTask() {
     @get:org.gradle.api.tasks.InputFiles
     abstract val sources: org.gradle.api.file.ConfigurableFileCollection
 
@@ -68,23 +68,20 @@ abstract class StageGlasspaneAssets : DefaultTask() {
 androidComponents {
     onVariants { variant ->
         val stage = tasks.register(
-            "stage${variant.name.replaceFirstChar(Char::uppercase)}GlasspaneAssets",
-            StageGlasspaneAssets::class,
+            "stage${variant.name.replaceFirstChar(Char::uppercase)}OnboardingAssets",
+            StageOnboardingAssets::class,
         ) {
             sources.from(
+                // Foundation assets only, BY DESIGN: this companion onboards
+                // for the foundation and ships no Tier-1 app. Apps (Glasspane,
+                // orgzly-native, yours) distribute their own bundles from their
+                // own repos; the wizard teaches the download-and-adopt path.
                 rootProject.file("docs/starter-init.el"),
-                // The jetpacs foundation bundle + the tiny Tier-1 sample the wizard
-                // can install to demo the core on its own.
                 rootProject.file("jetpacs-core.el"),
                 rootProject.file("emacs/apps/jetpacs-hello.el"),
-                // TODO(repo-split): glasspane.el moved to the separate glasspane
-                // repo, so it is no longer staged here. The Onboarding "Install
-                // glasspane.el" card degrades to an error until the next task
-                // (generic jetpacs onboarding + cross-repo Glasspane delivery)
-                // rewires how the companion delivers a Tier-1 app bundle.
             )
         }
-        variant.sources.assets?.addGeneratedSourceDirectory(stage, StageGlasspaneAssets::outputDir)
+        variant.sources.assets?.addGeneratedSourceDirectory(stage, StageOnboardingAssets::outputDir)
     }
 }
 

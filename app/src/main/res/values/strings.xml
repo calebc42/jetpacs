@@ -1,15 +1,15 @@
 <resources>
-    <string name="app_name">Glasspane</string>
+    <string name="app_name">Jetpacs</string>
     <string name="tile_capture_label">Org Capture</string>
 
-    <!-- Glasspane rebrands of the :jetpacs library defaults (app resources win
-         the resource merge). Keep keys in sync with the library's
+    <!-- Rebrands of the :jetpacs library defaults (app resources win the
+         resource merge). Keep keys in sync with the library's
          values/strings.xml. -->
-    <string name="widget_no_data">Open Glasspane to sync your agenda</string>
-    <string name="widget_custom_description">A blank Glasspane widget slot. Compose its contents from Emacs Lisp by pushing the matching widget:customN surface.</string>
-    <string name="widget_custom_label_1">Glasspane 1</string>
-    <string name="widget_custom_label_2">Glasspane 2</string>
-    <string name="widget_custom_label_3">Glasspane 3</string>
-    <string name="widget_custom_label_4">Glasspane 4</string>
-    <string name="widget_custom_label_5">Glasspane 5</string>
+    <string name="widget_no_data">Open Jetpacs to connect Emacs</string>
+    <string name="widget_custom_description">A blank Jetpacs widget slot. Compose its contents from Emacs Lisp by pushing the matching widget:customN surface.</string>
+    <string name="widget_custom_label_1">Jetpacs 1</string>
+    <string name="widget_custom_label_2">Jetpacs 2</string>
+    <string name="widget_custom_label_3">Jetpacs 3</string>
+    <string name="widget_custom_label_4">Jetpacs 4</string>
+    <string name="widget_custom_label_5">Jetpacs 5</string>
 </resources>

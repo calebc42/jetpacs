@@ -1,34 +1,35 @@
 # Contributing
 
-Thanks for looking under the hood. This file is the practical half —
-setup, tests, and the standing rules. The conceptual half is
+**This file is about changing the foundation** — the wire, the core
+elisp, the `:jetpacs` renderer library, the reference companion shell.
+Most people who arrive here want one of the other three doors, none of
+which needs any buy-in from this repo:
+
+- **Building your own app** (a Tier 1) on top of the foundation →
+  [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
+- **Building your own companion** (another platform's renderer) against
+  the wire → [docs/BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md).
+- **Contributing to Glasspane** (the reference org app) → it lives in
+  [its own repo](https://github.com/calebc42/glasspane); file issues
+  and PRs there.
+
+Still here to change the foundation? The conceptual half is
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams) and
-[docs/SPEC.md](docs/SPEC.md) (the wire contract); if you want to build
-your own app on the foundation rather than change the foundation, start
-at [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md) instead — that's the
-happy path, and it needs no buy-in from this repo at all.
+[docs/SPEC.md](docs/SPEC.md) (the wire contract); below is the practical
+half — setup, tests, and the standing rules.
 
 ## What's most valuable
 
-A second companion (desktop? e-ink?) written against the spec, the
-signed-socket transport, more worked Tier 1 examples, and anything on
-[docs/ROADMAP.md](docs/ROADMAP.md) — the roadmap is the prioritized
-queue, and its plan documents (`docs/PLAN-*.md`) break each item into
-self-contained tasks with files, pitfalls, and acceptance criteria.
-
-**Writing another companion?** [docs/SPEC.md](docs/SPEC.md) is the whole
-contract, and this repo hands you executable conformance fixtures for
-free: `test/widgets.golden` pins the exact JSON of every node the elisp
-side can emit, and `test/frames.golden` pins the trigger/capability
-frame payloads — parse them in your renderer's test suite and you are
-testing against the same truth the reference companion is held to.
-Unknown-node/unknown-attr tolerance (SPEC §12) is the only behavior we
-will insist on. The spec is an interface anyone may implement; a
-clean-room companion carries no license obligation from this repo (see
-README §License).
+The prioritized queue is [docs/ROADMAP.md](docs/ROADMAP.md). Standing
+highest: the signed-socket transport (the 1.0 transport target), a
+second companion written against the spec (see BUILDING-COMPANION —
+the goldens are your conformance fixtures), MELPA packaging of the
+elisp client, and profiling the bridge's battery cost.
 
 If you build on the extension seams and something is missing or leaky,
-that's a bug in the foundation — file it as one.
+that's a bug in the foundation — file it as one. The same goes for the
+docs: if BUILDING-TIER1 or BUILDING-COMPANION left you stuck, the
+gap is a foundation bug.
 
 ## Setup
 
@@ -37,8 +38,8 @@ sources under `emacs/` run from a checkout. Batch tests below.
 
 **Android side**: Android Studio (or JDK 17+ and the command line).
 Two Gradle modules: `:jetpacs` (the library — protocol, renderer, OS
-surfaces) and `:app` (the Glasspane shell). `./gradlew installDebug`
-builds and installs on a connected device.
+surfaces) and `:app` (the reference companion shell). `./gradlew
+installDebug` builds and installs on a connected device.
 
 ## Tests — run these before any PR
 
@@ -90,21 +91,16 @@ however good the feature.
    additive — unknown kinds/attrs are ignored, never fatal. If the
    Kotlin counterpart can't land in the same PR, the elisp side must
    degrade cleanly without it.
-6. **Org case conventions** *(applies to app repos — the core is
-   org-free, but the rule is ecosystem-wide, so it lives here too).*
-   Keywords, blocks, and drawers are recognized case-insensitively
-   (bind `case-fold-search` explicitly); TODO keywords and tags are
-   case-sensitive; display preserves file case. Every new org-syntax
-   regex ships with a case test.
-7. **The cache contract.** App views may memoise expensive extraction;
-   every mutation path must invalidate — directly in the action handler,
-   plus the shell's refresh hook for pull-to-refresh and queue drains.
-8. **Degrade, don't hang.** If a bridged flow can't be represented on
+6. **Degrade, don't hang.** If a bridged flow can't be represented on
    the phone, signal `quit` (renders as "cancelled") rather than
    blocking. A cancelled prompt beats a frozen phone.
-9. **Battery is a feature.** Event-driven over polling, elisp over
+7. **Battery is a feature.** Event-driven over polling, elisp over
    spawned binaries, no timers where a hook exists. If your change adds
    background work, say what it costs.
+
+(App-authoring rules — org case conventions, the view-cache contract —
+live where the apps do: [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) and
+the [glasspane repo](https://github.com/calebc42/glasspane).)
 
 ## Style
 

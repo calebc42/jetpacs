@@ -183,7 +183,9 @@ The companion stays a portable renderer by construction: **every
 Kotlin behavior must be traceable to a SPEC section**, and new Kotlin
 lands in `:jetpacs` only if it is protocol, in `:app` if it is opinion.
 Audit this table whenever a Kotlin wave lands (last audited
-2026-07-05, after the automation wave AUTO 6–10):
+2026-07-05, after the automation wave AUTO 6–10). Writing a companion
+of your own? This table doubles as your build map — see
+[BUILDING-COMPANION.md](BUILDING-COMPANION.md):
 
 | Kotlin surface | SPEC section |
 |---|---|

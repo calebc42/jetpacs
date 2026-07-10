@@ -1,167 +1,93 @@
-# Roadmap: unified prioritization across all plans
+# Roadmap — the Jetpacs foundation
 
-**STATUS (2026-07-09): spans both repos.** Written in the monorepo era;
-with the repo split the app-level horizons (the PKM/AUTO feature work
-in H3–H5) now belong to the
-[glasspane repo](https://github.com/calebc42/glasspane), which holds
-their plan documents. This repo's own queue is the foundation work:
-hardening follow-ups, the signed-socket transport, a second companion,
-MELPA packaging. The cross-plan ordering below is kept for context;
-when this doc and a plan's internal sequencing disagree, **this doc
-wins** (the two deliberate overrides are marked ⚠ and justified
-inline).
+**STATUS (2026-07-09): current.** This is the *foundation* roadmap: the
+wire, the core elisp client, the `:jetpacs` renderer library, and the
+reference companion shell. The **app-level roadmap** — the Glasspane org
+app, PKM conversion, the automation/launcher feature tracks, on-device
+acceptance — lives with the
+[glasspane repo](https://github.com/calebc42/glasspane) and its
+`docs/PLAN-*.md`. The pre-split unified roadmap ordering both worlds is
+in this file's git history.
 
-Task references:
-- **PRIM n** — [PLAN-primitive-completeness.md](PLAN-primitive-completeness.md) (all phases done; residue only)
-- **AUTO n** — [PLAN-automation-and-launcher.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-automation-and-launcher.md) (glasspane repo; Tasks 1–13 + 14–19 = launcher track)
-- **PKM n** — [PLAN-pkm-conversion.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-pkm-conversion.md) (glasspane repo; Tasks 1–15 conversion, 16–18 KMP)
-- **ORGRO: item** — the orgro-parity backlog (LaTeX, sparse filter,
-  org-crypt, org-protocol, link nav, timestamp tap-edit)
+## The meta-goal
 
-## The principles behind the order
+**Adoptability.** The foundation should outlive any single app and any
+single maintainer: a stranger can build a Tier 1
+([BUILDING-TIER1.md](BUILDING-TIER1.md)) or a companion
+([BUILDING-COMPANION.md](BUILDING-COMPANION.md)) without asking anyone's
+permission, and a future maintainer inherits a versioned, negotiable,
+tested platform (the completed
+[PLAN-platform-hardening.md](PLAN-platform-hardening.md)). Every item
+below is weighed against that.
 
-1. **Verified before new.** Outstanding on-device verification is debt;
-   it goes first because everything else stacks on those paths.
-2. **Protocol before features.** AUTO 1–2 are a day of paper + stubs
-   that unblock both the automation and launcher tracks and one PKM
-   task. Nothing else has that fan-out.
-3. **You-first, converts-later.** There is exactly one user today, and
-   they read org syntax fluently. Features that user runs daily
-   (automation, agenda, capture, linking) outrank convert-facing
-   polish (import, onboarding, WYSIWYG) — the PKM plan's convert
-   deliverables are *parked*, not cancelled, with an explicit unpark
-   trigger.
-4. **Battery gates between horizons.** Measure before stacking
-   (standing project rule); the FGS-rides-free hypothesis for triggers
-   gets tested before more device integration lands on top.
-5. **Absorb, don't duplicate.** Orgro-parity items that overlap funded
-   tasks ride along (link nav → PKM 1/3/4; timestamp tap-edit →
-   PKM 5) instead of being scheduled twice.
-6. **Kotlin additions get the tripwire.** PKM 16 (contract-discipline
-   audit) runs right after the first wave of automation Kotlin, so the
-   companion stays a portable renderer while it grows.
+## Near term
 
-Within a horizon, the streams listed are independent and safely
-parallel; horizons themselves are ordered.
+1. **Generic onboarding + Tier-1 app delivery.** The `:app` shell is
+   still Glasspane-branded, and the repo split left a hole flagged in
+   `app/build.gradle.kts` (`TODO(repo-split)`): the onboarding wizard
+   can no longer stage `glasspane.el` as an APK asset, so its "install
+   the app bundle" step degrades. Design the real story: a companion
+   that onboards for *the foundation* (pair, install `jetpacs-core.el`,
+   demo `jetpacs-hello.el`) and delivers any Tier-1 bundle — Glasspane
+   as the first payload, not a hardcoded special case.
+2. **Hardening residue** (small, from the completed plan's deferred
+   acceptance notes): a Kotlin-side unit test pinning `SDUI_NODE_TYPES`
+   against the renderer's `when` cases (the drift guard's other half),
+   and an `fboundp` sweep asserting every symbol promised in
+   [API-STABILITY.md](API-STABILITY.md) is bound.
+3. **MELPA packaging.** Explicitly deferred until after the repo split;
+   the split is done. Package the elisp client properly (the
+   `emacs/core/` sources are already package-shaped; the bundle stays
+   for the no-package-manager path).
+4. **Battery profiling.** The standing unmeasured gate: a normal day's
+   cost of the FGS plus a real trigger set. Publish the numbers in the
+   README — "unprofiled" is the word we most need to delete for
+   credibility.
 
-**Completed pre-work (2026-07-05):** the Kotlin side is now two Gradle
-modules — `:jetpacs` (protocol + renderer library, host-agnostic by
-construction: `JetpacsLaunch` / `JetpacsToolbars` seams) and `:app` (the
-Glasspane shell). This is the in-repo half of the repo-split decision
-(see ARCHITECTURE.md); it gives PKM 16 its enforcement point and PKM 17
-its extraction seam, and future Kotlin from AUTO tasks lands in `:jetpacs`
-only if it is protocol, in `:app` if it is opinion. CI
-(`.github/workflows/ci.yml`) now runs the three elisp test entry
-points, the bundle-freshness check, and both Gradle modules on every
-push/PR — the automated half of the standing gates below. Contribution
-rules consolidated in CONTRIBUTING.md.
+## Mid term
 
----
+5. **Transport 1.0: the signed Unix domain socket.** The v0 loopback
+   TCP socket trusts the pairing HMAC alone; the 1.0 target adds a UDS
+   in a shared-signature directory (SPEC §1). Only the connection
+   bootstrap changes on either side — that claim is the test.
+6. **A second companion.** The strongest possible validation of the
+   spec — desktop tray, e-ink, TUI, anything
+   ([BUILDING-COMPANION.md](BUILDING-COMPANION.md) is the invitation;
+   the goldens are the conformance kit). First-party or contributed;
+   what matters is that it's written against SPEC.md, not against the
+   Kotlin.
+7. **The remaining trigger batch.** `wifi.ssid` and `bluetooth.device`
+   (SPEC §11 reserves them): their value is the permission-degrade
+   design — degrade to `network` transport matching when ungranted,
+   never fire garbage. Hardware-gated.
+8. **PRIM residue: point/region indication** in the Tier 0 buffer
+   renderer (optional polish;
+   [PLAN-primitive-completeness.md](PLAN-primitive-completeness.md)
+   Task 15).
 
-## Horizon 0 — ✅ closed 2026-07-05
+## Long term
 
-On-device verification done: magit commit end-to-end, diff shading,
-live compile refresh (PRIM residue). Stays deferred deliberately:
-PRIM Task 15 (point/region indication — optional polish); PRIM
-inline-images follow-up is absorbed by PKM 9 in Horizon 4.
+9. **Port the pane (KMP).** The companion is a thin renderer by
+   contract; a Kotlin Multiplatform port (Compose Desktop, iOS against
+   a remote Emacs) is "port the pane, keep the brain." The
+   `:jetpacs`/`:app` module split is the extraction seam.
+10. **F-Droid distribution** of the reference companion — the natural
+    channel for this project's audience, and the forcing function for
+    release hygiene (versioning, reproducible builds, changelogs).
+11. **Spec 1.0.** Freeze the wire: the envelope, handshake, and §4–§6
+    semantics stop being "draft". Additive node-vocabulary growth
+    continues through negotiation and is explicitly *not* a version
+    bump (SPEC §3).
 
-## Horizon 1 — protocol seams + three quick wins (current)
+## Standing gates (checked on every substantial change)
 
-| order | item | why |
-|---|---|---|
-| 1 ✅ | **AUTO 1 + AUTO 2** — `triggers.set` / `trigger.fired` spec; `capability.invoke` + device-permission map | Landed 2026-07-05: SPEC §10–§11, `jetpacs-triggers.el`, capability helpers, `DeviceCapabilities.kt` (`settings.open` first), `frames.golden` |
-| 2 (par.) ✅ | **AUTO 3 + AUTO 4** — intent escape hatch; permission-free effectors | Landed 2026-07-05: 12-cap catalog in `DeviceCapabilities.kt` + `jetpacs-device.el`; REPL pass on device pending |
-| 2 (par.) ✅ | **AUTO 14 (launcher Task 14)** — `jetpacs-defapp` + home + per-app chrome | Landed 2026-07-05: `jetpacs-apps.el` + shell filter seam; Glasspane is the first defapp, jetpacs-hello the second; on-device check pending |
-
-## Horizon 2 — the minimum usable automation loop
-
-| order | item | why |
-|---|---|---|
-| 1 ✅ | **AUTO 6** — trigger host, persistence, boot receiver | Landed 2026-07-05 (TriggerHost.kt, boot rearm, reminder reboot fix); on-device acceptance pending |
-| 2 ✅ | **AUTO 7** — trigger batch 1 (time/power/battery/screen/…) | Landed 2026-07-05 with AUTO 6 (9 types, SPEC §11 catalog); on-device checks pending |
-| 3 ✅ | **AUTO 12** ⚠ — `jetpacs-deftrigger` + Automations view | Landed 2026-07-05 (macro, toggles via Customize, test-fire, jetpacs-automations.el); on-device pass pending |
-| 4 ✅ | **AUTO 10** — companion-local `on_fire` | Landed 2026-07-05 (cap invocations + notify posts in TriggerHost); on-device pass pending |
-| any 🟡 | **AUTO 11** — wake spike (timeboxed) | Docs half landed 2026-07-05 (ARCHITECTURE "Execution model"); Termux silent-start spike needs hardware |
-| after Kotlin lands ✅ | **PKM 16** — contract-discipline audit | Done 2026-07-05: conformance checklist in ARCHITECTURE.md; one divergence found (on_change `value` injection) and spec'd into §9 |
-
-**⛔ GATE (deferred to the H3→H4 boundary, decided 2026-07-05):**
-battery profile of a normal day with a real trigger set (screen +
-power + a time trigger) active; expectation is ≈0 delta over the
-existing FGS. H3 landed ahead of the measurement because the user was
-away from hardware and H3 is elisp-side value; the gate still blocks
-H4's heavier device integration. Protocol + the full pending
-acceptance list:
-[TESTING-ON-DEVICE.md](https://github.com/calebc42/glasspane/blob/main/docs/TESTING-ON-DEVICE.md)
-(glasspane repo).
-
-## Horizon 3 — daily-driver org value (self-serving PKM + orgro absorption)
-
-| item | why |
-|---|---|
-| ✅ **PKM 5** — daily-note landing surface (absorbs ORGRO: timestamp tap-edit via carried-over reschedule) | Landed 2026-07-05: glasspane-journal.el (datetree, carried-over reschedule, landing setting) |
-| ⏸ **PKM 1** — backlink-engine spike/decision (vulpea v2 decided; spike = on-device validation) | Hardware-gated: cold-index/incremental/memory numbers need the phone |
-| ✅ **PKM 3 → PKM 4** — wikilink autocomplete; backlinks panel + unlinked mentions | Landed 2026-07-05 ahead of the spike (glasspane-notes.el; degrades to absent without vulpea); on-device pass + spike numbers pending |
-| ✅ **PKM 11** — saved org-ql queries as table/board/calendar views | Landed 2026-07-05: glasspane-views.el (hub + 3 renderings over glasspane-org--query) |
-| 🟡 **AUTO 8** — connectivity triggers (network/SSID/BT) | `network` landed 2026-07-05; SSID/BT hardware-gated (their value is the permission-degrade flow) |
-| ✅ **AUTO 13** — org-defined automations | Landed 2026-07-05: glasspane-automations.el (automations.org, DONE = disabled, case test) |
-| ✅ **ORGRO: sparse filter** | Landed 2026-07-05: files.filter row over the org read-mode heading list |
-
-## Horizon 4 — launcher maturity + heavier device integration
-
-| item | why |
-|---|---|
-| **AUTO 9** — notification listener (trigger + effectors) | Tasker's most-loved trigger; isolated because of special access + privacy review |
-| **AUTO 15 → 16 → 17 (launcher Tasks 15–17)** — offline app switching; shortcuts/pinning; widget/tile slot picker | The "installed app" illusion, in dependency order |
-| **PKM 9** — inline images + photo capture | Settles the cross-app storage-boundary question; genuine personal value (photos in notes), convert-critical later; needs AUTO 2/3 (H1) |
-| **PKM 10** — typed property forms | Drawer syntax disappears from the detail view; reuses the settings-controls pattern |
-| **AUTO 5** — special-access effectors (brightness, DND) | Opportunistic — pull earlier any time a real automation wants one |
-| **ORGRO: LaTeX** — make the TeX-vs-KaTeX decision, then implement | The decision is the blocker, not the work; stop carrying it undecided |
-
-## Horizon 5 — convert-facing (parked, not cancelled)
-
-**Unpark trigger:** a concrete second user in sight — an F-Droid
-release push, or a real Obsidian/Logseq/Notion convert willing to
-trial. Until then this horizon accrues design notes only.
-
-- **PKM 2** ⚠ — editing-model design, then **PKM 6 → 7 → 8** (conceal,
-  structural manipulation, slash menu). **Override:** the PKM plan
-  calls Task 2 an early bet; cross-plan it moves here because the sole
-  current user reads org natively and the standing scope rule is
-  "usable, not IDE" — the bet still precedes its dependents, just
-  later. Exception kept: if any earlier editor work would touch
-  editor-sync rendering, PKM 2's design gets written first.
-- **PKM 12 → 13** — Obsidian/markdown, then Logseq + Notion importers
-  (the switching lever; PKM 13's csv→drawers demo pairs with the
-  already-landed PKM 11).
-- **PKM 14** — FOSS sync floor. **PKM 15** — zero-Emacs onboarding
-  (consumes AUTO 11's spike results).
-- **AUTO 18 → 19 (launcher Tasks 18–19)** — build import with consent;
-  declarative org apps. (19 may pull into H4 on personal desire — it's
-  useful without converts.)
-- **ORGRO: org-crypt, org-protocol** — org-protocol is mostly a
-  desktop concern (share sheet already covers Android capture).
-
-**Parked separately (no horizon):** PKM 17–18 (KMP desktop spike, iOS
-RFC) — wake them only when KMP stops being "much down the line".
-PKM 16 is the exception and already lives in H2.
-
-## The next five concrete actions
-
-1. AUTO 1 + 2: write SPEC §11 + the capability section; land the
-   Emacs/Kotlin stubs.
-2. AUTO 3 + 4: `DeviceCapabilities.kt` + `jetpacs-device.el`, effectors
-   green from the REPL.
-3. AUTO 14: `jetpacs-defapp` + home view, Glasspane as the first app,
-   zero visible change single-app.
-4. AUTO 6: trigger table + boot receiver + firing pipeline.
-5. AUTO 7: trigger batch 1 (time/power/battery/screen/…).
-
-## Standing gates (checked at every horizon boundary)
-
-- **Battery:** no horizon exit without knowing what the last one cost.
-- **Contract:** new Kotlin traceable to a SPEC section (PKM 16
-  checklist once it exists).
-- **Boundary:** every new wire action is allowlisted, validated,
+- **Battery:** no feature that adds background work lands without
+  stating its cost; event-driven over polling, always.
+- **Contract:** every companion behavior traceable to a SPEC section
+  (the ARCHITECTURE conformance table is the tripwire); protocol in
+  `:jetpacs`, opinion in `:app`.
+- **Boundary:** every new wire action is allowlisted, validated, and
   documented in SPEC §5 — no exceptions for "internal" features.
-- **Bundles + goldens:** regenerated on every wire change; case tests
-  on every new org regex.
+- **Bundle + goldens:** `jetpacs-core.el` regenerated with every
+  `emacs/` change; goldens regenerated only for intentional wire
+  changes, documented in SPEC.

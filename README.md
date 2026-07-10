@@ -1,6 +1,6 @@
 # Jetpacs — Emacs–Android Bridge Protocol
 
-[![CI](https://github.com/calebc42/glasspane/actions/workflows/ci.yml/badge.svg)](https://github.com/calebc42/glasspane/actions/workflows/ci.yml)
+[![CI](https://github.com/calebc42/jetpacs/actions/workflows/ci.yml/badge.svg)](https://github.com/calebc42/jetpacs/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 **Don't approximate Emacs — connect to it.**
@@ -57,7 +57,7 @@ core); the boundary is enforced by the build on both sides:
   first, the module boundary the second. `emacs/apps/jetpacs-hello.el` is
   the minimal worked Tier-1 example.
 - **Glasspane, the reference Tier 1** — one opinionated org app built on
-  those seams, in the **separate `glasspane` repo** (pure elisp; it
+  those seams, in the **separate [`glasspane` repo](https://github.com/calebc42/glasspane)** (pure elisp; it
   vendors this repo as a submodule and `(require 's `jetpacs-core`). It
   exists to prove the foundation and to be copied from — not to be the
   one true mobile Emacs.
@@ -96,10 +96,12 @@ the live bridge transparently when Emacs comes online.
 
 The prioritized plan across everything below is
 [docs/ROADMAP.md](docs/ROADMAP.md); each direction has a full audit and
-task breakdown in its own plan document:
+task breakdown in its own plan document (the app-level plans moved to
+the glasspane repo with the split):
 
 - **Device automation, FOSS Tasker-style**
-  ([docs/PLAN-automation-and-launcher.md](docs/PLAN-automation-and-launcher.md))
+  ([PLAN-automation-and-launcher.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-automation-and-launcher.md),
+  in the glasspane repo)
   — the protocol already reserves `triggers` and `capabilities` in the
   handshake; the plan fills them in: Android events (time, power,
   screen, connectivity, notifications) delivered to Emacs through the
@@ -112,7 +114,8 @@ task breakdown in its own plan document:
   **declarative org documents** with no code at all; any of them pins to
   the home screen as its own icon.
 - **Converting Obsidian / Logseq / Notion users**
-  ([docs/PLAN-pkm-conversion.md](docs/PLAN-pkm-conversion.md)) — org
+  ([PLAN-pkm-conversion.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-pkm-conversion.md),
+  in the glasspane repo) — org
   already subsumes their data models; the gap is UX abstraction:
   wikilinks + backlinks, a daily-note landing surface, concealed live
   editing, saved org-ql queries as table/board/calendar views, and vault
@@ -164,7 +167,7 @@ foundation bundle from the repo root, drop it somewhere on your
   ```
 
   For the full Glasspane org-app experience, also install `glasspane.el`
-  from the separate [`glasspane`](../glasspane) repo and
+  from the separate [`glasspane`](https://github.com/calebc42/glasspane) repo and
   `(require 'glasspane)` after `jetpacs-core` (it depends on this core).
   `emacs/apps/jetpacs-hello.el` is the minimal Tier-1 example bundled here.
 
@@ -222,30 +225,41 @@ with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
 
 - `docs/` — [SPEC.md](docs/SPEC.md) (the wire protocol),
   [ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams),
-  [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (extension guide),
-  [ROADMAP.md](docs/ROADMAP.md) (prioritized plan) and the `PLAN-*.md`
-  audits it draws from.
+  [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (build your own app),
+  [BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md) (build your own
+  companion/renderer), [ROADMAP.md](docs/ROADMAP.md) (the foundation
+  roadmap) and the foundation-side `PLAN-*.md` records (the app-level
+  plans live in the glasspane repo).
 - `emacs/core/` — the Jetpacs Elisp client (`jetpacs-*.el`): transport, shell,
   generic renderers, minibuffer bridge, editor sync, settings machinery.
-- `emacs/apps/` — Tier 1: `glasspane/` (the org app), `jetpacs-magit.el`,
-  `jetpacs-package-browser.el`.
+- `emacs/apps/` — `jetpacs-hello.el`, the minimal worked Tier-1 example.
+  The real Tier-1 apps live in the glasspane repo.
 - `jetpacs/` — the `:jetpacs` Android library (Kotlin / Jetpack Compose):
   protocol, renderer, offline queue, widgets/tiles/notifications.
 - `app/` — the `:app` Glasspane shell: branding, launcher activity, the
   org capture tile and keyboard toolbar.
-- `test/` — ERT suite, the widget wire-format golden, and the
-  core-isolation guard.
+- `test/` — the main and primitives ERT suites, the wire-format goldens,
+  and the core-isolation guard (`core-load-test.el`).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the test suites, and
-the standing rules (the wire-safety boundary chief among them).
+Three doors, and only the last needs buy-in from this repo:
 
-The foundation is the part meant to outlive any single app. Most valuable
-right now: a second companion (desktop? e-ink?) written against the spec,
-the signed-socket transport, the offline/hybrid fallback layer, and more
-worked Tier 1 examples. If you build on the seams and something is
-missing or leaky, that's a bug in the foundation — file it as one.
+- **Build your own app** on the foundation —
+  [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
+- **Build your own companion** against the wire —
+  [docs/BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md).
+- **Change the foundation itself** — [CONTRIBUTING.md](CONTRIBUTING.md)
+  (setup, test suites, and the standing rules, the wire-safety boundary
+  chief among them). Contributions to Glasspane go to
+  [its repo](https://github.com/calebc42/glasspane).
+
+The foundation is the part meant to outlive any single app. Most
+valuable right now: a second companion written against the spec, the
+signed-socket transport, and MELPA packaging — see
+[docs/ROADMAP.md](docs/ROADMAP.md). If you build on the seams and
+something is missing or leaky, that's a bug in the foundation — file it
+as one.
 
 ## License
 

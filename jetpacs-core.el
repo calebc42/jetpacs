@@ -4123,12 +4123,16 @@ Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 (cl-defun jetpacs-shell-define-view (name &key builder tab when overlay (order 100))
   "Register (or replace) shell view NAME.
 BUILDER is a function of one argument (snackbar text or nil) returning
-the view's scaffold alist.  TAB, when non-nil, is a plist (:icon :label)
-placing the view in the bottom bar; landing on a tab view makes it the
-current tab.  WHEN, when non-nil, is a predicate gating the view's
-inclusion in each push.  OVERLAY, when non-nil, is a predicate: while it
-holds, this view is the active one shown on a background push (a detail
-drill-in over the current tab).  ORDER sorts views and bottom-bar items."
+the view's scaffold alist.  TAB, when non-nil, is a plist
+\(:icon :label :badge) placing the view in the bottom bar; landing on a
+tab view makes it the current tab.  :badge, when non-nil, is a nullary
+function called on every push whose result overlays the tab icon — a
+count (capped at 99+ on-device), \"\" for a bare dot, or nil for none;
+errors and nil render no badge, so a badge can never break the push.
+WHEN, when non-nil, is a predicate gating the view's inclusion in each
+push.  OVERLAY, when non-nil, is a predicate: while it holds, this view
+is the active one shown on a background push (a detail drill-in over
+the current tab).  ORDER sorts views and bottom-bar items."
   (setq jetpacs-shell-views
         (sort (cons (cons name (list :builder builder :tab tab :when when
                                      :overlay overlay :order order))
@@ -4287,7 +4291,10 @@ Honours the app filter, so each app shows its own tabs."
             collect (jetpacs-nav-item (plist-get tab :icon)
                                    (plist-get tab :label)
                                    (jetpacs-shell-switch-view name)
-                                   :selected (equal name selected)))))
+                                   :selected (equal name selected)
+                                   :badge (when-let ((fn (plist-get tab :badge)))
+                                            (condition-case nil (funcall fn)
+                                              (error nil)))))))
 
 (cl-defun jetpacs-shell-default-top-bar (title &key extra-actions)
   "The standard top bar: TITLE plus the registered trailing actions.

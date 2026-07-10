@@ -130,10 +130,13 @@ grows a Marks tab between Agenda-less core tabs. The pieces:
   (or nil) and returns a scaffold view. Use `jetpacs-shell-tab-view` (tab
   chrome: drawer, bottom bar, pull-to-refresh) or `jetpacs-shell-nav-view`
   (back-arrow chrome) rather than hand-building scaffolds.
-- `:tab '(:icon I :label L)` puts it in the bottom bar; `:when PRED`
-  includes it only sometimes (an editor view while a file is open);
-  `:overlay PRED` makes it the active view while the predicate holds (a
-  detail drill-in) without being a tab.
+- `:tab '(:icon I :label L)` puts it in the bottom bar; add
+  `:badge FN` (a nullary function, called per push) to overlay a count
+  on the tab icon — return a number (99+ caps on-device), `""` for a
+  bare dot, or nil for none; errors render no badge, never a broken
+  push. `:when PRED` includes it only sometimes (an editor view while a
+  file is open); `:overlay PRED` makes it the active view while the
+  predicate holds (a detail drill-in) without being a tab.
 - `jetpacs-shell-add-drawer-item` / `jetpacs-shell-add-top-action` add global
   chrome; `jetpacs-shell-default-fab-function` offers your app's signature
   affordance on tab views (Glasspane uses it for Capture).

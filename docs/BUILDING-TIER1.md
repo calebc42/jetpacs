@@ -231,9 +231,19 @@ The screen ships with the foundation's own "Bridge" section
 controls the schema renderer can't express replaces the view —
 `(jetpacs-shell-define-view "settings" :builder #'my-settings-view)`
 replaces by name, and the stock drawer entry still reaches it — and
-appends `(jetpacs-shell-settings-body)` after its own controls so
-registered sections and links keep appearing. Don't add a second
-drawer entry for it; the stock one already targets the view name.
+splices `(jetpacs-settings-sections)` at the end of its own scrollable
+body so registered sections and links keep appearing:
+
+```elisp
+(apply #'jetpacs-lazy-column
+       (append (list my-controls…)
+               (jetpacs-settings-sections)))
+```
+
+(`jetpacs-shell-settings-body` is that lazy column with *only* the
+sections — use it as an entire body, never nested inside your own lazy
+column; scroll containers don't nest.) Don't add a second drawer entry
+for the screen; the stock one already targets the view name.
 
 ## The rules that keep the wire safe
 

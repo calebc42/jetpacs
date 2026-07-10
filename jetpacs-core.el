@@ -4811,18 +4811,21 @@ Safe on any hook: extra arguments are ignored."
 ;; `jetpacs-settings-add-link' — both appear here with no further wiring,
 ;; and the bare companion has a working Settings screen before any app
 ;; loads.  An app that needs a richer screen replaces the view
-;; (`jetpacs-shell-define-view' replaces by name) and appends
-;; `jetpacs-shell-settings-body' after its own controls; the drawer entry
-;; keeps working because it targets the view name, not the builder.
+;; (`jetpacs-shell-define-view' replaces by name) and splices
+;; `jetpacs-settings-sections' at the end of its own scrollable body;
+;; the drawer entry keeps working because it targets the view name, not
+;; the builder.
 
 (declare-function jetpacs-settings-sections "jetpacs-settings")
 (declare-function jetpacs-settings-register-section "jetpacs-settings")
 
 (defun jetpacs-shell-settings-body ()
-  "Every registered settings section and satellite link, as one column.
-The stock \"settings\" view renders exactly this; an app replacing that
-view composes it after its own controls so registry sections and links
-keep appearing."
+  "Every registered settings section and satellite link, as one body.
+The stock \"settings\" view renders exactly this.  It is a WHOLE
+scrollable body (one lazy column): an app replacing the view either
+uses it as its entire body, or — when it has controls of its own —
+splices `jetpacs-settings-sections' into its own lazy column instead.
+Never nest this node inside another scroll container."
   (apply #'jetpacs-lazy-column (jetpacs-settings-sections)))
 
 (defun jetpacs-shell--settings-view (snackbar)

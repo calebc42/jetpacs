@@ -95,8 +95,9 @@ App scaffold (`jetpacs-shell.el`): `jetpacs-shell-define-view`
 `jetpacs-shell-notify` `jetpacs-shell-add-drawer-item`
 `jetpacs-shell-add-top-action` `jetpacs-shell-default-fab-function`
 `jetpacs-shell-settings-body` (since 1.1.0: the stock "settings" view's
-content — an app replacing that view composes it after its own
-controls), and the hooks `jetpacs-shell-view-switched-hook`
+whole scrollable body — an app replacing that view with controls of its
+own splices `jetpacs-settings-sections` into its own lazy column
+instead), and the hooks `jetpacs-shell-view-switched-hook`
 `jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`.
@@ -112,7 +113,9 @@ Files/editor (`jetpacs-files.el`): `jetpacs-files-editor-body-functions`
 
 Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
 `jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`
-`jetpacs-settings-add-link`. Registered sections and links render on the
+`jetpacs-settings-add-link` `jetpacs-settings-sections` (since 1.1.0:
+the flat node list an app splices into its own body when it replaces
+the stock "settings" view). Registered sections and links render on the
 foundation's stock "settings" view without further wiring.
 
 ### Validation (`jetpacs-lint.el`)

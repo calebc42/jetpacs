@@ -1,4 +1,4 @@
-# EABP — Emacs–Android Bridge Protocol
+# Jetpacs — Emacs–Android Bridge Protocol
 
 [![CI](https://github.com/calebc42/glasspane/actions/workflows/ci.yml/badge.svg)](https://github.com/calebc42/glasspane/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -13,7 +13,7 @@ specification: the canonical computation lives in Emacs. Custom TODO
 sequences, agenda skip functions, `org-ql` queries, capture hooks, clock
 behavior — a parser can only approximate them.
 
-EABP takes a different premise. The phone is a thin pane of glass; Emacs
+Jetpacs takes a different premise. The phone is a thin pane of glass; Emacs
 is the source of truth behind it.
 
 ```
@@ -24,7 +24,7 @@ is the source of truth behind it.
   │  • Caches last-known UI state   │
   │  • Queues offline actions       │
   └──────────────┬──────────────────┘
-                 │  EABP: NDJSON bridge
+                 │  Jetpacs: NDJSON bridge
                  │  (loopback socket → signed Unix socket)
   ┌──────────────┴──────────────────┐
   │  Emacs (the source of truth)    │
@@ -41,24 +41,24 @@ inversion `emacsclient` uses on the desktop.
 
 ## The foundation and the reference app
 
-This repo is **the EABP foundation + its Android companion**. The
+This repo is **the Jetpacs foundation + its Android companion**. The
 Glasspane reference Tier 1 lives in its own repo (it `(require 's this
 core); the boundary is enforced by the build on both sides:
 
-- **EABP, the foundation** (this repo) — a written protocol
+- **Jetpacs, the foundation** (this repo) — a written protocol
   ([docs/SPEC.md](docs/SPEC.md)), the core Emacs client
-  (`emacs/core/`, bundled as `eabp-core.el`), and the app-agnostic
-  Android renderer + companion (the `:eabp` Gradle library in `eabp/`
+  (`emacs/core/`, bundled as `jetpacs-core.el`), and the app-agnostic
+  Android renderer + companion (the `:jetpacs` Gradle library in `jetpacs/`
   and the `:app` companion shell). The foundation renders *any* buffer,
   palettes *any* keymap, bridges *any* minibuffer prompt, and gives apps
   a shell (tabs, drawer, snackbar), an editor bridge (completion,
   diagnostics, eldoc), and a schema-driven settings machinery. It
   contains no org code and names no host app — a guard test enforces the
-  first, the module boundary the second. `emacs/apps/eabp-hello.el` is
+  first, the module boundary the second. `emacs/apps/jetpacs-hello.el` is
   the minimal worked Tier-1 example.
 - **Glasspane, the reference Tier 1** — one opinionated org app built on
   those seams, in the **separate `glasspane` repo** (pure elisp; it
-  vendors this repo as a submodule and `(require 's `eabp-core`). It
+  vendors this repo as a submodule and `(require 's `jetpacs-core`). It
   exists to prove the foundation and to be copied from — not to be the
   one true mobile Emacs.
 
@@ -121,7 +121,7 @@ task breakdown in its own plan document:
 - **Beyond Android** (same plan, track K) — the companion is a thin
   renderer by contract, so a Kotlin Multiplatform port (Compose Desktop,
   iOS against a remote Emacs) is "port the pane, keep the brain." The
-  `:eabp` / `:app` module split is the extraction seam.
+  `:jetpacs` / `:app` module split is the extraction seam.
 
 ## Status
 
@@ -155,26 +155,26 @@ Requires Emacs 28+ (for the C-level JSON functions).
 foundation bundle from the repo root, drop it somewhere on your
 `load-path`, and load it from your `init.el`:
 
-- [`eabp-core.el`](eabp-core.el) — the EABP foundation, for building or
+- [`jetpacs-core.el`](jetpacs-core.el) — the Jetpacs foundation, for building or
   running a Tier 1:
 
   ```elisp
   (add-to-list 'load-path "~/.emacs.d/elisp") ; wherever you put the file
-  (require 'eabp-core)
+  (require 'jetpacs-core)
   ```
 
   For the full Glasspane org-app experience, also install `glasspane.el`
   from the separate [`glasspane`](../glasspane) repo and
-  `(require 'glasspane)` after `eabp-core` (it depends on this core).
-  `emacs/apps/eabp-hello.el` is the minimal Tier-1 example bundled here.
+  `(require 'glasspane)` after `jetpacs-core` (it depends on this core).
+  `emacs/apps/jetpacs-hello.el` is the minimal Tier-1 example bundled here.
 
 **Option B — the individual sources.** Clone the repo and put the source
 directories on your `load-path`:
 
 ```elisp
-(add-to-list 'load-path "~/src/eabp/emacs/core")
-(add-to-list 'load-path "~/src/eabp/emacs/apps")   ; eabp-hello, the minimal example
-(require 'eabp-core)   ; or just the core features you want
+(add-to-list 'load-path "~/src/jetpacs/emacs/core")
+(add-to-list 'load-path "~/src/jetpacs/emacs/apps")   ; jetpacs-hello, the minimal example
+(require 'jetpacs-core)   ; or just the core features you want
 ```
 
 > The bundle is generated from the sources by `emacs/build-bundle.el`.
@@ -203,16 +203,16 @@ Launch the companion app; it starts the foreground service and listens on
 ### 3. Pair and connect
 
 The companion's screen shows a pairing token as a ready-made
-`(setq eabp-auth-token ...)` line — tap it to copy, add it to your init,
+`(setq jetpacs-auth-token ...)` line — tap it to copy, add it to your init,
 then:
 
 ```
-M-x eabp-connect
+M-x jetpacs-connect
 ```
 
 Emacs auto-connects on startup (`after-init-hook`), so if the app was
 already running when Emacs launched you may already be connected — check
-with `M-x eabp-ping`. The dashboard should now appear on the phone.
+with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
 
 > **v0 is local-only.** The loopback socket assumes Emacs and the
 > companion run on the same device (Emacs via the Android Emacs port, or
@@ -225,11 +225,11 @@ with `M-x eabp-ping`. The dashboard should now appear on the phone.
   [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (extension guide),
   [ROADMAP.md](docs/ROADMAP.md) (prioritized plan) and the `PLAN-*.md`
   audits it draws from.
-- `emacs/core/` — the EABP Elisp client (`eabp-*.el`): transport, shell,
+- `emacs/core/` — the Jetpacs Elisp client (`jetpacs-*.el`): transport, shell,
   generic renderers, minibuffer bridge, editor sync, settings machinery.
-- `emacs/apps/` — Tier 1: `glasspane/` (the org app), `eabp-magit.el`,
-  `eabp-package-browser.el`.
-- `eabp/` — the `:eabp` Android library (Kotlin / Jetpack Compose):
+- `emacs/apps/` — Tier 1: `glasspane/` (the org app), `jetpacs-magit.el`,
+  `jetpacs-package-browser.el`.
+- `jetpacs/` — the `:jetpacs` Android library (Kotlin / Jetpack Compose):
   protocol, renderer, offline queue, widgets/tiles/notifications.
 - `app/` — the `:app` Glasspane shell: branding, launcher activity, the
   org capture tile and keyboard toolbar.
@@ -249,7 +249,7 @@ missing or leaky, that's a bug in the foundation — file it as one.
 
 ## License
 
-EABP and Glasspane are free software, licensed under the **GNU General
+Jetpacs and Glasspane are free software, licensed under the **GNU General
 Public License, version 3 or later** ([GPL-3.0-or-later](LICENSE)).
 Copyright (C) 2026 calebc42 and contributors.
 

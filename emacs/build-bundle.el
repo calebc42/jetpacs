@@ -6,7 +6,7 @@
 ;;   emacs --batch -l emacs/build-bundle.el
 ;;
 ;; Output:
-;;   eabp-core.el  — the EABP foundation (emacs/core/): transport, shell,
+;;   jetpacs-core.el  — the Jetpacs foundation (emacs/core/): transport, shell,
 ;;                   generic renderers, minibuffer bridge, editor
 ;;                   sync/completion, settings machinery.  What a third-party
 ;;                   Tier 1 (the Glasspane app in its own repo, and others)
@@ -24,26 +24,26 @@
 (let* ((here (file-name-directory (or load-file-name buffer-file-name)))
        ;; Dependency order. Do not reorder without re-checking the require
        ;; graph.
-       (core-files '("core/eabp.el"
-                     "core/eabp-widgets.el"
-                     "core/eabp-lint.el"
-                     "core/eabp-surfaces.el"
-                     "core/eabp-triggers.el"
-                     "core/eabp-device.el"
-                     "core/eabp-minibuffer.el"
-                     "core/eabp-buffer.el"
-                     "core/eabp-shell.el"
-                     "core/eabp-apps.el"
-                     "core/eabp-tablist.el"
-                     "core/eabp-comint.el"
-                     "core/eabp-transient.el"
-                     "core/eabp-keymap.el"
-                     "core/eabp-sync.el"
-                     "core/eabp-complete.el"
-                     "core/eabp-settings.el"
-                     "core/eabp-files.el"
-                     "core/eabp-witheditor.el"
-                     "core/eabp-emacs-ui.el"))
+       (core-files '("core/jetpacs.el"
+                     "core/jetpacs-widgets.el"
+                     "core/jetpacs-lint.el"
+                     "core/jetpacs-surfaces.el"
+                     "core/jetpacs-triggers.el"
+                     "core/jetpacs-device.el"
+                     "core/jetpacs-minibuffer.el"
+                     "core/jetpacs-buffer.el"
+                     "core/jetpacs-shell.el"
+                     "core/jetpacs-apps.el"
+                     "core/jetpacs-tablist.el"
+                     "core/jetpacs-comint.el"
+                     "core/jetpacs-transient.el"
+                     "core/jetpacs-keymap.el"
+                     "core/jetpacs-sync.el"
+                     "core/jetpacs-complete.el"
+                     "core/jetpacs-settings.el"
+                     "core/jetpacs-files.el"
+                     "core/jetpacs-witheditor.el"
+                     "core/jetpacs-emacs-ui.el"))
        (emit (lambda (out features summary files)
                (with-temp-file out
                  (insert (format ";;; %s --- %s -*- lexical-binding: t; -*-\n"
@@ -66,8 +66,8 @@
                    (insert (format "(provide '%s)\n" feature)))
                  (insert (format ";;; %s ends here\n" (file-name-nondirectory out))))
                (message "Wrote %s" out))))
-  (funcall emit (expand-file-name "../eabp-core.el" here)
-           '(eabp-core) "EABP core client, single-file bundle"
+  (funcall emit (expand-file-name "../jetpacs-core.el" here)
+           '(jetpacs-core) "Jetpacs core client, single-file bundle"
            core-files))
 
 ;;; build-bundle.el ends here

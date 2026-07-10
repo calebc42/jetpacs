@@ -1,0 +1,261 @@
+;;; jetpacs-device.el --- Device effectors via capability.invoke -*- lexical-binding: t; -*-
+
+;; The Emacs face of SPEC §10's capability catalog: one thin defun per
+;; device capability, all funneling through `jetpacs-device--invoke'.  The
+;; companion is the validator — these wrappers only shape plain-data
+;; args; unknown or refused capabilities come back as typed errors
+;; (`cap-unsupported' / `cap-permission' / `cap-failed') which the
+;; default callback surfaces in *Messages*.
+;;
+;; Check `jetpacs-device-cap-p' / `jetpacs-device-can-p' (jetpacs.el) to degrade
+;; gracefully in UI; from the REPL just call and read the echo area.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'jetpacs)
+(require 'jetpacs-widgets)
+(require 'jetpacs-surfaces)
+
+(defun jetpacs-device--invoke (cap args &optional callback)
+  "Invoke device capability CAP with plain-data alist ARGS.
+CALLBACK as in `jetpacs-capability-invoke'; when nil, failures surface
+in *Messages* with their typed code."
+  (jetpacs-capability-invoke
+   cap args
+   (or callback
+       (lambda (ok payload)
+         (unless ok
+           (message "Jetpacs device %s: %s [%s]" cap
+                    (alist-get 'detail payload)
+                    (alist-get 'code payload)))))))
+
+;; ─── Intents: the universal escape hatch ─────────────────────────────────────
+
+(cl-defun jetpacs-device-intent (&key action data package class-name mime
+                                   extras (mode "activity"))
+  "Fire an Android Intent on the companion (SPEC §10 `intent.start').
+ACTION is an intent action string; DATA a URI; PACKAGE / CLASS-NAME
+target an explicit component; MIME sets the type; EXTRAS is an alist
+of plain data (strings, numbers, booleans — pass :false for false).
+MODE is \"activity\" (default), \"broadcast\", or \"service\".
+Activity launches are best-effort while the companion is backgrounded.
+
+Example, from the eval REPL:
+  (jetpacs-device-intent :action \"android.intent.action.VIEW\"
+                      :data \"https://example.com\")"
+  (jetpacs-device--invoke
+   "intent.start"
+   (append (when action `((action . ,action)))
+           (when data `((data . ,data)))
+           (when package `((package . ,package)))
+           (when class-name `((class_name . ,class-name)))
+           (when mime `((mime . ,mime)))
+           (when extras `((extras . ,extras)))
+           `((mode . ,mode)))))
+
+(defun jetpacs-device-app-launch (package)
+  "Launch PACKAGE's main activity on the companion."
+  (jetpacs-device--invoke "app.launch" `((package . ,package))))
+
+(defun jetpacs-device-apps-list (callback)
+  "Fetch the launchable apps and call CALLBACK with ((LABEL . PACKAGE) ...)."
+  (jetpacs-device--invoke
+   "apps.list" nil
+   (lambda (ok payload)
+     (if (not ok)
+         (message "Jetpacs device apps.list: %s [%s]"
+                  (alist-get 'detail payload) (alist-get 'code payload))
+       (funcall callback
+                (mapcar (lambda (app)
+                          (cons (alist-get 'label app)
+                                (alist-get 'package app)))
+                        (alist-get 'apps (alist-get 'result payload))))))))
+
+(defun jetpacs-device-launch-app ()
+  "Pick an installed app in a companion dialog and launch it.
+The picker renders on the phone: choosing there keeps Glasspane
+foregrounded, which is what makes the activity launch legal — Android
+silently drops launches requested while the app is backgrounded (the
+reason a desktop `completing-read' picker can never work here)."
+  (interactive)
+  (jetpacs-device-apps-list
+   (lambda (apps)
+     (jetpacs-send-dialog
+      (apply #'jetpacs-lazy-column
+             (cons (jetpacs-section-header "Launch app")
+                   (mapcar (lambda (app)
+                             (jetpacs-button (car app)
+                                          (jetpacs-action
+                                           "device.launch"
+                                           :args `((package . ,(cdr app)))
+                                           :when-offline "drop")
+                                          :variant "text"))
+                           apps)))))))
+
+(jetpacs-defaction "device.launch"
+  (lambda (args _)
+    (when-let ((pkg (alist-get 'package args)))
+      (jetpacs-dismiss-dialog)
+      (jetpacs-device-app-launch pkg))))
+
+;; ─── Permission-free effectors ───────────────────────────────────────────────
+
+(defun jetpacs-device-vibrate (&optional ms pattern)
+  "Vibrate for MS milliseconds (default 200), or by PATTERN.
+PATTERN is a list of durations (off, on, off, on, … ms) and wins over MS."
+  (jetpacs-device--invoke
+   "vibrate"
+   (if pattern
+       `((pattern . ,(vconcat pattern)))
+     `((ms . ,(or ms 200))))))
+
+(cl-defun jetpacs-device-tts (text &key pitch rate)
+  "Speak TEXT on the companion. PITCH and RATE are floats around 1.0.
+Best-effort and asynchronous: the engine lazy-inits on first use."
+  (jetpacs-device--invoke
+   "tts.speak"
+   (append `((text . ,text))
+           (when pitch `((pitch . ,pitch)))
+           (when rate `((rate . ,rate))))))
+
+(defun jetpacs-device-volume-set (stream level)
+  "Set STREAM volume to LEVEL (0..max, clamped device-side).
+STREAM is music, ring, alarm, notification, call, or system."
+  (jetpacs-device--invoke "volume.set" `((stream . ,stream) (level . ,level))))
+
+(defun jetpacs-device-ringer-mode (mode)
+  "Set the ringer MODE: \"normal\", \"vibrate\", or \"silent\".
+Silent needs Do Not Disturb access — a cap-permission error carries
+the settings deep-link to grant it."
+  (jetpacs-device--invoke "ringer.mode" `((mode . ,mode))))
+
+(defun jetpacs-device-flashlight (on)
+  "Switch the torch ON (non-nil) or off."
+  (jetpacs-device--invoke "flashlight" `((on . ,(if on t :false)))))
+
+(defun jetpacs-device-media-key (key)
+  "Send media KEY: play_pause, play, pause, next, previous, stop,
+fast_forward, or rewind."
+  (jetpacs-device--invoke "media.key" `((key . ,key))))
+
+(defun jetpacs-device-clipboard-read (callback)
+  "Read the companion clipboard and call CALLBACK with its text, or nil.
+Android 10+ exposes the clipboard only while the companion is
+foregrounded; elsewhere this yields nil (a cap-permission error).
+Never log or persist what arrives here."
+  (jetpacs-device--invoke
+   "clipboard.read" nil
+   (lambda (ok payload)
+     (funcall callback
+              (and ok (alist-get 'text (alist-get 'result payload)))))))
+
+(defun jetpacs-device-settings-open (panel)
+  "Open the companion's settings PANEL.
+PANEL is wifi, internet, bluetooth, volume, nfc, or any
+android.settings.* action string — the compliant \"toggle\" for
+radios Android won't let apps flip."
+  (jetpacs-device--invoke "settings.open" `((panel . ,panel))))
+
+(defun jetpacs-device-keep-screen-on (on)
+  "Keep the companion screen on while Jetpacs UI is showing (ON non-nil).
+A window flag, not a wakelock: it clears when Jetpacs UI leaves the
+screen, so it cannot pin the device awake in the background."
+  (jetpacs-device--invoke "screen.keep_on" `((on . ,(if on t :false)))))
+
+;; ─── Special-access effectors ────────────────────────────────────────────────
+
+(defun jetpacs-device-brightness (level)
+  "Set screen brightness LEVEL (0–255).
+Needs the modify-system-settings grant; a cap-permission error carries
+the deep-link (or use the Device permissions screen)."
+  (jetpacs-device--invoke "brightness.set" `((level . ,level))))
+
+(defun jetpacs-device-dnd (mode)
+  "Set Do Not Disturb MODE: \"on\", \"off\", or \"priority\".
+Needs Do Not Disturb access — see the Device permissions screen."
+  (jetpacs-device--invoke "dnd.set" `((mode . ,mode))))
+
+;; ─── The Device permissions screen ───────────────────────────────────────────
+
+(defconst jetpacs-device--perm-info
+  '((post_notifications "Notifications" "app")
+    (exact_alarms "Exact alarms (reminders, time triggers)"
+                  "android.settings.REQUEST_SCHEDULE_EXACT_ALARM")
+    (write_settings "Modify system settings (brightness)"
+                    "android.settings.action.MANAGE_WRITE_SETTINGS")
+    (notification_policy "Do Not Disturb access (ringer, DND, volume)"
+                         "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS")
+    ;; No grant link yet: the app appears in that system list only once
+    ;; the notification-listener service ships (automation plan Task 9).
+    (notification_listener "Notification access (feature not shipped yet)" nil)
+    (fine_location "Location (Wi-Fi SSID triggers)" "app")
+    (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app"))
+  "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
+PANEL feeds `settings.open': a grant screen action, or \"app\" for
+Glasspane's own app-info page (runtime permissions live there).")
+
+(defun jetpacs-device--perm-row (key label panel perms)
+  (let ((granted (eq t (alist-get key perms))))
+    (apply #'jetpacs-row
+           (delq nil
+                 (list
+                  (jetpacs-box
+                   (list (jetpacs-column
+                          (jetpacs-text label 'body)
+                          (jetpacs-text (if granted "Granted" "Not granted")
+                                     'caption)))
+                   :weight 1)
+                  (when (and panel (not granted))
+                    (jetpacs-button "Grant"
+                                 (jetpacs-action "device.perm.open"
+                                              :args `((panel . ,panel))
+                                              :when-offline "drop")
+                                 :variant "text")))))))
+
+(defun jetpacs-device-permissions-dialog ()
+  "Show the device-permission map with grant deep-links.
+Android never pops a dialog for special-access permissions — the only
+compliant flow is deep-linking the user to the grant screen.  The map
+refreshes on the next reconnect after granting."
+  (interactive)
+  (let ((perms (alist-get 'perms (alist-get 'device jetpacs--session))))
+    (jetpacs-send-dialog
+     (apply #'jetpacs-lazy-column
+            (append
+             (list (jetpacs-section-header "Device permissions")
+                   (jetpacs-text (concat "Special access needs a trip to system "
+                                      "settings; the list refreshes on the "
+                                      "next reconnect.")
+                              'caption))
+             (mapcar (lambda (row)
+                       (apply #'jetpacs-device--perm-row
+                              (append row (list perms))))
+                     jetpacs-device--perm-info))))))
+
+(jetpacs-defaction "device.perms"
+  (lambda (_args _) (jetpacs-device-permissions-dialog)))
+
+(jetpacs-defaction "device.perm.open"
+  (lambda (args _)
+    (when-let ((panel (alist-get 'panel args)))
+      (jetpacs-dismiss-dialog)
+      (jetpacs-device-settings-open panel))))
+
+;; Entry point: a card on the settings screen (satellite contract).
+(with-eval-after-load 'jetpacs-settings
+  (jetpacs-settings-add-link
+   18 (lambda ()
+        (jetpacs-card
+         (list (jetpacs-row
+                (jetpacs-icon "key")
+                (jetpacs-box (list (jetpacs-column
+                                 (jetpacs-text "Device permissions" 'label)
+                                 (jetpacs-text "Grant special access for effectors and triggers"
+                                            'caption)))
+                          :weight 1)
+                (jetpacs-icon "chevron_right")))
+         :on-tap (jetpacs-action "device.perms" :when-offline "drop")))))
+
+(provide 'jetpacs-device)
+;;; jetpacs-device.el ends here

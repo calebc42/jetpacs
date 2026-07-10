@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared provider info for the blank Elisp-composed widget slots. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="140dp"
+    android:minResizeHeight="70dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_jetpacs_agenda"
+    android:previewLayout="@layout/widget_jetpacs_agenda"
+    android:description="@string/widget_custom_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

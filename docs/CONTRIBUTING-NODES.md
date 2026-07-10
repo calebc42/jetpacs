@@ -34,29 +34,29 @@ Adding a node type `foo`:
 
 1. **Renderer** — add a `"foo" -> SduiFoo(node, baseModifier, dispatch)`
    case to the `when (type)` in
-   [`SduiRenderer.kt`](../eabp/src/main/java/com/calebc42/eabp/SduiRenderer.kt),
+   [`SduiRenderer.kt`](../jetpacs/src/main/java/com/calebc42/jetpacs/SduiRenderer.kt),
    and write `SduiFoo` (a sibling file like `SduiChart.kt` for anything
    substantial). Value-carrying callbacks dispatch through
    `dispatchWithValue` so the current value lands in `args.value` (SPEC §9).
 2. **Negotiation** — add `"foo"` to `SDUI_NODE_TYPES` in the same file (the
    set sits right beside the `when` so they can't drift). This is what puts
    `foo` in the welcome's `node_types` so a client can detect support.
-3. **Constructor** — add `eabp-foo` to
-   [`eabp-widgets.el`](../emacs/core/eabp-widgets.el), funnelled through
-   `eabp--node` (nil attrs drop out).
-4. **Linter** — add `"foo"` to `eabp-lint-node-types` in
-   [`eabp-lint.el`](../emacs/core/eabp-lint.el), and any numeric/colour
+3. **Constructor** — add `jetpacs-foo` to
+   [`jetpacs-widgets.el`](../emacs/core/jetpacs-widgets.el), funnelled through
+   `jetpacs--node` (nil attrs drop out).
+4. **Linter** — add `"foo"` to `jetpacs-lint-node-types` in
+   [`jetpacs-lint.el`](../emacs/core/jetpacs-lint.el), and any numeric/colour
    attributes to the typed-attribute lists so a malformed `foo` is caught
    before the wire.
-5. **Golden** — add a representative `(eabp-foo …)` case to
-   `eabp-tests--widget-cases` in [`test/eabp-tests.el`](../test/eabp-tests.el)
+5. **Golden** — add a representative `(jetpacs-foo …)` case to
+   `jetpacs-tests--widget-cases` in [`test/jetpacs-tests.el`](../test/jetpacs-tests.el)
    and regenerate:
-   `emacs -Q --batch -l test/eabp-tests.el -f eabp-tests-regen-widget-golden`.
-   The `eabp-lint-types-cover-golden` test fails if a golden `t` has no
+   `emacs -Q --batch -l test/jetpacs-tests.el -f jetpacs-tests-regen-widget-golden`.
+   The `jetpacs-lint-types-cover-golden` test fails if a golden `t` has no
    linter entry — so it keeps steps 2 and 4 honest.
 6. **Spec** — document `foo`'s wire shape under the right family in
    [SPEC.md](SPEC.md) §9.
-7. **Public API** — if `eabp-foo` is meant for third parties, list it in
+7. **Public API** — if `jetpacs-foo` is meant for third parties, list it in
    [API-STABILITY.md](API-STABILITY.md).
 8. **Build** — regenerate the bundles
    (`emacs --batch -l emacs/build-bundle.el`), run the suite, and build the
@@ -66,10 +66,10 @@ Adding a node type `foo`:
 
 - **`slider`** — the smallest end-to-end addition: one inline `when` case,
   one constructor, one golden line. Read it as the minimal template.
-- **`chart`** ([`SduiChart.kt`](../eabp/src/main/java/com/calebc42/eabp/SduiChart.kt))
+- **`chart`** ([`SduiChart.kt`](../jetpacs/src/main/java/com/calebc42/jetpacs/SduiChart.kt))
   — a substantial curated node: its own file, an animated Canvas draw, a
   closed `kind` enum, `on_point_tap` value injection, and a
   `contentDescription` for accessibility. The model for a real widget.
-- **`canvas`** ([`SduiCanvas.kt`](../eabp/src/main/java/com/calebc42/eabp/SduiCanvas.kt))
+- **`canvas`** ([`SduiCanvas.kt`](../jetpacs/src/main/java/com/calebc42/jetpacs/SduiCanvas.kt))
   — a *closed interpreter*: before adding a curated node, ask whether the
   need is really a `canvas` draw program driven from Elisp. Usually it is.

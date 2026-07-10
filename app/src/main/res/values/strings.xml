@@ -2,7 +2,7 @@
     <string name="app_name">Glasspane</string>
     <string name="tile_capture_label">Org Capture</string>
 
-    <!-- Glasspane rebrands of the :eabp library defaults (app resources win
+    <!-- Glasspane rebrands of the :jetpacs library defaults (app resources win
          the resource merge). Keep keys in sync with the library's
          values/strings.xml. -->
     <string name="widget_no_data">Open Glasspane to sync your agenda</string>

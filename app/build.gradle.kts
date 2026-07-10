@@ -6,10 +6,10 @@ plugins {
 }
 
 // The Glasspane shell: app identity (branding, theme, launcher activity,
-// the org capture tile, the org keyboard toolbar) on top of the :eabp
+// the org capture tile, the org keyboard toolbar) on top of the :jetpacs
 // library, which carries the protocol, renderer, and OS surfaces.
 android {
-    namespace = "com.calebc42.eabp"
+    namespace = "com.calebc42.jetpacs"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -17,7 +17,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.calebc42.eabp"
+        applicationId = "com.calebc42.jetpacs"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -73,14 +73,14 @@ androidComponents {
         ) {
             sources.from(
                 rootProject.file("docs/starter-init.el"),
-                // The eabp foundation bundle + the tiny Tier-1 sample the wizard
+                // The jetpacs foundation bundle + the tiny Tier-1 sample the wizard
                 // can install to demo the core on its own.
-                rootProject.file("eabp-core.el"),
-                rootProject.file("emacs/apps/eabp-hello.el"),
+                rootProject.file("jetpacs-core.el"),
+                rootProject.file("emacs/apps/jetpacs-hello.el"),
                 // TODO(repo-split): glasspane.el moved to the separate glasspane
                 // repo, so it is no longer staged here. The Onboarding "Install
                 // glasspane.el" card degrades to an error until the next task
-                // (generic eabp onboarding + cross-repo Glasspane delivery)
+                // (generic jetpacs onboarding + cross-repo Glasspane delivery)
                 // rewires how the companion delivers a Tier-1 app bundle.
             )
         }
@@ -89,10 +89,10 @@ androidComponents {
 }
 
 dependencies {
-    // The EABP foundation (protocol, renderer, widgets/tiles, queue). Its
+    // The Jetpacs foundation (protocol, renderer, widgets/tiles, queue). Its
     // build file exposes the renderer stack as `api`, so Compose/Room types
     // used in shell code resolve through it.
-    implementation(project(":eabp"))
+    implementation(project(":jetpacs"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

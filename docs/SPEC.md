@@ -1,9 +1,9 @@
-# EABP — the Emacs–Android Bridge Protocol
+# Jetpacs — the Emacs–Android Bridge Protocol
 
 Version: **1 (draft)** · Status: matches the reference implementations in
 `emacs/core/` and `app/` · Framing: **NDJSON** (one JSON object per line)
 
-EABP connects a live Emacs to a mobile *companion* that renders
+Jetpacs connects a live Emacs to a mobile *companion* that renders
 server-driven UI. The design premise: **Emacs is the source of truth; the
 companion is a thin pane of glass.** The companion holds no application
 logic — it renders the specs it is sent, caches them for offline display,
@@ -64,8 +64,8 @@ companion → Emacs   session.welcome  {server_proof, granted, node_types, devic
   its pairing UI; the user copies it into their Emacs init. The token
   itself never crosses the wire.
 - **Mutual proof (HMAC-SHA256, lowercase hex, keyed by the token):**
-  - client `mac`  = `HMAC(token, "eabp1:client:" + SNONCE + ":" + CNONCE)`
-  - `server_proof` = `HMAC(token, "eabp1:server:" + CNONCE + ":" + SNONCE)`
+  - client `mac`  = `HMAC(token, "jetpacs1:client:" + SNONCE + ":" + CNONCE)`
+  - `server_proof` = `HMAC(token, "jetpacs1:server:" + CNONCE + ":" + SNONCE)`
   - Nonces need uniqueness, not secrecy. Both sides fail closed: a wrong
     client mac is refused before any state is trusted; a missing or wrong
     `server_proof` makes the client drop the connection (a rogue app
@@ -102,9 +102,9 @@ Two independent version numbers, deliberately not conflated:
   this document's version) — the wire contract. Bumped only on a
   wire-breaking change.
 - **API version** — the client library's Tier 1 surface (the Elisp
-  constructors and seams; reference: `eabp-api-version`, semver). Carried
+  constructors and seams; reference: `jetpacs-api-version`, semver). Carried
   informationally in `hello`'s `client` string
-  (`emacs/30.1 eabp.el/1.0.0`) for logging skew. A companion never gates
+  (`emacs/30.1 jetpacs.el/1.0.0`) for logging skew. A companion never gates
   on it — the API surface is a client-side concern.
 
 Node-vocabulary growth is **not** a protocol bump: new node types are
@@ -161,13 +161,13 @@ user, not the wire, chooses the command.
 
 Actions are dot-namespaced `noun.verb` (`heading.todo-set`,
 `files.rename`, `packages.install`). Namespaces belong to the module that
-registers the handler; the core reserves `eabp.*`, `nav.*`, `view.*`,
+registers the handler; the core reserves `jetpacs.*`, `nav.*`, `view.*`,
 `dialog.*`, `edit.*`, `tablist.*`, `settings.*`, `prompt.*`,
 `dashboard.*`, `files.*`, `emacs.*`, `packages.*`, `customize.*`,
 `transient.*`, `share.*`, `demo.*`, `witheditor.*`, `comint.*`,
 `imenu.*`, `tools.*`, `trigger.*` (device-trigger fires, §11), `app.*`
-(launcher app switching, eabp-apps.el), `device.*` (device-effector
-UI: the app-launch picker, the permissions screen — eabp-device.el).
+(launcher app switching, jetpacs-apps.el), `device.*` (device-effector
+UI: the app-launch picker, the permissions screen — jetpacs-device.el).
 
 - `when_offline` is the queue policy the *spec author* chose for the
   control: `"queue"` (default — persist and replay), `"drop"` (meaningless
@@ -412,7 +412,7 @@ capability.result    {ok, result?}     companion → client (reply)
 | `flashlight` | `{on}` | — | torch of the first flash-capable camera; none → `cap-failed` |
 | `media.key` | `{key}` | — | `play_pause` \| `play` \| `pause` \| `next` \| `previous` \| `stop` \| `fast_forward` \| `rewind` |
 | `clipboard.read` | — | `{text}` | Android 10+ exposes the clipboard only to the focused app → `cap-permission` while backgrounded. Contents must never be logged or persisted companion-side |
-| `screen.keep_on` | `{on}` | — | a window flag held only while the companion's EABP UI is on screen — it cannot pin the device awake from the background |
+| `screen.keep_on` | `{on}` | — | a window flag held only while the companion's Jetpacs UI is on screen — it cannot pin the device awake from the background |
 | `brightness.set` | `{level}` | — | 0–255, switches to manual brightness; ungranted → `cap-permission` (`write_settings` + the grant deep-link) |
 | `dnd.set` | `{mode}` | — | `on` \| `off` \| `priority`; ungranted → `cap-permission` (`notification_policy` + the grant deep-link) |
 

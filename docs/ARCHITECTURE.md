@@ -1,6 +1,6 @@
 # Architecture: the tiers and where the boundary runs
 
-EABP is layered so that everything below the app line is generic — it
+Jetpacs is layered so that everything below the app line is generic — it
 works for any Emacs buffer, mode, or package with zero per-package code —
 and everything above it is one replaceable opinion.
 
@@ -27,28 +27,28 @@ live transients, where a bounded set of human-written labels fits a pie.
 
 ## Emacs side
 
-### `emacs/core/` — the EABP foundation (`eabp-*`)
+### `emacs/core/` — the Jetpacs foundation (`jetpacs-*`)
 
 | module | role |
 |---|---|
-| `eabp.el` | transport: NDJSON framing, handshake, pairing auth, reconnect backoff |
-| `eabp-widgets.el` | the widget constructors (wire shapes in `test/widgets.golden`) |
-| `eabp-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
-| `eabp-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
-| `eabp-device.el` | device effectors: one thin defun per SPEC §10 capability (`eabp-device-intent`, `-flashlight`, `-tts`, …) through the `eabp-device--invoke` funnel |
-| `eabp-minibuffer.el` | prompt bridge: `y-or-n-p` / `completing-read` / … → dialogs, only inside action handlers |
-| `eabp-buffer.el` | **Tier 0 renderer**: any buffer → spans + tappable regions; the major-mode→skin registry |
-| `eabp-shell.el` | the app shell: view registry, tab/drawer/top-bar chrome, snackbar, connect/refresh pushes |
-| `eabp-apps.el` | app identity over the shell: `eabp-defapp` groups views, launcher home grid, per-app tab bars (inert until a second app registers) |
-| `eabp-tablist.el` | **Tier 0.5**: generic `tabulated-list-mode` renderer + skin hook alists |
-| `eabp-comint.el` | **Tier 0.5**: generic `comint-mode` renderer — transcript tail + input row, `comint.send` scoped to the buffer's own live process |
-| `eabp-transient.el` | **Tier 0.5**: transient prefixes as touch dialogs (advice on `transient-setup`) |
-| `eabp-keymap.el` | command palette over any buffer's keymap; live-transient pie plumbing |
-| `eabp-sync.el` | editor shadow buffers: delta sync, flymake diagnostics, eldoc, fontify pushes |
-| `eabp-complete.el` | capf bridge: the phone's completion strip, answered from the shadow |
-| `eabp-settings.el` | schema-driven settings from `defcustom` metadata; registry = the allowlist |
-| `eabp-files.el` | file browser (a dired skin) + plain editor + content search, root-confined; app hooks for file types |
-| `eabp-emacs-ui.el` | buffers / eval REPL / *Messages* views, M-x, imenu section drill-in, message→toast mirror |
+| `jetpacs.el` | transport: NDJSON framing, handshake, pairing auth, reconnect backoff |
+| `jetpacs-widgets.el` | the widget constructors (wire shapes in `test/widgets.golden`) |
+| `jetpacs-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
+| `jetpacs-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
+| `jetpacs-device.el` | device effectors: one thin defun per SPEC §10 capability (`jetpacs-device-intent`, `-flashlight`, `-tts`, …) through the `jetpacs-device--invoke` funnel |
+| `jetpacs-minibuffer.el` | prompt bridge: `y-or-n-p` / `completing-read` / … → dialogs, only inside action handlers |
+| `jetpacs-buffer.el` | **Tier 0 renderer**: any buffer → spans + tappable regions; the major-mode→skin registry |
+| `jetpacs-shell.el` | the app shell: view registry, tab/drawer/top-bar chrome, snackbar, connect/refresh pushes |
+| `jetpacs-apps.el` | app identity over the shell: `jetpacs-defapp` groups views, launcher home grid, per-app tab bars (inert until a second app registers) |
+| `jetpacs-tablist.el` | **Tier 0.5**: generic `tabulated-list-mode` renderer + skin hook alists |
+| `jetpacs-comint.el` | **Tier 0.5**: generic `comint-mode` renderer — transcript tail + input row, `comint.send` scoped to the buffer's own live process |
+| `jetpacs-transient.el` | **Tier 0.5**: transient prefixes as touch dialogs (advice on `transient-setup`) |
+| `jetpacs-keymap.el` | command palette over any buffer's keymap; live-transient pie plumbing |
+| `jetpacs-sync.el` | editor shadow buffers: delta sync, flymake diagnostics, eldoc, fontify pushes |
+| `jetpacs-complete.el` | capf bridge: the phone's completion strip, answered from the shadow |
+| `jetpacs-settings.el` | schema-driven settings from `defcustom` metadata; registry = the allowlist |
+| `jetpacs-files.el` | file browser (a dired skin) + plain editor + content search, root-confined; app hooks for file types |
+| `jetpacs-emacs-ui.el` | buffers / eval REPL / *Messages* views, M-x, imenu section drill-in, message→toast mirror |
 
 The core is org-free by contract; `test/core-load-test.el` loads only
 this directory and fails if an app feature or org itself sneaks in.
@@ -68,16 +68,16 @@ this directory and fails if an app feature or org itself sneaks in.
 | `glasspane/glasspane-notes.el` | vulpea bridge: `[[` wikilink capf in phone-editor shadows, detail-view backlinks + on-demand unlinked mentions, `link.materialize` |
 | `glasspane/glasspane-demo.el` | the mobile-IDE tour files |
 | `glasspane/glasspane.el` | aggregate entry point: `(require 'glasspane)` |
-| `eabp-magit.el` | curated magit radial menu (pure data + key dispatch) |
-| `eabp-package-browser.el` | package-menu skin for the tablist renderer — the worked example |
-| `eabp-customize.el` | customize browser: the defgroup tree + `custom-type` schemas as native controls (gate: `custom-variable-p`) |
-| `eabp-tools.el` | tools hub: bookmark/process/timer entry points (free via the tablist renderer), kill-ring browser, `M-x shell` entry |
-| `eabp-automations.el` | device-trigger management view (enable switches, last-fired, test-fire) over core eabp-triggers.el; settings-link satellite |
+| `jetpacs-magit.el` | curated magit radial menu (pure data + key dispatch) |
+| `jetpacs-package-browser.el` | package-menu skin for the tablist renderer — the worked example |
+| `jetpacs-customize.el` | customize browser: the defgroup tree + `custom-type` schemas as native controls (gate: `custom-variable-p`) |
+| `jetpacs-tools.el` | tools hub: bookmark/process/timer entry points (free via the tablist renderer), kill-ring browser, `M-x shell` entry |
+| `jetpacs-automations.el` | device-trigger management view (enable switches, last-fired, test-fire) over core jetpacs-triggers.el; settings-link satellite |
 
 ### Bundles
 
 `emacs/build-bundle.el` emits two single-file bundles at the repo root:
-**`eabp-core.el`** (the foundation only — what a third-party Tier 1
+**`jetpacs-core.el`** (the foundation only — what a third-party Tier 1
 depends on) and **`glasspane.el`** (core + reference apps).
 
 ## Android side: two Gradle modules
@@ -86,20 +86,20 @@ The elisp core/apps boundary has a Kotlin mirror, enforced by the build
 (split 2026-07-05 — the module boundary is the future repo boundary,
 and the KMP extraction seam):
 
-**`eabp/` — the `:eabp` library** (namespace `com.calebc42.eabp.core`;
-Kotlin package stays `com.calebc42.eabp`). Everything a host companion
-needs short of its own identity: `EabpServer` / `EabpConnection` /
-`FrameCodec` / `Envelope` / `EabpAuth` (transport, handshake, pairing),
-`EabpDatabase` (offline queue + surface cache), `SurfaceStore` /
+**`jetpacs/` — the `:jetpacs` library** (namespace `com.calebc42.jetpacs.core`;
+Kotlin package stays `com.calebc42.jetpacs`). Everything a host companion
+needs short of its own identity: `JetpacsServer` / `JetpacsConnection` /
+`FrameCodec` / `Envelope` / `JetpacsAuth` (transport, handshake, pairing),
+`JetpacsDatabase` (offline queue + surface cache), `SurfaceStore` /
 `SurfaceManager`, `SduiRenderer` / `SduiContentNodes` / `SduiInputNodes`
 / `SduiScaffold` (spec → Compose), `SyntaxHighlight`, `EditorSync` /
-`EabpCompletionState` / `EabpDialogState`, `NotificationRenderer`,
+`JetpacsCompletionState` / `JetpacsDialogState`, `NotificationRenderer`,
 `Reminders`, `DeviceCapabilities` (the `capability.invoke` effector
 dispatch + device-permission report, SPEC §10), `TriggerHost` +
 `BootReceiver` (the persisted device-trigger table, context-registered
 listeners riding the FGS, exact `time` alarms, and reboot re-arming,
 SPEC §11), the widget providers + tile slots, `RadialMenu` /
-`EabpPieMenuState`, `ActionReceiver`, `BridgeService`, `EmacsWaker` —
+`JetpacsPieMenuState`, `ActionReceiver`, `BridgeService`, `EmacsWaker` —
 plus their manifest entries, permissions, and widget resources, which
 merge into any host app.
 
@@ -111,10 +111,10 @@ library's host-neutral defaults (app resources win the merge).
 **The two seams that keep the library host-agnostic** (the rule: the
 library names no host class):
 
-- `EabpLaunch` — "open the app" resolves the host's launcher activity
+- `JetpacsLaunch` — "open the app" resolves the host's launcher activity
   via the package manager and carries the trampoline-extras contract
   the host's activity must honor.
-- `EabpToolbars` — editor toolbars are host-registered by name; the
+- `JetpacsToolbars` — editor toolbars are host-registered by name; the
   library ships none. Glasspane registers `"org"` → `OrgEditToolbar`.
   An unregistered name renders nothing (the unknown-node rule).
 
@@ -122,15 +122,15 @@ library names no host class):
 
 | seam | owner | what registers there |
 |---|---|---|
-| `eabp-render-buffer-functions` | eabp-buffer | per-major-mode buffer skins (dired cards, tablist) |
-| `eabp-shell-define-view` / drawer / top-action / default-FAB | eabp-shell | app views, tabs, and global chrome |
-| `eabp-shell-view-switched/refresh/after-push-hook` | eabp-shell | app state resets, cache drops, piggyback pushes |
-| `eabp-tablist-{header,row,filter}-functions` | eabp-tablist | per-mode tablist skins |
-| `eabp-files-editor-{body,actions,toolbar}` + open/after-save hooks | eabp-files | per-file-type editor behaviour |
-| `eabp-settings-register-section` / `eabp-settings-after-set-hook` | eabp-settings | app settings exposure (the wire allowlist) |
-| `eabp-keymap` pie plumbing | eabp-keymap | curated Tier 1 pies (see eabp-magit.el) |
-| `eabp-defaction` | eabp-surfaces | every semantic action handler (allowlist rule: [SPEC §5](SPEC.md)) |
-| `eabp-buffer-refresh-function` / `eabp-tablist-view-buffer-function` | core | host navigation — already pointed at the shell |
+| `jetpacs-render-buffer-functions` | jetpacs-buffer | per-major-mode buffer skins (dired cards, tablist) |
+| `jetpacs-shell-define-view` / drawer / top-action / default-FAB | jetpacs-shell | app views, tabs, and global chrome |
+| `jetpacs-shell-view-switched/refresh/after-push-hook` | jetpacs-shell | app state resets, cache drops, piggyback pushes |
+| `jetpacs-tablist-{header,row,filter}-functions` | jetpacs-tablist | per-mode tablist skins |
+| `jetpacs-files-editor-{body,actions,toolbar}` + open/after-save hooks | jetpacs-files | per-file-type editor behaviour |
+| `jetpacs-settings-register-section` / `jetpacs-settings-after-set-hook` | jetpacs-settings | app settings exposure (the wire allowlist) |
+| `jetpacs-keymap` pie plumbing | jetpacs-keymap | curated Tier 1 pies (see jetpacs-magit.el) |
+| `jetpacs-defaction` | jetpacs-surfaces | every semantic action handler (allowlist rule: [SPEC §5](SPEC.md)) |
+| `jetpacs-buffer-refresh-function` / `jetpacs-tablist-view-buffer-function` | core | host navigation — already pointed at the shell |
 
 Two standing contracts worth knowing before you build:
 
@@ -181,24 +181,24 @@ APK. May well dead-end; the result gets recorded here either way.
 
 The companion stays a portable renderer by construction: **every
 Kotlin behavior must be traceable to a SPEC section**, and new Kotlin
-lands in `:eabp` only if it is protocol, in `:app` if it is opinion.
+lands in `:jetpacs` only if it is protocol, in `:app` if it is opinion.
 Audit this table whenever a Kotlin wave lands (last audited
 2026-07-05, after the automation wave AUTO 6–10):
 
 | Kotlin surface | SPEC section |
 |---|---|
 | `FrameCodec` / `Envelope` (NDJSON, envelope, ids) | §1–§2 |
-| `EabpAuth` + handshake in `EabpConnection` | §3 |
+| `JetpacsAuth` + handshake in `JetpacsConnection` | §3 |
 | `session.welcome` `device` report | §3, §10 |
 | `SurfaceStore` / `SurfaceManager` (revisions, cache, multi-view) | §4 |
 | `ActionReceiver` (actions, policies, dedupe), `dispatchWithValue` value injection | §5 |
 | Builtins (`view.switch`, `clipboard.copy`) | §5 |
-| Offline queue + replay (`EabpDatabase`, replay loop) | §6 |
-| Dialogs, toasts, pies (`EabpDialogState`, `EabpPieMenuState`) | §7 |
+| Offline queue + replay (`JetpacsDatabase`, replay loop) | §6 |
+| Dialogs, toasts, pies (`JetpacsDialogState`, `JetpacsPieMenuState`) | §7 |
 | `ReminderScheduler` (replace-set, reboot persistence) | §7 |
 | `EditorSync` / completion / diagnostics / eldoc / fontify | §8 |
 | `SduiRenderer` + node files (shapes pinned by `test/widgets.golden`) | §9 |
-| `DeviceCapabilities` (catalog + perm map), `EabpRuntime.keepScreenOn` | §10 |
+| `DeviceCapabilities` (catalog + perm map), `JetpacsRuntime.keepScreenOn` | §10 |
 | `TriggerHost` / `TriggerAlarmReceiver` / `BootReceiver` (types, throttle, hysteresis, `on_fire`, reboot rearm) | §11 |
 | `EmacsWaker` | §5 (`wake` policy), execution model above |
 | Widgets / tiles / notification rendering | §4 surfaces (`widget:*`, `notification:*`) |

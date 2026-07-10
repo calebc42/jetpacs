@@ -1,0 +1,27 @@
+<resources>
+    <!-- Library defaults are host-neutral; a host app rebrands by redefining
+         any of these in its own values/strings.xml (app resources win the
+         merge — see the Glasspane overrides in app/src/main/res). -->
+    <string name="widget_agenda_label">Org Agenda</string>
+    <string name="widget_title_default">Agenda</string>
+    <string name="widget_description">Today\'s Org agenda. Tap an item to open it; tap its circle to cycle the TODO state. Shows the last synced agenda even while Emacs is offline.</string>
+    <string name="widget_empty">Nothing scheduled today</string>
+    <string name="widget_no_data">Open the app to sync your agenda</string>
+    <string name="widget_synced_at">Synced %1$s</string>
+    <string name="widget_toggle_todo">Cycle TODO state</string>
+    <string name="widget_refresh">Refresh agenda</string>
+    <string name="widget_overdue">Overdue</string>
+    <string name="widget_today">Today</string>
+    <string name="widget_view_selector_title">Widget view</string>
+    <string name="widget_custom_description">A blank widget slot. Compose its contents from Emacs Lisp by pushing the matching widget:customN surface.</string>
+    <string name="widget_custom_label_1">Jetpacs slot 1</string>
+    <string name="widget_custom_label_2">Jetpacs slot 2</string>
+    <string name="widget_custom_label_3">Jetpacs slot 3</string>
+    <string name="widget_custom_label_4">Jetpacs slot 4</string>
+    <string name="widget_custom_label_5">Jetpacs slot 5</string>
+    <string name="widget_capture">New capture</string>
+    <string name="widget_clock_label">Org Clock</string>
+    <string name="widget_clock_description">Quick clock in/out shortcuts for the Org clock. Taps queue when Emacs is offline.</string>
+    <string name="widget_clock_in_last">Clock in (last)</string>
+    <string name="widget_clock_out">Clock out</string>
+</resources>

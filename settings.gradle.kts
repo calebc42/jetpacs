@@ -22,7 +22,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "eabp"
+rootProject.name = "jetpacs"
 include(":app")
-include(":eabp")
+include(":jetpacs")
  

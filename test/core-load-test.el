@@ -1,4 +1,4 @@
-;;; core-load-test.el --- The EABP core must load standalone -*- lexical-binding: t; -*-
+;;; core-load-test.el --- The Jetpacs core must load standalone -*- lexical-binding: t; -*-
 
 ;; The delineation guard: loads ONLY emacs/core/ — the apps directory is
 ;; not even on the load-path — and asserts the foundation is complete and
@@ -15,15 +15,15 @@
                                (file-name-directory
                                 (or load-file-name buffer-file-name))))
 
-(dolist (feature '(eabp eabp-widgets eabp-lint eabp-surfaces eabp-triggers
-                   eabp-device eabp-minibuffer eabp-buffer eabp-shell
-                   eabp-apps eabp-tablist eabp-comint eabp-transient
-                   eabp-keymap eabp-sync eabp-complete eabp-settings
-                   eabp-files eabp-witheditor eabp-emacs-ui))
+(dolist (feature '(jetpacs jetpacs-widgets jetpacs-lint jetpacs-surfaces jetpacs-triggers
+                   jetpacs-device jetpacs-minibuffer jetpacs-buffer jetpacs-shell
+                   jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-transient
+                   jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
+                   jetpacs-files jetpacs-witheditor jetpacs-emacs-ui))
   (require feature))
 
-(dolist (feature '(glasspane glasspane-ui glasspane-org eabp-magit
-                   eabp-package-browser))
+(dolist (feature '(glasspane glasspane-ui glasspane-org jetpacs-magit
+                   jetpacs-package-browser))
   (when (featurep feature)
     (error "Core pulled in app feature %s" feature)))
 
@@ -34,11 +34,11 @@
 
 ;; The shell must be servable on its own: views registered by core
 ;; feature modules exist even with no app loaded.
-(unless (assoc "files" eabp-shell-views)
+(unless (assoc "files" jetpacs-shell-views)
   (error "Shell has no files view"))
-(unless (assoc "eval" eabp-shell-views)
+(unless (assoc "eval" jetpacs-shell-views)
   (error "Shell has no eval view"))
 
-(message "EABP core loads standalone: OK")
+(message "Jetpacs core loads standalone: OK")
 
 ;;; core-load-test.el ends here

@@ -1,8 +1,8 @@
-# Plan: platform hardening — make eabp-core a foundation others build on
+# Plan: platform hardening — make jetpacs-core a foundation others build on
 
 **STATUS (2026-07-07): Phases A–E DONE; only Phase F (repo split) remains.**
 Produced from an audit of `emacs/core/`,
-`eabp/src/main/java/com/calebc42/eabp/` (the `:eabp` renderer),
+`jetpacs/src/main/java/com/calebc42/jetpacs/` (the `:jetpacs` renderer),
 `test/widgets.golden`, and the existing plan docs.
 
 **VERIFIED (2026-07-09):** full suite green on Emacs 30.1 — 135/135 main +
@@ -14,53 +14,53 @@ pass on 30.1 and in CI. The green/failing counts in the phase notes are kept
 as-written for historical record; this note is the correct baseline.
 
 Phase E landed 2026-07-07 (Tasks 14–15) — multi-tenant hardening:
-- Ownership machinery in `eabp-surfaces.el`: `eabp-current-owner`,
-  `with-eabp-owner`, `eabp--claim` (warn / error-under-
-  `eabp-strict-namespaces` on a cross-owner name clash, silent same-owner
-  re-registration for live reload). Wired into `eabp-defaction`,
-  `eabp-shell-define-view`, `eabp-settings-register-section`, and
-  `eabp-defapp` (attributes its `:views`).
-- `eabp-app-unregister` tears down an app's owned actions, views, settings
+- Ownership machinery in `jetpacs-surfaces.el`: `jetpacs-current-owner`,
+  `with-jetpacs-owner`, `jetpacs--claim` (warn / error-under-
+  `jetpacs-strict-namespaces` on a cross-owner name clash, silent same-owner
+  re-registration for live reload). Wired into `jetpacs-defaction`,
+  `jetpacs-shell-define-view`, `jetpacs-settings-register-section`, and
+  `jetpacs-defapp` (attributes its `:views`).
+- `jetpacs-app-unregister` tears down an app's owned actions, views, settings
   sections, and UI-state/subscriptions in one call (live reload +
-  uninstall). `eabp-settings-remove-section` and `eabp-on-state-change-clear`
+  uninstall). `jetpacs-settings-remove-section` and `jetpacs-on-state-change-clear`
   added to support it.
 - 2 tests (collision + teardown); API-STABILITY + BUILDING-TIER1 (§7)
   updated. Suite 134 / 129 green (same 5 pre-existing); pure elisp, no
   Kotlin/wire change.
 
 Phase D landed 2026-07-07 (Tasks 11–13) — the visualization ladder:
-- Rung 1 `chart` (`SduiChart.kt`, elisp `eabp-chart`/`eabp-chart-series`):
+- Rung 1 `chart` (`SduiChart.kt`, elisp `jetpacs-chart`/`jetpacs-chart-series`):
   data-in, animated Canvas draw, closed `kind` enum
   (line/bar/area/sparkline), `on_point_tap` value injection, a11y summary.
-- Rung 2 `canvas` (`SduiCanvas.kt`, elisp `eabp-canvas` + `eabp-draw-*`):
+- Rung 2 `canvas` (`SduiCanvas.kt`, elisp `jetpacs-canvas` + `jetpacs-draw-*`):
   a closed draw-op interpreter (line/rect/circle/path/text) in node-local
   coords, no animation/interaction, unknown ops skipped.
 - Rung 3 `docs/CONTRIBUTING-NODES.md`: the Kotlin-contribution checklist +
   the "earns a curated primitive" rule (the alternative path, never
   required of app authors).
-- Both nodes in `SDUI_NODE_TYPES` + `eabp-lint-node-types`; golden +2
+- Both nodes in `SDUI_NODE_TYPES` + `jetpacs-lint-node-types`; golden +2
   (53–54); SPEC §9 Visualization family added. Suite 132 / 127 green
-  (same 5 pre-existing); `:eabp` Kotlin compiles clean.
+  (same 5 pre-existing); `:jetpacs` Kotlin compiles clean.
 
 Phase C landed 2026-07-07 (Tasks 5–10): `row`/`column`/`flow_row` take
-`:spacing` and `:align` (splitter `eabp--children-and-opts` keeps
-`(eabp-row a b c)` callers working); cross-axis alignment consumed in the
+`:spacing` and `:align` (splitter `jetpacs--children-and-opts` keeps
+`(jetpacs-row a b c)` callers working); cross-axis alignment consumed in the
 renderer; `box`/`surface`/`card` gain `:width`/`:height`/`:fill-fraction`/
-`:border` (via `eabp-border`) through a shared Kotlin `containerModifier`;
+`:border` (via `jetpacs-border`) through a shared Kotlin `containerModifier`;
 `image` gains sizing + `aspect_ratio` + `content_scale`; new `slider`
-input node (elisp `eabp-slider`, renderer `Slider`, in `SDUI_NODE_TYPES` +
-`eabp-lint-node-types`). Task 10: grid = compose a `flow_row` of sized
+input node (elisp `jetpacs-slider`, renderer `Slider`, in `SDUI_NODE_TYPES` +
+`jetpacs-lint-node-types`). Task 10: grid = compose a `flow_row` of sized
 cells (no dedicated node, per the accepted default). Golden +5 additive
 lines (48–52); SPEC §9 updated. Suite 131 tests / 126 green (same 5
-pre-existing); `:eabp` Kotlin compiles clean.
+pre-existing); `:jetpacs` Kotlin compiles clean.
 
-Phase B landed 2026-07-07 (**Task 4**): new `emacs/core/eabp-lint.el` —
-`eabp-lint-spec` (validate a node tree: unknown `t`, malformed actions,
-non-serializable / mistyped attrs), `eabp-render-to-json` (headless wire
-round-trip so views are ERT-able with no phone), and `eabp-lint-sanitize-spec`
-behind the opt-in `eabp-lint-on-push` (invalid node → inline `empty_state`
-error, wired into `eabp-surface-update`). `eabp-lint-node-types` mirrors
-`SDUI_NODE_TYPES`; the drift test `eabp-lint-types-cover-golden` fails if a
+Phase B landed 2026-07-07 (**Task 4**): new `emacs/core/jetpacs-lint.el` —
+`jetpacs-lint-spec` (validate a node tree: unknown `t`, malformed actions,
+non-serializable / mistyped attrs), `jetpacs-render-to-json` (headless wire
+round-trip so views are ERT-able with no phone), and `jetpacs-lint-sanitize-spec`
+behind the opt-in `jetpacs-lint-on-push` (invalid node → inline `empty_state`
+error, wired into `jetpacs-surface-update`). `jetpacs-lint-node-types` mirrors
+`SDUI_NODE_TYPES`; the drift test `jetpacs-lint-types-cover-golden` fails if a
 constructor ships a `t` the linter/renderer don't know. 7 tests added (131
 total, all core green). Added to `build-bundle.el` + `core-load-test.el`.
 The deferred Phase-A acceptance tests are now cheap follow-ups on this base
@@ -69,16 +69,16 @@ still open: a Kotlin-side `NODE_TYPES` unit test and an `API-STABILITY.md`
 `fboundp` sweep).
 
 Phase A landed 2026-07-07:
-- **Task 1** — `eabp-api-version` (defconst "1.0.0") + `eabp-protocol-version`
-  clarified in `eabp.el`, echoed in `hello`'s `client`; `docs/API-STABILITY.md`
+- **Task 1** — `jetpacs-api-version` (defconst "1.0.0") + `jetpacs-protocol-version`
+  clarified in `jetpacs.el`, echoed in `hello`'s `client`; `docs/API-STABILITY.md`
   (frozen public-symbol list + the two rules); SPEC §3 "Versioning".
 - **Task 2** — `SDUI_NODE_TYPES` in `SduiRenderer.kt` (32 types, kept beside
   the `when`), published in `session.welcome` as `node_types`
-  (`EabpConnection.kt`); `eabp-node-supported-p` in `eabp.el` (permissive
+  (`JetpacsConnection.kt`); `jetpacs-node-supported-p` in `jetpacs.el` (permissive
   when catalog absent); SPEC §3 + §9 deltas.
 - **Task 3** — the `else` fallback in `SduiRenderer.kt` (unknown container →
   its children, leaf → nothing, never a crash); SPEC §9/§12 now match.
-- Tests: `eabp-node-supported-negotiation` + `eabp-api-version-bound` added
+- Tests: `jetpacs-node-supported-negotiation` + `jetpacs-api-version-bound` added
   (124 tests, all core green). Bundle regenerated. **Pre-existing** 5
   failures remain (glasspane org-table/vulpea-notes/detail — confirmed
   identical with these changes stashed; org/vulpea env skew, not this work).
@@ -94,7 +94,7 @@ more qualified person fork it. Bias every task toward a standalone core,
 complete docs, and clean seams a stranger can onboard against. The
 end-state adds **Phase F: split the repo** — extract the hardened core
 into its own repository, leaving Glasspane as a separate reference-app
-repo (finally executing the deferred split; the Gradle `:eabp`/`:app`
+repo (finally executing the deferred split; the Gradle `:jetpacs`/`:app`
 boundary and the org-free-by-contract core already make the core cleanly
 extractable). Do Phase F **last**, so the new maintainer inherits a
 finished platform.
@@ -130,15 +130,15 @@ can land alongside any other phase.
 ## Repo conventions (read first — carried from PLAN-primitive-completeness.md)
 
 - Edit sources under `emacs/core/` (and `emacs/apps/` for Tier 1). The
-  root `eabp-core.el` / `glasspane.el` are **generated bundles** — never
+  root `jetpacs-core.el` / `glasspane.el` are **generated bundles** — never
   hand-edit. Regenerate: `emacs --batch -l emacs/build-bundle.el`.
-- Tests: `emacs -Q --batch -l test/eabp-tests.el -f
+- Tests: `emacs -Q --batch -l test/jetpacs-tests.el -f
   ert-run-tests-batch-and-exit`. Regenerate the wire golden only after an
-  **intentional** wire change: `-f eabp-tests-regen-widget-golden`.
+  **intentional** wire change: `-f jetpacs-tests-regen-widget-golden`.
 - **Command-dispatch boundary (SPEC §5):** the wire never names code to
   run. New actions are narrow, validated, and documented in SPEC.
 - Wire-format additions need a Kotlin counterpart in
-  `eabp/src/main/java/com/calebc42/eabp/` (renderer nodes live in
+  `jetpacs/src/main/java/com/calebc42/jetpacs/` (renderer nodes live in
   `SduiRenderer.kt` + `SduiContentNodes.kt` / `SduiInputNodes.kt`). If the
   Kotlin can't land in the same pass, the elisp side must be
   additive-only (unknown attrs/nodes are ignored by the client) and the
@@ -156,29 +156,29 @@ can land alongside any other phase.
 check. Today the wire says `v: 1` but there is no elisp API version and no
 spec/vocabulary version anywhere (grep of `emacs/core/` finds none).
 
-**Files:** `emacs/core/eabp.el`, `docs/SPEC.md`, a new
+**Files:** `emacs/core/jetpacs.el`, `docs/SPEC.md`, a new
 `docs/API-STABILITY.md`.
 
 **Implementation:**
 
-- `(defconst eabp-api-version "1.0.0")` in `eabp.el` — the elisp Tier 1
+- `(defconst jetpacs-api-version "1.0.0")` in `jetpacs.el` — the elisp Tier 1
   API surface version (semver; bump minor on additive, major on breaking).
-- `(defconst eabp-spec-version 1)` — the wire/vocabulary version, echoed
+- `(defconst jetpacs-spec-version 1)` — the wire/vocabulary version, echoed
   in `session.hello`'s `client` object so a companion can log skew.
 - `docs/API-STABILITY.md`: the frozen public-symbol list (the ~40
-  constructors in `eabp-widgets.el` + the seams in
-  [ARCHITECTURE.md](ARCHITECTURE.md)'s seam table), the `eabp--`
+  constructors in `jetpacs-widgets.el` + the seams in
+  [ARCHITECTURE.md](ARCHITECTURE.md)'s seam table), the `jetpacs--`
   double-dash = internal convention stated normatively, and the
   deprecation policy (a symbol is removed only on a major bump, one minor
   cycle after a `make-obsolete` marker).
 - SPEC delta: §2 header notes `spec_version`; add a short "Versioning"
   subsection to §3.
 
-**Pitfalls:** don't retro-freeze internals — audit `eabp-widgets.el`
+**Pitfalls:** don't retro-freeze internals — audit `jetpacs-widgets.el`
 exports first and mark anything not meant to be public with `--` before
 publishing the list, or you've promised stability you don't want.
 
-**Acceptance:** `eabp-api-version` / `eabp-spec-version` bound; a test
+**Acceptance:** `jetpacs-api-version` / `jetpacs-spec-version` bound; a test
 asserts every symbol named in `API-STABILITY.md` is `fboundp`; `hello`
 carries `spec_version` (extend the handshake test).
 
@@ -189,9 +189,9 @@ given node and branch to a fallback — the same courtesy triggers already
 get via `device.trigger_types`. Without this, every Phase C/D addition
 silently breaks older companions.
 
-**Files:** Kotlin `EabpConnection` (welcome builder) + a node-catalog
-constant near `SduiRenderer`; elisp `eabp.el` (welcome parsing ~line 290,
-alongside `eabp-granted-p`); `docs/SPEC.md` §3 + §9.
+**Files:** Kotlin `JetpacsConnection` (welcome builder) + a node-catalog
+constant near `SduiRenderer`; elisp `jetpacs.el` (welcome parsing ~line 290,
+alongside `jetpacs-granted-p`); `docs/SPEC.md` §3 + §9.
 
 **Implementation:**
 
@@ -200,8 +200,8 @@ alongside `eabp-granted-p`); `docs/SPEC.md` §3 + §9.
   they can't drift) and include it in `session.welcome` as
   `node_types: [...]`, under the existing `capabilities` grant (it rides
   the same `device` object, or a sibling — pick one and spec it).
-- elisp: `(eabp-node-supported-p 'chart)` predicate mirroring
-  `eabp-granted-p`, reading the welcome's `node_types`; returns `t`
+- elisp: `(jetpacs-node-supported-p 'chart)` predicate mirroring
+  `jetpacs-granted-p`, reading the welcome's `node_types`; returns `t`
   (permissively) when the companion sent no catalog at all (an older
   companion that predates this task — the constructor's own additive
   safety still applies).
@@ -212,7 +212,7 @@ alongside `eabp-granted-p`); `docs/SPEC.md` §3 + §9.
 companion from before this task sends no catalog and must not be treated
 as "supports nothing." Support is *positive* knowledge only.
 
-**Acceptance:** welcome round-trips `node_types`; `eabp-node-supported-p`
+**Acceptance:** welcome round-trips `node_types`; `jetpacs-node-supported-p`
 returns nil for an absent type when a catalog is present, `t` when no
 catalog was sent; handshake test extended.
 
@@ -225,7 +225,7 @@ unknown *container* type silently swallows its whole subtree. This is the
 exact failure Task 2 guards against, but the fallback must be graceful
 even when a Tier 1 didn't gate.
 
-**Files:** `eabp/src/main/java/com/calebc42/eabp/SduiRenderer.kt` (add the
+**Files:** `jetpacs/src/main/java/com/calebc42/jetpacs/SduiRenderer.kt` (add the
 terminal `else`), `docs/SPEC.md` §12.
 
 **Implementation:**
@@ -256,12 +256,12 @@ Task 4's harness.
 unit-tests their views with no phone attached; a malformed node fails at
 lint time, never blanks a surface on the device.
 
-**Files:** new `emacs/core/eabp-lint.el` (add to `build-bundle.el`
+**Files:** new `emacs/core/jetpacs-lint.el` (add to `build-bundle.el`
 core-files + `core-load-test.el`); test helpers in `test/`.
 
 **Implementation:**
 
-- `eabp-lint-spec` walks a node tree and checks each node against a
+- `jetpacs-lint-spec` walks a node tree and checks each node against a
   schema derived from the golden reference: `t` is a known type (from a
   table that must stay in sync with `widgets.golden` — assert this in a
   test), required attrs present, attr value types correct (a `color` is a
@@ -269,21 +269,21 @@ core-files + `core-load-test.el`); test helpers in `test/`.
   has `action` xor `builtin`). Returns a list of `(path . problem)`; nil
   = clean.
 - Wire the linter into the *serialize* path as an opt-in guard
-  (`eabp-lint-on-push`, default nil in production, t in tests): when on,
+  (`jetpacs-lint-on-push`, default nil in production, t in tests): when on,
   a node that fails lint is replaced in place by an inline `empty_state`
   error node naming the problem, so **one bad subtree degrades to a
   visible error instead of dropping the whole push**. This pushes the
-  builder-level isolation in `eabp-shell` down to the node level.
-- Headless render assertion helper: `eabp-render-to-json` (build a view,
+  builder-level isolation in `jetpacs-shell` down to the node level.
+- Headless render assertion helper: `jetpacs-render-to-json` (build a view,
   serialize, parse back) so ERT tests assert on structure without a
-  companion. Fold the existing `eabp-render-buffer` fixtures onto it.
+  companion. Fold the existing `jetpacs-render-buffer` fixtures onto it.
 
 **Pitfalls:** the schema table is a maintenance liability if it drifts
 from `widgets.golden`. Make the golden the source of truth — derive or
 cross-check the linter's known-type/attr set against it in a test that
 fails when a constructor is added without a schema entry.
 
-**Acceptance:** `eabp-lint-spec` flags a `text` node missing `text`, a
+**Acceptance:** `jetpacs-lint-spec` flags a `text` node missing `text`, a
 bad color, an action with both `action` and `builtin`; a lint-guarded
 push of a bad node emits the inline error node; a drift test fails if a
 golden line has no schema entry.
@@ -303,10 +303,10 @@ not "new Kotlin." Every task here is additive and MUST land after Phase A
 renderer (`SduiRenderer.kt:111,127`), but the elisp constructors don't
 emit them. Surface the capability.
 
-**Files:** `emacs/core/eabp-widgets.el`; regen `widgets.golden`.
+**Files:** `emacs/core/jetpacs-widgets.el`; regen `widgets.golden`.
 
-**Implementation:** add `:spacing` and `:scroll` keys to `eabp-row` /
-`eabp-column` (and confirm `flow_row`). No Kotlin change. Regen golden
+**Implementation:** add `:spacing` and `:scroll` keys to `jetpacs-row` /
+`jetpacs-column` (and confirm `flow_row`). No Kotlin change. Regen golden
 (intentional additive wire change).
 
 **Acceptance:** golden lines for row/column carry the new attrs when
@@ -318,7 +318,7 @@ passed; renderer already consumes them (no Kotlin diff).
 children. Today `row` hardcodes `CenterVertically` and `column` defaults
 `Start` (`SduiRenderer.kt:128`).
 
-**Files:** `SduiRenderer.kt`, `eabp-widgets.el`; regen golden.
+**Files:** `SduiRenderer.kt`, `jetpacs-widgets.el`; regen golden.
 
 **Implementation:** `:align` on both, mapping to `horizontalAlignment`
 (column) / `verticalAlignment` (row): `start|center|end`. Keep current
@@ -333,7 +333,7 @@ centered (headless structural check + one Compose spot-check).
 container takes width/height and `image` hardcodes `fillMaxWidth()`
 (`SduiRenderer.kt:432`).
 
-**Files:** `SduiRenderer.kt`, `eabp-widgets.el`; regen golden.
+**Files:** `SduiRenderer.kt`, `jetpacs-widgets.el`; regen golden.
 
 **Implementation:**
 
@@ -355,7 +355,7 @@ weight is ignored when both are set (mirrors Compose).
 **Goal:** an outlined container (a very common look with no primitive
 today).
 
-**Files:** `SduiRenderer.kt`, `eabp-widgets.el`; regen golden.
+**Files:** `SduiRenderer.kt`, `jetpacs-widgets.el`; regen golden.
 
 **Implementation:** `:border` as `{width, color}` (color = hex or token)
 → `Modifier.border(width.dp, resolveColor(color), shape)`, reusing the
@@ -370,7 +370,7 @@ stroke (Compose spot-check).
 so any "set a value" UI is currently blocked.
 
 **Files:** new `SduiInputNodes.kt` entry + dispatch in `SduiRenderer.kt`;
-`eabp-widgets.el` constructor; SPEC §9; regen golden.
+`jetpacs-widgets.el` constructor; SPEC §9; regen golden.
 
 **Implementation:** `{t:"slider", id, value, min?, max?, steps?,
 on_change}` → Compose `Slider`, dispatching `on_change` with `value`
@@ -382,7 +382,7 @@ Task 2's `NODE_TYPES`.
 doesn't flood the wire.
 
 **Acceptance:** golden line; slider dispatches once on release with the
-final value; `eabp-node-supported-p 'slider` reflects the catalog.
+final value; `jetpacs-node-supported-p 'slider` reflects the catalog.
 
 ### Task 10 (decision): grid vs. flow_row
 
@@ -419,8 +419,8 @@ the doc so the vocabulary can't bloat):
 tappable, theme-reactive chart. This is where ~95% of real visualization
 need lands and where the polish lives.
 
-**Files:** new `eabp/src/main/java/com/calebc42/eabp/SduiChart.kt` +
-dispatch; `eabp-widgets.el` (`eabp-chart`); SPEC §9; regen golden;
+**Files:** new `jetpacs/src/main/java/com/calebc42/jetpacs/SduiChart.kt` +
+dispatch; `jetpacs-widgets.el` (`jetpacs-chart`); SPEC §9; regen golden;
 `NODE_TYPES`.
 
 **Implementation:**
@@ -441,7 +441,7 @@ becomes a charting library. If a request needs a knob outside this shape,
 that's a signal it belongs on `canvas`, not a new `chart` attr.
 
 **Acceptance:** golden line; a 2-series line chart renders and animates;
-a point tap dispatches injected data; `eabp-node-supported-p 'chart`
+a point tap dispatches injected data; `jetpacs-node-supported-p 'chart`
 gates a fallback (e.g. a `table` of the same series) on older companions.
 
 ### Task 12: `canvas` draw-ops interpreter (rung 2 — the escape hatch)
@@ -451,8 +451,8 @@ covers — a progress ring, a custom badge, a bespoke diagram. The Tier 1
 computes geometry in elisp and emits a draw program; the Kotlin
 interprets it and never changes again.
 
-**Files:** new `SduiCanvas.kt` + dispatch; `eabp-widgets.el`
-(`eabp-canvas` + op helpers); SPEC §9; regen golden; `NODE_TYPES`.
+**Files:** new `SduiCanvas.kt` + dispatch; `jetpacs-widgets.el`
+(`jetpacs-canvas` + op helpers); SPEC §9; regen golden; `NODE_TYPES`.
 
 **Implementation:**
 
@@ -489,7 +489,7 @@ section) or a dedicated `docs/CONTRIBUTING-NODES.md`.
 
 **Implementation:** a checklist for a new node: add the `when (type)`
 case; register it in `NODE_TYPES` (Task 2); add a constructor to
-`eabp-widgets.el`; add a `widgets.golden` line + a lint schema entry
+`jetpacs-widgets.el`; add a `widgets.golden` line + a lint schema entry
 (Task 4); document in SPEC §9; state the "earns a curated primitive"
 rule (Task 11) so contributions clear the same bar we hold ourselves to.
 Cross-link from ARCHITECTURE.md's seam table.
@@ -504,26 +504,26 @@ Cross-link from ARCHITECTURE.md's seam table.
 ### Task 14: Ownership + collision detection across the registration surface
 
 **Goal:** two coexisting Tier 1 apps can't silently clobber each other's
-action, view, surface, or settings symbol. Today `eabp-defaction`
-(`eabp-surfaces.el:118`) is a bare `puthash` (last-writer-wins,
-silent); only `eabp-defapp` detects view collisions, and only as a
-`message` (`eabp-apps.el:42`). Actions are the security boundary, so a
+action, view, surface, or settings symbol. Today `jetpacs-defaction`
+(`jetpacs-surfaces.el:118`) is a bare `puthash` (last-writer-wins,
+silent); only `jetpacs-defapp` detects view collisions, and only as a
+`message` (`jetpacs-apps.el:42`). Actions are the security boundary, so a
 silent clobber is both a bug and a trust surprise (app B answering app
 A's namespaced action).
 
-**Files:** `emacs/core/eabp-surfaces.el` (`eabp-defaction`),
-`emacs/core/eabp-shell.el` (`eabp-shell-define-view`),
-`emacs/core/eabp-apps.el`, `emacs/core/eabp-settings.el`.
+**Files:** `emacs/core/jetpacs-surfaces.el` (`jetpacs-defaction`),
+`emacs/core/jetpacs-shell.el` (`jetpacs-shell-define-view`),
+`emacs/core/jetpacs-apps.el`, `emacs/core/jetpacs-settings.el`.
 
 **Implementation:**
 
 - Thread an owner token through every registration. Simplest ergonomic
-  form: a dynamic `eabp-current-app` bound by `eabp-defapp` (or a
-  `with-eabp-app` macro) that registrations capture. Record `(name .
+  form: a dynamic `jetpacs-current-app` bound by `jetpacs-defapp` (or a
+  `with-jetpacs-app` macro) that registrations capture. Record `(name .
   owner)` alongside each handler/view/section.
 - On a re-registration by a *different* owner, `warn` (a real
   `display-warning`, not a swallowed `message`) — or refuse behind a
-  `eabp-strict-namespaces` defcustom. Same-owner re-registration is the
+  `jetpacs-strict-namespaces` defcustom. Same-owner re-registration is the
   normal live-reload case and stays silent.
 - Optionally validate that an app's action/view/surface names begin with
   its declared `:namespace`, turning the SPEC §5 naming *convention* into
@@ -542,25 +542,25 @@ mis-prefixed name.
 settings, and state subscriptions atomically — no stale handlers
 accumulate across live-dev reloads, and an app can be genuinely removed.
 
-**Files:** `emacs/core/eabp-apps.el` (+ the registries it must reach:
-`eabp-surfaces.el`, `eabp-shell.el`, `eabp-settings.el`).
+**Files:** `emacs/core/jetpacs-apps.el` (+ the registries it must reach:
+`jetpacs-surfaces.el`, `jetpacs-shell.el`, `jetpacs-settings.el`).
 
 **Implementation:**
 
-- Given the owner token from Task 14, `eabp-app-unregister` walks each
+- Given the owner token from Task 14, `jetpacs-app-unregister` walks each
   registry and removes entries owned by the app (actions, views,
   drawer/top-action chrome, settings sections, `on-state-change`
-  subscriptions), then `eabp-shell--schedule-repush`.
+  subscriptions), then `jetpacs-shell--schedule-repush`.
 - Provide an `unload-feature` hook shim so `(unload-feature 'my-app)`
   routes through it.
 
-**Pitfalls:** state subscriptions (`eabp-on-state-change`) and UI-state
+**Pitfalls:** state subscriptions (`jetpacs-on-state-change`) and UI-state
 keys are easy to miss and leak secrets/values — clear both by owner
-prefix (there's already `eabp-ui-state-clear` by prefix in
-`eabp-surfaces.el:175` to model on).
+prefix (there's already `jetpacs-ui-state-clear` by prefix in
+`jetpacs-surfaces.el:175` to model on).
 
 **Acceptance:** register an app with an action + view + state sub,
-`eabp-app-unregister`, assert all three registries no longer hold its
+`jetpacs-app-unregister`, assert all three registries no longer hold its
 entries and a repush was scheduled.
 
 ---
@@ -570,7 +570,7 @@ entries and a repush was scheduled.
 ### Task 16: Extract the core into its own repository
 
 **Goal:** two repos — a standalone **core platform** (the wire, the Tier 0
-renderer, the `:eabp` Android library, `eabp-core.el`, the docs a
+renderer, the `:jetpacs` Android library, `jetpacs-core.el`, the docs a
 third-party writes against) and a separate **Glasspane reference-app**
 repo (the org app, `:app` shell, `glasspane.el`). The core repo is what a
 new maintainer adopts; Glasspane is one worked example that depends on it.
@@ -581,11 +581,11 @@ extracting a half-hardened one just moves the work.
 **Implementation (sketch — detail at execution time):**
 
 - The seams already exist: `emacs/core/` vs `emacs/apps/`, the
-  `core-load-test.el` org-free tripwire, the Gradle `:eabp` (namespace
-  `com.calebc42.eabp.core`) vs `:app` split, and the two host-agnostic
-  seams (`EabpLaunch`, `EabpToolbars`). So this is packaging, not
+  `core-load-test.el` org-free tripwire, the Gradle `:jetpacs` (namespace
+  `com.calebc42.jetpacs.core`) vs `:app` split, and the two host-agnostic
+  seams (`JetpacsLaunch`, `JetpacsToolbars`). So this is packaging, not
   re-architecting.
-- Core repo contents: `emacs/core/`, `eabp/` (the `:eabp` module) promoted
+- Core repo contents: `emacs/core/`, `jetpacs/` (the `:jetpacs` module) promoted
   to a standalone Gradle project with its own minimal host harness for
   testing, `test/`, and `docs/{SPEC,ARCHITECTURE,BUILDING-TIER1,
   API-STABILITY,CONTRIBUTING-NODES}.md` + the relevant PLAN docs.
@@ -598,7 +598,7 @@ extracting a half-hardened one just moves the work.
   new repo over a flat copy.
 
 **Acceptance:** the core repo byte-compiles, passes `core-load-test.el`
-and the full test suite, and builds the `:eabp` library with no reference
+and the full test suite, and builds the `:jetpacs` library with no reference
 to Glasspane or `:app`; the Glasspane repo builds against the tagged core.
 
 ## Resolved decisions (2026-07-07 — owner accepted all defaults)
@@ -613,7 +613,7 @@ wanting to make domain calls they're unsure of). Locked:
 3. **Task 12 canvas coords:** node-local `width`×`height`; no `viewbox` in
    v1.
 4. **Task 14 strictness:** warn on cross-owner collision; a refuse mode
-   lives behind an opt-in `eabp-strict-namespaces` defcustom (default off).
+   lives behind an opt-in `jetpacs-strict-namespaces` defcustom (default off).
 
 ## Suggested sequencing
 

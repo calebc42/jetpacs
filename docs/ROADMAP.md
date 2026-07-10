@@ -39,11 +39,11 @@ Within a horizon, the streams listed are independent and safely
 parallel; horizons themselves are ordered.
 
 **Completed pre-work (2026-07-05):** the Kotlin side is now two Gradle
-modules — `:eabp` (protocol + renderer library, host-agnostic by
-construction: `EabpLaunch` / `EabpToolbars` seams) and `:app` (the
+modules — `:jetpacs` (protocol + renderer library, host-agnostic by
+construction: `JetpacsLaunch` / `JetpacsToolbars` seams) and `:app` (the
 Glasspane shell). This is the in-repo half of the repo-split decision
 (see ARCHITECTURE.md); it gives PKM 16 its enforcement point and PKM 17
-its extraction seam, and future Kotlin from AUTO tasks lands in `:eabp`
+its extraction seam, and future Kotlin from AUTO tasks lands in `:jetpacs`
 only if it is protocol, in `:app` if it is opinion. CI
 (`.github/workflows/ci.yml`) now runs the three elisp test entry
 points, the bundle-freshness check, and both Gradle modules on every
@@ -63,9 +63,9 @@ inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 
 | order | item | why |
 |---|---|---|
-| 1 ✅ | **AUTO 1 + AUTO 2** — `triggers.set` / `trigger.fired` spec; `capability.invoke` + device-permission map | Landed 2026-07-05: SPEC §10–§11, `eabp-triggers.el`, capability helpers, `DeviceCapabilities.kt` (`settings.open` first), `frames.golden` |
-| 2 (par.) ✅ | **AUTO 3 + AUTO 4** — intent escape hatch; permission-free effectors | Landed 2026-07-05: 12-cap catalog in `DeviceCapabilities.kt` + `eabp-device.el`; REPL pass on device pending |
-| 2 (par.) ✅ | **AUTO 14 (launcher Task 14)** — `eabp-defapp` + home + per-app chrome | Landed 2026-07-05: `eabp-apps.el` + shell filter seam; Glasspane is the first defapp, eabp-hello the second; on-device check pending |
+| 1 ✅ | **AUTO 1 + AUTO 2** — `triggers.set` / `trigger.fired` spec; `capability.invoke` + device-permission map | Landed 2026-07-05: SPEC §10–§11, `jetpacs-triggers.el`, capability helpers, `DeviceCapabilities.kt` (`settings.open` first), `frames.golden` |
+| 2 (par.) ✅ | **AUTO 3 + AUTO 4** — intent escape hatch; permission-free effectors | Landed 2026-07-05: 12-cap catalog in `DeviceCapabilities.kt` + `jetpacs-device.el`; REPL pass on device pending |
+| 2 (par.) ✅ | **AUTO 14 (launcher Task 14)** — `jetpacs-defapp` + home + per-app chrome | Landed 2026-07-05: `jetpacs-apps.el` + shell filter seam; Glasspane is the first defapp, jetpacs-hello the second; on-device check pending |
 
 ## Horizon 2 — the minimum usable automation loop
 
@@ -73,7 +73,7 @@ inline-images follow-up is absorbed by PKM 9 in Horizon 4.
 |---|---|---|
 | 1 ✅ | **AUTO 6** — trigger host, persistence, boot receiver | Landed 2026-07-05 (TriggerHost.kt, boot rearm, reminder reboot fix); on-device acceptance pending |
 | 2 ✅ | **AUTO 7** — trigger batch 1 (time/power/battery/screen/…) | Landed 2026-07-05 with AUTO 6 (9 types, SPEC §11 catalog); on-device checks pending |
-| 3 ✅ | **AUTO 12** ⚠ — `eabp-deftrigger` + Automations view | Landed 2026-07-05 (macro, toggles via Customize, test-fire, eabp-automations.el); on-device pass pending |
+| 3 ✅ | **AUTO 12** ⚠ — `jetpacs-deftrigger` + Automations view | Landed 2026-07-05 (macro, toggles via Customize, test-fire, jetpacs-automations.el); on-device pass pending |
 | 4 ✅ | **AUTO 10** — companion-local `on_fire` | Landed 2026-07-05 (cap invocations + notify posts in TriggerHost); on-device pass pending |
 | any 🟡 | **AUTO 11** — wake spike (timeboxed) | Docs half landed 2026-07-05 (ARCHITECTURE "Execution model"); Termux silent-start spike needs hardware |
 | after Kotlin lands ✅ | **PKM 16** — contract-discipline audit | Done 2026-07-05: conformance checklist in ARCHITECTURE.md; one divergence found (on_change `value` injection) and spec'd into §9 |
@@ -141,9 +141,9 @@ PKM 16 is the exception and already lives in H2.
 
 1. AUTO 1 + 2: write SPEC §11 + the capability section; land the
    Emacs/Kotlin stubs.
-2. AUTO 3 + 4: `DeviceCapabilities.kt` + `eabp-device.el`, effectors
+2. AUTO 3 + 4: `DeviceCapabilities.kt` + `jetpacs-device.el`, effectors
    green from the REPL.
-3. AUTO 14: `eabp-defapp` + home view, Glasspane as the first app,
+3. AUTO 14: `jetpacs-defapp` + home view, Glasspane as the first app,
    zero visible change single-app.
 4. AUTO 6: trigger table + boot receiver + firing pipeline.
 5. AUTO 7: trigger batch 1 (time/power/battery/screen/…).

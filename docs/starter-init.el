@@ -44,10 +44,10 @@
 
 ;;; ── Pairing ──────────────────────────────────────────────────────────
 ;; Open the Glasspane app: its "Waiting for Emacs" screen shows a
-;; one-line (setq eabp-auth-token "...") — tap it to copy, then paste
+;; one-line (setq jetpacs-auth-token "...") — tap it to copy, then paste
 ;; it below and restart Emacs (or eval the line).
 ;;
-;; (setq eabp-auth-token "PASTE-YOUR-PAIRING-LINE-HERE")
+;; (setq jetpacs-auth-token "PASTE-YOUR-PAIRING-LINE-HERE")
 
 ;;; ── Settings persistence ─────────────────────────────────────────────
 ;; The phone's Settings screen saves through Customize; keep that out of

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Glasspane shell manifest: app identity only. The EABP components
+<!-- Glasspane shell manifest: app identity only. The Jetpacs components
      (bridge service, action plumbing, widgets, tiles, reminders) and their
-     permissions merge in from the :eabp library manifest. -->
+     permissions merge in from the :jetpacs library manifest. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Onboarding writes glasspane.el into /sdcard/Documents. On API 29+
@@ -17,7 +17,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_glasspane"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Eabp">
+        android:theme="@style/Theme.Jetpacs">
         <!-- ^ Match your existing theme name from themes.xml if it differs. -->
 
         <!-- adjustResize: required for IME window insets to be reported on

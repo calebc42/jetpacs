@@ -25,7 +25,7 @@ that's a bug in the foundation — file it as one.
 sources under `emacs/` run from a checkout. Batch tests below.
 
 **Android side**: Android Studio (or JDK 17+ and the command line).
-Two Gradle modules: `:eabp` (the library — protocol, renderer, OS
+Two Gradle modules: `:jetpacs` (the library — protocol, renderer, OS
 surfaces) and `:app` (the Glasspane shell). `./gradlew installDebug`
 builds and installs on a connected device.
 
@@ -36,13 +36,13 @@ builds and installs on a connected device.
 emacs -Q --batch -l test/core-load-test.el
 
 # 2. The main ERT suite (widgets, surfaces, protocol, renderers).
-emacs -Q --batch -l test/eabp-tests.el -f ert-run-tests-batch-and-exit
+emacs -Q --batch -l test/jetpacs-tests.el -f ert-run-tests-batch-and-exit
 
 # 3. The primitives suite (minibuffer bridge, buffer walk, transient).
-emacs -Q --batch -l test/eabp-primitives-test.el -f ert-run-tests-batch-and-exit
+emacs -Q --batch -l test/jetpacs-primitives-test.el -f ert-run-tests-batch-and-exit
 
 # 4. Kotlin: both modules build.
-./gradlew :eabp:assembleDebug :app:assembleDebug
+./gradlew :jetpacs:assembleDebug :app:assembleDebug
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly these, plus a check that
@@ -55,26 +55,26 @@ however good the feature.
 
 1. **The command-dispatch boundary (normative, [SPEC §5](docs/SPEC.md)).**
    Nothing on the wire names code to run. An action is a name the Emacs
-   side explicitly registered (`eabp-defaction`); its handler validates
+   side explicitly registered (`jetpacs-defaction`); its handler validates
    its args and performs one narrow operation. Never write a handler
    that funcalls, evals, or opens paths straight off the wire. New
    actions get documented in SPEC §5, in their module's namespace.
 2. **The core is org-free.** `emacs/core/` must load without org or any
    app feature — `test/core-load-test.el` enforces it. Org knowledge
    lives in the Glasspane app (its own repo).
-3. **The Kotlin mirror: protocol → `:eabp`, opinion → `:app`.** The
-   library names no host class — app launches go through `EabpLaunch`,
-   editor toolbars through the `EabpToolbars` registry. If your library
+3. **The Kotlin mirror: protocol → `:jetpacs`, opinion → `:app`.** The
+   library names no host class — app launches go through `JetpacsLaunch`,
+   editor toolbars through the `JetpacsToolbars` registry. If your library
    change needs to know about Glasspane, it's cut at the wrong altitude.
-4. **The bundle is generated.** Root `eabp-core.el` comes from
+4. **The bundle is generated.** Root `jetpacs-core.el` comes from
    `emacs --batch -l emacs/build-bundle.el` — never edit it by hand;
    regenerate after any `emacs/` source change and commit the result.
 5. **The goldens are the wire truth.** `test/widgets.golden` is the
    machine-checked shape of every node constructor; `test/frames.golden`
    pins the trigger/capability frame payloads (SPEC §10–§11). Regenerate
    them only for an INTENTIONAL wire change
-   (`emacs -Q --batch -l test/eabp-tests.el -f eabp-tests-regen-widget-golden`
-   / `-f eabp-tests-regen-frame-golden`), and document the change in
+   (`emacs -Q --batch -l test/jetpacs-tests.el -f jetpacs-tests-regen-widget-golden`
+   / `-f jetpacs-tests-regen-frame-golden`), and document the change in
    SPEC §9 (widgets) or the frame's own section. Wire additions must be
    additive — unknown kinds/attrs are ignored, never fatal. If the
    Kotlin counterpart can't land in the same PR, the elisp side must

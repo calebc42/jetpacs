@@ -1,21 +1,21 @@
 # API stability — what a Tier 1 can depend on
 
-This document is the contract between the core (`eabp-core.el`) and a
+This document is the contract between the core (`jetpacs-core.el`) and a
 third-party Tier 1. Everything listed here is **public and stable**:
-within a major version of `eabp-api-version` it will not be removed or
+within a major version of `jetpacs-api-version` it will not be removed or
 change signature incompatibly. Everything else is internal.
 
-- **`eabp-api-version`** (a defconst in `eabp.el`) is the semver of this
-  surface. Check it: `(version<= "1.0.0" eabp-api-version)`.
-- **The wire/vocabulary version is `eabp-protocol-version`** (the SPEC
+- **`jetpacs-api-version`** (a defconst in `jetpacs.el`) is the semver of this
+  surface. Check it: `(version<= "1.0.0" jetpacs-api-version)`.
+- **The wire/vocabulary version is `jetpacs-protocol-version`** (the SPEC
   number, the envelope `v`) — a *separate* number. Node-vocabulary
-  additions are negotiated per-connection (see `eabp-node-supported-p`),
+  additions are negotiated per-connection (see `jetpacs-node-supported-p`),
   not gated on this.
 
 ## The two rules
 
 1. **`--` means internal.** Any symbol with a double dash after the
-   package prefix (`eabp--node`, `eabp-shell--schedule-repush`,
+   package prefix (`jetpacs--node`, `jetpacs-shell--schedule-repush`,
    `glasspane-org--query`) is private: no stability promise, may change or
    vanish in any release. Do not call it from a Tier 1. If you find
    yourself needing one, that is a bug report ("promote X to public"), not
@@ -28,87 +28,87 @@ change signature incompatibly. Everything else is internal.
 
 ## The public surface
 
-### Widget constructors (`eabp-widgets.el`)
+### Widget constructors (`jetpacs-widgets.el`)
 
 The node vocabulary. Wire shapes are pinned by `test/widgets.golden`.
 
-Content: `eabp-text` `eabp-markup` `eabp-rich-text` `eabp-span`
-`eabp-icon` `eabp-image` `eabp-date-stamp` `eabp-divider`
-`eabp-section-header` `eabp-empty-state` `eabp-progress`.
+Content: `jetpacs-text` `jetpacs-markup` `jetpacs-rich-text` `jetpacs-span`
+`jetpacs-icon` `jetpacs-image` `jetpacs-date-stamp` `jetpacs-divider`
+`jetpacs-section-header` `jetpacs-empty-state` `jetpacs-progress`.
 
-Layout: `eabp-row` `eabp-flow-row` `eabp-scroll-row` `eabp-column`
-`eabp-scroll-column` `eabp-box` `eabp-surface` `eabp-card` `eabp-border`
-`eabp-lazy-column` `eabp-scroll-here` `eabp-spacer` `eabp-collapsible`
-`eabp-reorderable-list` `eabp-table` `eabp-table-row` `eabp-table-rule`
-`eabp-table-cell`. (`row`/`column`/`flow-row` take trailing `:spacing`/
+Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
+`jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-border`
+`jetpacs-lazy-column` `jetpacs-scroll-here` `jetpacs-spacer` `jetpacs-collapsible`
+`jetpacs-reorderable-list` `jetpacs-table` `jetpacs-table-row` `jetpacs-table-rule`
+`jetpacs-table-cell`. (`row`/`column`/`flow-row` take trailing `:spacing`/
 `:align`/`:scroll` keywords; `box`/`surface`/`card` take
 `:width`/`:height`/`:fill-fraction`/`:border`.)
 
-Input: `eabp-button` `eabp-icon-button` `eabp-chip` `eabp-assist-chip`
-`eabp-menu` `eabp-menu-item` `eabp-checkbox` `eabp-switch` `eabp-slider`
-`eabp-text-input` `eabp-enum-list` `eabp-date-button` `eabp-time-button`
-`eabp-editor`.
+Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip`
+`jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`
+`jetpacs-text-input` `jetpacs-enum-list` `jetpacs-date-button` `jetpacs-time-button`
+`jetpacs-editor`.
 
-Visualization: `eabp-chart` `eabp-chart-series` `eabp-canvas`
-`eabp-draw-line` `eabp-draw-rect` `eabp-draw-circle` `eabp-draw-path`
-`eabp-draw-text`.
+Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
+`jetpacs-draw-line` `jetpacs-draw-rect` `jetpacs-draw-circle` `jetpacs-draw-path`
+`jetpacs-draw-text`.
 
-Chrome: `eabp-scaffold` `eabp-top-bar` `eabp-bottom-bar` `eabp-nav-item`
-`eabp-drawer` `eabp-drawer-item` `eabp-fab`.
+Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-item`
+`jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab`.
 
-Actions: `eabp-action` `eabp-clipboard-action`.
+Actions: `jetpacs-action` `jetpacs-clipboard-action`.
 
-Home-surface composition: `eabp-widget-item` `eabp-widget-divider`
-`eabp-tile`.
+Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
+`jetpacs-tile`.
 
-### Session & negotiation (`eabp.el`)
+### Session & negotiation (`jetpacs.el`)
 
-`eabp-connected-p` `eabp-granted-p` `eabp-node-supported-p`
-`eabp-device-caps` `eabp-device-cap-p` `eabp-device-can-p`
-`eabp-capability-invoke` — plus the customization vars `eabp-host`
-`eabp-port` `eabp-auth-token` `eabp-wants`.
+`jetpacs-connected-p` `jetpacs-granted-p` `jetpacs-node-supported-p`
+`jetpacs-device-caps` `jetpacs-device-cap-p` `jetpacs-device-can-p`
+`jetpacs-capability-invoke` — plus the customization vars `jetpacs-host`
+`jetpacs-port` `jetpacs-auth-token` `jetpacs-wants`.
 
-### Actions & state (`eabp-surfaces.el`)
+### Actions & state (`jetpacs-surfaces.el`)
 
-`eabp-defaction` `eabp-on-state-change` `eabp-on-state-change-clear`
-`eabp-ui-state` `eabp-ui-state-put` `eabp-ui-state-clear`
-`eabp-surface-push` `eabp-surface-remove`.
+`jetpacs-defaction` `jetpacs-on-state-change` `jetpacs-on-state-change-clear`
+`jetpacs-ui-state` `jetpacs-ui-state-put` `jetpacs-ui-state-clear`
+`jetpacs-surface-push` `jetpacs-surface-remove`.
 
-### Multi-tenant ownership (`eabp-surfaces.el`, `eabp-apps.el`)
+### Multi-tenant ownership (`jetpacs-surfaces.el`, `jetpacs-apps.el`)
 
-`with-eabp-owner` `eabp-app-unregister` — plus the customization var
-`eabp-strict-namespaces`. Wrap a Tier 1's registrations in
-`(with-eabp-owner "my-app" …)` so its actions/views/settings are
+`with-jetpacs-owner` `jetpacs-app-unregister` — plus the customization var
+`jetpacs-strict-namespaces`. Wrap a Tier 1's registrations in
+`(with-jetpacs-owner "my-app" …)` so its actions/views/settings are
 attributed to it; then a cross-owner name collision warns (or errors
-under `eabp-strict-namespaces`), and `eabp-app-unregister` tears the app
+under `jetpacs-strict-namespaces`), and `jetpacs-app-unregister` tears the app
 down cleanly for live reload or uninstall.
 
 ### The shell / app seams
 
-App scaffold (`eabp-shell.el`): `eabp-shell-define-view`
-`eabp-shell-tab-view` `eabp-shell-nav-view` `eabp-shell-push`
-`eabp-shell-notify` `eabp-shell-add-drawer-item`
-`eabp-shell-add-top-action` `eabp-shell-default-fab-function`, and the
-hooks `eabp-shell-view-switched-hook` `eabp-shell-refresh-hook`
-`eabp-shell-after-push-hook`.
+App scaffold (`jetpacs-shell.el`): `jetpacs-shell-define-view`
+`jetpacs-shell-tab-view` `jetpacs-shell-nav-view` `jetpacs-shell-push`
+`jetpacs-shell-notify` `jetpacs-shell-add-drawer-item`
+`jetpacs-shell-add-top-action` `jetpacs-shell-default-fab-function`, and the
+hooks `jetpacs-shell-view-switched-hook` `jetpacs-shell-refresh-hook`
+`jetpacs-shell-after-push-hook`.
 
-App identity (`eabp-apps.el`): `eabp-defapp` `eabp-apps-remove`.
+App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`.
 
-Buffer skins (`eabp-buffer.el`): `eabp-render-buffer-register`.
+Buffer skins (`jetpacs-buffer.el`): `jetpacs-render-buffer-register`.
 
-Tablist skins (`eabp-tablist.el`): the `eabp-tablist-header-functions`
-`eabp-tablist-row-functions` `eabp-tablist-filter-functions` alists.
+Tablist skins (`jetpacs-tablist.el`): the `jetpacs-tablist-header-functions`
+`jetpacs-tablist-row-functions` `jetpacs-tablist-filter-functions` alists.
 
-Files/editor (`eabp-files.el`): `eabp-files-editor-body-functions`
-`eabp-files-editor-actions-functions` `eabp-files-editor-toolbar-function`
-`eabp-files-open-hook` `eabp-files-after-save-hook`.
+Files/editor (`jetpacs-files.el`): `jetpacs-files-editor-body-functions`
+`jetpacs-files-editor-actions-functions` `jetpacs-files-editor-toolbar-function`
+`jetpacs-files-open-hook` `jetpacs-files-after-save-hook`.
 
-Settings (`eabp-settings.el`): `eabp-settings-register-section`
-`eabp-settings-remove-section` `eabp-settings-after-set-hook`.
+Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
+`jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`.
 
-### Validation (`eabp-lint.el`)
+### Validation (`jetpacs-lint.el`)
 
-`eabp-lint-spec` `eabp-render-to-json` (see Phase B).
+`jetpacs-lint-spec` `jetpacs-render-to-json` (see Phase B).
 
 ## Anything not listed here
 

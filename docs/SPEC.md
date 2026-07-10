@@ -325,9 +325,12 @@ constructor, kept honest by the ERT suite. Summary by family:
   row for pure swipe-through content (e.g. flashcard review). Switching
   is companion-local (the `view.switch` philosophy); optional
   `on_change` dispatches with the settled page index injected as
-  `value`. An additive node — negotiate via `node_types` (§3); a
-  companion that predates it stacks the pages, so the documented
-  fallback is a chip row plus the selected child.
+  `value`. The user's page survives re-pushes; an optional `id` keys
+  that state — a push carrying a new `id` resets to `initial` (a fresh
+  flashcard lands on its question page). An additive node — negotiate
+  via `node_types` (§3); a companion that predates it stacks the
+  pages, so the documented fallback is a chip row plus the selected
+  child.
   `table` (org-table grid: `rows` of span-bearing `cells`, plus `rule`
   rows for hlines and `header` rows rendered emphasized; per-column
   `aligns` of `start`/`center`/`end`; columns size to their widest cell

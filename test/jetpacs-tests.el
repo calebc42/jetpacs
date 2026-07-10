@@ -768,7 +768,7 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
      (jetpacs-tabs (list (jetpacs-tab-item "Day" :icon "event")
                       (jetpacs-tab-item "Week"))
                 (list leaf leaf)
-                :initial 1 :scrollable t :on-change act)
+                :initial 1 :scrollable t :on-change act :id "tid")
      ;; Agenda month calendar
      (jetpacs-month-grid "2026-07"
                       :marks '(("2026-07-10" . 3)

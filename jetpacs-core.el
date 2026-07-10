@@ -783,7 +783,7 @@ revealed background (hex; defaults to a theme container color)."
   (jetpacs--node nil 'label label 'icon icon))
 
 (cl-defun jetpacs-tabs (items children &key initial scrollable pager-only
-                              on-change)
+                              on-change id)
   "An intra-view tab row over swipeable pages (SPEC §9 `tabs').
 ITEMS (from `jetpacs-tab-item') label the tabs; CHILDREN is the
 same-length list of page nodes.  Switching — tab tap or horizontal
@@ -792,16 +792,20 @@ philosophy; ON-CHANGE optionally dispatches on a settled page change
 with the new index injected into args as `value'.  INITIAL picks the
 starting page; SCROLLABLE lets many tabs pan instead of cramming;
 PAGER-ONLY drops the tab row entirely for pure swipe-through content
-\(flashcard review).  A companion that predates the node stacks all
-pages — gate on `jetpacs-node-supported-p' and fall back to a chip row
-plus the selected child."
+\(flashcard review).  The user's page survives re-pushes; ID, when
+non-nil, keys that client-side state — a push carrying a NEW id resets
+to INITIAL (a fresh flashcard lands on its question page).  A companion
+that predates the node stacks all pages — gate on
+`jetpacs-node-supported-p' and fall back to a chip row plus the
+selected child."
   (jetpacs--node "tabs"
               'items (vconcat items)
               'children (vconcat children)
               'initial initial
               'scrollable (and scrollable t)
               'pager_only (and pager-only t)
-              'on_change on-change))
+              'on_change on-change
+              'id id))
 
 (cl-defun jetpacs-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.

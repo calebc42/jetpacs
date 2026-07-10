@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,6 +35,12 @@ import org.json.JSONObject
  * `on_change`, which dispatches with the settled page index injected as
  * `value`. `pager_only` drops the tab row for pure swipe-through content
  * (flashcard review); `scrollable` lets many tabs pan instead of cramming.
+ *
+ * The user's page survives re-pushes (a background refresh must never
+ * yank the pager). `id`, when present, keys that state: a push carrying
+ * a NEW id resets to `initial` — a fresh flashcard lands on its
+ * question page — while pushes with the same id leave the user where
+ * they are.
  */
 @Composable
 internal fun SduiTabs(
@@ -52,6 +59,7 @@ internal fun SduiTabs(
     val pagerOnly = node.optBoolean("pager_only", false)
     val onChange = node.optJSONObject("on_change")
 
+    key(node.optString("id")) {
     val pagerState = rememberPagerState(initialPage = initial) { pageCount }
     val scope = rememberCoroutineScope()
 
@@ -98,4 +106,5 @@ internal fun SduiTabs(
             }
         }
     }
+    } // key(id)
 }

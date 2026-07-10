@@ -1732,6 +1732,40 @@ don't even apply (min-colors) but the palette variables are plain data."
                                            :false-object :false)))))
     (disable-theme 'modus-vivendi)))
 
+;; ─── Stock settings screen ──────────────────────────────────────────────────
+
+(ert-deftest jetpacs-shell-stock-settings-screen ()
+  "The foundation registers the settings view, drawer entry, and Bridge knobs."
+  (should (assoc "settings" jetpacs-shell-views))
+  (should (assoc "Bridge" jetpacs-settings-registry))
+  ;; Exactly one Settings affordance in the drawer.
+  (let ((items (delq nil (mapcar (lambda (e) (funcall (cdr e)))
+                                 jetpacs-shell-drawer-items))))
+    (should (= 1 (cl-count-if
+                  (lambda (item) (equal (alist-get 'label item) "Settings"))
+                  items))))
+  ;; The stock body renders the Bridge knobs from their custom-type.
+  (let ((body (prin1-to-string (jetpacs-shell-settings-body))))
+    (should (string-search "setting/jetpacs-theme-sync" body))
+    (should (string-search "setting/jetpacs-dialog-style" body))
+    (should (string-search "setting/jetpacs-reconnect" body))))
+
+(ert-deftest jetpacs-shell-settings-view-replaceable ()
+  "An app's own \"settings\" registration replaces the stock view in place."
+  (let ((orig (cdr (assoc "settings" jetpacs-shell-views))))
+    (should orig)
+    (unwind-protect
+        (progn
+          (jetpacs-shell-define-view "settings" :builder #'ignore)
+          (should (eq (plist-get (cdr (assoc "settings" jetpacs-shell-views))
+                                 :builder)
+                      #'ignore))
+          (should (= 1 (cl-count "settings" jetpacs-shell-views
+                                 :key #'car :test #'equal))))
+      (jetpacs-shell-define-view "settings"
+        :builder (plist-get orig :builder)
+        :order (plist-get orig :order)))))
+
 (ert-deftest jetpacs-theme-push-gating ()
   "No auto-push while disconnected; the manual command degrades to a message."
   (setq jetpacs-theme--timer nil)

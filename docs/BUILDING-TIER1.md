@@ -211,12 +211,29 @@ detail views outside the Files tab attach it the same way.
 
 ### 6. Settings
 
-Expose defcustoms to the phone with
-`(jetpacs-settings-register-section TITLE ENTRIES)`. The registry is a
-security boundary: only listed symbols can be set from the wire, values
-are validated against the `custom-type` schema, and persistence goes
-through Customize. Register cache-invalidation on
-`jetpacs-settings-after-set-hook`.
+The foundation already provides the settings screen: a stock
+`"settings"` view (reached from the drawer) that renders every
+registered section and satellite link. You register content, not
+chrome:
+
+- `(jetpacs-settings-register-section TITLE ENTRIES)` exposes
+  defcustoms; they appear on the stock screen rendered from their
+  `custom-type` schemas. The registry is a security boundary: only
+  listed symbols can be set from the wire, values are validated against
+  the schema, and persistence goes through Customize. Register
+  cache-invalidation on `jetpacs-settings-after-set-hook`.
+- `(jetpacs-settings-add-link ORDER BUILDER)` adds a navigation card to
+  a satellite screen (a package browser, a device page) under the
+  trailing "Emacs" section.
+
+The screen ships with the foundation's own "Bridge" section
+(theme mirroring, dialog style, auto-reconnect). An app that needs
+controls the schema renderer can't express replaces the view —
+`(jetpacs-shell-define-view "settings" :builder #'my-settings-view)`
+replaces by name, and the stock drawer entry still reaches it — and
+appends `(jetpacs-shell-settings-body)` after its own controls so
+registered sections and links keep appearing. Don't add a second
+drawer entry for it; the stock one already targets the view name.
 
 ## The rules that keep the wire safe
 

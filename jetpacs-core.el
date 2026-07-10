@@ -51,7 +51,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.0.0"
+(defconst jetpacs-api-version "1.1.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -4802,6 +4802,51 @@ Safe on any hook: extra arguments are ignored."
  70 (lambda ()
       (jetpacs-drawer-item "refresh" "Refresh data"
                         (jetpacs-action "dashboard.refresh" :when-offline "drop"))))
+
+;; ─── Stock settings screen ───────────────────────────────────────────────────
+
+;; The foundation provides the settings screen itself, so a Tier 1 only
+;; registers content: defcustom sections through
+;; `jetpacs-settings-register-section' and satellite screens through
+;; `jetpacs-settings-add-link' — both appear here with no further wiring,
+;; and the bare companion has a working Settings screen before any app
+;; loads.  An app that needs a richer screen replaces the view
+;; (`jetpacs-shell-define-view' replaces by name) and appends
+;; `jetpacs-shell-settings-body' after its own controls; the drawer entry
+;; keeps working because it targets the view name, not the builder.
+
+(declare-function jetpacs-settings-sections "jetpacs-settings")
+(declare-function jetpacs-settings-register-section "jetpacs-settings")
+
+(defun jetpacs-shell-settings-body ()
+  "Every registered settings section and satellite link, as one column.
+The stock \"settings\" view renders exactly this; an app replacing that
+view composes it after its own controls so registry sections and links
+keep appearing."
+  (apply #'jetpacs-lazy-column (jetpacs-settings-sections)))
+
+(defun jetpacs-shell--settings-view (snackbar)
+  "The stock settings screen (see `jetpacs-shell-settings-body')."
+  (jetpacs-shell-nav-view "Settings" (jetpacs-shell-settings-body)
+                       :snackbar snackbar))
+
+(with-eval-after-load 'jetpacs-settings
+  ;; The foundation's own knobs, so the stock screen is never empty and
+  ;; the theme mirror / dialog style are discoverable without docs.
+  ;; Entries degrade per-symbol: a setup that never loads a module shows
+  ;; "not loaded yet" for its knob instead of losing the section.
+  (jetpacs-settings-register-section
+   "Bridge"
+   '((jetpacs-theme-sync :label "Mirror Emacs theme")
+     (jetpacs-dialog-style :label "Dialog style")
+     (jetpacs-reconnect :label "Auto-reconnect")))
+  (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
+  ;; Everyday nav: the one affordance for the screen, between the Apps
+  ;; entry (5) and the shell's own Refresh (70).
+  (jetpacs-shell-add-drawer-item
+   60 (lambda ()
+        (jetpacs-drawer-item "settings" "Settings"
+                          (jetpacs-shell-switch-view "settings")))))
 
 ;; ─── Lifecycle pushes ────────────────────────────────────────────────────────
 

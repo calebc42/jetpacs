@@ -93,9 +93,11 @@ down cleanly for live reload or uninstall.
 App scaffold (`jetpacs-shell.el`): `jetpacs-shell-define-view`
 `jetpacs-shell-tab-view` `jetpacs-shell-nav-view` `jetpacs-shell-push`
 `jetpacs-shell-notify` `jetpacs-shell-add-drawer-item`
-`jetpacs-shell-add-top-action` `jetpacs-shell-default-fab-function`, and the
-hooks `jetpacs-shell-view-switched-hook` `jetpacs-shell-refresh-hook`
-`jetpacs-shell-after-push-hook`.
+`jetpacs-shell-add-top-action` `jetpacs-shell-default-fab-function`
+`jetpacs-shell-settings-body` (since 1.1.0: the stock "settings" view's
+content — an app replacing that view composes it after its own
+controls), and the hooks `jetpacs-shell-view-switched-hook`
+`jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`.
 
@@ -109,7 +111,9 @@ Files/editor (`jetpacs-files.el`): `jetpacs-files-editor-body-functions`
 `jetpacs-files-open-hook` `jetpacs-files-after-save-hook`.
 
 Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
-`jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`.
+`jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`
+`jetpacs-settings-add-link`. Registered sections and links render on the
+foundation's stock "settings" view without further wiring.
 
 ### Validation (`jetpacs-lint.el`)
 

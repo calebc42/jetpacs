@@ -38,6 +38,7 @@
 (require 'jetpacs-sync)
 (require 'jetpacs-settings)
 (require 'jetpacs-theme)
+(require 'jetpacs-automations)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -988,6 +989,24 @@ records the last-fired time."
     (should (eq (alist-get 'test fired) t))
     (should (equal (alist-get 'type fired) "power"))
     (should (gethash "test/fire" jetpacs-triggers--last-fired))))
+
+(ert-deftest jetpacs-automations-view-renders ()
+  "The Automations view builds for both the empty and populated registry."
+  (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
+        (jetpacs-triggers--last-fired (make-hash-table :test 'equal))
+        (jetpacs-triggers-disabled nil))
+    (should (jetpacs-automations--view nil))   ; empty state
+    (jetpacs-deftrigger test/view
+      :type "battery.level" :params '((below . 20))
+      :policy "drop" :throttle-s 300 :handler #'ignore)
+    (let ((json (json-serialize
+                 (jetpacs-tests--canon (jetpacs-automations--view "snack"))
+                 :null-object :null :false-object :false)))
+      (should (string-search "test/view" json))
+      (should (string-search "trigger.toggle" json))
+      (should (string-search "trigger.test" json))
+      (should (string-search "Never fired" json))
+      (should (string-search "below=20" json)))))
 
 (ert-deftest jetpacs-device-report-queries ()
   "Session helpers read the granted list and the welcome's device report."

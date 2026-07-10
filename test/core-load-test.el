@@ -20,7 +20,8 @@
                    jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-transient
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
-                   jetpacs-package-browser jetpacs-customize))
+                   jetpacs-package-browser jetpacs-customize
+                   jetpacs-tools jetpacs-automations))
   (require feature))
 
 (dolist (feature '(glasspane glasspane-ui glasspane-org jetpacs-magit))
@@ -40,6 +41,10 @@
   (error "Shell has no eval view"))
 (unless (assoc "customize" jetpacs-shell-views)
   (error "Shell has no customize view"))
+(unless (assoc "tools" jetpacs-shell-views)
+  (error "Shell has no tools view"))
+(unless (assoc "automations" jetpacs-shell-views)
+  (error "Shell has no automations view"))
 
 (message "Jetpacs core loads standalone: OK")
 

@@ -415,6 +415,35 @@ coordinates are in the WIDTH×HEIGHT space.  Rung 2 — the elisp-only
 escape hatch for visuals no curated node covers."
   (jetpacs--node "canvas" 'width width 'height height 'ops (vconcat ops)))
 
+(cl-defun jetpacs-month-grid (month &key marks selected min-month max-month
+                                    on-day-tap on-month-change)
+  "An agenda month calendar for MONTH (\"YYYY-MM\") — SPEC §9 `month_grid'.
+MARKS is an alist of (\"YYYY-MM-DD\" . SPEC): SPEC is a dot count
+\(1-3 dots render under the day) or an alist like
+\((dots . N) (color . \"#hex\")).  SELECTED (\"YYYY-MM-DD\") fills one
+day; today is always outlined.  MIN-MONTH/MAX-MONTH (\"YYYY-MM\") clamp
+the companion-local month navigation (chevrons and horizontal swipe).
+ON-DAY-TAP dispatches with the tapped date injected into args as
+`value'; ON-MONTH-CHANGE with the newly shown \"YYYY-MM\" — answer it
+by pushing fresh marks (marks for unfetched months are simply absent,
+never blocking).  An additive node: gate on `jetpacs-node-supported-p';
+the fallback recipe is a `jetpacs-flow-row' of `fill_fraction'-sized day
+boxes with `on_tap'."
+  (jetpacs--node "month_grid"
+              'month month
+              'marks (and marks
+                          (mapcar (lambda (m)
+                                    (cons (intern (car m))
+                                          (if (numberp (cdr m))
+                                              `((dots . ,(cdr m)))
+                                            (cdr m))))
+                                  marks))
+              'selected selected
+              'min_month min-month
+              'max_month max-month
+              'on_day_tap on-day-tap
+              'on_month_change on-month-change))
+
 (cl-defun jetpacs-draw-line (x1 y1 x2 y2 &key color stroke)
   "A canvas line op from (X1 Y1) to (X2 Y2)."
   (jetpacs--node nil 'op "line" 'x1 x1 'y1 y1 'x2 x2 'y2 y2

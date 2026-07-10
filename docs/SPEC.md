@@ -365,9 +365,21 @@ constructor, kept honest by the ERT suite. Summary by family:
   `canvas` — the escape hatch: `{width, height, ops}` where each op is a
   closed, data-only draw primitive (`line`/`rect`/`circle`/`path`/`text`)
   in the node's coordinate space. No animation, no interaction (those earn
-  a curated primitive); unknown ops are skipped, never fatal. Both are
-  additive nodes — negotiate them via `node_types` (§3) and fall back
-  (e.g. a `table`) on a companion that predates them.
+  a curated primitive); unknown ops are skipped, never fatal.
+  `month_grid` — the agenda calendar, the `chart` of time:
+  `{month: "YYYY-MM", marks: {"YYYY-MM-DD": {dots, color?}, …},
+  selected?, min_month?, max_month?, on_day_tap?, on_month_change?}`.
+  Month navigation (chevrons, horizontal swipe) is companion-local and
+  clamped to `min_month`/`max_month`; `on_month_change` dispatches with
+  the newly shown month as `value` so the client can push fresh marks —
+  marks for unfetched months are simply absent, never blocking.
+  `on_day_tap` dispatches with the tapped ISO date as `value`; today is
+  outlined, `selected` filled, up to 3 `dots` render under a day. A
+  re-push with a different `month` adopts it; mark-only re-pushes leave
+  the user's shown month alone. All three are additive nodes —
+  negotiate via `node_types` (§3) and fall back (a `table`, or for
+  `month_grid` a `flow_row` of `fill_fraction` day boxes) on a
+  companion that predates them.
 - **Chrome**: `scaffold` (top_bar / bottom_bar / fab / drawer / snackbar /
   pull-to-refresh), `top_bar`, `bottom_bar` + `nav_item`, `drawer` +
   `drawer_item`, `fab`. The scaffold's `snackbar` string may be

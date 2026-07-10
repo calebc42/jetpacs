@@ -958,6 +958,35 @@ coordinates are in the WIDTH×HEIGHT space.  Rung 2 — the elisp-only
 escape hatch for visuals no curated node covers."
   (jetpacs--node "canvas" 'width width 'height height 'ops (vconcat ops)))
 
+(cl-defun jetpacs-month-grid (month &key marks selected min-month max-month
+                                    on-day-tap on-month-change)
+  "An agenda month calendar for MONTH (\"YYYY-MM\") — SPEC §9 `month_grid'.
+MARKS is an alist of (\"YYYY-MM-DD\" . SPEC): SPEC is a dot count
+\(1-3 dots render under the day) or an alist like
+\((dots . N) (color . \"#hex\")).  SELECTED (\"YYYY-MM-DD\") fills one
+day; today is always outlined.  MIN-MONTH/MAX-MONTH (\"YYYY-MM\") clamp
+the companion-local month navigation (chevrons and horizontal swipe).
+ON-DAY-TAP dispatches with the tapped date injected into args as
+`value'; ON-MONTH-CHANGE with the newly shown \"YYYY-MM\" — answer it
+by pushing fresh marks (marks for unfetched months are simply absent,
+never blocking).  An additive node: gate on `jetpacs-node-supported-p';
+the fallback recipe is a `jetpacs-flow-row' of `fill_fraction'-sized day
+boxes with `on_tap'."
+  (jetpacs--node "month_grid"
+              'month month
+              'marks (and marks
+                          (mapcar (lambda (m)
+                                    (cons (intern (car m))
+                                          (if (numberp (cdr m))
+                                              `((dots . ,(cdr m)))
+                                            (cdr m))))
+                                  marks))
+              'selected selected
+              'min_month min-month
+              'max_month max-month
+              'on_day_tap on-day-tap
+              'on_month_change on-month-change))
+
 (cl-defun jetpacs-draw-line (x1 y1 x2 y2 &key color stroke)
   "A canvas line op from (X1 Y1) to (X2 Y2)."
   (jetpacs--node nil 'op "line" 'x1 x1 'y1 y1 'x2 x2 'y2 y2
@@ -1391,7 +1420,8 @@ on-device) or the empty string for a bare attention dot; nil for none."
 (defconst jetpacs-lint-node-types
   '("text" "rich_text" "row" "flow_row" "column" "box" "surface"
     "lazy_column" "spacer" "divider" "card" "collapsible"
-    "reorderable_list" "table" "tabs" "chart" "canvas" "icon" "image"
+    "reorderable_list" "table" "tabs" "chart" "canvas" "month_grid"
+    "icon" "image"
     "date_stamp" "section_header" "empty_state" "progress" "menu" "button"
     "icon_button" "chip" "assist_chip" "text_input" "editor" "checkbox"
     "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
@@ -1402,12 +1432,13 @@ companion gates on `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys
   '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
-    nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger)
+    nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger
+    on_day_tap on_month_change)
   "Node keys whose value is an embedded action object (SPEC §9).")
 
 (defconst jetpacs-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
-    width height fill_fraction aspect_ratio min max steps initial
+    width height fill_fraction aspect_ratio min max steps initial dots
     ;; canvas draw-op coordinates
     x y w h r cx cy x1 y1 x2 y2 radius stroke)
   "Attributes whose value must be a number.")

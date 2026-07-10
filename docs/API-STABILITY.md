@@ -53,7 +53,7 @@ Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chi
 
 Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
 `jetpacs-draw-line` `jetpacs-draw-rect` `jetpacs-draw-circle` `jetpacs-draw-path`
-`jetpacs-draw-text`.
+`jetpacs-draw-text` `jetpacs-month-grid`.
 
 Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-item`
 `jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab` `jetpacs-snackbar-action`.

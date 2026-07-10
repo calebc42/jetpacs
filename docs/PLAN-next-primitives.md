@@ -1,12 +1,16 @@
 # Plan: next primitives — an advisory ranking of the vocabulary's next rungs
 
-**STATUS (2026-07-10): advisory, approved.** Not an implementation plan:
-each item graduates to its own plan doc when picked up, following the
-8-step checklist in [CONTRIBUTING-NODES.md](CONTRIBUTING-NODES.md)
-(renderer → `SDUI_NODE_TYPES` → constructor → lint → golden → SPEC §9 →
-API-STABILITY → bundles). Everything here is protocol-version-neutral
-per SPEC §3: additive attributes degrade silently, new nodes negotiate
-via `node_types`.
+**STATUS (2026-07-10): advisory, approved; Tier A IMPLEMENTED same day**
+(A1–A5 additive attrs, A6 `tabs`, A7 `month_grid` — three commits, each
+following the 8-step checklist in
+[CONTRIBUTING-NODES.md](CONTRIBUTING-NODES.md): renderer →
+`SDUI_NODE_TYPES` → constructor → lint → golden → SPEC → API-STABILITY
+→ bundles. One wire delta from the sketch below: `month_grid` clamps
+with `min_month`/`max_month`, since bare `min`/`max` are the slider's
+lint-typed numeric attrs). Tiers B/C and the polish list remain
+advisory; each item graduates to its own plan doc when picked up.
+Everything here is protocol-version-neutral per SPEC §3: additive
+attributes degrade silently, new nodes negotiate via `node_types`.
 
 ## Why
 

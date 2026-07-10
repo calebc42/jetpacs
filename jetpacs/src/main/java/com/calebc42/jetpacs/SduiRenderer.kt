@@ -107,7 +107,7 @@ val SDUI_NODE_TYPES: Set<String> = setOf(
     "text", "rich_text", "date_stamp", "menu", "section_header",
     "empty_state", "icon", "image", "progress",
     // Visualization
-    "chart", "canvas",
+    "chart", "canvas", "month_grid",
     // Input
     "text_input", "editor", "checkbox", "switch", "enum_list",
     "date_button", "time_button", "slider", "button", "icon_button",
@@ -321,6 +321,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         }
         "tabs" -> {
             SduiTabs(node, surfaceId, revision, baseModifier, dispatch)
+        }
+        "month_grid" -> {
+            SduiMonthGrid(node, baseModifier, dispatch)
         }
         "lazy_column" -> {
             val children = node.optJSONArray("children")

@@ -138,7 +138,19 @@ palette's purpose-built container tints."
   (cl-remove-if-not #'cdr alist))
 
 (defun jetpacs-theme--colors ()
-  "Material color-role alist for the active theme, or nil when unresolvable."
+  "Material color-role alist for the active theme, or nil when unresolvable.
+
+Role mapping follows Material grammar, not face taxonomy: `primary' is
+the theme's IDENTITY accent — it lands on the hero chrome (FAB,
+buttons, switches), so it comes from the keyword face, where theme
+authors put their signature hue (purple in the stock theme, blue in
+doom-one, pink in dracula), and from modus's flagship blue.  The link
+face is deliberately NOT primary: links are blue in nearly every theme
+regardless of its identity, which painted the hero chrome blue under
+themes that read as anything-but-blue.  `secondary' is the same hue
+muted (Material derives it from primary's hue, never a second
+competing accent); `tertiary' is the contrasting accent (constant
+face / modus cyan), mirroring Material's hue-shifted tertiary."
   (let* ((modus (jetpacs-theme--modus-p))
          (bg (or (and modus (jetpacs-theme--modus 'bg-main))
                  (jetpacs-theme--face-color :background 'default)))
@@ -147,11 +159,15 @@ palette's purpose-built container tints."
     (when (and bg fg)
       (let* ((primary (or (and modus (jetpacs-theme--modus 'blue))
                           (jetpacs-theme--face-color
-                           :foreground 'link 'font-lock-function-name-face)
+                           :foreground 'font-lock-keyword-face 'link
+                           'font-lock-function-name-face)
                           fg))
-             (secondary (or (and modus (jetpacs-theme--modus 'magenta))
-                            (jetpacs-theme--face-color
-                             :foreground 'font-lock-keyword-face)
+             (secondary (or (and modus (jetpacs-theme--modus 'blue-faint))
+                            ;; Muted primary: sink it halfway into the
+                            ;; theme's mid-gray, like Material's
+                            ;; low-chroma secondary tonal palette.
+                            (jetpacs-theme--blend
+                             primary (jetpacs-theme--blend fg bg 0.5) 0.5)
                             primary))
              (tertiary (or (and modus (jetpacs-theme--modus 'cyan))
                            (jetpacs-theme--face-color
@@ -176,7 +192,7 @@ palette's purpose-built container tints."
            (on_primary_container . ,(funcall on-container primary))
            (secondary . ,secondary)
            (on_secondary . ,bg)
-           (secondary_container . ,(funcall container secondary 'bg-magenta-subtle))
+           (secondary_container . ,(funcall container secondary 'bg-blue-nuanced))
            (on_secondary_container . ,(funcall on-container secondary))
            (tertiary . ,tertiary)
            (on_tertiary . ,bg)

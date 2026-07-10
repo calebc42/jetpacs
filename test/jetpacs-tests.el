@@ -1697,10 +1697,16 @@ in individual tests where needed."
         (should (eq (alist-get 'dark payload) :false))
         (should (equal (alist-get 'background colors) "#eceff4"))
         (should (equal (alist-get 'on_surface colors) "#2e3440"))
-        (should (equal (alist-get 'primary colors) "#5e81ac"))
+        ;; Primary is the IDENTITY accent — the keyword face, not the
+        ;; link face (links are blue in nearly every theme; primary←link
+        ;; painted the FAB blue under purple-identity themes).
+        (should (equal (alist-get 'primary colors) "#3b5b8c"))
         ;; Accent text sits on the theme background it was designed against.
         (should (equal (alist-get 'on_primary colors) "#eceff4"))
-        (should (equal (alist-get 'secondary colors) "#3b5b8c"))
+        ;; Secondary is the muted derivation of primary, not a second hue.
+        (should (alist-get 'secondary colors))
+        (should-not (equal (alist-get 'secondary colors)
+                           (alist-get 'primary colors)))
         (should (equal (alist-get 'error colors) "#bf616a"))
         ;; Containers are derived blends: present, and not the raw accent.
         (should (alist-get 'primary_container colors))
@@ -1741,9 +1747,14 @@ don't even apply (min-colors) but the palette variables are plain data."
                          (jetpacs-theme--modus 'blue)))
           (should (equal (alist-get 'error colors)
                          (jetpacs-theme--modus 'red)))
+          ;; Secondary stays in the identity hue, muted (modus blue-faint).
+          (should (equal (alist-get 'secondary colors)
+                         (jetpacs-theme--modus 'blue-faint)))
           ;; Container roles take the palette's purpose-built subtle tints.
           (should (equal (alist-get 'primary_container colors)
                          (jetpacs-theme--modus 'bg-blue-subtle)))
+          (should (equal (alist-get 'secondary_container colors)
+                         (jetpacs-theme--modus 'bg-blue-nuanced)))
           (should (equal (alist-get 'on_primary_container colors)
                          (jetpacs-theme--modus 'fg-main)))
           (should (stringp (json-serialize payload

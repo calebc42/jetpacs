@@ -220,6 +220,14 @@ mutated state the cached views no longer reflect).
 | `pie_menu.show` / `.dismiss`      | → comp.   | radial menu spec (curated, ≤ ~10 items)             | optional |
 | `reminders.set`                   | → comp.   | `{reminders: [{title, body, at_ms, ...}]}` — the set **replaces** the previous one, so cancelled items never fire stale; the companion persists it across reboots | optional |
 
+A `dialog.show` spec's **root node** may carry `dialog_style`:
+`"sheet"` / `"sheet_full"` render the same tree as a modal bottom sheet
+(collapsed / fully expanded — the native idiom for pickers and action
+menus); anything else, or its absence, keeps the centered dialog window.
+Additive: an old companion ignores the key and centers the dialog. The
+elisp side sets it per-call (`jetpacs-send-dialog`'s STYLE) or globally
+(`jetpacs-dialog-style`).
+
 The minibuffer bridge rides on dialogs: when a client action handler hits
 a prompting call (`y-or-n-p`, `completing-read`, `read-passwd`,
 `map-y-or-n-p`, raw event reads, …) it sends the prompt as a dialog and
@@ -305,6 +313,13 @@ constructor, kept honest by the ERT suite. Summary by family:
   user's scroll position), `box` (weight / alignment / tap), `surface`
   (tonal container), `card`, `spacer`, `collapsible` (folds on-device),
   `reorderable_list` (drag to reorder, reports via `on_reorder`),
+  `card` additionally takes `swipe_start` / `swipe_end` — per-side swipe
+  actions `{icon, label, color?, on_trigger}`: dragging reveals the
+  side's icon/label, a full swipe dispatches `on_trigger` once and the
+  card springs back (the server answers with the updated list); they
+  supersede the legacy single-action `on_swipe`, and because an old
+  companion renders no gesture, a swipe action must also be reachable
+  by tap or menu.
   `table` (org-table grid: `rows` of span-bearing `cells`, plus `rule`
   rows for hlines and `header` rows rendered emphasized; per-column
   `aligns` of `start`/`center`/`end`; columns size to their widest cell
@@ -324,8 +339,10 @@ constructor, kept honest by the ERT suite. Summary by family:
   `checkbox`, `switch`, `slider` (continuous value; `min`/`max` default
   0/1, `steps` for discrete; dispatches `on_change` once on release with
   the value injected), `text_input` (optional `password` masks entry and
-  requests a password keyboard; such values must not be logged or
-  retained), `enum_list` (single/multi select, optional free-add),
+  requests a password keyboard — such values must not be logged or
+  retained; optional `keyboard` picks the IME from the closed enum
+  `number`/`decimal`/`email`/`phone`/`uri`, unknown or absent → text,
+  `password` wins), `enum_list` (single/multi select, optional free-add),
   `date_button` / `time_button` (native pickers),
   `editor` (full editor: save/undo header, optional `syntax`, gutter
   `line_numbers`, `complete` for the completion strip, `chromeless`,
@@ -345,7 +362,14 @@ constructor, kept honest by the ERT suite. Summary by family:
   (e.g. a `table`) on a companion that predates them.
 - **Chrome**: `scaffold` (top_bar / bottom_bar / fab / drawer / snackbar /
   pull-to-refresh), `top_bar`, `bottom_bar` + `nav_item`, `drawer` +
-  `drawer_item`, `fab`.
+  `drawer_item`, `fab`. The scaffold's `snackbar` string may be
+  accompanied by `snackbar_action` `{label, on_tap}` — an action button
+  on the snackbar (the undo affordance) that dispatches only on a user
+  tap, never on timeout; old companions show the plain message. A
+  `badge` attribute on `nav_item` / `drawer_item` / `icon` /
+  `icon_button` overlays a count (numbers cap at 99+ on-device; the
+  empty string renders a bare attention dot) — cosmetic, never
+  load-bearing, silently ignored by older companions.
 - **Notification specs** add `meta` (channel, ongoing, category, priority,
   `chronometer: {base_ms}`) above a body of content nodes.
 

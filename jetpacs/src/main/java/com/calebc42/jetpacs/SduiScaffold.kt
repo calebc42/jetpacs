@@ -52,6 +52,10 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
     val bottomBar = spec.optJSONObject("bottom_bar")
     val drawer = spec.optJSONObject("drawer")
     val snackbar = spec.optString("snackbar", "")
+    // Optional action button on the snackbar (SPEC §9): {label, on_tap}.
+    // A sibling key, not a union on `snackbar` — optString would coerce an
+    // object to literal JSON text, so the string stays a plain string.
+    val snackbarAction = spec.optJSONObject("snackbar_action")
     val body = spec.optJSONObject("body") ?: JSONObject()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -69,7 +73,13 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
 
     LaunchedEffect(snackbar) {
         if (snackbar.isNotEmpty()) {
-            snackbarHostState.showSnackbar(snackbar)
+            val label = snackbarAction?.optString("label")?.takeIf { it.isNotEmpty() }
+            val result = snackbarHostState.showSnackbar(snackbar, actionLabel = label)
+            // The undo affordance: the action rides only a user tap, never
+            // the timeout, so a mutation stays final unless asked otherwise.
+            if (result == SnackbarResult.ActionPerformed) {
+                snackbarAction?.optJSONObject("on_tap")?.let(onAction)
+            }
         }
     }
 
@@ -220,7 +230,11 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
                                     NavigationBarItem(
                                         selected = selected,
                                         onClick = { if (action != null) onAction(action) },
-                                        icon = { Icon(IconMap.get(icon), contentDescription = null) },
+                                        icon = {
+                                            JetpacsBadged(item) {
+                                                Icon(IconMap.get(icon), contentDescription = null)
+                                            }
+                                        },
                                         label = if (label.isNotEmpty()) { { Text(label) } } else null
                                     )
                                 }
@@ -300,6 +314,11 @@ fun SduiScaffold(spec: JSONObject, onAction: (JSONObject) -> Unit) {
                                 icon = if (icon.isNotEmpty()) {
                                     { Icon(IconMap.get(icon), contentDescription = null) }
                                 } else null,
+                                // The drawer's native trailing slot, not a
+                                // BadgedBox: M3 renders drawer counts as text.
+                                badge = jetpacsBadgeText(item)?.let { text ->
+                                    { if (text.isEmpty()) Badge() else Text(text) }
+                                },
                                 onClick = {
                                     scope.launch { drawerState.close() }
                                     if (action != null) onAction(action)

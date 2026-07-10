@@ -29,10 +29,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -134,6 +137,7 @@ class MainActivity : ComponentActivity() {
 
 private const val DASHBOARD_SURFACE = "app:dashboard"
 
+@OptIn(ExperimentalMaterial3Api::class) // ModalBottomSheet (sheet-style dialogs)
 @Composable
 private fun BridgeScreen() {
     val context = LocalContext.current
@@ -278,15 +282,22 @@ private fun BridgeScreen() {
 
     val dialogSpec by JetpacsRuntime.dialogState.currentDialog.collectAsState()
     if (dialogSpec != null) {
-        Dialog(onDismissRequest = {
+        val onDismiss = {
             // Notify Emacs if this was a prompt dialog (fires prompt.dismiss action).
             JetpacsRuntime.dialogState.onDismissed?.invoke()
             JetpacsRuntime.dialogState.dismiss()
-        }) {
-            Surface(
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
+        }
+        // Presentation is server-chosen (SPEC §7): the spec's root may carry
+        // `dialog_style` — "sheet"/"sheet_full" render the same subtree in a
+        // modal bottom sheet; anything else keeps the centered dialog, which
+        // is also what an older companion shows (unknown keys are ignored).
+        when (dialogSpec!!.optString("dialog_style")) {
+            "sheet", "sheet_full" -> ModalBottomSheet(
+                onDismissRequest = onDismiss,
+                sheetState = rememberModalBottomSheetState(
+                    skipPartiallyExpanded =
+                        dialogSpec!!.optString("dialog_style") == "sheet_full"
+                )
             ) {
                 SduiNode(
                     node = dialogSpec!!,
@@ -295,6 +306,21 @@ private fun BridgeScreen() {
                     modifier = Modifier.padding(16.dp),
                     onAction = dispatch
                 )
+            }
+            else -> Dialog(onDismissRequest = onDismiss) {
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    SduiNode(
+                        node = dialogSpec!!,
+                        surfaceId = "dialog",
+                        revision = 0,
+                        modifier = Modifier.padding(16.dp),
+                        onAction = dispatch
+                    )
+                }
             }
         }
     }

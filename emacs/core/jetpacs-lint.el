@@ -43,7 +43,7 @@ companion gates on `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys
   '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
-    nav_action on_long_tap on_swipe on_add_row on_add_col)
+    nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger)
   "Node keys whose value is an embedded action object (SPEC §9).")
 
 (defconst jetpacs-lint--numeric-attrs

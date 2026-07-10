@@ -132,9 +132,26 @@ otherwise every dropped request would leak a pending-table entry."
       (message "Jetpacs: not connected; dropping request %s" kind))
     id))
 
-(defun jetpacs-send-dialog (spec)
-  "Push a dialog spec to the companion."
-  (jetpacs-send "dialog.show" spec))
+(defcustom jetpacs-dialog-style nil
+  "Default presentation for companion dialogs (SPEC §7).
+nil renders the centered dialog window; \"sheet\" renders the same spec
+as a modal bottom sheet (the native mobile idiom for pickers and
+menus); \"sheet_full\" opens the sheet fully expanded.  Old companions
+ignore the style and show the centered dialog."
+  :type '(choice (const :tag "Centered dialog" nil)
+                 (const :tag "Bottom sheet" "sheet")
+                 (const :tag "Bottom sheet, fully expanded" "sheet_full"))
+  :group 'jetpacs)
+
+(defun jetpacs-send-dialog (spec &optional style)
+  "Push a dialog SPEC to the companion.
+STYLE overrides `jetpacs-dialog-style' for this dialog: nil for the
+centered window, \"sheet\" or \"sheet_full\" for a bottom sheet.  The
+style rides the spec root as `dialog_style' — additive, so an old
+companion just shows the centered dialog."
+  (let ((style (or style jetpacs-dialog-style)))
+    (jetpacs-send "dialog.show"
+                  (if style (cons (cons 'dialog_style style) spec) spec))))
 
 (defun jetpacs-dismiss-dialog ()
   "Dismiss the current dialog on the companion."

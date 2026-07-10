@@ -145,9 +145,26 @@ otherwise every dropped request would leak a pending-table entry."
       (message "Jetpacs: not connected; dropping request %s" kind))
     id))
 
-(defun jetpacs-send-dialog (spec)
-  "Push a dialog spec to the companion."
-  (jetpacs-send "dialog.show" spec))
+(defcustom jetpacs-dialog-style nil
+  "Default presentation for companion dialogs (SPEC §7).
+nil renders the centered dialog window; \"sheet\" renders the same spec
+as a modal bottom sheet (the native mobile idiom for pickers and
+menus); \"sheet_full\" opens the sheet fully expanded.  Old companions
+ignore the style and show the centered dialog."
+  :type '(choice (const :tag "Centered dialog" nil)
+                 (const :tag "Bottom sheet" "sheet")
+                 (const :tag "Bottom sheet, fully expanded" "sheet_full"))
+  :group 'jetpacs)
+
+(defun jetpacs-send-dialog (spec &optional style)
+  "Push a dialog SPEC to the companion.
+STYLE overrides `jetpacs-dialog-style' for this dialog: nil for the
+centered window, \"sheet\" or \"sheet_full\" for a bottom sheet.  The
+style rides the spec root as `dialog_style' — additive, so an old
+companion just shows the centered dialog."
+  (let ((style (or style jetpacs-dialog-style)))
+    (jetpacs-send "dialog.show"
+                  (if style (cons (cons 'dialog_style style) spec) spec))))
 
 (defun jetpacs-dismiss-dialog ()
   "Dismiss the current dialog on the companion."
@@ -727,20 +744,39 @@ first flagged child wins."
   (jetpacs--node "divider"))
 
 (cl-defun jetpacs-card (children &key on-tap padding weight on-swipe
+                              swipe-start swipe-end
                               width height fill-fraction border)
   "An elevated card wrapping CHILDREN.
 WIDTH/HEIGHT fix the size (dp), FILL-FRACTION (0.0-1.0) sets a fraction
-of parent width, and BORDER is an `jetpacs-border' spec."
+of parent width, and BORDER is an `jetpacs-border' spec.
+SWIPE-START / SWIPE-END are `jetpacs-swipe-action' specs revealed by
+dragging the card from that side; a full swipe fires the action and the
+card springs back (push the updated list in the handler).  They win
+over the legacy single-action ON-SWIPE.  Old companions render no
+gesture, so a swipe action must also be reachable by tap or menu."
   (jetpacs--node "card"
               'children (vconcat children)
               'on_tap on-tap
               'on_swipe on-swipe
+              'swipe_start swipe-start
+              'swipe_end swipe-end
               'padding padding
               'weight weight
               'width width
               'height height
               'fill_fraction fill-fraction
               'border border))
+
+(cl-defun jetpacs-swipe-action (icon label action &key color)
+  "A per-side card swipe action (`jetpacs-card' :swipe-start / :swipe-end).
+ICON and LABEL are revealed on the swipe background as the card drags;
+ACTION is dispatched once on a full swipe.  COLOR optionally tints the
+revealed background (hex; defaults to a theme container color)."
+  (jetpacs--node nil
+              'icon icon
+              'label label
+              'on_trigger action
+              'color color))
 
 (cl-defun jetpacs-collapsible (id header children &key collapsed on-long-tap on-swipe)
   "A fold/expand section. ID keys the (client-side) fold state.
@@ -924,13 +960,16 @@ escape hatch for visuals no curated node covers."
   (jetpacs--node nil 'op "text" 'x x 'y y 'text text 'color color 'size size
               'align (and align (format "%s" align))))
 
-(cl-defun jetpacs-icon-button (icon action &key content-description padding)
-  "An icon button."
+(cl-defun jetpacs-icon-button (icon action &key content-description padding badge)
+  "An icon button.
+BADGE overlays a count on the icon: a number (rendered capped at 99+)
+or the empty string for a bare attention dot; nil for none."
   (jetpacs--node "icon_button"
               'icon icon
               'on_tap action
               'content_description content-description
-              'padding padding))
+              'padding padding
+              'badge badge))
 
 (cl-defun jetpacs-menu (items &key icon padding)
   "An overflow menu: an icon that opens a dropdown of ITEMS.
@@ -944,7 +983,7 @@ ellipsis. Folding/opening is handled entirely on-device."
 
 (cl-defun jetpacs-text-input (id &key value hint label on-submit single-line
                               multi-line min-lines max-lines monospace syntax
-                              password padding)
+                              password keyboard padding)
   "A text input field.
 ID identifies the field. ON-SUBMIT is an action dispatched when done.
 The client defaults to single-line; pass MULTI-LINE non-nil for a box that
@@ -954,7 +993,10 @@ and MONOSPACE renders it in a fixed-width font (handy for code).
 SYNTAX (e.g. \"elisp\", \"org\") turns on client-side highlighting.
 PASSWORD masks the entry (dots) and requests a password keyboard — used by
 the `read-passwd' bridge; such a field's value must not be logged or
-retained beyond the read."
+retained beyond the read.
+KEYBOARD picks the IME: \"number\", \"decimal\", \"email\", \"phone\", or
+\"uri\"; nil (or an unknown value) falls back to the text keyboard, and
+PASSWORD always wins."
   (jetpacs--node "text_input"
               'id id
               'value value
@@ -969,6 +1011,7 @@ retained beyond the read."
               'monospace (and monospace t)
               'syntax syntax
               'password (and password t)
+              'keyboard keyboard
               'padding padding))
 
 (cl-defun jetpacs-enum-list (id options &key value multi-select allow-add on-change padding)
@@ -1021,9 +1064,12 @@ ON-CHANGE fires once on release with the position injected into args as
 
 ;; ─── Display ─────────────────────────────────────────────────────────────────
 
-(cl-defun jetpacs-icon (name &key size color padding)
-  "An icon display."
-  (jetpacs--node "icon" 'name name 'size size 'color color 'padding padding))
+(cl-defun jetpacs-icon (name &key size color padding badge)
+  "An icon display.
+BADGE overlays a count: a number (capped at 99+ on-device) or the empty
+string for a bare attention dot; nil for none."
+  (jetpacs--node "icon" 'name name 'size size 'color color 'padding padding
+              'badge badge))
 
 (cl-defun jetpacs-chip (label &key on-tap selected icon padding)
   "A filter chip."
@@ -1209,8 +1255,12 @@ editor into the affordance."
                            (vconcat toolbar)
                          toolbar)))
 
-(cl-defun jetpacs-scaffold (&key top-bar fab body bottom-bar floating-toolbar snackbar drawer on-refresh)
-  "The standard app frame."
+(cl-defun jetpacs-scaffold (&key top-bar fab body bottom-bar floating-toolbar
+                            snackbar snackbar-action drawer on-refresh)
+  "The standard app frame.
+SNACKBAR is the transient message text; SNACKBAR-ACTION optionally adds
+an action button to it (`jetpacs-snackbar-action') — the undo
+affordance.  Old companions show the plain message."
   (jetpacs--node "scaffold"
               'top_bar top-bar
               'fab fab
@@ -1218,6 +1268,7 @@ editor into the affordance."
               'bottom_bar bottom-bar
               'floating_toolbar floating-toolbar
               'snackbar snackbar
+              'snackbar_action snackbar-action
               'drawer drawer
               'on_refresh on-refresh))
 
@@ -1225,13 +1276,23 @@ editor into the affordance."
   "A navigation drawer spec. ITEMS is a list from `jetpacs-drawer-item'."
   (jetpacs--node nil 'header header 'items (vconcat items)))
 
-(cl-defun jetpacs-drawer-item (icon label action &key selected)
-  "An item in the navigation drawer."
+(defun jetpacs-snackbar-action (label action)
+  "An action button on the scaffold snackbar (`jetpacs-scaffold').
+LABEL is the button text (\"Undo\"); ACTION dispatches only when the
+user taps it — never when the snackbar times out, so a mutation stays
+final unless explicitly recalled."
+  (jetpacs--node nil 'label label 'on_tap action))
+
+(cl-defun jetpacs-drawer-item (icon label action &key selected badge)
+  "An item in the navigation drawer.
+BADGE shows a trailing count: a number (capped at 99+ on-device) or the
+empty string for a bare attention dot; nil for none."
   (jetpacs--node nil
               'icon icon
               'label label
               'on_tap action
-              'selected (and selected t)))
+              'selected (and selected t)
+              'badge badge))
 
 (cl-defun jetpacs-top-bar (title &key nav-icon nav-action actions)
   "A TopAppBar spec."
@@ -1253,13 +1314,16 @@ editor into the affordance."
   "A BottomBar spec. ITEMS is a list from `jetpacs-nav-item'."
   (jetpacs--node nil 'items (vconcat items)))
 
-(cl-defun jetpacs-nav-item (icon label action &key selected)
-  "An item in the bottom bar."
+(cl-defun jetpacs-nav-item (icon label action &key selected badge)
+  "An item in the bottom bar.
+BADGE overlays a count on the tab icon: a number (capped at 99+
+on-device) or the empty string for a bare attention dot; nil for none."
   (jetpacs--node nil
               'icon icon
               'label label
               'on_tap action
-              'selected (and selected t)))
+              'selected (and selected t)
+              'badge badge))
 
 (provide 'jetpacs-widgets)
 ;;; jetpacs-widgets.el ends here
@@ -1313,7 +1377,7 @@ companion gates on `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys
   '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
-    nav_action on_long_tap on_swipe on_add_row on_add_col)
+    nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger)
   "Node keys whose value is an embedded action object (SPEC §9).")
 
 (defconst jetpacs-lint--numeric-attrs

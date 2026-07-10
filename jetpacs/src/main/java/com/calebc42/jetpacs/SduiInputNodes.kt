@@ -140,6 +140,9 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
     val maxLines = node.optInt("max_lines", if (singleLine) 1 else Int.MAX_VALUE)
     val syntax = node.optString("syntax")
     val password = node.optBoolean("password", false)
+    // IME hint (SPEC §9): a closed enum; unknown/absent falls back to text,
+    // and password always wins (never suggest/reveal a secret).
+    val keyboard = node.optString("keyboard")
     val monospace = node.optBoolean("monospace", false) || syntax.isNotEmpty()
     val highlight = when {
         // A masked field takes precedence: never highlight (or reveal) a secret.
@@ -187,7 +190,17 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
         // action reads the value back from `jetpacs--ui-state`.
         modifier = modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(
-            keyboardType = if (password) KeyboardType.Password else KeyboardType.Text,
+            keyboardType = when {
+                password -> KeyboardType.Password
+                else -> when (keyboard) {
+                    "number" -> KeyboardType.Number
+                    "decimal" -> KeyboardType.Decimal
+                    "email" -> KeyboardType.Email
+                    "phone" -> KeyboardType.Phone
+                    "uri" -> KeyboardType.Uri
+                    else -> KeyboardType.Text
+                }
+            },
             imeAction = if (singleLine) ImeAction.Done else ImeAction.Default
         ),
         keyboardActions = KeyboardActions(onDone = {

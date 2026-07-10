@@ -680,7 +680,10 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
      (jetpacs-lazy-column leaf leaf)
      (jetpacs-spacer :height 4 :width 2 :weight 1)
      (jetpacs-divider)
-     (jetpacs-card (list leaf) :on-tap act :padding 8 :weight 1)
+     (jetpacs-card (list leaf) :on-tap act :padding 8 :weight 1
+                :swipe-start (jetpacs-swipe-action "check" "Done" act)
+                :swipe-end (jetpacs-swipe-action "schedule" "Later" act
+                                              :color "#4CAF50"))
      (jetpacs-collapsible "cid" leaf (list leaf) :collapsed t :on-long-tap act)
      (jetpacs-reorderable-list (list '((label . "h") (level . 1))) :on-reorder act)
      (jetpacs-action "y.z")
@@ -690,17 +693,17 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
      (jetpacs-date-button "L" act :value "2026-01-01")
      (jetpacs-time-button "L" act :value "10:00")
      (jetpacs-image "http://x" :content-description "d" :padding 1)
-     (jetpacs-icon-button "add" act :content-description "c" :padding 1)
+     (jetpacs-icon-button "add" act :content-description "c" :padding 1 :badge 3)
      (jetpacs-menu (list (jetpacs-menu-item "L" act :icon "add")) :icon "more_vert" :padding 2)
      (jetpacs-text-input "tid" :value "v" :hint "h" :label "l" :on-submit act
                       :single-line t :min-lines 1 :max-lines 3
-                      :monospace t :syntax "org" :padding 2)
+                      :monospace t :syntax "org" :keyboard "number" :padding 2)
      (jetpacs-text-input "tid2" :multi-line t)
      (jetpacs-enum-list "eid" '("a" "b") :value '("a") :multi-select t
                      :allow-add t :on-change act :padding 1)
      (jetpacs-checkbox "kid" :checked t :label "l" :on-change act :padding 1)
      (jetpacs-switch "sid" :checked t :label "l" :on-change act :padding 1)
-     (jetpacs-icon "add" :size 20 :color "#FFF" :padding 1)
+     (jetpacs-icon "add" :size 20 :color "#FFF" :padding 1 :badge "")
      (jetpacs-chip "l" :on-tap act :selected t :icon "add" :padding 1)
      (jetpacs-progress :variant "linear" :value 0.5 :padding 1)
      (jetpacs-assist-chip "l" :on-tap act :icon "add" :padding 1)
@@ -712,13 +715,16 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
      (jetpacs-editor "f.org" "content" :on-save act :read-only t :syntax "org"
                   :line-numbers "absolute" :complete t
                   :chromeless t :publish-state t)
-     (jetpacs-drawer (list (jetpacs-drawer-item "i" "l" act :selected t)) :header "h")
+     (jetpacs-drawer (list (jetpacs-drawer-item "i" "l" act :selected t :badge 100))
+                  :header "h")
      (jetpacs-top-bar "t" :nav-icon "menu" :nav-action act :actions (list leaf))
      (jetpacs-fab "add" :label "l" :on-tap act :extended t)
-     (jetpacs-bottom-bar (list (jetpacs-nav-item "i" "l" act :selected t)))
+     (jetpacs-bottom-bar (list (jetpacs-nav-item "i" "l" act :selected t :badge 2)))
      (jetpacs-scaffold :top-bar (jetpacs-top-bar "t") :fab (jetpacs-fab "add")
                     :body leaf :bottom-bar (jetpacs-bottom-bar nil)
-                    :snackbar "s" :drawer (jetpacs-drawer nil :header "h")
+                    :snackbar "s"
+                    :snackbar-action (jetpacs-snackbar-action "Undo" act)
+                    :drawer (jetpacs-drawer nil :header "h")
                     :on-refresh act)
      (jetpacs-table
       (list (jetpacs-table-row
@@ -1073,6 +1079,30 @@ records the last-fired time."
     (should-not (jetpacs-lint-spec canvas))
     (should (equal "chart" (alist-get 't (jetpacs-render-to-json chart))))
     (should (equal "canvas" (alist-get 't (jetpacs-render-to-json canvas))))))
+
+(ert-deftest jetpacs-lint-swipe-badge-snackbar ()
+  "Swipe actions, badges, and snackbar actions ride the generic lint walk."
+  (should-not
+   (jetpacs-lint-spec
+    (jetpacs-card (list (jetpacs-text "row"))
+               :swipe-start (jetpacs-swipe-action "check" "Done"
+                                               (jetpacs-action "t.done"))
+               :swipe-end (jetpacs-swipe-action "schedule" "Later"
+                                             (jetpacs-action "t.later")
+                                             :color "#4CAF50"))))
+  ;; A broken swipe action is caught: on_trigger is an action key.
+  (should (jetpacs-lint-spec
+           (jetpacs-card (list (jetpacs-text "row"))
+                      :swipe-start '((icon . "x")
+                                     (on_trigger . ((args . ((k . "v")))))))))
+  (should-not (jetpacs-lint-spec (jetpacs-icon "inbox" :badge 3)))
+  (should-not (jetpacs-lint-spec
+               (jetpacs-icon-button "inbox" (jetpacs-action "a.b") :badge "")))
+  (should-not
+   (jetpacs-lint-spec
+    (jetpacs-scaffold :body (jetpacs-text "b") :snackbar "Archived"
+                   :snackbar-action (jetpacs-snackbar-action
+                                     "Undo" (jetpacs-action "t.unarchive"))))))
 
 ;; ─── Data-driven editor toolbars (SPEC §9 "Editor toolbars") ─────────────────
 

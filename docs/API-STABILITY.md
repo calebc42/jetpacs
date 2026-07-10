@@ -40,9 +40,10 @@ Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 `jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-border`
 `jetpacs-lazy-column` `jetpacs-scroll-here` `jetpacs-spacer` `jetpacs-collapsible`
 `jetpacs-reorderable-list` `jetpacs-table` `jetpacs-table-row` `jetpacs-table-rule`
-`jetpacs-table-cell`. (`row`/`column`/`flow-row` take trailing `:spacing`/
-`:align`/`:scroll` keywords; `box`/`surface`/`card` take
-`:width`/`:height`/`:fill-fraction`/`:border`.)
+`jetpacs-table-cell` `jetpacs-swipe-action`. (`row`/`column`/`flow-row` take
+trailing `:spacing`/`:align`/`:scroll` keywords; `box`/`surface`/`card`
+take `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
+`:swipe-start`/`:swipe-end`.)
 
 Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip`
 `jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`
@@ -54,7 +55,10 @@ Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
 `jetpacs-draw-text`.
 
 Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-item`
-`jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab`.
+`jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab` `jetpacs-snackbar-action`.
+(`nav-item`/`drawer-item`/`icon`/`icon-button` take `:badge`;
+`text-input` takes `:keyboard`; `jetpacs-send-dialog` takes an optional
+STYLE / `jetpacs-dialog-style`.)
 
 Actions: `jetpacs-action` `jetpacs-clipboard-action`.
 

@@ -39,6 +39,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -52,8 +54,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,6 +72,9 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
@@ -223,6 +231,11 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         "card" -> {
             val actionJson = node.optJSONObject("on_tap")
             val swipeJson = node.optJSONObject("on_swipe")
+            // Per-side swipe actions (SPEC §9): {icon, label, color?,
+            // on_trigger}. When present they win over the legacy
+            // single-action on_swipe.
+            val swipeStart = node.optJSONObject("swipe_start")
+            val swipeEnd = node.optJSONObject("swipe_end")
             val cardContent: @Composable () -> Unit = {
                 androidx.compose.material3.ElevatedCard(
                     modifier = baseModifier
@@ -235,7 +248,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                     }
                 }
             }
-            if (swipeJson != null) {
+            if (swipeStart != null || swipeEnd != null) {
+                SwipeActionCard(swipeStart, swipeEnd, dispatch) { cardContent() }
+            } else if (swipeJson != null) {
                 val density = LocalDensity.current
                 val thresholdPx = with(density) { 80.dp.toPx() }
                 var offsetX by remember { mutableStateOf(0f) }
@@ -432,7 +447,9 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             val actionJson = node.optJSONObject("on_tap")
             val iconName = node.optString("icon", "help_outline")
             IconButton(onClick = { if (actionJson != null) dispatch(actionJson) }, modifier = baseModifier) {
-                Icon(IconMap.get(iconName), contentDescription = null)
+                JetpacsBadged(node) {
+                    Icon(IconMap.get(iconName), contentDescription = null)
+                }
             }
         }
         "icon" -> {
@@ -443,14 +460,16 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             val size = node.optInt("size", 0)
             val tint = resolveColor(node.optString("color"))
                 .takeIf { it != Color.Unspecified } ?: LocalContentColor.current
-            Icon(
-                IconMap.get(iconName),
-                contentDescription = null,
-                tint = tint,
-                modifier = baseModifier.then(
-                    if (size > 0) Modifier.size(size.dp) else Modifier
+            JetpacsBadged(node) {
+                Icon(
+                    IconMap.get(iconName),
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = baseModifier.then(
+                        if (size > 0) Modifier.size(size.dp) else Modifier
+                    )
                 )
-            )
+            }
         }
         "chip" -> {
             val label = node.optString("label")
@@ -696,4 +715,106 @@ internal fun dispatchStateChanged(context: Context, id: String, valueJson: Strin
         putExtra(ActionReceiver.EXTRA_VALUE_JSON, valueJson)
     }
     context.sendBroadcast(intent)
+}
+
+/** NODE's `badge` value as display text (SPEC §9): a number renders as a
+ *  count capped at "99+", the empty string as a bare dot badge; null when
+ *  the node carries no badge. */
+internal fun jetpacsBadgeText(node: JSONObject): String? {
+    if (!node.has("badge")) return null
+    return when (val raw = node.opt("badge")) {
+        is Number -> raw.toInt().let { if (it > 99) "99+" else it.toString() }
+        is String -> raw
+        else -> ""
+    }
+}
+
+/** Wrap CONTENT in a [BadgedBox] when NODE carries a `badge` attribute —
+ *  the shared treatment for icons, icon buttons, and nav items. */
+@Composable
+internal fun JetpacsBadged(node: JSONObject, content: @Composable () -> Unit) {
+    val text = jetpacsBadgeText(node)
+    if (text == null) {
+        content()
+        return
+    }
+    BadgedBox(badge = { if (text.isEmpty()) Badge() else Badge { Text(text) } }) {
+        content()
+    }
+}
+
+/**
+ * Per-side card swipe actions (SPEC §9): dragging reveals the side's
+ * icon/label on its (optionally hex-colored) background; a full swipe past
+ * the threshold fires `on_trigger` once, with a haptic tick, and the card
+ * springs back — the client answers by pushing the updated list, the same
+ * contract as the legacy single-action `on_swipe`.
+ */
+@Composable
+private fun SwipeActionCard(
+    swipeStart: JSONObject?,
+    swipeEnd: JSONObject?,
+    dispatch: (JSONObject) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    val state = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            val side = when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> swipeStart
+                SwipeToDismissBoxValue.EndToStart -> swipeEnd
+                else -> null
+            }
+            side?.optJSONObject("on_trigger")?.let {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                dispatch(it)
+            }
+            // Never settle dismissed: the card stays until the server's
+            // refreshed list removes it (or doesn't — a schedule action
+            // legitimately keeps the row).
+            false
+        }
+    )
+    SwipeToDismissBox(
+        state = state,
+        enableDismissFromStartToEnd = swipeStart != null,
+        enableDismissFromEndToStart = swipeEnd != null,
+        backgroundContent = {
+            val side = when (state.dismissDirection) {
+                SwipeToDismissBoxValue.StartToEnd -> swipeStart
+                SwipeToDismissBoxValue.EndToStart -> swipeEnd
+                else -> null
+            } ?: return@SwipeToDismissBox
+            val bg = resolveColor(side.optString("color"))
+                .takeIf { it != Color.Unspecified }
+                ?: MaterialTheme.colorScheme.secondaryContainer
+            val fg = if (bg.luminance() < 0.5f) Color.White else Color(0xFF1A1A1A)
+            val label = side.optString("label")
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 4.dp)
+                    .background(bg, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 20.dp),
+                contentAlignment =
+                    if (state.dismissDirection == SwipeToDismissBoxValue.StartToEnd)
+                        Alignment.CenterStart
+                    else Alignment.CenterEnd
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        IconMap.get(side.optString("icon", "help_outline")),
+                        contentDescription = label.ifEmpty { null },
+                        tint = fg
+                    )
+                    if (label.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(label, color = fg, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+    ) {
+        content()
+    }
 }

@@ -1,27 +1,37 @@
 <#
 .SYNOPSIS
-Deploy the Glasspane bundle (and optionally the companion APK) to the
-connected Android device.
+Deploy the jetpacs foundation bundle — and any Tier-1 app bundles — to
+the connected Android device.
 
 .DESCRIPTION
-Default: rebuild glasspane.el from emacs/*.el via WSL Emacs, then adb-push
-it to /sdcard/Download/glasspane.el. Termux is not debuggable, so adb cannot
-write into /data/data/com.termux directly — pair this with the init.el
-bootstrap snippet that adopts a newer staged bundle at Emacs startup:
+Default: rebuild jetpacs-core.el from emacs/core/*.el via WSL Emacs, then
+adb-push it (plus every path in -Bundles) to /sdcard/Download/. Termux is
+not debuggable, so adb cannot write into /data/data/com.termux directly —
+the starter init (docs/starter-init.el) adopts newer staged bundles from
+/sdcard/Download (or /sdcard/Documents, the onboarding slot) at Emacs
+startup, newest copy wins.
 
-    ;; Adopt a freshly adb-pushed bundle before loading it.
-    (let ((staged "/sdcard/Download/glasspane.el")
-          (installed "~/.emacs.d/elisp/glasspane.el"))
-      (when (and (file-readable-p staged)
-                 (file-newer-than-file-p staged installed))
-        (copy-file staged installed t)
-        (message "glasspane: adopted new bundle from Downloads")))
-    (require 'glasspane)
+App bundles are not built here — each app repo builds its own. Pass the
+built file:
+
+    # foundation only
+    .\deploy.ps1
+
+    # foundation + the Glasspane app bundle (from its own repo checkout)
+    .\deploy.ps1 -Bundles ..\glasspane\glasspane.el
+    .\deploy.ps1 -Bundles \\wsl.localhost\Debian\home\me\pkb\projects\Glasspane\glasspane.el
+
+    # foundation + the hello demo app
+    .\deploy.ps1 -Bundles emacs\apps\jetpacs-hello.el
+
+.PARAMETER Bundles
+Extra single-file elisp bundles to push alongside jetpacs-core.el, each
+staged under its own basename.
 
 .PARAMETER Ssh
-Push straight into Termux's home (~/.emacs.d/elisp/glasspane.el) over
-Termux sshd — a true direct drop, no staging or restart-adopt needed.
-One-time setup inside Termux:
+Push straight into Termux's home (~/.emacs.d/elisp/) over Termux sshd —
+a true direct drop, no staging or restart-adopt needed. One-time setup
+inside Termux:
     pkg install openssh && passwd && sshd
 Optional, for passwordless pushes: append your Windows public key
 (~/.ssh/id_ed25519.pub) to ~/.ssh/authorized_keys in Termux.
@@ -31,20 +41,28 @@ sshd must be running on the device when you deploy (`sshd` in Termux).
 Also build and install the companion app (gradlew installDebug).
 #>
 param(
+    [string[]]$Bundles = @(),
     [switch]$Ssh,
     [switch]$Apk
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
-$bundle = Join-Path $repo 'glasspane.el'
 
 # C:\path\to\repo -> /mnt/c/path/to/repo for the WSL build step.
 $wslRepo = '/mnt/' + $repo.Substring(0, 1).ToLower() + ($repo.Substring(2) -replace '\\', '/')
 
-Write-Host '-- Rebuilding glasspane.el from emacs/*.el ...'
+Write-Host '-- Rebuilding jetpacs-core.el from emacs/core/*.el ...'
 wsl.exe -d Debian -- emacs --batch -l "$wslRepo/emacs/build-bundle.el"
 if ($LASTEXITCODE -ne 0) { throw 'Bundle build failed.' }
+
+# The push set: the foundation bundle plus whatever apps were passed in.
+$files = @(Join-Path $repo 'jetpacs-core.el')
+foreach ($b in $Bundles) {
+    $resolved = (Resolve-Path $b -ErrorAction SilentlyContinue)
+    if (-not $resolved) { throw "Bundle not found: $b" }
+    $files += $resolved.Path
+}
 
 Write-Host '-- Checking device ...'
 adb get-state | Out-Null
@@ -55,14 +73,21 @@ if ($Ssh) {
     adb forward tcp:8022 tcp:8022 | Out-Null
     ssh -p 8022 termux@127.0.0.1 'mkdir -p .emacs.d/elisp'
     if ($LASTEXITCODE -ne 0) { throw 'ssh failed - is sshd running in Termux?' }
-    scp -P 8022 $bundle termux@127.0.0.1:.emacs.d/elisp/glasspane.el
-    if ($LASTEXITCODE -ne 0) { throw 'scp failed.' }
-    Write-Host '   Installed to ~/.emacs.d/elisp/glasspane.el - reload or restart Emacs.'
+    foreach ($f in $files) {
+        $name = Split-Path $f -Leaf
+        scp -P 8022 $f "termux@127.0.0.1:.emacs.d/elisp/$name"
+        if ($LASTEXITCODE -ne 0) { throw "scp failed: $name" }
+        Write-Host "   Installed ~/.emacs.d/elisp/$name"
+    }
+    Write-Host '   Reload or restart Emacs to pick the bundles up.'
 } else {
     Write-Host '-- Staging to /sdcard/Download (adopted by init.el on Emacs restart) ...'
-    adb push $bundle /sdcard/Download/glasspane.el
-    if ($LASTEXITCODE -ne 0) { throw 'adb push failed.' }
-    Write-Host '   Staged. Restart Emacs on the device (or eval the adopt snippet) to pick it up.'
+    foreach ($f in $files) {
+        $name = Split-Path $f -Leaf
+        adb push $f "/sdcard/Download/$name"
+        if ($LASTEXITCODE -ne 0) { throw "adb push failed: $name" }
+    }
+    Write-Host '   Staged. Restart Emacs on the device (or eval the adopt snippet) to pick them up.'
 }
 
 if ($Apk) {

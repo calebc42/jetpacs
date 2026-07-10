@@ -17,25 +17,31 @@
 ;;   - M-x customize (saved to custom.el): settings changed from the
 ;;     phone's Settings screen land here.
 
-;;; ── Glasspane bundle ─────────────────────────────────────────────────
-;; The single-file bundle lives at ~/.emacs.d/elisp/glasspane.el.  A
-;; newer staged copy is adopted automatically at startup: the companion
-;; app's onboarding writes it to /sdcard/Documents, and deploy.ps1 (a
-;; dev machine) stages it to /sdcard/Download.  Both slots are checked
-;; and the most-recent copy wins, so either delivery path just works.
+;;; ── The bundles: jetpacs core + the Glasspane app ────────────────────
+;; Two single-file bundles live in ~/.emacs.d/elisp/: jetpacs-core.el
+;; (the foundation) and glasspane.el (the org app — it `require's the
+;; core rather than inlining it, so both must be present).  Newer staged
+;; copies are adopted automatically at startup: the companion app's
+;; onboarding writes them to /sdcard/Documents, and the deploy scripts
+;; (a dev machine) stage to /sdcard/Download.  Both slots are checked
+;; and the most-recent copy wins, so either delivery path just works —
+;; and any other Tier-1 bundle you add to the list is adopted the same
+;; way.
 (add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
-(let ((staged (seq-filter #'file-readable-p
-                          '("/sdcard/Documents/glasspane.el"
-                            "/sdcard/Download/glasspane.el")))
-      (installed (expand-file-name "elisp/glasspane.el" user-emacs-directory)))
-  (dolist (s staged)
-    (when (or (not (file-exists-p installed))
-              (file-newer-than-file-p s installed))
-      (make-directory (file-name-directory installed) t)
-      (copy-file s installed t)
-      (message "glasspane: adopted new bundle from %s"
-               (file-name-directory s)))))
-(require 'glasspane)
+(dolist (bundle '("jetpacs-core.el" "glasspane.el"))
+  (let ((staged (seq-filter #'file-readable-p
+                            (list (concat "/sdcard/Documents/" bundle)
+                                  (concat "/sdcard/Download/" bundle))))
+        (installed (expand-file-name (concat "elisp/" bundle)
+                                     user-emacs-directory)))
+    (dolist (s staged)
+      (when (or (not (file-exists-p installed))
+                (file-newer-than-file-p s installed))
+        (make-directory (file-name-directory installed) t)
+        (copy-file s installed t)
+        (message "%s: adopted new bundle from %s"
+                 bundle (file-name-directory s))))))
+(require 'glasspane)  ; pulls in jetpacs-core from the same directory
 
 ;; First run writes Glasspane's managed org defaults into
 ;; ~/.emacs.d/elisp/glasspane/ and loads them; later runs just load.

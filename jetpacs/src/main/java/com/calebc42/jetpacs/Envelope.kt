@@ -28,6 +28,8 @@ object Kind {
     const val FONTIFY_SHOW = "fontify.show"
     const val CAPABILITY_INVOKE = "capability.invoke"
     const val CAPABILITY_RESULT = "capability.result"
+    // Emacs-theme mirroring (SPEC §7); routed to [JetpacsRuntime.setEmacsTheme].
+    const val THEME_SET = "theme.set"
     // SPEC §11 replace-set; routed to [TriggerHost.replaceSet].
     const val TRIGGERS_SET = "triggers.set"
 }

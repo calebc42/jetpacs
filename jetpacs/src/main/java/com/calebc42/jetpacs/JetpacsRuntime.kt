@@ -11,6 +11,7 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 
 @SuppressLint("StaticFieldLeak")
 object JetpacsRuntime {
@@ -74,6 +75,30 @@ object JetpacsRuntime {
     }
 
     /**
+     * The last `theme.set` payload from Emacs, or null when none was ever
+     * pushed (or the client cleared it). Persisted in prefs like a cached
+     * surface: the app keeps the Emacs look across restarts while Emacs is
+     * away. The shell's theme composable collects this and, when non-null,
+     * lets it win over Material You / the static fallback.
+     */
+    private val _emacsTheme = MutableStateFlow<JSONObject?>(null)
+    val emacsTheme: StateFlow<JSONObject?> = _emacsTheme.asStateFlow()
+
+    fun setEmacsTheme(context: Context, payload: JSONObject) {
+        // `colors: null` (or no colors at all) is the documented clear: the
+        // client stops mirroring and the companion falls back to its own
+        // scheme chain.
+        val cleared = payload.optJSONObject("colors") == null
+        _emacsTheme.value = if (cleared) null else payload
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .apply {
+                if (cleared) remove(KEY_EMACS_THEME)
+                else putString(KEY_EMACS_THEME, payload.toString())
+            }
+            .apply()
+    }
+
+    /**
      * Number of offline events waiting in the Room queue, for the top-bar
      * badge. Refresh from a background thread only (Room forbids main).
      */
@@ -89,5 +114,16 @@ object JetpacsRuntime {
             database = JetpacsDatabase.getDatabase(context)
         }
         if (JetpacsAuth.hasPaired(context)) _pairedEver.value = true
+        if (_emacsTheme.value == null) {
+            _emacsTheme.value = context
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_EMACS_THEME, null)
+                ?.let { runCatching { JSONObject(it) }.getOrNull() }
+        }
     }
+
+    // Same prefs file as [JetpacsAuth]: one "jetpacs" store for small
+    // durable companion state.
+    private const val PREFS = "jetpacs"
+    private const val KEY_EMACS_THEME = "emacs_theme"
 }

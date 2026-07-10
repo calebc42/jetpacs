@@ -38,7 +38,7 @@ class JetpacsConnection(
     // is simply not granted — the forward-compat mechanism from the spec.
     private val supported = setOf(
         "surfaces.widget", "surfaces.notification", "surfaces.dialog",
-        "capabilities", "triggers", "queue.replay",
+        "capabilities", "triggers", "queue.replay", "theme",
     )
 
     fun start() {
@@ -144,6 +144,14 @@ class JetpacsConnection(
             }
             Kind.FONTIFY_SHOW -> {
                 JetpacsRuntime.editSyncState.showFontify(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
+
+            // Emacs mirroring its theme onto the companion (SPEC §7). Each
+            // push replaces the previous; `colors: null` clears back to the
+            // companion's own scheme. Persisted so the look survives restarts.
+            Kind.THEME_SET -> {
+                JetpacsRuntime.setEmacsTheme(context, frame.payload)
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 

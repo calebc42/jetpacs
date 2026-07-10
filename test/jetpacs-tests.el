@@ -37,6 +37,7 @@
 (require 'jetpacs-complete)
 (require 'jetpacs-sync)
 (require 'jetpacs-settings)
+(require 'jetpacs-theme)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -1641,6 +1642,104 @@ in individual tests where needed."
        ,@body)))
 
 ; heading line stripped
+
+;; ─── Theme mirroring ────────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-theme-hex-parsing ()
+  "Hex colors parse display-independently (a tty frame must not quantize)."
+  (should (equal (jetpacs-theme--hex "#2E3440") "#2e3440"))
+  (should (equal (jetpacs-theme--hex "#2e3440") "#2e3440"))
+  (should (equal (jetpacs-theme--rgb "#f00") '(1.0 0.0 0.0)))
+  (should-not (jetpacs-theme--rgb "unspecified-bg"))
+  (should-not (jetpacs-theme--rgb "unspecified-fg"))
+  (should-not (jetpacs-theme--rgb 'unspecified))
+  (should-not (jetpacs-theme--rgb "#12345"))
+  (should (equal (jetpacs-theme--blend "#000000" "#ffffff" 0.25) "#bfbfbf"))
+  (should (jetpacs-theme--dark-p "#2e3440"))
+  (should-not (jetpacs-theme--dark-p "#eceff4")))
+
+(ert-deftest jetpacs-theme-generic-palette ()
+  "The face-extraction path builds Material roles from resolved face colors."
+  (should-not (jetpacs-theme--modus-p))
+  (let* ((fixture '(((default . :background) . "#eceff4")
+                    ((default . :foreground) . "#2e3440")
+                    ((link . :foreground) . "#5e81ac")
+                    ((error . :foreground) . "#bf616a")
+                    ((font-lock-keyword-face . :foreground) . "#3b5b8c")
+                    ((font-lock-string-face . :foreground) . "#4f6f3f")))
+         (real (symbol-function 'face-attribute)))
+    (cl-letf (((symbol-function 'face-attribute)
+               (lambda (face attr &optional frame inherit)
+                 (or (cdr (assoc (cons face attr) fixture))
+                     (funcall real face attr frame inherit)))))
+      (let* ((payload (jetpacs-theme-payload))
+             (colors (alist-get 'colors payload))
+             (syntax (alist-get 'syntax payload)))
+        (should (eq (alist-get 'dark payload) :false))
+        (should (equal (alist-get 'background colors) "#eceff4"))
+        (should (equal (alist-get 'on_surface colors) "#2e3440"))
+        (should (equal (alist-get 'primary colors) "#5e81ac"))
+        ;; Accent text sits on the theme background it was designed against.
+        (should (equal (alist-get 'on_primary colors) "#eceff4"))
+        (should (equal (alist-get 'secondary colors) "#3b5b8c"))
+        (should (equal (alist-get 'error colors) "#bf616a"))
+        ;; Containers are derived blends: present, and not the raw accent.
+        (should (alist-get 'primary_container colors))
+        (should-not (equal (alist-get 'primary_container colors)
+                           (alist-get 'primary colors)))
+        (should (equal (alist-get 'keyword syntax) "#3b5b8c"))
+        (should (equal (alist-get 'string syntax) "#4f6f3f"))
+        ;; The whole frame must serialize for the wire.
+        (should (stringp (json-serialize payload
+                                         :null-object :null
+                                         :false-object :false)))))))
+
+(ert-deftest jetpacs-theme-batch-frame-sends-nothing ()
+  "A frame with no resolvable default colors yields no payload (never push
+garbage from a tty/batch session)."
+  (should-not (jetpacs-theme--modus-p))
+  (let ((real (symbol-function 'face-attribute)))
+    (cl-letf (((symbol-function 'face-attribute)
+               (lambda (face attr &optional frame inherit)
+                 (if (eq face 'default) 'unspecified
+                   (funcall real face attr frame inherit)))))
+      (should-not (jetpacs-theme-payload)))))
+
+(ert-deftest jetpacs-theme-modus-palette ()
+  "The modus path reads the palette API — exact in batch, where face specs
+don't even apply (min-colors) but the palette variables are plain data."
+  (skip-unless (memq 'modus-vivendi (custom-available-themes)))
+  (unwind-protect
+      (progn
+        (load-theme 'modus-vivendi t)
+        (should (jetpacs-theme--modus-p))
+        (let* ((payload (jetpacs-theme-payload))
+               (colors (alist-get 'colors payload)))
+          (should (eq (alist-get 'dark payload) t))
+          (should (equal (alist-get 'background colors)
+                         (jetpacs-theme--modus 'bg-main)))
+          (should (equal (alist-get 'primary colors)
+                         (jetpacs-theme--modus 'blue)))
+          (should (equal (alist-get 'error colors)
+                         (jetpacs-theme--modus 'red)))
+          ;; Container roles take the palette's purpose-built subtle tints.
+          (should (equal (alist-get 'primary_container colors)
+                         (jetpacs-theme--modus 'bg-blue-subtle)))
+          (should (equal (alist-get 'on_primary_container colors)
+                         (jetpacs-theme--modus 'fg-main)))
+          (should (stringp (json-serialize payload
+                                           :null-object :null
+                                           :false-object :false)))))
+    (disable-theme 'modus-vivendi)))
+
+(ert-deftest jetpacs-theme-push-gating ()
+  "No auto-push while disconnected; the manual command degrades to a message."
+  (setq jetpacs-theme--timer nil)
+  (let ((jetpacs-theme-sync t))
+    (jetpacs-theme--push-soon)
+    (should-not jetpacs-theme--timer))
+  ;; Disconnected `M-x jetpacs-theme-send' must message, not error or hang.
+  (jetpacs-theme-send))
 
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

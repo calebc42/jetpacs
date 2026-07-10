@@ -74,7 +74,7 @@ companion → Emacs   session.welcome  {server_proof, granted, node_types, devic
   requests; the companion grants the intersection with what it supports
   (`granted` in the welcome). Unrecognised capabilities are silently not
   granted. v0 capability names: `surfaces.widget`, `surfaces.notification`,
-  `surfaces.dialog`, `capabilities`, `triggers`, `queue.replay`.
+  `surfaces.dialog`, `capabilities`, `triggers`, `queue.replay`, `theme`.
 - **Node vocabulary.** `node_types` is the flat list of widget node `t`
   discriminators (§9) this companion renders — always present, since
   serving `app:*` surfaces is core rather than a negotiated capability. A
@@ -219,6 +219,7 @@ mutated state the cached views no longer reflect).
 | `toast.show`                      | → comp.   | `{text}` transient toast                            | optional |
 | `pie_menu.show` / `.dismiss`      | → comp.   | radial menu spec (curated, ≤ ~10 items)             | optional |
 | `reminders.set`                   | → comp.   | `{reminders: [{title, body, at_ms, ...}]}` — the set **replaces** the previous one, so cancelled items never fire stale; the companion persists it across reboots | optional |
+| `theme.set`                       | → comp.   | `{dark, colors, syntax}` — mirror the client's theme onto the companion's UI | `theme` |
 
 A `dialog.show` spec's **root node** may carry `dialog_style`:
 `"sheet"` / `"sheet_full"` render the same tree as a modal bottom sheet
@@ -227,6 +228,21 @@ menus); anything else, or its absence, keeps the centered dialog window.
 Additive: an old companion ignores the key and centers the dialog. The
 elisp side sets it per-call (`jetpacs-send-dialog`'s STYLE) or globally
 (`jetpacs-dialog-style`).
+
+`theme.set` lets the client's theme win over the companion's own scheme
+(Material You, or its static fallback). `colors` maps Material color-role
+names — the same snake_case tokens §9 nodes use (`primary`,
+`surface_variant`, `on_primary_container`, …) — to `#rrggbb` strings;
+`syntax` maps editor token names (`comment`, `keyword`, `heading` /
+`paren` as arrays, …) the same way; `dark` declares the theme's polarity,
+which overrides the device's day/night setting while mirroring. Every key
+is optional — the companion fills holes from its fallback scheme. Each
+push replaces the last and is persisted like a cached surface (the phone
+keeps the client's look while the client is away); `colors: null` clears
+the mirror and the persisted palette. The reference client extracts the
+palette from the running Emacs theme (`jetpacs-theme.el`, opt-in via
+`jetpacs-theme-sync`), leaning on the modus-themes palette API when a
+modus theme is active and on resolved face attributes otherwise.
 
 The minibuffer bridge rides on dialogs: when a client action handler hits
 a prompting call (`y-or-n-p`, `completing-read`, `read-passwd`,

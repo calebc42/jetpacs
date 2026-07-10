@@ -149,7 +149,7 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
         password -> PasswordVisualTransformation()
         syntax.isNotEmpty() -> {
             val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-            val sc = remember(dark) { SyntaxColors.forBackground(dark) }
+            val sc = rememberSyntaxColors(dark)
             remember(syntax, sc) { SyntaxTransformation(syntax, sc) }
         }
         else -> VisualTransformation.None
@@ -276,7 +276,7 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     }
 
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val sc = remember(dark) { SyntaxColors.forBackground(dark) }
+    val sc = rememberSyntaxColors(dark)
     val diagColors = mapOf(
         "error" to MaterialTheme.colorScheme.error,
         "warning" to Color(0xFFC08A00),

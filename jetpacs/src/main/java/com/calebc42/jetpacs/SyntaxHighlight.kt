@@ -12,10 +12,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 
 /**
- * Token colours for code highlighting, tuned to the app's Nord palette so the
- * editor reads like Emacs does on the desktop. Two palettes — the dark one uses
- * the brighter Aurora/Frost accents, the light one uses darkened variants so
- * yellows/greens stay legible on a pale background.
+ * Token colours for code highlighting. The static palettes below (Nord-derived
+ * accents, keyed only on surface luminance so they stay legible on any
+ * Material You wallpaper scheme) are the fallback; when the client syncs its
+ * Emacs theme, [rememberSyntaxColors] overlays the pushed `syntax` colors so
+ * the editor reads like the user's actual desktop theme.
  */
 data class SyntaxColors(
     val comment: Color,

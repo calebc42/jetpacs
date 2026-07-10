@@ -75,7 +75,7 @@ internal fun SduiText(node: JSONObject, modifier: Modifier) {
     val content: @Composable () -> Unit = {
         if (syntax.isNotEmpty()) {
             val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-            val sc = remember(dark) { SyntaxColors.forBackground(dark) }
+            val sc = rememberSyntaxColors(dark)
             val mono = syntax.lowercase() != "org"
             val annotated = remember(text, syntax, sc) {
                 when (syntax.lowercase()) {

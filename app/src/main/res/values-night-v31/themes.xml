@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Material You launch window, dark: the dynamic dark scheme's surface
+         tone (see values-v31/themes.xml). -->
+    <style name="Theme.Jetpacs" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/system_neutral1_900</item>
+    </style>
+</resources>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Material You launch window: match the dynamic light scheme's surface
+         tone so the pre-Compose frame doesn't flash an off-palette color. -->
+    <style name="Theme.Jetpacs" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/system_neutral1_10</item>
+    </style>
+</resources>

@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- Window theme behind the Compose content. Compose (JetpacsTheme) owns
+         all real theming; this only controls the launch window before the
+         first frame, so it must track light/dark (values-night variant) and,
+         on 12+, the dynamic-color background (values-v31 variants) instead of
+         flashing a hardcoded color that matches neither. -->
     <style name="Theme.Jetpacs" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#334155</item>
-        <item name="android:statusBarColor">#334155</item>
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
     </style>
 </resources>

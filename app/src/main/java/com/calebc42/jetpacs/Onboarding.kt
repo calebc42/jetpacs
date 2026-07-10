@@ -100,10 +100,12 @@ private const val EARLY_INIT_SNIPPET = """;; 1. REDIRECT HOME TO TERMUX
 (setenv "PATH" (concat "/data/data/com.termux/files/usr/bin:" (getenv "PATH")))
 (add-to-list 'exec-path "/data/data/com.termux/files/usr/bin")
 
-;; 3. LOAD THE TERMUX INIT.EL
-;; Guarantee that Emacs boots using your Single Source of Truth configuration
+;; 3. SET CUSTOM FILE
+;; Ensure customization variables are written to the Termux directory
 (setq custom-file "/data/data/com.termux/files/home/.emacs.d/custom.el")
-(load "/data/data/com.termux/files/home/.emacs.d/init.el" t t)
+
+;; DO NOT manually load init.el here. Emacs will naturally look for it 
+;; in your new user-emacs-directory when it is safe to do so.
 """
 
 /** Minimal bootstrap for a user keeping their own init — just the essentials. */

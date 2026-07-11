@@ -11,6 +11,11 @@ app with its own tabs.
 Everything below assumes `(require 'jetpacs-emacs-ui)` or the `jetpacs-core.el`
 bundle is loaded. Nothing here requires Glasspane.
 
+Two companion documents: [TUTORIAL.md](TUTORIAL.md) builds a first app
+line by line — if this is your first Tier 1, do that walk before
+reading this map — and [WIDGETS.md](WIDGETS.md) is the reference for
+every node constructor the examples below use.
+
 ## Zero to Hello (five minutes)
 
 Prove the loop before reading further — a Tier 1 is developed *live*
@@ -33,9 +38,11 @@ building one:
    the phone follows.
 
 That file demonstrates the whole shape of a Tier 1: a view builder made
-of widget constructors, one allowlisted action, a tab registration, and
-an app identity. Everything else in this guide is that pattern at
-larger sizes.
+of widget constructors ([WIDGETS.md](WIDGETS.md) catalogues them all),
+one allowlisted action, a tab registration, and an app identity.
+Everything else in this guide is that pattern at larger sizes; the
+guided version of this loop — with an input round trip and a list —
+is [TUTORIAL.md](TUTORIAL.md).
 
 ## The extension surfaces, smallest first
 

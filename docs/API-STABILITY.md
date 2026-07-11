@@ -30,7 +30,8 @@ change signature incompatibly. Everything else is internal.
 
 ### Widget constructors (`jetpacs-widgets.el`)
 
-The node vocabulary. Wire shapes are pinned by `test/widgets.golden`.
+The node vocabulary. Wire shapes are pinned by `test/widgets.golden`;
+the authoring reference is [WIDGETS.md](WIDGETS.md).
 
 Content: `jetpacs-text` `jetpacs-markup` `jetpacs-rich-text` `jetpacs-span`
 `jetpacs-icon` `jetpacs-image` `jetpacs-date-stamp` `jetpacs-divider`

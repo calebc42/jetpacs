@@ -64,8 +64,11 @@ core); the boundary is enforced by the build on both sides:
 
 The tier model, module map, and every extension seam are documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). If you want to build your
-own Tier 1 — your own tabs, skins, and workflow — start at
-[docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
+own Tier 1 — your own tabs, skins, and workflow — start with the
+hands-on walkthrough in [docs/TUTORIAL.md](docs/TUTORIAL.md), then the
+map of every extension surface in
+[docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md) and the widget-DSL
+reference in [docs/WIDGETS.md](docs/WIDGETS.md).
 
 ### The tiers in one breath
 
@@ -225,7 +228,9 @@ with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
 
 - `docs/` — [SPEC.md](docs/SPEC.md) (the wire protocol),
   [ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams),
+  [TUTORIAL.md](docs/TUTORIAL.md) (hello world, step by step),
   [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (build your own app),
+  [WIDGETS.md](docs/WIDGETS.md) (the widget-DSL reference),
   [BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md) (build your own
   companion/renderer), [ROADMAP.md](docs/ROADMAP.md) (the foundation
   roadmap) and the foundation-side `PLAN-*.md` records (the app-level
@@ -245,7 +250,8 @@ with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
 
 Three doors, and only the last needs buy-in from this repo:
 
-- **Build your own app** on the foundation —
+- **Build your own app** on the foundation — start at
+  [docs/TUTORIAL.md](docs/TUTORIAL.md), then
   [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
 - **Build your own companion** against the wire —
   [docs/BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md).

@@ -13,7 +13,8 @@
 ;; file after editing and the phone follows.
 ;;
 ;; It is deliberately not part of any bundle; it exists to be read,
-;; loaded, and mutated in front of an audience.
+;; loaded, and mutated in front of an audience.  docs/TUTORIAL.md
+;; builds this exact pattern step by step, then goes past it.
 
 ;;; Code:
 

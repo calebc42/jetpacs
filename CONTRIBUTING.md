@@ -6,6 +6,7 @@ Most people who arrive here want one of the other three doors, none of
 which needs any buy-in from this repo:
 
 - **Building your own app** (a Tier 1) on top of the foundation →
+  [docs/TUTORIAL.md](docs/TUTORIAL.md), then
   [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
 - **Building your own companion** (another platform's renderer) against
   the wire → [docs/BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md).

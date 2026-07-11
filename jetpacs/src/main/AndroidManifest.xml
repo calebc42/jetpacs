@@ -23,6 +23,10 @@
     <!-- The `vibrate` effector (SPEC §10). Install-time, not runtime. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- `shortcut.pin` (SPEC §10): the pre-O legacy pin path is a launcher
+         broadcast gated on this permission; API 26+ ignores it. -->
+    <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
+
     <!-- Reboot persistence (SPEC §11): rearm triggers, reschedule reminders. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 

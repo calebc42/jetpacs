@@ -9,6 +9,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
@@ -21,10 +23,15 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
+import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
+import androidx.core.graphics.drawable.toBitmap
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
@@ -69,6 +76,8 @@ object DeviceCapabilities {
         "intent.start" to ::intentStart,
         "app.launch" to ::appLaunch,
         "apps.list" to ::appsList,
+        "shortcut.pin" to ::shortcutPin,
+        "shortcuts.set" to ::shortcutsSet,
         "vibrate" to ::vibrate,
         "tts.speak" to ::ttsSpeak,
         "volume.set" to ::volumeSet,
@@ -281,6 +290,111 @@ object DeviceCapabilities {
             }
             .sortedBy { it.optString("label").lowercase() }
         return JSONObject().put("apps", JSONArray(apps))
+    }
+
+    // ── launcher shortcuts ───────────────────────────────────────────────────
+
+    /**
+     * `shortcut.pin {id, label, action, icon_png?, long_label?}` — request
+     * a home-screen pinned shortcut whose tap opens the host app with
+     * `action` embedded (the [JetpacsLaunch] extras contract, so it joins
+     * the live/queue pipeline exactly like a widget row tap). This is how
+     * an Elisp-composed app gets launcher identity without its own APK:
+     * `icon_png` supplies the logo and Android persists it inside the pin.
+     * Re-pinning an existing id updates label/icon/action in place, no
+     * confirmation dialog — a distro shipping a logo refresh just calls
+     * again. A fresh pin goes through the launcher's confirm dialog; the
+     * reply means "requested", not "placed" (Android exposes no reliable
+     * completion signal).
+     */
+    private fun shortcutPin(context: Context, args: JSONObject): JSONObject {
+        if (!ShortcutManagerCompat.isRequestPinShortcutSupported(context))
+            throw CapabilityException("cap-failed",
+                "shortcut.pin: this launcher does not support pinned shortcuts")
+        val info = buildShortcut(context, args, "shortcut.pin")
+        val alreadyPinned = ShortcutManagerCompat
+            .getShortcuts(context, ShortcutManagerCompat.FLAG_MATCH_PINNED)
+            .any { it.id == info.id }
+        if (alreadyPinned) {
+            ShortcutManagerCompat.updateShortcuts(context, listOf(info))
+            return JSONObject().put("updated", true)
+        }
+        ShortcutManagerCompat.requestPinShortcut(context, info, null)
+        return JSONObject()
+    }
+
+    /**
+     * `shortcuts.set {shortcuts: [{id, label, action, icon_png?,
+     * long_label?}]}` — replace-set of the app icon's long-press (dynamic)
+     * shortcuts, the same whole-set discipline as `triggers.set`. An empty
+     * list clears them. A set larger than the launcher's per-activity max
+     * is refused outright rather than silently truncated.
+     */
+    private fun shortcutsSet(context: Context, args: JSONObject): JSONObject {
+        val list = args.optJSONArray("shortcuts")
+            ?: throw CapabilityException("cap-failed", "shortcuts.set: missing 'shortcuts'")
+        val max = ShortcutManagerCompat.getMaxShortcutCountPerActivity(context)
+        if (list.length() > max)
+            throw CapabilityException("cap-failed",
+                "shortcuts.set: ${list.length()} shortcuts exceed this launcher's max of $max")
+        val infos = (0 until list.length()).map { i ->
+            buildShortcut(context,
+                list.optJSONObject(i) ?: throw CapabilityException("cap-failed",
+                    "shortcuts.set: shortcuts[$i] is not an object"),
+                "shortcuts.set")
+        }
+        if (infos.isEmpty()) ShortcutManagerCompat.removeAllDynamicShortcuts(context)
+        else ShortcutManagerCompat.setDynamicShortcuts(context, infos)
+        return JSONObject()
+    }
+
+    /** One shortcut entry → [ShortcutInfoCompat]; [cap] names the caller in errors. */
+    private fun buildShortcut(
+        context: Context, args: JSONObject, cap: String,
+    ): ShortcutInfoCompat {
+        val id = args.optString("id")
+        val label = args.optString("label")
+        val action = args.optJSONObject("action")
+        if (id.isEmpty()) throw CapabilityException("cap-failed", "$cap: missing 'id'")
+        if (label.isEmpty()) throw CapabilityException("cap-failed", "$cap: missing 'label'")
+        if (action == null) throw CapabilityException("cap-failed", "$cap: missing 'action'")
+        val builder = ShortcutInfoCompat.Builder(context, id)
+            .setShortLabel(label)
+            .setIcon(shortcutIcon(context, args.optString("icon_png"), cap))
+            // Revision -1: a shortcut outlives any surface revision, like a
+            // share intent. The action string round-trips untouched.
+            .setIntent(JetpacsLaunch.openAppIntent(context, action.toString(), -1))
+        args.optString("long_label").takeIf { it.isNotEmpty() }
+            ?.let { builder.setLongLabel(it) }
+        return builder.build()
+    }
+
+    /**
+     * Base64 PNG → an adaptive icon the launcher masks to its shape; empty
+     * → the host app's own icon. Oversized bitmaps are scaled down before
+     * crossing the binder (the system persists pinned-shortcut icons).
+     */
+    private fun shortcutIcon(context: Context, iconB64: String, cap: String): IconCompat {
+        if (iconB64.isEmpty()) {
+            return IconCompat.createWithBitmap(
+                context.packageManager.getApplicationIcon(context.packageName).toBitmap())
+        }
+        val bytes = try {
+            Base64.decode(iconB64, Base64.DEFAULT)
+        } catch (e: IllegalArgumentException) {
+            throw CapabilityException("cap-failed", "$cap: 'icon_png' is not valid base64")
+        }
+        var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: throw CapabilityException("cap-failed",
+                "$cap: 'icon_png' did not decode as an image")
+        val maxDim = 512
+        if (bitmap.width > maxDim || bitmap.height > maxDim) {
+            val scale = maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)
+            bitmap = Bitmap.createScaledBitmap(bitmap,
+                (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1), true)
+        }
+        return IconCompat.createWithAdaptiveBitmap(bitmap)
     }
 
     // ── permission-free effectors ────────────────────────────────────────────

@@ -99,6 +99,58 @@ reason a desktop `completing-read' picker can never work here)."
       (jetpacs-dismiss-dialog)
       (jetpacs-device-app-launch pkg))))
 
+;; ─── Launcher shortcuts ──────────────────────────────────────────────────────
+
+(defun jetpacs-device--icon-base64 (file)
+  "Read image FILE (a PNG) and return its bytes base64-encoded."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file)
+    (base64-encode-string (buffer-string) t)))
+
+(defun jetpacs-device--shortcut-spec (id label action icon-file long-label)
+  "The plain-data shortcut object `shortcut.pin' and `shortcuts.set' share."
+  (append `((id . ,id)
+            (label . ,label)
+            (action . ,action))
+          (when icon-file
+            `((icon_png . ,(jetpacs-device--icon-base64 icon-file))))
+          (when long-label `((long_label . ,long-label)))))
+
+(cl-defun jetpacs-device-shortcut-pin (id label action &key icon-file long-label)
+  "Request a home-screen pinned shortcut — launcher identity for an app.
+ID names the shortcut; re-pinning the same ID updates label, icon, and
+action in place (how an app ships a logo refresh, no dialog).  LABEL is
+the short name under the icon.  ACTION is a `jetpacs-action' descriptor
+dispatched through the normal tap pipeline when the shortcut opens the
+companion — point it at whatever pushes your app's root view.
+ICON-FILE is a PNG the launcher masks to its adaptive-icon shape:
+square and full-bleed, 432px or larger recommended (keep the logo
+inside the middle ~66%); omitted, the companion's own icon is used.
+Android asks the user to confirm a fresh pin, and overlays a small
+badge of the companion's icon — that part is OS-enforced."
+  (jetpacs-device--invoke
+   "shortcut.pin"
+   (jetpacs-device--shortcut-spec id label action icon-file long-label)))
+
+(defun jetpacs-device-shortcuts-set (shortcuts)
+  "Replace the companion icon's long-press (dynamic) shortcuts.
+SHORTCUTS is a list of (ID LABEL ACTION [ICON-FILE [LONG-LABEL]])
+entries — fields as in `jetpacs-device-shortcut-pin'.  The whole set is
+replaced (`triggers.set' discipline); nil clears it.  Launchers cap the
+count (typically four visible), and a set over the max is refused
+outright rather than truncated."
+  (jetpacs-device--invoke
+   "shortcuts.set"
+   `((shortcuts
+      . ,(vconcat
+          (mapcar (lambda (s)
+                    (cl-destructuring-bind
+                        (id label action &optional icon-file long-label) s
+                      (jetpacs-device--shortcut-spec
+                       id label action icon-file long-label)))
+                  shortcuts))))))
+
 ;; ─── Permission-free effectors ───────────────────────────────────────────────
 
 (defun jetpacs-device-vibrate (&optional ms pattern)

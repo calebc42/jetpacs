@@ -163,6 +163,26 @@ Eval / Tools tabs — show in every app; claim them in an explicit app of
 their own (say `"system"`) to contain them. The first `:tab` view in
 `:views` is the app's landing tab.
 
+**A home-screen icon of its own.** An app — or a whole distro — can put
+its logo on the Android home screen, no APK and no Kotlin:
+
+```elisp
+(jetpacs-device-shortcut-pin
+ "marks" "Marks"
+ (jetpacs-action "app.open" :args '((app . "marks")))
+ :icon-file "~/marks/logo.png")
+```
+
+Tapping the pin opens the companion and fires the action through the
+normal tap pipeline — `app.open` lands on your app's landing tab, but
+any action works. The PNG is masked to the launcher's adaptive-icon
+shape (square and full-bleed, 432 px or larger, keep the mark inside
+the middle two-thirds); Android badges the pin with the companion's
+own icon (OS-enforced) and asks the user to confirm the first pin.
+Re-pinning the same id updates logo, label, and action in place — how
+you ship a logo refresh. `jetpacs-device-shortcuts-set` fills the
+companion icon's long-press menu the same way (both SPEC §10).
+
 ### 5. Per-file-type editor behaviour
 
 `jetpacs-files.el` owns the Files tab and the plain editor; your app teaches

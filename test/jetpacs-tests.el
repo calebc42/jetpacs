@@ -1323,6 +1323,64 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
     (should (equal got '(("Emacs" . "org.gnu.emacs")
                          ("Termux" . "com.termux"))))))
 
+(ert-deftest jetpacs-device-shortcut-pin-args ()
+  "shortcut.pin sends id/label/action, base64s the icon file, and omits
+absent optional keys."
+  (let ((icon (make-temp-file "jetpacs-icon" nil ".png" "PNGBYTES"))
+        sent)
+    (unwind-protect
+        (cl-letf (((symbol-function 'jetpacs-capability-invoke)
+                   (lambda (cap args &optional _callback)
+                     (setq sent (cons cap args)))))
+          (jetpacs-device-shortcut-pin
+           "distro" "My Distro"
+           (jetpacs-action "app.open" :args '((view . "root")))
+           :icon-file icon :long-label "My Distro Notes")
+          (should (equal (car sent) "shortcut.pin"))
+          (let ((args (cdr sent)))
+            (should (equal (alist-get 'id args) "distro"))
+            (should (equal (alist-get 'label args) "My Distro"))
+            (should (equal (alist-get 'long_label args) "My Distro Notes"))
+            (should (equal (alist-get 'icon_png args)
+                           (base64-encode-string "PNGBYTES" t)))
+            ;; The action rides as a standard action object, untouched.
+            (should (equal (alist-get 'action (alist-get 'action args))
+                           "app.open"))
+            (should (equal (alist-get 'view (alist-get 'args (alist-get 'action args)))
+                           "root"))))
+      (delete-file icon))
+    ;; No icon, no long label: the keys are absent, not null — the
+    ;; companion falls back to its own icon.
+    (cl-letf (((symbol-function 'jetpacs-capability-invoke)
+               (lambda (cap args &optional _callback)
+                 (setq sent (cons cap args)))))
+      (jetpacs-device-shortcut-pin "d2" "Distro 2" (jetpacs-action "app.open"))
+      (let ((args (cdr sent)))
+        (should-not (assq 'icon_png args))
+        (should-not (assq 'long_label args))))))
+
+(ert-deftest jetpacs-device-shortcuts-set-args ()
+  "shortcuts.set wraps entries in a vector; nil clears with an empty one."
+  (let (sent)
+    (cl-letf (((symbol-function 'jetpacs-capability-invoke)
+               (lambda (cap args &optional _callback)
+                 (setq sent (cons cap args)))))
+      (jetpacs-device-shortcuts-set
+       (list (list "capture" "Capture" (jetpacs-action "capture.open"))
+             (list "agenda" "Agenda" (jetpacs-action "agenda.open"))))
+      (should (equal (car sent) "shortcuts.set"))
+      (let ((shortcuts (alist-get 'shortcuts (cdr sent))))
+        (should (vectorp shortcuts))
+        (should (= (length shortcuts) 2))
+        (let ((first (aref shortcuts 0)))
+          (should (equal (alist-get 'id first) "capture"))
+          (should (equal (alist-get 'label first) "Capture"))
+          (should-not (assq 'icon_png first))))
+      ;; Replace-set discipline: clearing sends an empty vector, never a
+      ;; missing key.
+      (jetpacs-device-shortcuts-set nil)
+      (should (equal (alist-get 'shortcuts (cdr sent)) [])))))
+
 (ert-deftest jetpacs-device-permissions-dialog-renders ()
   "The permissions dialog lists the perm map with grant deep-links."
   (let ((jetpacs--session

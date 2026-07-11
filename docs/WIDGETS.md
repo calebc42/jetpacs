@@ -282,8 +282,9 @@ custom surface with `jetpacs-surface-push` or build your own shell.
 
 Rows for `widget:*` (home-screen list widgets) and `tile:customN`
 (Quick Settings) surfaces, rendered with RemoteViews — the vocabulary
-is deliberately small. See
-[BUILDING-TIER1.md](BUILDING-TIER1.md) for wiring them up.
+is deliberately small. See [BUILDING-TIER1
+§10](BUILDING-TIER1.md#10-surfaces-beyond-the-app-notifications-widgets-tiles)
+for wiring them up.
 
 - **`(jetpacs-widget-item TEXT &key todo done meta icon on-tap in-app
   button on-button)`** — a two-line row. `:todo` renders a colored

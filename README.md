@@ -42,7 +42,7 @@ inversion `emacsclient` uses on the desktop.
 ## The foundation and the reference app
 
 This repo is **the Jetpacs foundation + its Android companion**. The
-Glasspane reference Tier 1 lives in its own repo (it `(require 's this
+Glasspane reference Tier 1 lives in its own repo (it `require`s this
 core); the boundary is enforced by the build on both sides:
 
 - **Jetpacs, the foundation** (this repo) — a written protocol
@@ -52,13 +52,15 @@ core); the boundary is enforced by the build on both sides:
   and the `:app` companion shell). The foundation renders *any* buffer,
   palettes *any* keymap, bridges *any* minibuffer prompt, and gives apps
   a shell (tabs, drawer, snackbar), an editor bridge (completion,
-  diagnostics, eldoc), and a schema-driven settings machinery. It
+  diagnostics, eldoc), a device layer (effectors out, triggers in,
+  home-screen widgets, tiles, notifications, reminders), and a
+  schema-driven settings machinery. It
   contains no org code and names no host app — a guard test enforces the
   first, the module boundary the second. `emacs/apps/jetpacs-hello.el` is
   the minimal worked Tier-1 example.
 - **Glasspane, the reference Tier 1** — one opinionated org app built on
   those seams, in the **separate [`glasspane` repo](https://github.com/calebc42/glasspane)** (pure elisp; it
-  vendors this repo as a submodule and `(require 's `jetpacs-core`). It
+  vendors this repo as a submodule and `require`s `jetpacs-core`). It
   exists to prove the foundation and to be copied from — not to be the
   one true mobile Emacs.
 
@@ -99,23 +101,22 @@ the live bridge transparently when Emacs comes online.
 
 The prioritized plan across everything below is
 [docs/ROADMAP.md](docs/ROADMAP.md); each direction has a full audit and
-task breakdown in its own plan document (the app-level plans moved to
-the glasspane repo with the split):
+task breakdown in its own plan document (the app-level plans live in
+the glasspane repo):
 
-- **Device automation, FOSS Tasker-style**
+- **Finishing the automation surface**
   ([PLAN-automation-and-launcher.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-automation-and-launcher.md),
-  in the glasspane repo)
-  — the protocol already reserves `triggers` and `capabilities` in the
-  handshake; the plan fills them in: Android events (time, power,
-  screen, connectivity, notifications) delivered to Emacs through the
-  existing offline queue, device effectors (intents, flashlight, TTS,
-  volume) invocable from elisp, and automations authored in org files.
-  Elisp is the task language; that's the point.
-- **One app, many builds, AppSheet-style** (same plan, track L) — views
-  group into named apps behind a launcher home; builds travel as single
-  elisp files (installed with explicit code-trust consent) or as
-  **declarative org documents** with no code at all; any of them pins to
-  the home screen as its own icon.
+  in the glasspane repo) — device triggers, effectors, and the
+  multi-app launcher ship today (see Status below and
+  [BUILDING-TIER1](docs/BUILDING-TIER1.md#the-platform-beyond-the-screen));
+  what remains is the hardware-gated connectivity batch (`wifi.ssid`,
+  `bluetooth.device`) and a notification-listener event source. Elisp
+  is the task language; that's the point.
+- **Declarative app builds** (same plan, track L) — apps already
+  travel as single elisp files installed with explicit code-trust
+  consent, grouped behind the launcher home with their own pinned
+  icons; the next step is builds as **declarative org documents** with
+  no code at all.
 - **Converting Obsidian / Logseq / Notion users**
   ([PLAN-pkm-conversion.md](https://github.com/calebc42/glasspane/blob/main/docs/PLAN-pkm-conversion.md),
   in the glasspane repo) — org
@@ -131,10 +132,29 @@ the glasspane repo with the split):
 
 ## Status
 
-Proof of concept. Working today: the org dashboard, clock notification,
-minibuffer bridge, offline action queue, live editor sync with
-completion/diagnostics/eldoc, the tablist and transient renderers, and
-the pairing handshake.
+Proof of concept, but a broad one — everything in
+[docs/SPEC.md](docs/SPEC.md) is implemented on both sides. Working
+today:
+
+- **Rendering** — any buffer (Tier 0); the tabulated-list, transient,
+  and comint renderers (Tier 0.5); the full SPEC §9 widget vocabulary
+  through tables, charts, canvas, and the agenda month grid.
+- **The app shell** — multi-app launcher home with per-app tabs,
+  chrome, and settings; the package browser, customize browser, tools
+  hub, and automations screen as stock chrome.
+- **Interaction** — the semantic-action allowlist, the offline queue
+  with replay and dedupe, the full minibuffer-prompt bridge, dialogs
+  and bottom sheets, radial pie menus, toasts.
+- **Editing** — live editor sync with completion, flymake diagnostics,
+  eldoc, and fontification, opt-in eglot; data-driven keyboard
+  toolbars; the with-editor bridge (`git commit` from the phone).
+- **The device** — effectors callable from elisp (intents, TTS, torch,
+  volume/DND/brightness, media keys, clipboard, launcher shortcuts);
+  device triggers with companion-local `on_fire` and reboot re-arm;
+  home-screen widget and QS-tile slots; notification surfaces with a
+  live chronometer; persistent reminders; Emacs-theme mirroring.
+- **Transport** — mutual HMAC pairing, reconnect backoff, monotonic
+  surface revisions with offline rendering from cache.
 
 Known limitations:
 

@@ -40,7 +40,9 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
 | `jetpacs-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
 | `jetpacs-device.el` | device effectors: one thin defun per SPEC §10 capability (`jetpacs-device-intent`, `-flashlight`, `-tts`, …) through the `jetpacs-device--invoke` funnel |
+| `jetpacs-theme.el` | theme mirroring: palette + syntax colors extracted from the running theme (modus API or resolved faces) → `theme.set`, opt-in via `jetpacs-theme-sync` (SPEC §7) |
 | `jetpacs-minibuffer.el` | prompt bridge: `y-or-n-p` / `completing-read` / … → dialogs, only inside action handlers |
+| `jetpacs-witheditor.el` | with-editor bridge: commit-message / rebase buffers → a phone editor dialog, `witheditor.finish` / `.cancel` (SPEC §7) |
 | `jetpacs-buffer.el` | **Tier 0 renderer**: any buffer → spans + tappable regions; the major-mode→skin registry |
 | `jetpacs-shell.el` | the app shell: view registry, tab/drawer/top-bar chrome, snackbar, connect/refresh pushes |
 | `jetpacs-apps.el` | app identity over the shell: `jetpacs-defapp` groups views, launcher home grid, per-app tab bars (inert until a second app registers) |
@@ -68,13 +70,10 @@ complete app (~60 commented lines: one view, one action, one tab, one
 `jetpacs-defapp`), written to be loaded into a live session and mutated.
 
 The real Tier-1 apps live in the
-**[glasspane repo](https://github.com/calebc42/glasspane)** (split
-2026-07-09): the Glasspane org app plus the magit pie. Its README
-carries their module map. That repo is also the worked example of
-*shipping* a Tier 1: pure elisp, this repo as a git submodule, its own
-app-only bundle. (The package/customize browsers, tools hub, and
-automations view moved into `emacs/core/` 2026-07-10 — they are pure
-clients of core seams and every app's users need them.)
+**[glasspane repo](https://github.com/calebc42/glasspane)**: the
+Glasspane org app plus the magit pie. Its README carries their module
+map. That repo is also the worked example of *shipping* a Tier 1: pure
+elisp, this repo as a git submodule, its own app-only bundle.
 
 ### The bundle
 
@@ -86,8 +85,8 @@ depends on. App repos build their own bundles that open with
 ## Android side: two Gradle modules
 
 The elisp core/apps boundary has a Kotlin mirror, enforced by the build
-(split 2026-07-05 — the module boundary is the future repo boundary,
-and the KMP extraction seam):
+(the module boundary is the future repo boundary, and the KMP
+extraction seam):
 
 **`jetpacs/` — the `:jetpacs` library** (namespace `com.calebc42.jetpacs.core`;
 Kotlin package stays `com.calebc42.jetpacs`). Everything a host companion
@@ -140,6 +139,11 @@ library names no host class):
 | `jetpacs-settings-register-section` / `jetpacs-settings-after-set-hook` | jetpacs-settings | app settings exposure (the wire allowlist) |
 | `jetpacs-keymap` pie plumbing | jetpacs-keymap | curated Tier 1 pies (see jetpacs-magit.el) |
 | `jetpacs-defaction` | jetpacs-surfaces | every semantic action handler (allowlist rule: [SPEC §5](SPEC.md)) |
+| `jetpacs-device-*` / `jetpacs-capability-invoke` | jetpacs-device, jetpacs.el | device side-effects from handlers and triggers (SPEC §10) |
+| `jetpacs-deftrigger` / `jetpacs-trigger-register` | jetpacs-triggers | device events → elisp handlers, plus companion-local `on_fire` (SPEC §11) |
+| `jetpacs-surface-push` (`notification:*`, `widget:customN`, `tile:customN`) | jetpacs-surfaces | surfaces beyond the app: notifications, home-screen widgets, QS tiles |
+| `jetpacs-theme-sync` / `jetpacs-theme-send` | jetpacs-theme | mirror the client theme onto companion chrome and editor |
+| `jetpacs-node-supported-p` / `jetpacs-granted-p` / `jetpacs-device-cap-p` | jetpacs.el | per-connection negotiation — gate additive nodes, capabilities, and effectors |
 | `jetpacs-buffer-refresh-function` / `jetpacs-tablist-view-buffer-function` | core | host navigation — already pointed at the shell |
 
 Two standing contracts worth knowing before you build:
@@ -193,7 +197,7 @@ The companion stays a portable renderer by construction: **every
 Kotlin behavior must be traceable to a SPEC section**, and new Kotlin
 lands in `:jetpacs` only if it is protocol, in `:app` if it is opinion.
 Audit this table whenever a Kotlin wave lands (last audited
-2026-07-05, after the automation wave AUTO 6–10). Writing a companion
+2026-07-05). Writing a companion
 of your own? This table doubles as your build map — see
 [BUILDING-COMPANION.md](BUILDING-COMPANION.md):
 
@@ -216,12 +220,10 @@ of your own? This table doubles as your build map — see
 | `EmacsWaker` | §5 (`wake` policy), execution model above |
 | Widgets / tiles / notification rendering | §4 surfaces (`widget:*`, `notification:*`) |
 
-Divergence rule: a behavior with no SPEC home gets spec'd or removed —
-the 2026-07-05 audit found one (the `value` injection on change
-callbacks) and spec'd it into §9. Org knowledge in Kotlin is now
-**zero**, in both modules: the org keyboard toolbar is elisp data
-interpreted by `SduiToolbar` (§9 "Editor toolbars"), the agenda
-widget's header button dispatches a server-pushed `header_action`
-(§4), and the org-clock widget and org-capture QS tile became
-elisp-composed `widget:customN` / `tile:customN` slot pushes in the
-glasspane repo (see `docs/PLAN-decouple-org-surfaces.md`).
+Divergence rule: a behavior with no SPEC home gets spec'd or removed.
+Org knowledge in Kotlin is **zero**, in both modules: the org keyboard
+toolbar is elisp data interpreted by `SduiToolbar` (§9 "Editor
+toolbars"), the agenda widget's header button dispatches a
+server-pushed `header_action` (§4), and the org-clock widget and
+org-capture QS tile are elisp-composed `widget:customN` /
+`tile:customN` slot pushes in the glasspane repo.

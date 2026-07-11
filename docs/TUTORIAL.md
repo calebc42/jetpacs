@@ -390,7 +390,9 @@ identity. Everything else is that pattern on a bigger surface:
 - **The map** — [BUILDING-TIER1.md](BUILDING-TIER1.md): buffer skins,
   tablist skins, curated pie menus, per-file-type editors and keyboard
   toolbars, settings sections, badges, a home-screen icon of your own
-  (`jetpacs-device-shortcut-pin`).
+  (`jetpacs-device-shortcut-pin`) — plus the platform beyond the
+  screen: device effectors and triggers, home-screen widgets and QS
+  tiles, notification surfaces, and theme mirroring.
 - **The vocabulary** — [WIDGETS.md](WIDGETS.md): every constructor,
   including tables, charts, the month grid, the full editor node, and
   home-screen widgets/tiles.

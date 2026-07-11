@@ -133,7 +133,7 @@ a core-only session and a Hello tab appears. A larger one:
 ```
 
 That's a complete Tier 1: load it next to `jetpacs-core.el` and the phone
-grows a Marks tab between Agenda-less core tabs. **Two naming rules make
+grows a Marks tab next to the core tabs. **Two naming rules make
 your app safe next to any other:** view names live in your app's
 namespace (`"<appid>.<view>"`, or bare `"<appid>"` for a single-view
 app) because the registry replaces by name; and registrations run inside
@@ -281,34 +281,10 @@ appearing:
 The stock Settings drawer entry resolves to `"<appid>.settings"` while
 your app is current (`jetpacs-shell-resolve-view`), so you register no
 drawer entry and never touch the stock view. Do **not** redefine the
-stock `"settings"` view by name — that's the retired single-app pattern;
-with several apps loaded, the last one would hijack the screen for all
-of them. (`jetpacs-shell-settings-body` is that lazy column with *only*
+stock `"settings"` view by name — with several apps loaded, the last
+registration would hijack the screen for all of them. (`jetpacs-shell-settings-body` is that lazy column with *only*
 the sections — use it as an entire body, never nested inside your own
 lazy column; scroll containers don't nest.)
-
-## The rules that keep the wire safe
-
-Read [SPEC §5](SPEC.md#5-events-the-semantic-action-boundary) before
-defining actions. In short:
-
-1. **Actions are an allowlist.** `jetpacs-defaction` registers a name; the
-   handler validates its args and performs one specific operation. Never
-   write a handler that runs code, commands, or paths straight off the
-   wire.
-2. **Namespace your actions** (`my.bookmark.jump`, not `jump`). Core
-   namespaces are listed in the spec.
-3. **Choose queue policies deliberately.** `:when-offline "queue"` for
-   mutations (they replay), `"drop"` for navigation and refreshes,
-   `"wake"` for things worth starting Emacs over. Give repeated mutations
-   a `:dedupe` key.
-4. **Honor the cache contract.** If your views memoise, every mutation
-   path must invalidate — your own actions directly, plus a handler on
-   `jetpacs-shell-refresh-hook` for pull-to-refresh and queue replays.
-5. **Prompts are free.** Inside an action handler, plain `y-or-n-p`,
-   `read-string`, and `completing-read` are automatically bridged to
-   native dialogs on the phone. Write handlers as if the user were at the
-   keyboard.
 
 ### 7. Owning your registrations
 
@@ -335,6 +311,207 @@ tears down everything owned by the app — its actions, views, chrome,
 settings content, FAB, and UI-state — in one call, for clean live reload
 or a genuine uninstall. `jetpacs-defapp` already attributes its `:views`
 to the app id; the owner wrap covers everything else.
+
+## The platform beyond the screen
+
+An app is more than its tabs. Everything in this part ships in the
+core and is negotiated per connection: `jetpacs-granted-p` tells you
+whether the session carries a capability, `jetpacs-device-cap-p`
+whether the companion has a given effector, `jetpacs-device-can-p`
+whether a runtime permission is granted, and `jetpacs-node-supported-p`
+whether a widget node exists ([WIDGETS.md](WIDGETS.md) shows the
+gating pattern). Degrade, don't assume.
+
+### 8. Drive the device (effectors)
+
+`jetpacs-device.el` wraps every
+[SPEC §10](SPEC.md#10-device-capabilities-optional) capability in one
+thin defun, callable from any action handler, trigger handler, or the
+Eval tab:
+
+- `jetpacs-device-intent` — fire any Android intent
+  (activity / broadcast / service); the universal escape hatch.
+- `jetpacs-device-app-launch`, `jetpacs-device-apps-list`, and the
+  interactive `jetpacs-device-launch-app` picker.
+- `jetpacs-device-shortcut-pin` / `jetpacs-device-shortcuts-set` —
+  the launcher icons of §4½.
+- `jetpacs-device-vibrate`, `-tts`, `-flashlight`, `-media-key`.
+- `jetpacs-device-volume-set`, `-ringer-mode`, `-dnd`, `-brightness`,
+  `-settings-open`, `-keep-screen-on`.
+- `jetpacs-device-clipboard-read` (takes a callback; the OS exposes
+  the clipboard only to the focused app).
+- `jetpacs-device-permissions-dialog` — the interactive permission
+  report, with deep links to each grant screen.
+
+```elisp
+(jetpacs-defaction "myapp.focus"
+  (lambda (_args _)
+    (jetpacs-device-dnd "priority")
+    (jetpacs-device-tts "Focus mode on")
+    (jetpacs-shell-notify "Focus until you say otherwise")))
+```
+
+Failures come back typed, never silent: a `cap-permission` error names
+the missing permission and carries a settings deep link. Gate optional
+controls on `jetpacs-device-cap-p` / `jetpacs-device-can-p`, and reach
+for raw `jetpacs-capability-invoke` only when no wrapper exists yet.
+
+### 9. React to the device (triggers & automations)
+
+The other direction — Android events delivered to elisp
+([SPEC §11](SPEC.md#11-device-triggers-optional)):
+
+```elisp
+(jetpacs-deftrigger myapp/on-charge
+  :type "power" :params '((state . "connected")) :policy "wake"
+  :handler (lambda (_data _args) (myapp-sync)))
+```
+
+- Ten trigger types: `time` (one-shot or repeating, exact alarms),
+  `power`, `battery.level` (edge-crossing hysteresis), `screen`,
+  `headset`, `airplane`, `boot`, `timezone.changed`, `package`,
+  `network`. A type this companion can't host is skipped
+  per-registration, never poisoning the set.
+- Fires arrive as ordinary actions through the offline queue — pick
+  `:policy` (`"queue"` / `"drop"` / `"wake"`), `:dedupe`, and
+  `:throttle-s` exactly as you would for a button.
+- `:on-fire` runs **with Emacs dead**: a companion-local vector of
+  capability invocations and/or a notification, deliberately without
+  conditionals or loops —
+
+  ```elisp
+  :on-fire [((cap . "flashlight") (args . ((on . t))))
+            ((notify . ((title . "Charger connected"))))]
+  ```
+- The registered set persists on-device and re-arms after reboot;
+  replace-set semantics mean an unregistered trigger can never fire
+  stale.
+- Users manage every registration on the stock **Automations** screen
+  (enable switch — persisted, wire summary, last fired, "Fire now"),
+  and `jetpacs-trigger-test-fire` exercises the same dispatch path
+  from the desktop.
+
+### 10. Surfaces beyond the app: notifications, widgets, tiles
+
+`jetpacs-shell-push` serves the `app:*` surface; `jetpacs-surface-push`
+serves every other namespace ([SPEC §4](SPEC.md#4-surfaces)) with
+automatic monotonic revisions, and the companion keeps rendering the
+last push while Emacs is away.
+
+A live notification — ongoing, with a running chronometer (the shape
+of a clock or timer):
+
+```elisp
+(jetpacs-surface-push "notification:myapp.brew"
+  (jetpacs-notification-spec
+   :channel "myapp" :ongoing t
+   :chronometer `((base_ms . ,(truncate (* 1000 (float-time)))))
+   :body (list (jetpacs-text "Tea steeping" 'title))))
+;; later: (jetpacs-surface-remove "notification:myapp.brew")
+```
+
+Five blank home-screen widget slots (`widget:custom1` … `custom5`)
+render lists of `jetpacs-widget-item` rows; `header_action` is the
+widget header's "+" button:
+
+```elisp
+(jetpacs-surface-push "widget:custom1"
+  `((title . "Inbox")
+    (header_action . ,(jetpacs-action "myapp.capture"))
+    (items . ,(vconcat (mapcar #'myapp--widget-row (myapp-items))))
+    (empty . "All clear")))
+```
+
+Five Quick Settings tile slots (`tile:custom1` … `custom5`) take a
+`jetpacs-tile` spec the same way — and a tile without `:in-app` fires
+from the shade with the phone still locked, so compose accordingly.
+Refresh these surfaces from `jetpacs-shell-after-push-hook`,
+memo-guarded, so they ride pushes you were making anyway. Persistent
+reminders (`reminders.set`,
+[SPEC §7](SPEC.md#7-dialogs-toasts-pies-reminders)) ride the same
+connection and survive reboots; the core has no elisp wrapper for them
+yet.
+
+### 11. Look like the user's Emacs (theme mirroring)
+
+`(setq jetpacs-theme-sync t)` extracts a Material palette and editor
+syntax colors from the running Emacs theme (the modus-themes palette
+API when one is active, resolved face attributes otherwise) and
+mirrors them onto the companion — chrome, widgets, and highlighting
+alike, persisted while Emacs is away. `M-x jetpacs-theme-send` pushes
+once without opting in; `M-x jetpacs-theme-clear` hands the companion
+back to Material You. The ladder: synced Emacs theme, else Material
+You, else the built-in fallback.
+
+### 12. The editor bridge, end to end
+
+Every `jetpacs-editor` on a connected session can carry the full
+bridge with zero app code: Emacs-backed completion (`:complete`),
+flymake squiggles (`jetpacs-sync-diagnostics`), an eldoc line
+(`jetpacs-sync-eldoc`), and Emacs-faithful highlighting
+(`jetpacs-sync-fontify`) — plus opt-in LSP via `jetpacs-sync-eglot`
+and `jetpacs-sync-eglot-modes`, and `jetpacs-sync-shadow-setup-hook`
+for per-shadow-buffer setup. The sync invariant is worth repeating to
+your users: the shadow buffer never writes to disk, so a lost frame
+can only cost a feature, never corrupt an edit.
+
+`jetpacs-witheditor.el` extends the bridge to editor *callbacks*: a
+`git commit` or interactive rebase started from a phone action pops
+the message buffer as a phone editor with Commit / Cancel — magit
+works end-to-end with no app code.
+
+### 13. What the core already ships
+
+Chrome every app inherits — link to it, don't rebuild it:
+
+- **Files** — a root-confined browser (`jetpacs-files-roots`), the
+  plain editor with your per-type seams (§5), and a pure-elisp content
+  search with bounded cost (the `jetpacs-files-grep-*` defcustoms).
+- **Eval** — a REPL with history and the full editor bridge on its
+  input row.
+- **Buffers / Messages** — any buffer rendered via Tier 0 with imenu
+  section drill-in; a live *Messages* tail; a `message` → toast mirror
+  (`jetpacs-forward-messages`).
+- **M-x** — the one sanctioned arbitrary-command path, prompts
+  bridged.
+- **Tools** — bookmarks, the kill ring (companion-local copy, works
+  offline), a shell, process and timer lists. Any `comint` buffer
+  renders as transcript + input row (`jetpacs-comint-render`), so
+  ielm and language REPLs come free.
+- **Settings satellites** — the package browser (§2's worked example),
+  the customize browser (every `custom-variable-p` symbol rendered
+  from its schema — `M-x customize` parity), and the Automations
+  screen (§9).
+
+## The rules that keep the wire safe
+
+Read [SPEC §5](SPEC.md#5-events-the-semantic-action-boundary) before
+defining actions. In short:
+
+1. **Actions are an allowlist.** `jetpacs-defaction` registers a name; the
+   handler validates its args and performs one specific operation. Never
+   write a handler that runs code, commands, or paths straight off the
+   wire.
+2. **Namespace your actions** (`my.bookmark.jump`, not `jump`). Core
+   namespaces are listed in the spec.
+3. **Choose queue policies deliberately.** `:when-offline "queue"` for
+   mutations (they replay), `"drop"` for navigation and refreshes,
+   `"wake"` for things worth starting Emacs over. Give repeated mutations
+   a `:dedupe` key.
+4. **Honor the cache contract.** If your views memoise, every mutation
+   path must invalidate — your own actions directly, plus a handler on
+   `jetpacs-shell-refresh-hook` for pull-to-refresh and queue replays.
+5. **Prompts are free.** Inside an action handler the whole prompt zoo
+   is bridged to native dialogs: `y-or-n-p` / `yes-or-no-p` /
+   `map-y-or-n-p`, `read-string` / `read-from-minibuffer`,
+   `read-passwd` (a masked field), `completing-read` and
+   `completing-read-multiple`, `read-char-choice` /
+   `read-multiple-choice` / `read-answer`, even raw `read-event` and
+   `read-key-sequence` — with `jetpacs-prompt-timeout` bounding a
+   prompt left unanswered. Write handlers as if the user were at the
+   keyboard. Dialogs you send yourself (`jetpacs-send-dialog`) can
+   render as bottom sheets via `jetpacs-dialog-style` or the per-call
+   STYLE.
 
 ## Shipping it
 

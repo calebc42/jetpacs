@@ -42,25 +42,32 @@
    (jetpacs-text "Edit jetpacs-hello.el, re-evaluate, watch this view change."
               'caption)))
 
-(jetpacs-defaction "hello.tap"
-  ;; The allowlist rule in one line: the wire says "hello.tap", this
-  ;; handler decides what that means — the wire never names code.
-  (lambda (_args _payload)
-    (setq jetpacs-hello--count (1+ jetpacs-hello--count))
-    (jetpacs-shell-notify (format "Tap %d!" jetpacs-hello--count))
-    (jetpacs-shell-push)))
+;; Registrations run under the app's owner id: that scopes chrome and
+;; settings to this app when others coexist, catches name collisions,
+;; and makes (jetpacs-app-unregister "hello") a clean teardown.  The view
+;; name lives in the app's namespace — "hello" here; a bigger app names
+;; its views "appid.view" (see jetpacs-apps.el, the Tier-1 entry point).
+(with-jetpacs-owner "hello"
 
-(jetpacs-shell-define-view "hello"
-  :builder (lambda (snackbar)
-             (jetpacs-shell-tab-view "hello" (jetpacs-hello--body)
-                                  :snackbar snackbar))
-  :tab '(:icon "waving_hand" :label "Hello")
-  :order 5)  ; leftmost — before any other app's tabs
+  (jetpacs-defaction "hello.tap"
+    ;; The allowlist rule in one line: the wire says "hello.tap", this
+    ;; handler decides what that means — the wire never names code.
+    (lambda (_args _payload)
+      (setq jetpacs-hello--count (1+ jetpacs-hello--count))
+      (jetpacs-shell-notify (format "Tap %d!" jetpacs-hello--count))
+      (jetpacs-shell-push)))
 
-;; Loaded next to Glasspane this makes it app number two: the launcher
-;; home appears with two cards, and each app keeps its own tab bar.
-(jetpacs-defapp "hello" :label "Hello" :icon "waving_hand"
-             :views '("hello") :order 20)
+  (jetpacs-shell-define-view "hello"
+    :builder (lambda (snackbar)
+               (jetpacs-shell-tab-view "hello" (jetpacs-hello--body)
+                                    :snackbar snackbar))
+    :tab '(:icon "waving_hand" :label "Hello")
+    :order 5)  ; leftmost — before any other app's tabs
+
+  ;; Loaded next to Glasspane this makes it app number two: the launcher
+  ;; home appears with two cards, and each app keeps its own tab bar.
+  (jetpacs-defapp "hello" :label "Hello" :icon "waving_hand"
+               :views '("hello") :order 20))
 
 (provide 'jetpacs-hello)
 ;;; jetpacs-hello.el ends here

@@ -86,7 +86,10 @@ Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
 `(with-jetpacs-owner "my-app" …)` so its actions/views/settings are
 attributed to it; then a cross-owner name collision warns (or errors
 under `jetpacs-strict-namespaces`), and `jetpacs-app-unregister` tears the app
-down cleanly for live reload or uninstall.
+down cleanly for live reload or uninstall. Since 1.2.0 ownership also
+*scopes*: owned drawer items, top actions, and settings sections/links
+render only while their app is current (see BUILDING-TIER1 §7), and app
+view names are namespaced `"<appid>.<view>"`.
 
 ### The shell / app seams
 
@@ -95,12 +98,20 @@ App scaffold (`jetpacs-shell.el`): `jetpacs-shell-define-view`
 `jetpacs-shell-notify` `jetpacs-shell-add-drawer-item`
 `jetpacs-shell-add-top-action` `jetpacs-shell-default-fab-function`
 `jetpacs-shell-settings-body` (since 1.1.0: the stock "settings" view's
-whole scrollable body — an app replacing that view with controls of its
-own splices `jetpacs-settings-sections` into its own lazy column
-instead), and the hooks `jetpacs-shell-view-switched-hook`
+whole scrollable body — an app with controls of its own defines a
+`"<appid>.settings"` view and splices `jetpacs-settings-sections` into its
+own lazy column instead), `jetpacs-shell-resolve-view` (since 1.2.0: a
+logical core view name through the per-app override resolver — the
+stock Settings drawer entry targets `(jetpacs-shell-resolve-view
+"settings")`), and the hooks `jetpacs-shell-view-switched-hook`
 `jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.
 
-App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`.
+App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
+`jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`
+(since 1.2.0: the current-app predicate for gating dynamic
+registrations, and the per-app default FAB that replaces setting
+`jetpacs-shell-default-fab-function` directly — the direct set still works
+but leaks the FAB onto every coexisting app's views).
 
 Buffer skins (`jetpacs-buffer.el`): `jetpacs-render-buffer-register`.
 

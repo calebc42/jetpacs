@@ -161,6 +161,10 @@ attributed to it and cross-owner collisions are detected."
   (declare (indent 1) (debug (form body)))
   `(let ((jetpacs-current-owner ,id)) ,@body))
 
+(defun jetpacs--owner-of (kind name)
+  "The owner id attributed to KIND:NAME, or nil when unclaimed/core."
+  (gethash (format "%s:%s" kind name) jetpacs--registration-owners))
+
 (defun jetpacs--owned-names (kind owner)
   "List the NAMEs of KIND currently attributed to OWNER."
   (let (names)

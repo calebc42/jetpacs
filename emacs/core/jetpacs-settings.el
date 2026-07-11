@@ -313,29 +313,61 @@ name under `name' — the settings screen uses the registry-gated
   (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
 (defvar jetpacs-settings-links nil
-  "Ordered list of (ORDER . BUILDER) navigation entries for the settings screen.
+  "Ordered list of (ORDER BUILDER . OWNER) navigation entries for the settings screen.
 BUILDER is a nullary function returning a node (usually a tappable card
 leading to another screen).  Apps register their satellite screens here
 — the package browser, the customize browser — instead of each claiming
 a drawer slot; `jetpacs-settings-sections' renders them under a trailing
-\"Emacs\" section.")
+\"Emacs\" section.  OWNER is the `jetpacs-current-owner' captured at
+registration (nil = core).")
 
 (defun jetpacs-settings-add-link (order builder)
-  "Add BUILDER (a nullary node builder) to the settings screen at ORDER."
+  "Add BUILDER (a nullary node builder) to the settings screen at ORDER.
+Registrations made under `with-jetpacs-owner' are attributed to that app
+and shown only while it is current (once a second app exists)."
   (setq jetpacs-settings-links
-        (sort (cons (cons order builder) jetpacs-settings-links)
+        (sort (cons (cons order (cons builder
+                                      (bound-and-true-p jetpacs-current-owner)))
+                    jetpacs-settings-links)
               (lambda (a b) (< (car a) (car b))))))
 
+(defvar jetpacs-settings-section-filter-function nil
+  "When non-nil, a predicate on an OWNER id gating settings content.
+Applied to each registered section (owner from the ownership registry)
+and satellite link (owner captured at `jetpacs-settings-add-link' time).
+The apps layer installs the current-app filter here; nil means every
+section shows — the single-app default.  A nil owner (core, or a
+registration made outside `with-jetpacs-owner') always shows.")
+
+(defun jetpacs-settings--owner-visible-p (owner)
+  "Non-nil when settings content registered by OWNER passes the filter.
+A filter that signals passes the content — a broken app layer must not
+blank the settings screen."
+  (or (null owner)
+      (null jetpacs-settings-section-filter-function)
+      (condition-case nil
+          (funcall jetpacs-settings-section-filter-function owner)
+        (error t))))
+
 (defun jetpacs-settings-sections ()
-  "Flat list of nodes rendering every registry section, then the links."
+  "Flat list of nodes rendering every registry section, then the links.
+Sections and links attributed to an app (registered under
+`with-jetpacs-owner') render only while that app passes
+`jetpacs-settings-section-filter-function'."
   (append
    (cl-loop for (title . entries) in jetpacs-settings-registry
+            when (jetpacs-settings--owner-visible-p
+                  (and (fboundp 'jetpacs--owner-of)
+                       (jetpacs--owner-of "settings" title)))
             append (append (list (jetpacs-divider)
                                  (jetpacs-section-header title))
                            (mapcar #'jetpacs-settings--item entries)))
-   (when jetpacs-settings-links
-     (append (list (jetpacs-divider) (jetpacs-section-header "Emacs"))
-             (mapcar (lambda (e) (funcall (cdr e))) jetpacs-settings-links)))))
+   (let ((links (cl-remove-if-not
+                 (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+                 jetpacs-settings-links)))
+     (when links
+       (append (list (jetpacs-divider) (jetpacs-section-header "Emacs"))
+               (mapcar (lambda (e) (funcall (cadr e))) links))))))
 
 ;; ─── Actions and state handlers ──────────────────────────────────────────────
 

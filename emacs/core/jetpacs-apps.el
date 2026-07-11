@@ -5,10 +5,23 @@
 ;; `app.open' action that switches between them.  Pure shell logic — no
 ;; wire changes beyond the `app.*' action namespace reserved in SPEC §5.
 ;;
+;; THIS IS THE ENTRY POINT for a Tier 1 app.  The contract that keeps
+;; coexisting apps isolated:
+;;
+;;   1. Name your views in your own namespace — "<appid>.<view>" (bare
+;;      "<appid>" is fine for a single-view app).  The shell registry
+;;      replaces by name; bare names collide across apps.
+;;   2. Make registrations under (with-jetpacs-owner "<appid>" ...) —
+;;      views, actions, settings sections/links, drawer items, top
+;;      actions.  Ownership is what scopes your chrome and settings to
+;;      your app, catches collisions, and lets `jetpacs-app-unregister'
+;;      tear you down cleanly for live reload.
+;;   3. Finish with `jetpacs-defapp' claiming your views.
+;;
 ;; The single-app contract: with zero or one `jetpacs-defapp' registered,
-;; NOTHING changes — every view shows, no home screen, no drawer entry.
-;; The launcher machinery appears with the second app (AppSheet boots
-;; straight into a lone app the same way).
+;; NOTHING changes — every view and all chrome shows, no home screen, no
+;; drawer entry.  The launcher machinery appears with the second app
+;; (AppSheet boots straight into a lone app the same way).
 ;;
 ;; Views not claimed by any app (the core Files / Eval / Tools tabs)
 ;; show in every app.  To contain them instead, claim them in an
@@ -37,7 +50,14 @@ PLIST keys: :label :icon :views (list of shell view names) :order.")
   "Register (or replace) app ID grouping VIEWS (shell view names).
 LABEL and ICON draw the app's launcher-home card; the first :tab view
 in VIEWS is the app's landing tab.  ORDER sorts home cards; equal
-orders keep registration order."
+orders keep registration order.
+
+Name the views you define \"ID.<view>\" (or bare \"ID\") so they can
+never collide with another app's; a view named \"ID.settings\" is
+reached by the stock Settings drawer entry while this app is current
+\(see `jetpacs-shell-resolve-view').  Claiming a core view (\"files\",
+\"eval\", ...) into an app is also legal — that contains it to this
+app instead of showing everywhere."
   ;; Attribute the app's views to it in the ownership registry, so
   ;; cross-app collisions are caught (`jetpacs--claim' warns, or errors under
   ;; `jetpacs-strict-namespaces') and `jetpacs-app-unregister' can find them
@@ -77,6 +97,13 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
     (when (fboundp 'jetpacs-settings-remove-section)
       (jetpacs-settings-remove-section title))
     (jetpacs--unclaim "settings" title))
+  ;; Owner-attributed chrome and settings links, and the app's FAB.
+  (jetpacs-shell-remove-owned-chrome id)
+  (when (boundp 'jetpacs-settings-links)
+    (setq jetpacs-settings-links
+          (cl-remove-if (lambda (e) (equal (cddr e) id))
+                        jetpacs-settings-links)))
+  (setf (alist-get id jetpacs-apps--fabs nil t #'equal) nil)
   ;; Drop UI-state and its subscriptions keyed under the app's id prefix.
   (jetpacs-ui-state-clear (concat id "."))
   (jetpacs-on-state-change-clear (concat id "."))
@@ -99,12 +126,20 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
       jetpacs-apps--current
     (caar jetpacs-apps--registry)))
 
+(defun jetpacs-apps-current-p (id)
+  "Non-nil while app ID is the one whose views are showing.
+Also non-nil with no second app registered — a lone app is always
+current.  For gating dynamic registrations an app makes outside its
+`with-jetpacs-owner' blocks."
+  (or (not (jetpacs-apps--multi-p))
+      (equal id (jetpacs-apps-current))))
+
 (defun jetpacs-apps--landing-tab (id)
   "The view app ID lands on: its first :tab view, else its first view."
   (let ((views (plist-get (cdr (assoc id jetpacs-apps--registry)) :views)))
     (or (cl-find-if #'jetpacs-shell--tab-p views) (car views))))
 
-;; ─── The shell filter (the whole gating mechanism) ───────────────────────────
+;; ─── The shell filters (the whole gating mechanism) ──────────────────────────
 
 (defun jetpacs-apps--view-visible-p (name)
   "Single-app: everything shows.  Multi-app: the current app's views
@@ -115,6 +150,55 @@ plus every unclaimed view (core tabs, the home grid itself)."
             (equal owner (jetpacs-apps-current))))))
 
 (setq jetpacs-shell-view-filter-function #'jetpacs-apps--view-visible-p)
+
+;; Chrome (drawer items, top actions) and settings content (sections,
+;; links) carry the owner recorded at registration; both filters reduce
+;; to the same question.  Unowned registrations never reach these (the
+;; shell and settings helpers pass nil owners through unconditionally).
+(setq jetpacs-shell-chrome-filter-function #'jetpacs-apps-current-p)
+(with-eval-after-load 'jetpacs-settings
+  (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p))
+
+;; Core view slots resolve to a per-app override when the current app
+;; registered one: "settings" reaches "glasspane.settings" inside
+;; Glasspane.  This replaces the single-app-era pattern of redefining
+;; the stock view by name (which the last-loaded app would hijack).
+(defun jetpacs-apps--resolve-view (name)
+  (let ((cur (jetpacs-apps-current)))
+    (and cur
+         (let ((scoped (concat cur "." name)))
+           (and (assoc scoped jetpacs-shell-views) scoped)))))
+
+(setq jetpacs-shell-view-resolver-function #'jetpacs-apps--resolve-view)
+
+;; Once a second app exists the drawer header names the app you are in;
+;; a lone app keeps whatever `jetpacs-shell-drawer-header' it set.
+(defun jetpacs-apps--drawer-header ()
+  (when (jetpacs-apps--multi-p)
+    (plist-get (cdr (assoc (jetpacs-apps-current) jetpacs-apps--registry))
+               :label)))
+
+(setq jetpacs-shell-drawer-header-function #'jetpacs-apps--drawer-header)
+
+;; ─── Per-app default FAB ─────────────────────────────────────────────────────
+
+(defvar jetpacs-apps--fabs nil
+  "Alist of (APP-ID . FN); FN takes a view name and returns a FAB node.")
+
+(defun jetpacs-apps--default-fab (name)
+  "The current app's default FAB for view NAME, or nil."
+  (let ((fn (cdr (assoc (jetpacs-apps-current) jetpacs-apps--fabs))))
+    (when fn (funcall fn name))))
+
+(defun jetpacs-apps-set-default-fab (id fn)
+  "Give app ID the default FAB builder FN (view name -> FAB node or nil).
+The app's FAB appears on its tab views that pass no explicit :fab —
+and, unlike setting `jetpacs-shell-default-fab-function' directly, never
+on another app's views."
+  (setf (alist-get id jetpacs-apps--fabs nil t #'equal) nil)
+  (push (cons id fn) jetpacs-apps--fabs)
+  (setq jetpacs-shell-default-fab-function #'jetpacs-apps--default-fab)
+  (jetpacs-shell--schedule-repush))
 
 ;; ─── The launcher home ───────────────────────────────────────────────────────
 

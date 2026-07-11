@@ -7,9 +7,15 @@
 ;;
 ;; Tier 1 apps do not build a shell — they register views into this one:
 ;;
-;;   (jetpacs-shell-define-view "agenda"
+;;   (jetpacs-shell-define-view "myapp.agenda"
 ;;     :builder #'my-agenda-view
 ;;     :tab '(:icon "event" :label "Agenda") :order 10)
+;;
+;; View names live in the app's namespace: name them "<appid>.<view>"
+;; (or bare "<appid>" for a single-view app) and claim them with
+;; `jetpacs-defapp'.  The registry replaces by name, so two apps using the
+;; same bare name would silently hijack each other's screens — the
+;; ownership registry warns when that happens (see `jetpacs--claim').
 ;;
 ;; A builder is a function of one argument (the snackbar text to attach, or
 ;; nil) returning a full scaffold view alist — use `jetpacs-shell-tab-view' /
@@ -155,29 +161,72 @@ handlers memo-guarded so unchanged data sends nothing.")
 
 ;; ─── Chrome: drawer, bottom bar, top bar ─────────────────────────────────────
 
-(defvar jetpacs-shell-drawer-header "Glasspane"
-  "Text rendered at the top of the app drawer.")
+(defvar jetpacs-shell-drawer-header "Jetpacs"
+  "Text rendered at the top of the app drawer.
+When `jetpacs-shell-drawer-header-function' returns non-nil, that wins —
+the apps layer uses it to show the current app's label once a second
+app is registered.")
+
+(defvar jetpacs-shell-drawer-header-function nil
+  "When non-nil, a nullary function returning the drawer header, or nil
+to fall back to `jetpacs-shell-drawer-header'.")
+
+(defvar jetpacs-shell-chrome-filter-function nil
+  "When non-nil, a predicate on an OWNER id gating chrome per push.
+Applied to drawer items and default top-bar actions through the owner
+recorded at registration time (`jetpacs-current-owner').  The apps layer
+\(jetpacs-apps.el) installs the current-app filter here; nil means all
+chrome shows — the single-app default.  A nil owner (core, or a
+registration made outside `with-jetpacs-owner') always shows.")
+
+(defun jetpacs-shell--chrome-visible-p (owner)
+  "Non-nil when chrome registered by OWNER passes the app filter.
+A filter that signals passes the item — a broken app layer must not
+strip the drawer."
+  (or (null owner)
+      (null jetpacs-shell-chrome-filter-function)
+      (condition-case nil (funcall jetpacs-shell-chrome-filter-function owner)
+        (error t))))
 
 (defvar jetpacs-shell-drawer-items nil
-  "Ordered list of (ORDER . BUILDER) drawer entries.
-BUILDER is a function of no arguments returning an `jetpacs-drawer-item'.")
+  "Ordered list of (ORDER BUILDER . OWNER) drawer entries.
+BUILDER is a function of no arguments returning an `jetpacs-drawer-item';
+OWNER is the `jetpacs-current-owner' captured at registration (nil =
+core), consulted by `jetpacs-shell-chrome-filter-function'.")
 
 (defun jetpacs-shell-add-drawer-item (order builder)
-  "Add BUILDER (a nullary function returning a drawer item) at ORDER."
+  "Add BUILDER (a nullary function returning a drawer item) at ORDER.
+Registrations made under `with-jetpacs-owner' are attributed to that app
+and shown only while it is current (once a second app exists)."
   (setq jetpacs-shell-drawer-items
-        (sort (cons (cons order builder) jetpacs-shell-drawer-items)
+        (sort (cons (cons order (cons builder jetpacs-current-owner))
+                    jetpacs-shell-drawer-items)
               (lambda (a b) (< (car a) (car b)))))
   (jetpacs-shell--schedule-repush))
 
 (defvar jetpacs-shell-top-actions nil
-  "Ordered list of (ORDER . BUILDER) default top-bar trailing actions.
-BUILDER is a function of no arguments returning an icon-button node.")
+  "Ordered list of (ORDER BUILDER . OWNER) default top-bar trailing actions.
+BUILDER is a function of no arguments returning an icon-button node;
+OWNER as in `jetpacs-shell-drawer-items'.")
 
 (defun jetpacs-shell-add-top-action (order builder)
-  "Add BUILDER (a nullary function returning an icon button) at ORDER."
+  "Add BUILDER (a nullary function returning an icon button) at ORDER.
+Registrations made under `with-jetpacs-owner' are attributed to that app
+and shown only while it is current (once a second app exists)."
   (setq jetpacs-shell-top-actions
-        (sort (cons (cons order builder) jetpacs-shell-top-actions)
+        (sort (cons (cons order (cons builder jetpacs-current-owner))
+                    jetpacs-shell-top-actions)
               (lambda (a b) (< (car a) (car b)))))
+  (jetpacs-shell--schedule-repush))
+
+(defun jetpacs-shell-remove-owned-chrome (owner)
+  "Drop every drawer item and top action registered by OWNER."
+  (setq jetpacs-shell-drawer-items
+        (cl-remove-if (lambda (e) (equal (cddr e) owner))
+                      jetpacs-shell-drawer-items)
+        jetpacs-shell-top-actions
+        (cl-remove-if (lambda (e) (equal (cddr e) owner))
+                      jetpacs-shell-top-actions))
   (jetpacs-shell--schedule-repush))
 
 (defvar jetpacs-shell-default-fab-function nil
@@ -194,13 +243,36 @@ views that don't define their own.")
   "Action descriptor for the companion-local `view.switch' builtin."
   `((builtin . "view.switch") (view . ,view)))
 
+(defvar jetpacs-shell-view-resolver-function nil
+  "When non-nil, a function from a logical view NAME to the concrete one.
+The apps layer resolves core slots to per-app overrides — e.g.
+\"settings\" becomes \"glasspane.settings\" while Glasspane is current
+and has registered that view.  nil (or a resolver returning nil) keeps
+the name as-is.")
+
+(defun jetpacs-shell-resolve-view (name)
+  "NAME through `jetpacs-shell-view-resolver-function', erring on NAME."
+  (or (and jetpacs-shell-view-resolver-function
+           (condition-case nil
+               (funcall jetpacs-shell-view-resolver-function name)
+             (error nil)))
+      name))
+
 (defun jetpacs-shell-drawer ()
   "The navigation drawer built from `jetpacs-shell-drawer-items'.
 A builder returning nil contributes nothing — conditional entries
-\(e.g. the multi-app \"Apps\" item) just return nil when hidden."
-  (jetpacs-drawer (delq nil (mapcar (lambda (e) (funcall (cdr e)))
+\(e.g. the multi-app \"Apps\" item) just return nil when hidden.
+Entries registered under `with-jetpacs-owner' show only while their app
+passes `jetpacs-shell-chrome-filter-function'."
+  (jetpacs-drawer (delq nil (mapcar (lambda (e)
+                                   (when (jetpacs-shell--chrome-visible-p (cddr e))
+                                     (funcall (cadr e))))
                                  jetpacs-shell-drawer-items))
-               :header jetpacs-shell-drawer-header))
+               :header (or (and jetpacs-shell-drawer-header-function
+                                (condition-case nil
+                                    (funcall jetpacs-shell-drawer-header-function)
+                                  (error nil)))
+                           jetpacs-shell-drawer-header)))
 
 (defun jetpacs-shell-bottom-bar (selected)
   "The bottom bar of the included :tab views, with SELECTED highlighted.
@@ -219,11 +291,16 @@ Honours the app filter, so each app shows its own tabs."
 
 (cl-defun jetpacs-shell-default-top-bar (title &key extra-actions)
   "The standard top bar: TITLE plus the registered trailing actions.
-EXTRA-ACTIONS are prepended (view-specific buttons before the globals)."
+EXTRA-ACTIONS are prepended (view-specific buttons before the globals).
+Actions registered under `with-jetpacs-owner' show only while their app
+passes `jetpacs-shell-chrome-filter-function'."
   (jetpacs-top-bar title
                 :actions (append extra-actions
-                                 (mapcar (lambda (e) (funcall (cdr e)))
-                                         jetpacs-shell-top-actions))))
+                                 (delq nil
+                                       (mapcar (lambda (e)
+                                                 (when (jetpacs-shell--chrome-visible-p (cddr e))
+                                                   (funcall (cadr e))))
+                                               jetpacs-shell-top-actions)))))
 
 (cl-defun jetpacs-shell-tab-view (name body &key top-bar (fab nil fab-given) snackbar)
   "A standard tab view: drawer, bottom bar, pull-to-refresh, default chrome.
@@ -407,11 +484,16 @@ Safe on any hook: extra arguments are ignored."
 ;; `jetpacs-settings-register-section' and satellite screens through
 ;; `jetpacs-settings-add-link' — both appear here with no further wiring,
 ;; and the bare companion has a working Settings screen before any app
-;; loads.  An app that needs a richer screen replaces the view
-;; (`jetpacs-shell-define-view' replaces by name) and splices
-;; `jetpacs-settings-sections' at the end of its own scrollable body;
-;; the drawer entry keeps working because it targets the view name, not
-;; the builder.
+;; loads.  Register sections under `with-jetpacs-owner' and they show only
+;; while that app is current (once a second app exists).
+;;
+;; An app that needs a richer screen defines its own
+;; \"<appid>.settings\" view splicing `jetpacs-settings-sections' at the
+;; end of its own scrollable body; the stock drawer entry resolves to it
+;; while that app is current (`jetpacs-shell-resolve-view'), so the one
+;; Settings affordance reaches the right screen in every app.  Do NOT
+;; redefine the stock \"settings\" view by name — with several apps
+;; loaded the last one would hijack the screen for all of them.
 
 (declare-function jetpacs-settings-sections "jetpacs-settings")
 (declare-function jetpacs-settings-register-section "jetpacs-settings")
@@ -442,11 +524,13 @@ Never nest this node inside another scroll container."
      (jetpacs-reconnect :label "Auto-reconnect")))
   (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
   ;; Everyday nav: the one affordance for the screen, between the Apps
-  ;; entry (5) and the shell's own Refresh (70).
+  ;; entry (5) and the shell's own Refresh (70).  Resolved per app: an
+  ;; app with its own "<appid>.settings" view gets it targeted here.
   (jetpacs-shell-add-drawer-item
    60 (lambda ()
         (jetpacs-drawer-item "settings" "Settings"
-                          (jetpacs-shell-switch-view "settings")))))
+                          (jetpacs-shell-switch-view
+                           (jetpacs-shell-resolve-view "settings"))))))
 
 ;; ─── Lifecycle pushes ────────────────────────────────────────────────────────
 

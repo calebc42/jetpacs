@@ -104,27 +104,33 @@ a core-only session and a Hello tab appears. A larger one:
   (apply #'jetpacs-lazy-column
          (mapcar (lambda (bm)
                    (jetpacs-card (list (jetpacs-text (car bm) 'body))
-                              :on-tap (jetpacs-action "my.bookmark.jump"
+                              :on-tap (jetpacs-action "marks.jump"
                                                    :args `((name . ,(car bm))))))
                  bookmark-alist)))
 
-(jetpacs-shell-define-view "bookmarks"
-  :builder (lambda (snackbar)
-             (jetpacs-shell-tab-view "bookmarks" (my/bookmarks-body)
-                                  :snackbar snackbar))
-  :tab '(:icon "bookmark" :label "Marks")
-  :order 15)
+(with-jetpacs-owner "marks"
 
-(jetpacs-defaction "my.bookmark.jump"
-  (lambda (args _)
-    (when-let ((bm (assoc (alist-get 'name args) bookmark-alist)))
-      (bookmark-jump (car bm)))
-    (jetpacs-shell-notify "Jumped")   ; snackbar on the next push
-    (jetpacs-shell-push)))            ; re-render everything (cheap: memoise!)
+  (jetpacs-shell-define-view "marks.bookmarks"
+    :builder (lambda (snackbar)
+               (jetpacs-shell-tab-view "marks.bookmarks" (my/bookmarks-body)
+                                    :snackbar snackbar))
+    :tab '(:icon "bookmark" :label "Marks")
+    :order 15)
+
+  (jetpacs-defaction "marks.jump"
+    (lambda (args _)
+      (when-let ((bm (assoc (alist-get 'name args) bookmark-alist)))
+        (bookmark-jump (car bm)))
+      (jetpacs-shell-notify "Jumped")   ; snackbar on the next push
+      (jetpacs-shell-push))))           ; re-render everything (cheap: memoise!)
 ```
 
 That's a complete Tier 1: load it next to `jetpacs-core.el` and the phone
-grows a Marks tab between Agenda-less core tabs. The pieces:
+grows a Marks tab between Agenda-less core tabs. **Two naming rules make
+your app safe next to any other:** view names live in your app's
+namespace (`"<appid>.<view>"`, or bare `"<appid>"` for a single-view
+app) because the registry replaces by name; and registrations run inside
+`with-jetpacs-owner` so they're attributed to you (§7). The pieces:
 
 - `jetpacs-shell-define-view NAME :builder FN` — FN gets the snackbar text
   (or nil) and returns a scaffold view. Use `jetpacs-shell-tab-view` (tab
@@ -137,9 +143,12 @@ grows a Marks tab between Agenda-less core tabs. The pieces:
   push. `:when PRED` includes it only sometimes (an editor view while a
   file is open); `:overlay PRED` makes it the active view while the
   predicate holds (a detail drill-in) without being a tab.
-- `jetpacs-shell-add-drawer-item` / `jetpacs-shell-add-top-action` add global
-  chrome; `jetpacs-shell-default-fab-function` offers your app's signature
-  affordance on tab views (Glasspane uses it for Capture).
+- `jetpacs-shell-add-drawer-item` / `jetpacs-shell-add-top-action` add
+  chrome. Registered under `with-jetpacs-owner`, chrome belongs to your
+  app: it shows only while yours is the current app (once a second app
+  exists). `(jetpacs-apps-set-default-fab "appid" FN)` offers your app's
+  signature affordance on its tab views (Glasspane uses it for Capture)
+  without leaking onto anyone else's.
 - Hooks: `jetpacs-shell-view-switched-hook` (reset drill-in state),
   `jetpacs-shell-refresh-hook` (drop your memo caches — pull-to-refresh and
   queue drains run it), `jetpacs-shell-after-push-hook` (piggyback cheap,
@@ -151,7 +160,7 @@ One `jetpacs-defapp` call gives your views an identity in the launcher:
 
 ```elisp
 (jetpacs-defapp "marks" :label "Marks" :icon "bookmark"
-             :views '("bookmarks"))
+             :views '("marks.bookmarks"))
 ```
 
 While only one app is registered nothing changes — the phone boots
@@ -247,12 +256,14 @@ chrome:
   trailing "Emacs" section.
 
 The screen ships with the foundation's own "Bridge" section
-(theme mirroring, dialog style, auto-reconnect). An app that needs
-controls the schema renderer can't express replaces the view —
-`(jetpacs-shell-define-view "settings" :builder #'my-settings-view)`
-replaces by name, and the stock drawer entry still reaches it — and
-splices `(jetpacs-settings-sections)` at the end of its own scrollable
-body so registered sections and links keep appearing:
+(theme mirroring, dialog style, auto-reconnect). Register your sections
+under `with-jetpacs-owner` (§7): owned sections and links show only while
+your app is current, so two apps' settings never interleave.
+
+An app that needs controls the schema renderer can't express defines its
+own `"<appid>.settings"` view and splices `(jetpacs-settings-sections)` at
+the end of its own scrollable body so registered sections and links keep
+appearing:
 
 ```elisp
 (apply #'jetpacs-lazy-column
@@ -260,10 +271,14 @@ body so registered sections and links keep appearing:
                (jetpacs-settings-sections)))
 ```
 
-(`jetpacs-shell-settings-body` is that lazy column with *only* the
-sections — use it as an entire body, never nested inside your own lazy
-column; scroll containers don't nest.) Don't add a second drawer entry
-for the screen; the stock one already targets the view name.
+The stock Settings drawer entry resolves to `"<appid>.settings"` while
+your app is current (`jetpacs-shell-resolve-view`), so you register no
+drawer entry and never touch the stock view. Do **not** redefine the
+stock `"settings"` view by name — that's the retired single-app pattern;
+with several apps loaded, the last one would hijack the screen for all
+of them. (`jetpacs-shell-settings-body` is that lazy column with *only*
+the sections — use it as an entire body, never nested inside your own
+lazy column; scroll containers don't nest.)
 
 ## The rules that keep the wire safe
 
@@ -288,10 +303,11 @@ defining actions. In short:
    native dialogs on the phone. Write handlers as if the user were at the
    keyboard.
 
-### 7. Owning your registrations (optional, for coexistence)
+### 7. Owning your registrations
 
-If your Tier 1 might share a session with another, wrap its registrations
-so its names are attributed to it:
+Every session assumes it may host more than one app, so wrap your
+registrations — views, actions, settings sections and links, drawer
+items, top actions — in `with-jetpacs-owner`:
 
 ```elisp
 (with-jetpacs-owner "marks"
@@ -299,15 +315,19 @@ so its names are attributed to it:
   (jetpacs-shell-define-view "marks" :builder #'my/marks-body :tab '(:icon "bookmark")))
 ```
 
-Two payoffs. First, if another app registers the same action, view, or
+Three payoffs. First, if another app registers the same action, view, or
 settings name, you get a warning (or an error under
 `jetpacs-strict-namespaces`) instead of a silent clobber — actions are the
 wire's security boundary, so a collision is worth surfacing. Same-owner
 re-registration stays silent, so `eval-buffer` during live development is
-never noisy. Second, `(jetpacs-app-unregister "marks")` then tears down
-everything owned by the app — its actions, views, settings sections, and
-UI-state — in one call, for clean live reload or a genuine uninstall.
-`jetpacs-defapp` already attributes its `:views` to the app id.
+never noisy. Second, ownership is what scopes your chrome to your app:
+owned drawer items, top actions, and settings content show only while
+your app is current — unowned ones show everywhere, which is right for
+the core and wrong for an app. Third, `(jetpacs-app-unregister "marks")`
+tears down everything owned by the app — its actions, views, chrome,
+settings content, FAB, and UI-state — in one call, for clean live reload
+or a genuine uninstall. `jetpacs-defapp` already attributes its `:views`
+to the app id; the owner wrap covers everything else.
 
 ## Shipping it
 

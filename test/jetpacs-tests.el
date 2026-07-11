@@ -1512,6 +1512,112 @@ core views) are included."
       (jetpacs--on-action '((action . "app.open") (args . ((app . "nope")))) nil)
       (should (equal (jetpacs-apps-current) "hello-app")))))
 
+(ert-deftest jetpacs-apps-owned-chrome-gating ()
+  "Owned drawer items and top actions show only in their app; unowned everywhere."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-shell-drawer-items nil)
+        (jetpacs-shell-top-actions nil))
+    (jetpacs-shell-add-drawer-item 10 (lambda () '((label . "core"))))
+    (with-jetpacs-owner "one"
+      (jetpacs-shell-add-drawer-item 20 (lambda () '((label . "one's")))))
+    (with-jetpacs-owner "two"
+      (jetpacs-shell-add-drawer-item 30 (lambda () '((label . "two's"))))
+      (jetpacs-shell-add-top-action 10 (lambda () '((label . "two-action")))))
+    (cl-flet ((labels ()
+                (let ((d (prin1-to-string (jetpacs-shell-drawer))))
+                  (mapcar (lambda (l) (and (string-search l d) l))
+                          '("core" "one's" "two's")))))
+      ;; Single app: everything shows (a lone app is always current).
+      (jetpacs-defapp "one" :views '())
+      (should (equal (labels) '("core" "one's" "two's")))
+      ;; Second app: chrome follows the current app.
+      (jetpacs-defapp "two" :views '())
+      (should (equal (jetpacs-apps-current) "one"))
+      (should (equal (labels) '("core" "one's" nil)))
+      (should-not (string-search "two-action"
+                                 (prin1-to-string
+                                  (jetpacs-shell-default-top-bar "T"))))
+      (setq jetpacs-apps--current "two")
+      (should (equal (labels) '("core" nil "two's")))
+      (should (string-search "two-action"
+                             (prin1-to-string
+                              (jetpacs-shell-default-top-bar "T")))))))
+
+(ert-deftest jetpacs-apps-settings-section-scoping ()
+  "Owned settings sections render only while their app is current."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-settings-registry nil)
+        (jetpacs-settings-links nil))
+    (jetpacs-settings-register-section "Shared" '())
+    (with-jetpacs-owner "one"
+      (jetpacs-settings-register-section "One's section" '()))
+    (with-jetpacs-owner "two"
+      (jetpacs-settings-register-section "Two's section" '()))
+    (unwind-protect
+        (progn
+          (jetpacs-defapp "one" :views '())
+          (jetpacs-defapp "two" :views '())
+          (let ((body (prin1-to-string (jetpacs-settings-sections))))
+            (should (string-search "Shared" body))
+            (should (string-search "One's section" body))
+            (should-not (string-search "Two's section" body)))
+          (setq jetpacs-apps--current "two")
+          (let ((body (prin1-to-string (jetpacs-settings-sections))))
+            (should (string-search "Two's section" body))
+            (should-not (string-search "One's section" body))))
+      (jetpacs--unclaim "settings" "One's section")
+      (jetpacs--unclaim "settings" "Two's section"))))
+
+(ert-deftest jetpacs-apps-view-resolver ()
+  "Core view slots resolve to \"<appid>.<name>\" when the current app has one."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-shell-views nil))
+    ;; No app at all: names pass through.
+    (should (equal (jetpacs-shell-resolve-view "settings") "settings"))
+    (jetpacs-shell-define-view "rich.settings" :builder #'ignore)
+    (jetpacs-defapp "rich" :views '("rich.settings"))
+    (jetpacs-defapp "plain" :views '())
+    (should (equal (jetpacs-shell-resolve-view "settings") "rich.settings"))
+    ;; An app without its own settings falls back to the stock name.
+    (setq jetpacs-apps--current "plain")
+    (should (equal (jetpacs-shell-resolve-view "settings") "settings"))))
+
+(ert-deftest jetpacs-apps-per-app-fab ()
+  "Each app's default FAB appears only while that app is current."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-apps--fabs nil)
+        (jetpacs-shell-default-fab-function nil))
+    (jetpacs-apps-set-default-fab "one" (lambda (_name) '((t . "fab-one"))))
+    (jetpacs-defapp "one" :views '())
+    (jetpacs-defapp "two" :views '())
+    (should (equal (jetpacs-shell-default-fab "x") '((t . "fab-one"))))
+    (setq jetpacs-apps--current "two")
+    (should-not (jetpacs-shell-default-fab "x"))))
+
+(ert-deftest jetpacs-apps-unregister-tears-down-chrome ()
+  "jetpacs-app-unregister drops the app's chrome, links, and FAB."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-shell-drawer-items nil)
+        (jetpacs-shell-top-actions nil)
+        (jetpacs-settings-links nil)
+        (jetpacs-apps--fabs nil))
+    (with-jetpacs-owner "gone"
+      (jetpacs-shell-add-drawer-item 10 (lambda () '((label . "gone"))))
+      (jetpacs-shell-add-top-action 10 (lambda () '((label . "gone"))))
+      (jetpacs-settings-add-link 10 (lambda () '((label . "gone")))))
+    (jetpacs-apps-set-default-fab "gone" #'ignore)
+    (jetpacs-defapp "gone" :views '())
+    (jetpacs-app-unregister "gone")
+    (should-not jetpacs-shell-drawer-items)
+    (should-not jetpacs-shell-top-actions)
+    (should-not jetpacs-settings-links)
+    (should-not (assoc "gone" jetpacs-apps--fabs))))
+
 ;; ─── Protocol frame shapes (golden snapshot, SPEC §10–§11) ──────────────────
 
 (defconst jetpacs-tests--frames-golden-file
@@ -1827,7 +1933,7 @@ don't even apply (min-colors) but the palette variables are plain data."
   (should (assoc "settings" jetpacs-shell-views))
   (should (assoc "Bridge" jetpacs-settings-registry))
   ;; Exactly one Settings affordance in the drawer.
-  (let ((items (delq nil (mapcar (lambda (e) (funcall (cdr e)))
+  (let ((items (delq nil (mapcar (lambda (e) (funcall (cadr e)))
                                  jetpacs-shell-drawer-items))))
     (should (= 1 (cl-count-if
                   (lambda (item) (equal (alist-get 'label item) "Settings"))

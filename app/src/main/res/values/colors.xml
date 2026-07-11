@@ -7,5 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="launcher_bg">#334155</color>
+    <!-- Launcher-icon background: EmacsPurple (ui/theme/Color.kt), the
+         same logo midtone the theming ladder falls back to. -->
+    <color name="launcher_bg">#7E55B3</color>
 </resources>

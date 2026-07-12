@@ -189,16 +189,6 @@ plus every unclaimed view (core tabs, the home grid itself)."
         (or (null owner)
             (equal owner (jetpacs-apps-current))))))
 
-(setq jetpacs-shell-view-filter-function #'jetpacs-apps--view-visible-p)
-
-;; Chrome (drawer items, top actions) and settings content (sections,
-;; links) carry the owner recorded at registration; both filters reduce
-;; to the same question.  Unowned registrations never reach these (the
-;; shell and settings helpers pass nil owners through unconditionally).
-(setq jetpacs-shell-chrome-filter-function #'jetpacs-apps-current-p)
-(with-eval-after-load 'jetpacs-settings
-  (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p))
-
 ;; Core view slots resolve to a per-app override when the current app
 ;; registered one: "settings" reaches "glasspane.settings" inside
 ;; Glasspane.  This replaces the single-app-era pattern of redefining
@@ -209,7 +199,38 @@ plus every unclaimed view (core tabs, the home grid itself)."
          (let ((scoped (concat cur "." name)))
            (and (assoc scoped jetpacs-shell-views) scoped)))))
 
-(setq jetpacs-shell-view-resolver-function #'jetpacs-apps--resolve-view)
+(defun jetpacs--install-invariants ()
+  "Re-assert the multi-app isolation seams.  Idempotent.
+These four function-valued vars ARE the whole gating mechanism: which
+views are visible, which chrome (drawer items, top actions) shows, which
+settings sections show, and the core->per-app view resolver.  They are
+INTERNAL — deliberately not `defcustom's and not on any Settings screen —
+because a stray `setq' (from user init.el or a mis-behaved app) that nulls
+one would leak another app's views, chrome or settings.
+
+Structural ownership, not load-order luck: this installer runs at load
+time AND again as the first step of `jetpacs-connect' (via
+`jetpacs-before-connect-hook'), which fires after the user's whole init.el
+has run — so nothing done during init can survive to the first served
+frame.  The seam vars themselves being internal (no user-facing knob) is
+the other half; together they make isolation an invariant rather than a
+default."
+  (setq jetpacs-shell-view-filter-function   #'jetpacs-apps--view-visible-p
+        jetpacs-shell-chrome-filter-function #'jetpacs-apps-current-p
+        jetpacs-shell-view-resolver-function #'jetpacs-apps--resolve-view)
+  ;; The settings-section filter lives in jetpacs-settings, which loads
+  ;; after this file in the bundle; only set it once that var is bound.
+  (when (boundp 'jetpacs-settings-section-filter-function)
+    (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p)))
+
+;; Install at load time...
+(jetpacs--install-invariants)
+;; ...cover the settings filter as soon as its feature arrives (the
+;; load-time call above skips it while still unbound)...
+(with-eval-after-load 'jetpacs-settings
+  (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p))
+;; ...and re-assert everything at connect, after all user init has run.
+(add-hook 'jetpacs-before-connect-hook #'jetpacs--install-invariants)
 
 ;; Once a second app exists the drawer header names the app you are in;
 ;; a lone app keeps whatever `jetpacs-shell-drawer-header' it set.

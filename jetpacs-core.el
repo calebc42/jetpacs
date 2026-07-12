@@ -51,7 +51,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.2.0"
+(defconst jetpacs-api-version "1.3.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -492,10 +492,19 @@ and nothing else here changes."
    :filter #'jetpacs--filter
    :sentinel #'jetpacs--sentinel))
 
+(defvar jetpacs-before-connect-hook nil
+  "Hook run at the very start of `jetpacs-connect', before the socket opens.
+By the time connect fires — on `after-init-hook', or a 0-delay timer when
+the bundle loads post-init — the user's whole init.el has already run.  So
+this is where invariants that must hold regardless of user code are
+re-asserted: whatever a stray `setq' during init did is overwritten before
+the first frame is served.  See `jetpacs--install-invariants'.")
+
 ;;;###autoload
 (defun jetpacs-connect ()
   "Connect to the companion and run the handshake."
   (interactive)
+  (run-hooks 'jetpacs-before-connect-hook)
   (setq jetpacs--user-disconnected nil
         jetpacs--reconnect-delay jetpacs-reconnect-initial-delay)
   (jetpacs--cancel-reconnect)
@@ -537,6 +546,274 @@ and nothing else here changes."
 
 (provide 'jetpacs)
 ;;; jetpacs.el ends here
+;;; ==================================================================
+;;; BEGIN core/jetpacs-config.el
+;;; ==================================================================
+
+;;; jetpacs-config.el --- The foundation-owned root and per-app config subtrees -*- lexical-binding: t; -*-
+
+;; Jetpacs owns a namespaced directory tree under the user's Emacs home
+;; (`jetpacs-root', i.e. ~/.emacs.d/jetpacs/) rather than colonizing
+;; ~/.emacs.d itself.  The user's init.el keeps a single seam line (see
+;; docs/starter-init.el) that loads the managed entry point; everything
+;; the foundation and its apps write lives under `jetpacs-root'.  The
+;; user's own files (init.el, custom.el) stay at the `user-emacs-directory'
+;; root, OUTSIDE this tree, so a sync pass can never clobber them.
+;;
+;; Two ownership tiers, mirrored in this file's verbs:
+;;
+;;   - SYNC (overwrite): `jetpacs-app-config-sync' rewrites every managed
+;;     file to the current bundle defaults, so an app update can evolve
+;;     them; edits to those files are expected to be lost.  DO-NOT-EDIT
+;;     banners mark them.
+;;   - CREATE-ONCE: `jetpacs-app-config-ensure' populates a subtree on the
+;;     first run and only loads it thereafter, so user edits survive.
+;;
+;; The MUST-own-vs-overridable axis is ORTHOGONAL to these file tiers and
+;; is carried in Lisp, not on disk: an invariant is a defun / registry
+;; mutation / hook (a stray `setq' can't reach it); a default is a
+;; `defcustom' the user is meant to override.  See
+;; `jetpacs--install-invariants' in jetpacs-apps.el.
+;;
+;; This module is the generalization of Glasspane's `glasspane-config.el':
+;; the same sync/ensure/load contract, promoted into the core and keyed by
+;; app-id so any app reuses it (an app becomes a thin caller passing its id
+;; and its (FILENAME . CONTENT) file set).
+
+;;; Code:
+
+(require 'jetpacs)
+
+(defconst jetpacs-root
+  (expand-file-name "jetpacs/" user-emacs-directory)
+  "The foundation-owned directory tree, replacing the mis-named `elisp/'.
+Everything Jetpacs and its apps write lives here.  The user's own files
+\(init.el, custom.el) stay at the `user-emacs-directory' root, OUTSIDE this
+tree, so a sync pass can never clobber them.  Treat this directory as the
+foundation's, not the user's.")
+
+(defconst jetpacs-lib-dir
+  (expand-file-name "lib/" jetpacs-root)
+  "Where adopted single-file bundles live (core + each app), one `require'
+each.  SYNC tier: the newest staged copy is adopted over the installed one.
+Kept flat and monolithic on purpose — on-device loading is one `require'
+per bundle, never a multi-file module graph.")
+
+(defun jetpacs-app-dir (id)
+  "Return the config-subtree directory for app ID under `jetpacs-root'.
+Keyed by the same app-id as views (\"ID.*\") and UI-state (\"ID.\"), so an
+app's on-disk config, in-memory registrations and namespaced state all
+share one key.  The directory is not created here — the config verbs do
+that when the app opts in."
+  (file-name-as-directory
+   (expand-file-name id (expand-file-name "apps/" jetpacs-root))))
+
+(defun jetpacs-app-config-load (id)
+  "Load every elisp file in app ID's config subtree, in name order.
+A missing subtree is fine — nothing loads until the app opts in via
+`jetpacs-app-config-ensure' or `jetpacs-app-config-sync'.  Files load in
+name order (so extra user files sort predictably among managed ones); an
+error in one file is reported and skipped, never fatal."
+  (let ((dir (jetpacs-app-dir id)))
+    (when (file-directory-p dir)
+      (dolist (file (directory-files dir t "\\.el\\'"))
+        (condition-case err
+            (load file nil 'nomessage)
+          (error (message "jetpacs-config: error loading %s: %s"
+                          file (error-message-string err))))))))
+
+(defun jetpacs-app-config-sync (id files)
+  "Write FILES into app ID's config subtree and load them.
+FILES is an alist of (FILENAME . CONTENT).  Every file is overwritten —
+the reset-to-current-bundle semantics are the point, so an app update can
+evolve its defaults.  Returns the subtree directory."
+  (let ((dir (jetpacs-app-dir id))
+        (coding-system-for-write 'utf-8))
+    (make-directory dir t)
+    (dolist (spec files)
+      (write-region (cdr spec) nil (expand-file-name (car spec) dir)
+                    nil 'silent))
+    (jetpacs-app-config-load id)
+    dir))
+
+(defun jetpacs-app-config-ensure (id files)
+  "Create app ID's config subtree from FILES on first run; load it after.
+A missing subtree is populated via `jetpacs-app-config-sync'; an existing
+one is only loaded, never rewritten — so a user's edits to the seeded files
+survive an app that merely re-runs this at load time.  An app forces the
+overwrite/upgrade path explicitly with `jetpacs-app-config-sync' (e.g.
+behind an allowlisted `config.sync' action)."
+  (if (file-directory-p (jetpacs-app-dir id))
+      (jetpacs-app-config-load id)
+    (jetpacs-app-config-sync id files)))
+
+;; ─── Bundle adoption + the managed entry-point bootstrap ─────────────────────
+;;
+;; jetpacs-init.el (the on-disk entry file the user's one seam line loads) is
+;; deliberately thin: it only needs to get lib/jetpacs-core.el in place and
+;; `(require 'jetpacs-core)'.  Everything after that lives HERE, in versioned
+;; core, so it is testable and evolves with the bundle rather than with a file
+;; the user has to re-paste.
+
+(defconst jetpacs-staging-dirs '("/sdcard/Documents/" "/sdcard/Download/")
+  "Shared-storage directories bundles are staged into before adoption.
+The companion (a separate UID) can only write here, not the Emacs sandbox;
+Emacs pulls the newest staged copy into `jetpacs-lib-dir'.")
+
+(defvar jetpacs-installed-bundles nil
+  "App bundle file names to adopt and require at startup.
+Set by the create-once ~/.emacs.d/jetpacs/apps.el, which the user edits to
+install an app.  The core bundle is always loaded and is never listed here.")
+
+(defun jetpacs-config-adopt (bundle)
+  "Copy the newest staged BUNDLE into `jetpacs-lib-dir'; return its feature.
+Newest-wins across `jetpacs-staging-dirs' (browser downloads and companion/
+deploy staging both land there).  A `.el' name maps to its feature symbol."
+  (let ((installed (expand-file-name bundle jetpacs-lib-dir)))
+    (make-directory jetpacs-lib-dir t)
+    (dolist (dir jetpacs-staging-dirs)
+      (let ((s (concat dir bundle)))
+        (when (and (file-readable-p s)
+                   (or (not (file-exists-p installed))
+                       (file-newer-than-file-p s installed)))
+          (copy-file s installed t)
+          (message "jetpacs: adopted %s from %s" bundle dir))))
+    (intern (file-name-base bundle))))
+
+(defun jetpacs-config-seed-file (path content)
+  "Create PATH with CONTENT once, making parent dirs; never overwrite.
+The create-once tier: `apps.el' and `user.el' are seeded this way so user
+edits to them survive every subsequent startup and sync."
+  (unless (file-exists-p path)
+    (make-directory (file-name-directory path) t)
+    (let ((coding-system-for-write 'utf-8))
+      (write-region content nil path nil 'silent))))
+
+(defconst jetpacs-config--user-template
+  ";;; user.el --- Your Jetpacs overrides -*- lexical-binding: t; -*-
+;; CREATE-ONCE: Jetpacs wrote this once and never touches it again.
+;; It loads AFTER Jetpacs's defaults and your saved Settings, so anything
+;; here wins.  Put personal tweaks (keybindings, theme, variables) below.
+
+"
+  "Seed contents for a fresh ~/.emacs.d/jetpacs/user.el.")
+
+(defconst jetpacs-config--apps-template
+  ";;; apps.el --- Jetpacs installed app bundles -*- lexical-binding: t; -*-
+;; CREATE-ONCE, yours to edit.  List the app bundle files you download into
+;; /sdcard/Download (or Documents); each is adopted into ~/.emacs.d/jetpacs/lib/
+;; and required at startup.  The core bundle is always loaded and is NOT listed.
+
+(setq jetpacs-installed-bundles '())   ; e.g. '(\"glasspane.el\")
+"
+  "Seed contents for a fresh ~/.emacs.d/jetpacs/apps.el.")
+
+(defconst jetpacs-config--apps-migrated-template
+  ";;; apps.el --- Jetpacs installed app bundles -*- lexical-binding: t; -*-
+;; CREATE-ONCE, yours to edit.  Migrated from your previous init.el bundle list.
+
+(setq jetpacs-installed-bundles '(%s))
+"
+  "Seed for apps.el after a legacy migration; %s is the discovered bundle list.")
+
+(defun jetpacs-config-migrate-legacy ()
+  "Non-destructively move the old ~/.emacs.d/elisp/ layout under `jetpacs-root'.
+Copies bundle `.el' files into `jetpacs-lib-dir', each elisp/<app>/ config
+subtree into `(jetpacs-app-dir <app>)', and seeds apps.el from the discovered
+app bundles so they still load.  Leaves the old elisp/ and custom.el untouched.
+Runs at most once: guarded on apps.el not yet existing."
+  (let ((old (expand-file-name "elisp/" user-emacs-directory)))
+    (when (and (file-directory-p old)
+               (not (file-exists-p (expand-file-name "apps.el" jetpacs-root))))
+      (make-directory jetpacs-lib-dir t)
+      (let (bundles)
+        (dolist (f (directory-files old t "\\.el\\'"))
+          (let ((name (file-name-nondirectory f)))
+            (copy-file f (expand-file-name name jetpacs-lib-dir) t)
+            (unless (equal name "jetpacs-core.el")
+              (push name bundles))))
+        (dolist (d (directory-files old t "\\`[^.]"))
+          (when (file-directory-p d)
+            (let ((dest (jetpacs-app-dir (file-name-nondirectory d))))
+              (unless (file-directory-p dest)
+                (copy-directory d dest nil t t)))))
+        (jetpacs-config-seed-file
+         (expand-file-name "apps.el" jetpacs-root)
+         (format jetpacs-config--apps-migrated-template
+                 (mapconcat (lambda (b) (format "%S" b))
+                            (nreverse bundles) " ")))
+        (message "jetpacs: migrated %s into %s"
+                 (abbreviate-file-name old) (abbreviate-file-name jetpacs-root))))))
+
+(defun jetpacs-apply-foundation-defaults ()
+  "Apply Jetpacs's phone-ergonomics and file-hygiene defaults.
+Called by the managed entry point BEFORE `custom-file' and the user's
+`user.el' load, so every setting here is overridable — these are DEFAULTS
+\(plain setters), not invariants.  Touch/scroll basics, backups and auto-saves
+in one place, no lock files (single-user device), auto-revert, and volume keys
+paging the buffer on Android."
+  (when (fboundp 'pixel-scroll-precision-mode)
+    (pixel-scroll-precision-mode 1))
+  (setq touch-screen-precision-scroll t
+        touch-screen-word-select t
+        touch-screen-extend-selection t
+        touch-screen-display-keyboard t)
+  (when (fboundp 'context-menu-mode) (context-menu-mode 1))
+  (setq use-dialog-box t
+        use-short-answers t
+        inhibit-startup-screen t)
+  (when (eq system-type 'android)
+    (setq android-pass-multimedia-buttons-to-system nil)
+    (global-set-key (kbd "<volume-up>")   #'scroll-down-command)
+    (global-set-key (kbd "<volume-down>") #'scroll-up-command))
+  (setq backup-directory-alist
+        `(("." . ,(expand-file-name "backups/" user-emacs-directory)))
+        backup-by-copying t
+        create-lockfiles nil)
+  (let ((auto-save-dir (expand-file-name "auto-save/" user-emacs-directory)))
+    (make-directory auto-save-dir t)
+    (setq auto-save-file-name-transforms `((".*" ,auto-save-dir t))))
+  (global-auto-revert-mode 1)
+  (setq global-auto-revert-non-file-buffers t
+        auto-revert-verbose nil)
+  (save-place-mode 1)
+  (savehist-mode 1)
+  (recentf-mode 1))
+
+(defun jetpacs-config-bootstrap ()
+  "Wire up the managed root after core has loaded.
+Called by jetpacs-init.el once `jetpacs-core' is required: migrate any legacy
+layout, load the create-once installed-app list and adopt+require each app,
+apply the foundation defaults, then load `custom-file' and the user override.
+Invariants are re-asserted separately at connect (`jetpacs-before-connect-hook')."
+  (add-to-list 'load-path jetpacs-lib-dir)
+  (jetpacs-config-migrate-legacy)
+  ;; Installed apps: a create-once, user-owned list.
+  (let ((apps (expand-file-name "apps.el" jetpacs-root)))
+    (jetpacs-config-seed-file apps jetpacs-config--apps-template)
+    (load apps t))
+  (dolist (bundle jetpacs-installed-bundles)
+    (condition-case err
+        (require (jetpacs-config-adopt bundle))
+      (error (display-warning
+              'jetpacs
+              (format "app bundle %s failed to load: %S" bundle err)
+              :error))))
+  ;; Foundation defaults (overridable) — before custom/user so those win.
+  (jetpacs-apply-foundation-defaults)
+  ;; custom-file: user data, pinned OUTSIDE the jetpacs/ sync tree.
+  (unless custom-file
+    (setq custom-file (expand-file-name "custom.el" user-emacs-directory)))
+  (when (and custom-file (file-exists-p custom-file))
+    (load custom-file nil 'nomessage))
+  ;; User override escape hatch — loaded LAST so the user beats every default.
+  (let ((user (expand-file-name "user.el" jetpacs-root)))
+    (jetpacs-config-seed-file user jetpacs-config--user-template)
+    (load user t)))
+
+(provide 'jetpacs-config)
+;;; jetpacs-config.el ends here
+
 ;;; ==================================================================
 ;;; BEGIN core/jetpacs-theme.el
 ;;; ==================================================================
@@ -5233,16 +5510,6 @@ plus every unclaimed view (core tabs, the home grid itself)."
         (or (null owner)
             (equal owner (jetpacs-apps-current))))))
 
-(setq jetpacs-shell-view-filter-function #'jetpacs-apps--view-visible-p)
-
-;; Chrome (drawer items, top actions) and settings content (sections,
-;; links) carry the owner recorded at registration; both filters reduce
-;; to the same question.  Unowned registrations never reach these (the
-;; shell and settings helpers pass nil owners through unconditionally).
-(setq jetpacs-shell-chrome-filter-function #'jetpacs-apps-current-p)
-(with-eval-after-load 'jetpacs-settings
-  (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p))
-
 ;; Core view slots resolve to a per-app override when the current app
 ;; registered one: "settings" reaches "glasspane.settings" inside
 ;; Glasspane.  This replaces the single-app-era pattern of redefining
@@ -5253,7 +5520,38 @@ plus every unclaimed view (core tabs, the home grid itself)."
          (let ((scoped (concat cur "." name)))
            (and (assoc scoped jetpacs-shell-views) scoped)))))
 
-(setq jetpacs-shell-view-resolver-function #'jetpacs-apps--resolve-view)
+(defun jetpacs--install-invariants ()
+  "Re-assert the multi-app isolation seams.  Idempotent.
+These four function-valued vars ARE the whole gating mechanism: which
+views are visible, which chrome (drawer items, top actions) shows, which
+settings sections show, and the core->per-app view resolver.  They are
+INTERNAL — deliberately not `defcustom's and not on any Settings screen —
+because a stray `setq' (from user init.el or a mis-behaved app) that nulls
+one would leak another app's views, chrome or settings.
+
+Structural ownership, not load-order luck: this installer runs at load
+time AND again as the first step of `jetpacs-connect' (via
+`jetpacs-before-connect-hook'), which fires after the user's whole init.el
+has run — so nothing done during init can survive to the first served
+frame.  The seam vars themselves being internal (no user-facing knob) is
+the other half; together they make isolation an invariant rather than a
+default."
+  (setq jetpacs-shell-view-filter-function   #'jetpacs-apps--view-visible-p
+        jetpacs-shell-chrome-filter-function #'jetpacs-apps-current-p
+        jetpacs-shell-view-resolver-function #'jetpacs-apps--resolve-view)
+  ;; The settings-section filter lives in jetpacs-settings, which loads
+  ;; after this file in the bundle; only set it once that var is bound.
+  (when (boundp 'jetpacs-settings-section-filter-function)
+    (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p)))
+
+;; Install at load time...
+(jetpacs--install-invariants)
+;; ...cover the settings filter as soon as its feature arrives (the
+;; load-time call above skips it while still unbound)...
+(with-eval-after-load 'jetpacs-settings
+  (setq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p))
+;; ...and re-assert everything at connect, after all user init has run.
+(add-hook 'jetpacs-before-connect-hook #'jetpacs--install-invariants)
 
 ;; Once a second app exists the drawer header names the app you are in;
 ;; a lone app keeps whatever `jetpacs-shell-drawer-header' it set.
@@ -7734,6 +8032,7 @@ Returns (PREFIX . CANDIDATE-NODES) or nil."
 ;;; Code:
 
 (require 'jetpacs)
+(require 'jetpacs-config)
 (require 'jetpacs-widgets)
 (require 'jetpacs-surfaces)
 (require 'cl-lib)
@@ -7788,21 +8087,61 @@ screen has ever rendered this session."
 
 ;; ─── Persistence ─────────────────────────────────────────────────────────────
 
+(defvar jetpacs-settings--custom-file-warned nil
+  "Non-nil once we've warned that `custom-file' sits in the sync tree.")
+
+(defun jetpacs-settings--warn-if-custom-file-managed (cf)
+  "Warn once if custom-file CF resolves inside `jetpacs-root'.
+A phone Settings save rewrites the file `custom-file' names and reports
+success blind to that file's directory; if CF lived under the Jetpacs sync
+tree, the next bundle sync would silently revert every saved setting.  We
+still save (the user asked to), but flag it loudly so it gets moved back to
+~/.emacs.d/custom.el.  Mirrors the tier rule: user data must never sit in a
+sync-overwrite dir."
+  (when (and cf
+             (not jetpacs-settings--custom-file-warned)
+             (boundp 'jetpacs-root) jetpacs-root
+             ;; A trailing-slash prefix test, not `file-in-directory-p':
+             ;; the latter returns nil when the dir doesn't yet exist on
+             ;; disk (true before the first sync creates `jetpacs-root'),
+             ;; and this still rejects a sibling like `jetpacs-evil/'.
+             (string-prefix-p
+              (file-name-as-directory (expand-file-name jetpacs-root))
+              (expand-file-name cf)
+              (memq system-type '(windows-nt ms-dos cygwin))))
+    (setq jetpacs-settings--custom-file-warned t)
+    (display-warning
+     'jetpacs
+     (format "custom-file %s is inside the Jetpacs sync tree (%s); saved settings \
+will be lost on the next bundle sync.  Move it to %s."
+             (abbreviate-file-name cf)
+             (abbreviate-file-name jetpacs-root)
+             (abbreviate-file-name
+              (expand-file-name "custom.el" user-emacs-directory)))
+     :error)))
+
 (defun jetpacs-settings-save-variable (symbol value)
   "Persist SYMBOL as VALUE through Customize, surfacing failures.
 Returns non-nil on success.  Failures are reported through
 `jetpacs-settings-notify-function' instead of being silently dropped;
 notably, `customize-save-variable' quietly skips saving when there is
 no file to save into (started with -q, or no init file), which would
-otherwise look like a save and then vanish on restart."
+otherwise look like a save and then vanish on restart.  A `custom-file'
+that exists but sits under `jetpacs-root' is a subtler version of the same
+trap (a sync would clobber it): we save but warn via
+`jetpacs-settings--warn-if-custom-file-managed'."
   (require 'cus-edit)
   (condition-case err
-      (if (custom-file t)
-          (progn (customize-save-variable symbol value) t)
-        (set-default symbol value)
-        (funcall jetpacs-settings-notify-function
-                 "Applied for this session only: no init file to save settings into")
-        nil)
+      (let ((cf (custom-file t)))
+        (if cf
+            (progn
+              (jetpacs-settings--warn-if-custom-file-managed cf)
+              (customize-save-variable symbol value)
+              t)
+          (set-default symbol value)
+          (funcall jetpacs-settings-notify-function
+                   "Applied for this session only: no init file to save settings into")
+          nil))
     (error
      (funcall jetpacs-settings-notify-function
               (format "Applied for this session, but saving failed: %s"

@@ -22,6 +22,7 @@
 ;;; Code:
 
 (require 'jetpacs)
+(require 'jetpacs-config)
 (require 'jetpacs-widgets)
 (require 'jetpacs-surfaces)
 (require 'cl-lib)
@@ -76,21 +77,61 @@ screen has ever rendered this session."
 
 ;; ─── Persistence ─────────────────────────────────────────────────────────────
 
+(defvar jetpacs-settings--custom-file-warned nil
+  "Non-nil once we've warned that `custom-file' sits in the sync tree.")
+
+(defun jetpacs-settings--warn-if-custom-file-managed (cf)
+  "Warn once if custom-file CF resolves inside `jetpacs-root'.
+A phone Settings save rewrites the file `custom-file' names and reports
+success blind to that file's directory; if CF lived under the Jetpacs sync
+tree, the next bundle sync would silently revert every saved setting.  We
+still save (the user asked to), but flag it loudly so it gets moved back to
+~/.emacs.d/custom.el.  Mirrors the tier rule: user data must never sit in a
+sync-overwrite dir."
+  (when (and cf
+             (not jetpacs-settings--custom-file-warned)
+             (boundp 'jetpacs-root) jetpacs-root
+             ;; A trailing-slash prefix test, not `file-in-directory-p':
+             ;; the latter returns nil when the dir doesn't yet exist on
+             ;; disk (true before the first sync creates `jetpacs-root'),
+             ;; and this still rejects a sibling like `jetpacs-evil/'.
+             (string-prefix-p
+              (file-name-as-directory (expand-file-name jetpacs-root))
+              (expand-file-name cf)
+              (memq system-type '(windows-nt ms-dos cygwin))))
+    (setq jetpacs-settings--custom-file-warned t)
+    (display-warning
+     'jetpacs
+     (format "custom-file %s is inside the Jetpacs sync tree (%s); saved settings \
+will be lost on the next bundle sync.  Move it to %s."
+             (abbreviate-file-name cf)
+             (abbreviate-file-name jetpacs-root)
+             (abbreviate-file-name
+              (expand-file-name "custom.el" user-emacs-directory)))
+     :error)))
+
 (defun jetpacs-settings-save-variable (symbol value)
   "Persist SYMBOL as VALUE through Customize, surfacing failures.
 Returns non-nil on success.  Failures are reported through
 `jetpacs-settings-notify-function' instead of being silently dropped;
 notably, `customize-save-variable' quietly skips saving when there is
 no file to save into (started with -q, or no init file), which would
-otherwise look like a save and then vanish on restart."
+otherwise look like a save and then vanish on restart.  A `custom-file'
+that exists but sits under `jetpacs-root' is a subtler version of the same
+trap (a sync would clobber it): we save but warn via
+`jetpacs-settings--warn-if-custom-file-managed'."
   (require 'cus-edit)
   (condition-case err
-      (if (custom-file t)
-          (progn (customize-save-variable symbol value) t)
-        (set-default symbol value)
-        (funcall jetpacs-settings-notify-function
-                 "Applied for this session only: no init file to save settings into")
-        nil)
+      (let ((cf (custom-file t)))
+        (if cf
+            (progn
+              (jetpacs-settings--warn-if-custom-file-managed cf)
+              (customize-save-variable symbol value)
+              t)
+          (set-default symbol value)
+          (funcall jetpacs-settings-notify-function
+                   "Applied for this session only: no init file to save settings into")
+          nil))
     (error
      (funcall jetpacs-settings-notify-function
               (format "Applied for this session, but saving failed: %s"

@@ -2002,5 +2002,127 @@ don't even apply (min-colors) but the palette variables are plain data."
   ;; Disconnected `M-x jetpacs-theme-send' must message, not error or hang.
   (jetpacs-theme-send))
 
+;; ─── Phase G: foundation-owned root + init seam ─────────────────────────────
+
+(ert-deftest jetpacs-install-invariants-reasserts ()
+  "The isolation seams survive a user `setq'.
+`jetpacs-before-connect-hook' runs at the top of `jetpacs-connect' — after
+the user's whole init.el — and re-installs the four internal seam vars, so
+nothing done during init can leak another app's views/chrome/settings to
+the first served frame."
+  (let ((jetpacs-shell-view-filter-function nil)
+        (jetpacs-shell-chrome-filter-function nil)
+        (jetpacs-shell-view-resolver-function nil)
+        (jetpacs-settings-section-filter-function nil))
+    ;; A stray user setq has nulled the whole gating mechanism...
+    (should-not jetpacs-shell-view-filter-function)
+    ;; ...connect's first act (this hook) restores every seam.
+    (run-hooks 'jetpacs-before-connect-hook)
+    (should (eq jetpacs-shell-view-filter-function #'jetpacs-apps--view-visible-p))
+    (should (eq jetpacs-shell-chrome-filter-function #'jetpacs-apps-current-p))
+    (should (eq jetpacs-shell-view-resolver-function #'jetpacs-apps--resolve-view))
+    (should (eq jetpacs-settings-section-filter-function #'jetpacs-apps-current-p))))
+
+(ert-deftest jetpacs-settings-custom-file-guard ()
+  "The custom-file guard latches a warning for a path under `jetpacs-root'
+and stays silent for the safe ~/.emacs.d/custom.el location."
+  (let ((jetpacs-settings--custom-file-warned nil)
+        (inside (expand-file-name "custom.el" jetpacs-lib-dir))
+        (safe (expand-file-name "custom.el" user-emacs-directory)))
+    ;; Safe location: no warning, flag untouched.
+    (jetpacs-settings--warn-if-custom-file-managed safe)
+    (should-not jetpacs-settings--custom-file-warned)
+    ;; Under the sync tree: warns once (flag latches so it fires only once).
+    (jetpacs-settings--warn-if-custom-file-managed inside)
+    (should jetpacs-settings--custom-file-warned)))
+
+(defvar jetpacs-tests--cfg-a nil "Scratch var set by app-config test fixtures.")
+
+(ert-deftest jetpacs-app-config-verbs ()
+  "sync overwrites and loads; ensure seeds once then only loads; a missing
+subtree loads nothing without error."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-root" t)))
+         (jetpacs-root tmp)
+         (id "testapp")
+         (afile (lambda () (expand-file-name "a.el" (jetpacs-app-dir id)))))
+    (unwind-protect
+        (progn
+          ;; app-dir is keyed under apps/<id>/ within the (rebound) root.
+          (should (equal (jetpacs-app-dir id)
+                         (file-name-as-directory
+                          (expand-file-name (concat "apps/" id) tmp))))
+          ;; Missing subtree: load is a silent no-op.
+          (setq jetpacs-tests--cfg-a nil)
+          (jetpacs-app-config-load id)
+          (should-not jetpacs-tests--cfg-a)
+          ;; ensure: first run seeds the file and loads it.
+          (jetpacs-app-config-ensure
+           id (list (cons "a.el" "(setq jetpacs-tests--cfg-a 1)\n")))
+          (should (file-exists-p (funcall afile)))
+          (should (= jetpacs-tests--cfg-a 1))
+          ;; ensure again with DIFFERENT content: create-once => not rewritten.
+          (jetpacs-app-config-ensure
+           id (list (cons "a.el" "(setq jetpacs-tests--cfg-a 2)\n")))
+          (with-temp-buffer
+            (insert-file-contents (funcall afile))
+            (should (string-match-p "cfg-a 1" (buffer-string))))
+          ;; sync: the explicit upgrade path DOES overwrite and reload.
+          (jetpacs-app-config-sync
+           id (list (cons "a.el" "(setq jetpacs-tests--cfg-a 3)\n")))
+          (should (= jetpacs-tests--cfg-a 3)))
+      (delete-directory tmp t))))
+
+(ert-deftest jetpacs-config-seed-file-create-once ()
+  "seed-file writes once (making parent dirs) and never overwrites."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-seed" t)))
+         (f (expand-file-name "sub/user.el" tmp)))
+    (unwind-protect
+        (progn
+          (jetpacs-config-seed-file f "first\n")
+          (should (equal "first\n"
+                         (with-temp-buffer (insert-file-contents f) (buffer-string))))
+          ;; A second call must NOT clobber the (possibly user-edited) file.
+          (jetpacs-config-seed-file f "second\n")
+          (should (equal "first\n"
+                         (with-temp-buffer (insert-file-contents f) (buffer-string)))))
+      (delete-directory tmp t))))
+
+(ert-deftest jetpacs-config-migrate-legacy-nondestructive ()
+  "The old ~/.emacs.d/elisp/ layout migrates into the jetpacs/ root:
+bundles -> lib/, app subtrees -> apps/<id>/, apps.el seeded with the
+discovered app bundles (never core); the old elisp/ is left intact and a
+second run is a no-op."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-mig" t)))
+         (user-emacs-directory tmp)
+         (jetpacs-root (expand-file-name "jetpacs/" tmp))
+         (jetpacs-lib-dir (expand-file-name "lib/" jetpacs-root))
+         (old (expand-file-name "elisp/" tmp)))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "glasspane" old) t)
+          (write-region "core" nil (expand-file-name "jetpacs-core.el" old) nil 'silent)
+          (write-region "app" nil (expand-file-name "glasspane.el" old) nil 'silent)
+          (write-region ";; cfg" nil
+                        (expand-file-name "glasspane/org-defaults.el" old) nil 'silent)
+          (jetpacs-config-migrate-legacy)
+          ;; Bundle .el files copied into lib/.
+          (should (file-exists-p (expand-file-name "jetpacs-core.el" jetpacs-lib-dir)))
+          (should (file-exists-p (expand-file-name "glasspane.el" jetpacs-lib-dir)))
+          ;; App config subtree copied under apps/glasspane/.
+          (should (file-exists-p
+                   (expand-file-name "org-defaults.el" (jetpacs-app-dir "glasspane"))))
+          ;; apps.el seeded, listing the app bundle but never the core bundle.
+          (let ((apps (expand-file-name "apps.el" jetpacs-root)))
+            (should (file-exists-p apps))
+            (with-temp-buffer
+              (insert-file-contents apps)
+              (should (string-match-p "glasspane\\.el" (buffer-string)))
+              (should-not (string-match-p "jetpacs-core" (buffer-string)))))
+          ;; Non-destructive: the old tree is still there.
+          (should (file-exists-p (expand-file-name "jetpacs-core.el" old)))
+          ;; Idempotent: a second run (apps.el now exists) does nothing, no error.
+          (jetpacs-config-migrate-legacy))
+      (delete-directory tmp t))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

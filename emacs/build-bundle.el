@@ -27,6 +27,7 @@
        ;; Dependency order. Do not reorder without re-checking the require
        ;; graph.
        (core-files '("core/jetpacs.el"
+                     "core/jetpacs-config.el"
                      "core/jetpacs-theme.el"
                      "core/jetpacs-widgets.el"
                      "core/jetpacs-lint.el"

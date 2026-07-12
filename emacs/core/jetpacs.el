@@ -38,7 +38,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.2.0"
+(defconst jetpacs-api-version "1.3.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -479,10 +479,19 @@ and nothing else here changes."
    :filter #'jetpacs--filter
    :sentinel #'jetpacs--sentinel))
 
+(defvar jetpacs-before-connect-hook nil
+  "Hook run at the very start of `jetpacs-connect', before the socket opens.
+By the time connect fires — on `after-init-hook', or a 0-delay timer when
+the bundle loads post-init — the user's whole init.el has already run.  So
+this is where invariants that must hold regardless of user code are
+re-asserted: whatever a stray `setq' during init did is overwritten before
+the first frame is served.  See `jetpacs--install-invariants'.")
+
 ;;;###autoload
 (defun jetpacs-connect ()
   "Connect to the companion and run the handshake."
   (interactive)
+  (run-hooks 'jetpacs-before-connect-hook)
   (setq jetpacs--user-disconnected nil
         jetpacs--reconnect-delay jetpacs-reconnect-initial-delay)
   (jetpacs--cancel-reconnect)

@@ -45,6 +45,7 @@
          bluetooth.device, SPEC §11). Declared so the rows exist under
          App info → Permissions; granted there (or via a future runtime
          prompt), never silently. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 

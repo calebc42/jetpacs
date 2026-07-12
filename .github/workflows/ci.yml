@@ -50,9 +50,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build both modules
+      - name: Unit tests and lint
         run: |
           chmod +x gradlew
+          ./gradlew :jetpacs:testDebugUnitTest :app:testDebugUnitTest :jetpacs:lintDebug :app:lintDebug --console=plain
+
+      - name: Build both modules
+        run: |
           ./gradlew :jetpacs:assembleDebug :app:assembleDebug --console=plain
 
       - name: Upload debug APK

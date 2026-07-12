@@ -1,5 +1,6 @@
 package com.calebc42.jetpacs
 
+import android.annotation.SuppressLint
 import com.calebc42.jetpacs.core.R
 import android.app.PendingIntent
 import android.content.ComponentName
@@ -88,6 +89,7 @@ abstract class JetpacsTileSlotService : TileService() {
         }
     }
 
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun openInApp(action: JSONObject, revision: Int) {
         val intent = JetpacsLaunch.openAppIntent(this, action.toString(), revision)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -98,7 +100,6 @@ abstract class JetpacsTileSlotService : TileService() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         } else {
             // The Intent overload throws on targetSdk 34+, hence the branch.
-            @Suppress("DEPRECATION")
             startActivityAndCollapse(intent)
         }
     }

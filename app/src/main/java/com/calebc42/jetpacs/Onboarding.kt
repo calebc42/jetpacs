@@ -77,7 +77,7 @@ import java.io.File
  * own repos; the wizard explains the generic install path (download → the
  * init's adopt list) without shipping or naming any app.
  */
-private enum class OnbStep { WELCOME, TERMUX, DELIVER, PAIR }
+private enum class OnbStep { WELCOME, ADVANCED, DELIVER, PAIR }
 
 /** Where init.el lives depends on whether the Termux HOME redirect is active. */
 private fun initPath(termux: Boolean): String =
@@ -230,21 +230,32 @@ internal fun OnboardingFlow() {
 
     when (step) {
         OnbStep.WELCOME -> WelcomeStep(
-            onChoose = { chosenByo ->
-                byo = chosenByo
-                step = if (chosenByo) OnbStep.DELIVER else OnbStep.TERMUX
+            onStart = {
+                byo = false
+                termux = false
+                step = OnbStep.DELIVER
             },
+            onAdvanced = { step = OnbStep.ADVANCED },
             onSkipToPair = { step = OnbStep.PAIR },
         )
-        OnbStep.TERMUX -> TermuxStep(
-            onAnswer = { t -> termux = t; step = OnbStep.DELIVER },
+        OnbStep.ADVANCED -> AdvancedSetupStep(
+            onUseExistingConfig = {
+                byo = true
+                termux = false
+                step = OnbStep.DELIVER
+            },
+            onUseTermux = {
+                byo = false
+                termux = true
+                step = OnbStep.DELIVER
+            },
             onBack = { step = OnbStep.WELCOME },
         )
         OnbStep.DELIVER -> DeliverStep(
             byo = byo,
             termux = termux,
             onNext = { step = OnbStep.PAIR },
-            onBack = { step = if (byo) OnbStep.WELCOME else OnbStep.TERMUX },
+            onBack = { step = if (byo || termux) OnbStep.ADVANCED else OnbStep.WELCOME },
         )
         OnbStep.PAIR -> Box(Modifier.fillMaxSize()) {
             PairingScreen(instructions = pairInstructions(byo))
@@ -253,8 +264,8 @@ internal fun OnboardingFlow() {
                 onClick = { step = OnbStep.DELIVER },
             )
             StepDots(
-                index = if (byo) 2 else 3,
-                total = if (byo) 2 else 3,
+                index = 2,
+                total = 2,
                 modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 12.dp),
             )
         }
@@ -332,7 +343,11 @@ private fun BackChip(modifier: Modifier = Modifier, onClick: () -> Unit) {
 }
 
 @Composable
-private fun WelcomeStep(onChoose: (Boolean) -> Unit, onSkipToPair: () -> Unit) {
+private fun WelcomeStep(
+    onStart: () -> Unit,
+    onAdvanced: () -> Unit,
+    onSkipToPair: () -> Unit,
+) {
     StepScaffold(onBack = null) {
         Icon(
             Icons.Default.Rocket,
@@ -348,14 +363,12 @@ private fun WelcomeStep(onChoose: (Boolean) -> Unit, onSkipToPair: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
         )
-        Text("Are you bringing your own Emacs config?", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = { onChoose(false) }, modifier = Modifier.fillMaxWidth()) {
-            Text("No — set me up (recommended)")
+        Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+            Text("Set up Jetpacs")
         }
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = { onChoose(true) }, modifier = Modifier.fillMaxWidth()) {
-            Text("Yes — I manage my own init.el")
+        OutlinedButton(onClick = onAdvanced, modifier = Modifier.fillMaxWidth()) {
+            Text("Advanced setup")
         }
         Spacer(Modifier.height(24.dp))
         TextButton(onClick = onSkipToPair, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -365,24 +378,49 @@ private fun WelcomeStep(onChoose: (Boolean) -> Unit, onSkipToPair: () -> Unit) {
 }
 
 @Composable
-private fun TermuxStep(onAnswer: (Boolean) -> Unit, onBack: () -> Unit) {
-    // Reached only on the guided (non-BYO) path: step 1 of 3 (termux → deliver → pair).
-    StepScaffold(onBack = onBack, index = 1, total = 3) {
-        Text("Is Emacs sharing a signature with Termux?", style = MaterialTheme.typography.titleMedium)
+private fun AdvancedSetupStep(
+    onUseExistingConfig: () -> Unit,
+    onUseTermux: () -> Unit,
+    onBack: () -> Unit,
+) {
+    StepScaffold(onBack = onBack) {
+        Text("Advanced setup", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "If your Emacs APK is signed to share Termux's identity, it can run Termux's " +
-                "FOSS tools and boot from a single init.el in Termux's home. If you're not " +
-                "sure, you're probably not — choose \"No\".",
+            "Choose one of these only if you already manage your Emacs configuration " +
+                "or use a shared Termux environment.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
         )
-        Button(onClick = { onAnswer(true) }, modifier = Modifier.fillMaxWidth()) {
-            Text("Yes — redirect Emacs to Termux")
+        Button(onClick = onUseExistingConfig, modifier = Modifier.fillMaxWidth()) {
+            Text("Use my existing init.el")
         }
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = { onAnswer(false) }, modifier = Modifier.fillMaxWidth()) {
-            Text("No — standalone Emacs")
+        OutlinedButton(onClick = onUseTermux, modifier = Modifier.fillMaxWidth()) {
+            Text("Use a shared Termux home")
         }
+        Text(
+            "Most people do not need either option. Go back and choose Set up Jetpacs " +
+                "for the standard standalone configuration.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "The Termux option is for an Emacs APK signed to share Termux's identity.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun SetupProgressScaffold(
+    onBack: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    StepScaffold(onBack = onBack, index = 1, total = 2) {
+        content()
     }
 }
 
@@ -464,7 +502,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
         }
     }
 
-    StepScaffold(onBack = onBack, index = if (byo) 1 else 2, total = if (byo) 2 else 3) {
+    SetupProgressScaffold(onBack = onBack) {
         Text("Copy these onto your device", style = MaterialTheme.typography.headlineSmall)
         Text(
             "Jetpacs can't write into Emacs's private folders (Android sandboxing), so " +

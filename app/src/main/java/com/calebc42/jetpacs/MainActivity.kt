@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -271,10 +273,11 @@ private fun BridgeScreen() {
                 dashboardRecord.revision,
                 dispatch
             )
-            // Paired but Emacs is away: a discreet key to re-view the token
-            // (e.g. to pair a new machine) without wiping app data.
+            // Paired but Emacs is away: make the cached/offline state explicit
+            // and keep pairing details available without making the token the
+            // primary dashboard affordance.
             if (!connected) {
-                TokenReveal(modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp))
+                DisconnectedBanner(modifier = Modifier.align(Alignment.BottomCenter))
             }
         }
     }
@@ -402,7 +405,7 @@ internal fun PairingScreen(instructions: String = DEFAULT_PAIR_INSTRUCTIONS) {
 
 /**
  * The pairing token plus its ready-to-paste setq line (tap to copy). Shown on
- * the pairing screen and inside [TokenReveal]. Displaying it is no more
+ * the pairing screen and inside [DisconnectedBanner]. Displaying it is no more
  * exposed than the token already is in app-private prefs or the user's init —
  * its job is to keep OTHER APPS from completing the handshake, not to hide
  * from someone holding an unlocked phone.
@@ -441,31 +444,60 @@ internal fun PairingTokenBlock(modifier: Modifier = Modifier) {
 }
 
 /**
- * A compact "🔑 Pair" chip that opens the token in a dialog. Overlaid on the
- * dashboard only while Emacs is disconnected, so an already-paired user can
- * still retrieve the token (to pair another machine, or after editing init)
- * without clearing app data to force the pairing screen back.
+ * Snackbar-style connection status shown over cached content while Emacs is
+ * away. Pairing is available under Details, but the primary message is that
+ * the visible dashboard is saved content rather than a live connection.
  */
 @Composable
-private fun TokenReveal(modifier: Modifier = Modifier) {
+private fun DisconnectedBanner(modifier: Modifier = Modifier) {
     var show by remember { mutableStateOf(false) }
     Surface(
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        tonalElevation = 3.dp,
-        modifier = modifier.clickable { show = true }
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shadowElevation = 6.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        Text(
-            "🔑 Pair",
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                Icons.Default.Cable,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.inverseOnSurface,
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Emacs is offline",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                )
+                Text(
+                    "Showing saved content",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.75f),
+                )
+            }
+            TextButton(onClick = { show = true }) {
+                Text("Details", color = MaterialTheme.colorScheme.inversePrimary)
+            }
+        }
     }
     if (show) {
         Dialog(onDismissRequest = { show = false }) {
             Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Pair another Emacs", style = MaterialTheme.typography.titleMedium)
+                    Text("Connection details", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Jetpacs will reconnect automatically. To connect a new Emacs, " +
+                            "copy the pairing line below into its configuration.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
                     PairingTokenBlock(modifier = Modifier.padding(top = 12.dp))
                 }
             }

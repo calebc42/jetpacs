@@ -134,7 +134,7 @@ fun RadialMenu(
     val goBack: () -> Unit = {
         when {
             navStack.isNotEmpty() -> {
-                val (bindings, title) = navStack.removeLast()
+                val (bindings, title) = navStack.removeAt(navStack.lastIndex)
                 currentBindings = bindings
                 currentTitle = title
             }

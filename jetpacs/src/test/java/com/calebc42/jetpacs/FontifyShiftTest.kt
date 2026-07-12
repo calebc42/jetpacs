@@ -9,11 +9,12 @@ import org.junit.Test
  * survives the keystroke-to-fontify-push gap; [splice] feeds it. The cases
  * pin down the boundary conventions: a run the edit lands inside stretches
  * over typed text, a run ending exactly at the cursor does not, and a run
- * starting exactly at the cursor slides right.
+ * starting exactly at the cursor slides right. This test belongs beside the
+ * library internals it exercises so Kotlin's test friend path can access them.
  */
 class FontifyShiftTest {
     private fun run(b: Int, e: Int) = FontifyRun(
-        start = b, end = e, color = null,
+        start = b, end = e, color = null, bg = null,
         bold = false, italic = false, underline = false, strike = false,
     )
 

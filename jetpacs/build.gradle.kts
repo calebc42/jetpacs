@@ -57,4 +57,5 @@ dependencies {
     api(libs.androidx.compose.material3)
     api("androidx.compose.material:material-icons-extended")
     api("io.coil-kt:coil-compose:2.6.0")
+    testImplementation(libs.junit)
 }

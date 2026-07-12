@@ -77,6 +77,7 @@ androidComponents {
                 // orgzly-native, yours) distribute their own bundles from their
                 // own repos; the wizard teaches the download-and-adopt path.
                 rootProject.file("docs/starter-init.el"),
+                rootProject.file("docs/jetpacs-init.el"),
                 rootProject.file("jetpacs-core.el"),
                 rootProject.file("emacs/apps/jetpacs-hello.el"),
             )

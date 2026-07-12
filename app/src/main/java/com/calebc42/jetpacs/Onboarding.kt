@@ -67,15 +67,16 @@ import java.io.File
  * wall deploy.ps1 hits. So the wizard *generates* the files and hands them over
  * two ways:
  *
- *   - the small init snippets go on the clipboard to paste (well under the
- *     Android clipboard ceiling);
- *   - the jetpacs-core.el bundle (clipboard is hopeless) is written to
- *     /sdcard/Documents, the slot the starter init.el adopts from.
+ *   - the small init snippet (one seam line + the pairing token) goes on the
+ *     clipboard to paste (well under the Android clipboard ceiling);
+ *   - the foundation files — jetpacs-init.el (the managed entry point the
+ *     seam loads) and jetpacs-core.el (the bundle it adopts) — are written to
+ *     /sdcard/Documents as a pair, the slots the seam and entry point read.
  *
  * The companion onboards for the FOUNDATION only. Tier-1 apps (Glasspane,
  * orgzly-native, yours) distribute their own single-file bundles from their
- * own repos; the wizard explains the generic install path (download → the
- * init's adopt list) without shipping or naming any app.
+ * own repos; the wizard explains the generic install path (download → list
+ * it in ~/.emacs.d/jetpacs/apps.el) without shipping or naming any app.
  */
 private enum class OnbStep { WELCOME, ADVANCED, DELIVER, PAIR }
 
@@ -100,34 +101,27 @@ private const val EARLY_INIT_SNIPPET = """;; 1. REDIRECT HOME TO TERMUX
 (setenv "PATH" (concat "/data/data/com.termux/files/usr/bin:" (getenv "PATH")))
 (add-to-list 'exec-path "/data/data/com.termux/files/usr/bin")
 
-;; 3. SET CUSTOM FILE
-;; Ensure customization variables are written to the Termux directory
-(setq custom-file "/data/data/com.termux/files/home/.emacs.d/custom.el")
+;; (custom-file is set by the Jetpacs entry point, from this HOME.)
 
-;; DO NOT manually load init.el here. Emacs will naturally look for it 
+;; DO NOT manually load init.el here. Emacs will naturally look for it
 ;; in your new user-emacs-directory when it is safe to do so.
 """
 
-/** Minimal bootstrap for a user keeping their own init — just the essentials. */
-private fun byoSnippet(token: String): String = """;; Jetpacs companion bootstrap — add to your own init.el.
+/** Minimal bootstrap for a user keeping their own init — the one seam line. */
+private fun byoSnippet(token: String): String = """;; Jetpacs companion bootstrap — add near the TOP of your own init.el.
 ;;
-;; Adopts staged bundles from shared storage (this app installs
-;; jetpacs-core.el there; app bundles you download land in Download).
-;; Add each app's bundle file name to the list, then require its feature.
-(add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
-(dolist (bundle '("jetpacs-core.el"))   ; e.g. add "glasspane.el"
-  (let ((staged (seq-filter #'file-readable-p
-                            (list (concat "/sdcard/Documents/" bundle)
-                                  (concat "/sdcard/Download/" bundle))))
-        (installed (expand-file-name (concat "elisp/" bundle)
-                                     user-emacs-directory)))
-    (dolist (s staged)
-      (when (or (not (file-exists-p installed))
-                (file-newer-than-file-p s installed))
-        (make-directory (file-name-directory installed) t)
-        (copy-file s installed t)))))
-(require 'jetpacs-core)
-;; (require 'your-app)  ; after adding its bundle above
+;; One line loads Jetpacs's managed entry point (like `(load custom-file)`).
+;; First run copies it in from /sdcard/Documents (staged by this app); after
+;; that it self-updates. Everything Jetpacs manages lives under
+;; ~/.emacs.d/jetpacs/; install apps by listing them in jetpacs/apps.el.
+(let ((entry (expand-file-name "jetpacs/jetpacs-init.el" user-emacs-directory))
+      (staged "/sdcard/Documents/jetpacs-init.el"))
+  (when (and (file-readable-p staged)
+             (or (not (file-exists-p entry))
+                 (file-newer-than-file-p staged entry)))
+    (make-directory (file-name-directory entry) t)
+    (copy-file staged entry t))
+  (load entry t))
 (setq jetpacs-auth-token "$token")
 """
 
@@ -456,9 +450,11 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                 output.use {
                     it.write(readAsset(context, "jetpacs-core.el"))
                 }
+                // The seam still loads the entry file from Documents; stage it.
+                runCatching { installAssetToDocuments(context, "jetpacs-init.el") }
                 coreInstalled = true
-                "Saved. If the folder you chose isn't Documents or Download, edit init.el's " +
-                    "adopt paths to point there."
+                "Saved. The core bundle is adopted from Documents/Download — if you chose " +
+                    "another folder, move it there (or edit ~/.emacs.d/jetpacs/jetpacs-init.el)."
             } catch (e: Exception) {
                 "Save failed: ${e.message}"
             }
@@ -474,7 +470,14 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         installResult = if (granted) {
-            runCatching { installAssetToDocuments(context, pendingInstall) }
+            runCatching {
+                // The foundation is a pair: the entry file the seam loads, plus
+                // the core bundle it adopts. Stage both together.
+                if (pendingInstall == "jetpacs-core.el") {
+                    installAssetToDocuments(context, "jetpacs-init.el")
+                }
+                installAssetToDocuments(context, pendingInstall)
+            }
                 .fold(
                     {
                         if (pendingInstall == "jetpacs-core.el") coreInstalled = true
@@ -500,7 +503,13 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             pendingInstall = name
             storagePerm.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
-            installResult = runCatching { installAssetToDocuments(context, name) }
+            installResult = runCatching {
+                // Stage the entry file alongside the core bundle (the seam pair).
+                if (name == "jetpacs-core.el") {
+                    installAssetToDocuments(context, "jetpacs-init.el")
+                }
+                installAssetToDocuments(context, name)
+            }
                 .fold(
                     {
                         if (name == "jetpacs-core.el") coreInstalled = true
@@ -547,8 +556,8 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             number = stepNo++,
             title = if (byo) "Bootstrap → your init.el" else "Copy the starter configuration",
             body = if (byo) {
-                "You keep your own init — just add these lines (bundle adopt, require, " +
-                    "and your pairing token) somewhere in it."
+                "You keep your own init — just add these lines (the one-line Jetpacs " +
+                    "seam and your pairing token) near the top of it."
             } else {
                 "A complete starter init, with your pairing token already filled in. " +
                     "Paste it as your whole init.el."
@@ -623,9 +632,8 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                     Text(
                         "Apps for Jetpacs (like Glasspane) ship as single .el bundles from " +
                             "their own projects. Download one in your browser — it lands in " +
-                            "Download — then add its file name to the bundle list in your " +
-                            "init.el and restart Emacs. Each app's own instructions cover " +
-                            "the rest.",
+                            "Download — then add its file name to ~/.emacs.d/jetpacs/apps.el " +
+                            "and restart Emacs. Each app's own instructions cover the rest.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp),
                     )

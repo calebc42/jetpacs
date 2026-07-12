@@ -1,5 +1,15 @@
 # Plan: platform hardening — make jetpacs-core a foundation others build on
 
+**UPDATE (2026-07-12): Phase G appended — reopened for one hardening pass.**
+The plan below was completed 2026-07-09; **Phase G** (a foundation-owned
+`~/.emacs.d/jetpacs/` root + a one-line `init.el` seam) is a new,
+self-contained addition in the same "make jetpacs-core a foundation others
+build on" thesis. It is ~90% *formalizing* patterns already shipped
+(Glasspane's config-dir verbs, the `elisp/` adopt logic, the `after-init`
+connect hook) plus one genuine latent-bug fix — the multi-app isolation
+seams are clobberable top-level `setq`s. See **Phase G** at the bottom.
+Phase G status: **in progress (2026-07-12)**.
+
 **STATUS (2026-07-09): ALL PHASES DONE — this plan is complete.** Phase F
 (the repo split) executed 2026-07-09: this repo is the standalone
 jetpacs foundation + companion; Glasspane lives in
@@ -628,3 +638,200 @@ D leans on C's sizing/border for chart/canvas layout. E (14–15) runs in
 parallel throughout. One commit per task, `feat:`/`fix:` style; regen
 bundles + golden per the conventions above; build the app on any
 Kotlin-touching task before committing.
+
+---
+
+## Phase G — foundation-owned root + one-line init seam (appended 2026-07-12)
+
+**Why reopen a finished plan.** Doom Emacs raised the question: should
+Jetpacs abstract module/dependency loading? The answer landed as a *middle
+ground* — not Doom's takeover of `~/.emacs.d`, but a namespaced root Jetpacs
+owns (`~/.emacs.d/jetpacs/`) plus a single `init.el` seam line, analogous to
+`(load custom-file)`. If you use Jetpacs you are a Jetpacs user first, and
+the foundation should *structurally* own the handful of things a good UX
+depends on — without ever touching the user's own libraries or config.
+
+Grounding (verified 2026-07-12) showed this is mostly formalization:
+`~/.emacs.d/elisp/` is already a de-facto managed install dir
+(`starter-init.el` adopts bundles into it, newest-wins); `custom-file` is
+already parked safely at `~/.emacs.d/custom.el`; and `glasspane-config.el`
+already implements the full `sync`/`ensure`/`load` + DO-NOT-EDIT + soft-merge
+ownership contract. The one genuinely new thing is closing a latent bug.
+
+### The two design axes (write these into contributor docs)
+
+The design turns on separating two axes that were being conflated:
+
+1. **File-ownership tier** — who owns the *bytes on disk*:
+   `sync-overwrite` (regenerated freely, DO-NOT-EDIT banner) ·
+   `create-once` (written once, never clobbered) · `user` (never touched).
+   Reuses Glasspane's `sync`/`ensure`/`load` verbs verbatim.
+2. **Invariant class** — whether a *running user form* can break it:
+   **INVARIANT** = `defun` / registry-hash mutation / hook (setq-proof) ·
+   **DEFAULT** = `defcustom` (intentionally `setq`-overridable).
+
+**The axes are orthogonal.** "Jetpacs must own this" is encoded in *symbol
+type*, independent of which file tier the code ships in. The verified kicker:
+today's four isolation seams (`jetpacs-shell-view-filter-function`,
+`-chrome-filter-function`, `-view-resolver-function`,
+`jetpacs-settings-section-filter-function`) are plain top-level `setq`s
+(`jetpacs-apps.el:192/198/200/212`), so `(setq jetpacs-shell-view-filter-function nil)`
+anywhere after core loads silently defeats multi-app isolation. Putting the
+*file* in the sync tier would not help — the vulnerability is a live symbol.
+The fix is **lifecycle re-assertion**: `jetpacs-connect` already runs on
+`after-init-hook` (`jetpacs.el:521-523`), i.e. after the user's whole init;
+re-install the seam functions as its first step and a mid-init `setq` is
+overwritten before the first frame is served.
+
+### The target tree
+
+```
+~/.emacs.d/
+├── init.el            [user]        one seam line (near top) + pasted (setq jetpacs-auth-token …)
+├── custom.el          [user/once]   custom-file — STAYS here, OUTSIDE jetpacs/
+└── jetpacs/           ══ FOUNDATION ROOT (replaces the mis-named elisp/) ══
+    ├── jetpacs-init.el [sync]       entry file the seam loads; core self-heals it via VERSION
+    ├── VERSION         [sync]       stamp core checks before rewriting jetpacs-init.el
+    ├── apps.el         [once]       jetpacs-installed-bundles — user-editable app list
+    ├── user.el         [once]       override escape hatch, loaded LAST (user wins)
+    ├── lib/            [sync]       adopted flattened bundles, one require each
+    │   ├── jetpacs-core.el
+    │   └── glasspane.el
+    └── apps/<id>/                   per-app config subtrees (promotes elisp/glasspane/)
+        ├── *.el (managed) [sync]    jetpacs-app-config-sync overwrites (APP-MANAGED banner)
+        └── *.el (seeds)   [once]    jetpacs-app-config-ensure creates once (merge-by-key)
+```
+
+The steady-state seam (first executable form in `init.el`):
+
+```elisp
+(load (expand-file-name "jetpacs/jetpacs-init.el" user-emacs-directory) t)
+```
+
+First run needs a self-adopting wrapper because the companion is a separate
+UID and *cannot* write into the Emacs/Termux sandbox (`Onboarding.kt:64-74`)
+— it only stages to `/sdcard`. So the wizard pastes a form that copies the
+staged entry file in once, then loads it; thereafter core self-heals it via a
+`VERSION` stamp, so the user's `init.el` never changes again.
+
+### Two data-loss traps (both easy to get wrong — call them out)
+
+1. **The installed-app list is `create-once` (`apps.el`), never `sync`.** If
+   regenerated, a refresh wipes user-added third-party apps *and* installing a
+   downloaded bundle would mean hand-editing a DO-NOT-EDIT file the companion
+   can't restage. `apps.el` is the faithful successor of today's user-edited
+   `dolist` (`starter-init.el:23`).
+2. **`custom-file` stays outside `jetpacs/`, plus a new guard.** A phone
+   Settings save is `customize-save-variable` rewriting whatever `custom-file`
+   names and reporting success *blind to the dir's sync policy*
+   (`jetpacs-settings.el:79-98`) — so `custom-file` under a sync dir = silent
+   revert on every restart.
+
+### Task 17: `jetpacs-config.el` — the foundation-owned root + app-config verbs
+
+**Goal:** one core module owns the root paths and generalizes Glasspane's
+config-dir contract, keyed by app-id.
+
+**Files:** new `emacs/core/jetpacs-config.el` (add to `build-bundle.el`
+`core-files` immediately after `core/jetpacs.el`).
+
+**Implementation:** `jetpacs-root` / `jetpacs-lib-dir` defconsts;
+`jetpacs-app-dir` (keyed by the same app-id as views `ID.*` and UI-state
+`"ID."`); `jetpacs-app-config-{sync,ensure,load}` promoted from
+`glasspane-config.el` — `sync` overwrites `(FILENAME . CONTENT)` files then
+loads; `load` loads every `.el` in name order, error-guarded; `ensure` is
+create-once then load. No per-app version/deps manifest (none exists today; a
+`;; Jetpacs-Bundle: FEATURE KIND VER` header covers require-ordering).
+
+**Acceptance:** batch ERT for `sync`/`ensure`/`load` (sync overwrites; ensure
+seeds once then only loads; missing subtree is a no-op); bundle rebuilds.
+
+### Task 18: Structural invariants + custom-file guard + api bump
+
+**Goal:** make the isolation seams `setq`-proof and close the settings-save
+data-loss window.
+
+**Files:** `jetpacs-apps.el`, `jetpacs.el`, `jetpacs-settings.el`.
+
+**Implementation:** add `jetpacs-before-connect-hook` (defvar in `jetpacs.el`)
+and `(run-hooks 'jetpacs-before-connect-hook)` as the first form of
+`jetpacs-connect`. Convert the four isolation `setq`s into an idempotent
+`jetpacs--install-invariants`; call it at load time and register it on the
+hook (so it re-asserts after all user init). Give the seam vars "internal —
+do not set" docstrings (no defcustom, no Settings entry). Add a
+`display-warning :error` (once) in `jetpacs-settings-save-variable` if
+`custom-file` resolves under `jetpacs-root`. Bump `jetpacs-api-version`
+1.2.0 → 1.3.0 (additive).
+
+**Pitfalls:** the settings-section filter var loads *after* `jetpacs-apps.el`
+in the bundle — keep the `with-eval-after-load 'jetpacs-settings` initial set,
+and guard the installer's settings line with `boundp`.
+
+**Acceptance:** a test that `setq`s a seam var to nil, runs
+`jetpacs-before-connect-hook`, and asserts it's restored; the custom-file
+guard fires for a path under `jetpacs-root` and not for `~/.emacs.d/custom.el`.
+
+### Task 19: The seam — `jetpacs-init.el`, VERSION self-heal, starter-init rewrite
+
+**Goal:** shrink `init.el` to one line; move the boilerplate into a
+Jetpacs-owned, self-healing entry file.
+
+**Files:** new `jetpacs-init.el` (staged asset + written under `jetpacs/`);
+`jetpacs-apply-foundation-defaults` + the VERSION self-heal writer in core;
+rewrite `docs/starter-init.el`; define the `apps.el` (`jetpacs-installed-bundles`)
+format; on-device migration shim.
+
+**Implementation:** load order inside `jetpacs-init.el` — `load-path += lib/`
+→ adopt+`(require 'jetpacs-core)` (hardcoded, NOT in `apps.el`, so an app-list
+edit can't disable the foundation) → load `apps.el` then adopt+require each
+app → `jetpacs-apply-foundation-defaults` (the old starter-init touch/hygiene
+body, now defcustom-backed) → `custom.el` → `user.el` → return to user init →
+`after-init` connect re-asserts invariants. Migration shim (idempotent,
+guarded by `jetpacs/lib/jetpacs-core.el` existing): copy `elisp/` bundles →
+`lib/`, move `elisp/glasspane/` → `apps/glasspane/`, leave `custom.el` and
+`elisp/` untouched.
+
+**Acceptance:** on-device — fresh whole-init paste, BYO stanza-append, a phone
+Settings save survives restart, a `user.el` override beats a default, and a
+broken `user.el` does NOT stop the bridge (proves the after-init structural
+boot). Batch-testable: the migration shim is idempotent.
+
+### Task 20: Onboarding wizard
+
+**Goal:** deliver the seam through the wizard's clipboard/stage model.
+
+**Files:** `app/src/main/java/com/calebc42/jetpacs/Onboarding.kt`.
+
+**Implementation:** stage `jetpacs-init.el` to `/sdcard/Documents` alongside
+the core bundle; fresh path pastes an `init.el` whose first form is the seam;
+collapse `byoSnippet` to the first-run seam form + token; drop the emitted
+`custom-file` line (the entry file sets the default); "Get apps" card copy →
+"add it to `~/.emacs.d/jetpacs/apps.el`". Build `:app` before committing.
+
+**Acceptance:** the wizard writes both staged files; the pasted snippets load
+cleanly on a fresh Emacs and a BYO Emacs.
+
+### Task 21: Rebase Glasspane onto the core verbs (Glasspane repo)
+
+**Goal:** the reference app uses the promoted foundation contract.
+
+**Files:** Glasspane repo (`~/pkb/projects/Glasspane`) `glasspane-config.el`.
+
+**Implementation:** call `(jetpacs-app-config-ensure "glasspane" glasspane-config--files)`
+rooted at `(jetpacs-app-dir "glasspane")` instead of the hardcoded
+`elisp/glasspane/`; wrap `jetpacs-defapp` + `config-ensure` in
+`with-jetpacs-owner "glasspane"`; ship the bundle to `jetpacs/lib/glasspane.el`;
+add `glasspane` to a sample `apps.el`. **Bundles must upgrade together.**
+
+**Acceptance:** Glasspane's config seeds into `jetpacs/apps/glasspane/`; the
+app registers and its views/chrome/settings scope correctly under the id.
+
+### Sequencing
+
+17 → 18 are the self-contained core increment (testable headless on the dev
+machine, no device). 19 is the user-facing seam; 20 delivers it; 21 migrates
+the reference app. 18's invariant fix is worth doing regardless of the
+directory work — it fixes a real isolation bug. One commit per task; regen the
+bundle (`emacs --batch -l emacs/build-bundle.el`) on any core touch; build
+`:app` on the Kotlin task. Bundles upgrade together (per the multi-app
+isolation contract).

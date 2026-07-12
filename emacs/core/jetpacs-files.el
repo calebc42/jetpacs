@@ -46,6 +46,24 @@ full listing — the same view you get from the Buffers tab on its dired
 buffer — instead of a separate shortcut screen."
   :type 'directory :group 'jetpacs)
 
+(defcustom jetpacs-files-shared-storage 'auto
+  "How the Files browser exposes Android shared storage (/sdcard).
+Emacs's HOME is a private per-app sandbox, so /sdcard is otherwise
+unreachable from the Files tab even though the phone and the rest of the
+platform live there.  When `auto' (the default) the browser probes for the
+device's primary shared-storage directory and, if it is accessible, offers a
+one-tap shortcut to it from the landing view — the standalone counterpart to
+what Termux's `termux-setup-storage' arranges via ~/storage/shared.  A
+string names an explicit directory to expose instead; nil disables the
+shortcut entirely.
+
+Access still depends on Emacs holding the storage permission: when it does
+not, no directory is accessible and the shortcut simply does not appear."
+  :type '(choice (const :tag "Auto-detect /sdcard" auto)
+                 (const :tag "Disabled" nil)
+                 (directory :tag "Explicit path"))
+  :group 'jetpacs)
+
 (defcustom jetpacs-files-max-bytes (* 256 1024)
   "Files larger than this open read-only.
 Editor saves travel inside a broadcast intent on the companion side,
@@ -107,6 +125,71 @@ the phone can trigger."
     (cl-some (lambda (root)
                (file-in-directory-p full (expand-file-name (cdr root))))
              jetpacs-files-roots)))
+
+;; ─── Shared storage (/sdcard) ────────────────────────────────────────────────
+;;
+;; Emacs runs in a private sandbox whose HOME is nowhere near /sdcard, so a
+;; standalone (non-Termux) install can't browse to the shared storage where the
+;; phone, downloaded app bundles, and org files all live.  Termux users get
+;; ~/storage/shared from `termux-setup-storage'; this gives everyone the same
+;; reach, without requiring Termux — but only when Emacs actually holds the
+;; storage permission (else the directory isn't accessible and we stay quiet).
+
+(defun jetpacs-files--detect-shared-dir ()
+  "Detect the primary shared-storage directory, or nil.
+Honours `jetpacs-files-shared-storage'.  For `auto', returns the first of the
+usual Android locations that exists and is readable; a string is taken as an
+explicit directory (still gated on accessibility)."
+  (pcase jetpacs-files-shared-storage
+    ('nil nil)
+    ((and (pred stringp) dir)
+     (and (file-accessible-directory-p dir) (file-name-as-directory dir)))
+    (_
+     (cl-some (lambda (d)
+                (and d (file-accessible-directory-p d) (file-name-as-directory d)))
+              (list (getenv "EXTERNAL_STORAGE")
+                    "/sdcard"
+                    "/storage/emulated/0"
+                    "/storage/self/primary")))))
+
+(defvar jetpacs-files--shared-dir 'unset
+  "Memoized `jetpacs-files-shared-dir' result — a directory, nil, or the
+`unset' sentinel before first detection.")
+
+(defun jetpacs-files-shared-dir ()
+  "The shared-storage directory the Files browser exposes, or nil.
+Detected once (see `jetpacs-files--detect-shared-dir').  On first successful
+detection the directory is also added to `jetpacs-files-roots', so navigation
+and file operations there clear the within-root guard — this is what widens
+the sandbox to reach /sdcard.  Returns nil (adding nothing) when no shared
+storage is accessible, so the feature degrades silently without it."
+  (when (eq jetpacs-files--shared-dir 'unset)
+    (setq jetpacs-files--shared-dir (jetpacs-files--detect-shared-dir))
+    (when jetpacs-files--shared-dir
+      (add-to-list 'jetpacs-files-roots
+                   (cons "Storage" jetpacs-files--shared-dir) t)))
+  jetpacs-files--shared-dir)
+
+(defun jetpacs-files--shared-storage-card ()
+  "Shortcut card to shared storage for the Files landing view, or nil.
+Shown only at the landing directory, when shared storage is accessible and is
+not itself the landing — one tap to the /sdcard tree Termux exposes at
+~/storage/shared."
+  (when-let (((null jetpacs-files--dir))
+             (shared (jetpacs-files-shared-dir)))
+    (unless (file-equal-p shared (jetpacs-files--current-dir))
+      (jetpacs-card
+       (list (jetpacs-row
+              (jetpacs-icon "sd_storage")
+              (jetpacs-box (list (jetpacs-column
+                               (jetpacs-text "Shared storage" 'body)
+                               (jetpacs-text (abbreviate-file-name
+                                           (directory-file-name shared))
+                                          'caption)))
+                        :weight 1)
+              (jetpacs-icon "chevron_right")))
+       :on-tap (jetpacs-action "files.cd"
+                            :args `((dir . ,(directory-file-name shared))))))))
 
 (defun jetpacs-files--entry-menu (path)
   "Overflow menu of single-file operations for PATH.
@@ -199,10 +282,12 @@ There is no separate roots screen — the view always shows a directory
 \(`jetpacs-files--current-dir'), so it matches the Buffers-tab listing.
 While content-search results exist, a re-entry card heads the list."
   (let ((buf (jetpacs-files--dired-buffer (jetpacs-files--current-dir)))
-        (results-card (jetpacs-files--grep-results-card)))
+        (results-card (jetpacs-files--grep-results-card))
+        (shared-card (jetpacs-files--shared-storage-card)))
     (if buf
         (apply #'jetpacs-lazy-column
                (append (and results-card (list results-card))
+                       (and shared-card (list shared-card))
                        (jetpacs-render-buffer buf)))
       (jetpacs-empty-state :icon "info"
                         :title "Can't open folder"

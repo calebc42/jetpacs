@@ -247,10 +247,10 @@ detail views outside the Files tab attach it the same way.
 
 ### 6. Settings
 
-The foundation already provides the settings screen: a stock
-`"settings"` view (reached from the drawer) that renders every
-registered section and satellite link. You register content, not
-chrome:
+The foundation provides two drawer destinations: native **Jetpacs
+Settings**, which works offline, and the stock `"settings"` view under
+**Emacs Settings**, which renders every registered section and satellite
+link. You register content, not chrome:
 
 - `(jetpacs-settings-register-section TITLE ENTRIES)` exposes
   defcustoms; they appear on the stock screen rendered from their
@@ -259,11 +259,17 @@ chrome:
   the schema, and persistence goes through Customize. Register
   cache-invalidation on `jetpacs-settings-after-set-hook`.
 - `(jetpacs-settings-add-link ORDER BUILDER)` adds a navigation card to
-  a satellite screen (a package browser, a device page) under the
-  trailing "Emacs" section.
+  a satellite screen (Customize, a package browser, tools) under the
+  trailing "Emacs Settings" section.
+- `(jetpacs-settings-add-native-link ORDER BUILDER)` adds a card to
+  the leading "Jetpacs Settings" section. Its action should be a local
+  builtin so Android configuration remains reachable with Emacs offline;
+  `jetpacs-native-settings-action` opens the
+  stock native destination.
 
-The screen ships with the foundation's own "Bridge" section
-(theme mirroring, dialog style, auto-reconnect). Register your sections
+The screen ships with native Jetpacs Settings and an Emacs Settings group
+whose Bridge subsection contains theme mirroring, dialog style, and
+auto-reconnect. Register your sections
 under `with-jetpacs-owner` (§7): owned sections and links show only while
 your app is current, so two apps' settings never interleave.
 
@@ -278,7 +284,7 @@ appearing:
                (jetpacs-settings-sections)))
 ```
 
-The stock Settings drawer entry resolves to `"<appid>.settings"` while
+The Emacs Settings drawer entry resolves to `"<appid>.settings"` while
 your app is current (`jetpacs-shell-resolve-view`), so you register no
 drawer entry and never touch the stock view. Do **not** redefine the
 stock `"settings"` view by name — with several apps loaded, the last

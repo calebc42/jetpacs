@@ -194,7 +194,9 @@ UI: the app-launch picker, the permissions screen — jetpacs-device.el).
 `action` is handled on-device and works with Emacs dead:
 `{"builtin": "view.switch", "view": v}` (flips a multi-view surface, then
 informs the client with a drop-policy `view.switched` event) and
-`{"builtin": "clipboard.copy", "text": s}`.
+`{"builtin": "clipboard.copy", "text": s}`, and
+`{"builtin": "jetpacs.settings.open"}` (opens Android-owned Jetpacs settings
+for permissions, notifications, offline state, pairing, and diagnostics).
 
 ## 6. Offline queue
 

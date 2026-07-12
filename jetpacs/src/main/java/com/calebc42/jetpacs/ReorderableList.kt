@@ -81,12 +81,12 @@ fun ReorderableList(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
-        itemsIndexed(items, key = { _, item -> "${item.pos}_${item.file}" }) { index, item ->
+        itemsIndexed(items, key = { index, item -> "${item.pos}_${item.file}_$index" }) { index, item ->
             val isDragged = draggedIndex == index
 
             // Calculate visual level for horizontal drag feedback
             val visualLevel = if (isDragged) {
-                (dragOriginalLevel + (dragOffsetX / levelStepPx).toInt()).coerceIn(1, 10)
+                (dragOriginalLevel + (dragOffsetX / levelStepPx).toInt()).coerceIn(0, 10)
             } else {
                 item.level
             }
@@ -96,7 +96,7 @@ fun ReorderableList(
                 label = "drag_elevation"
             )
 
-            val startPadding = ((visualLevel - 1) * 24).dp
+            val startPadding = (visualLevel * 24).dp
 
             Column(
                 modifier = Modifier

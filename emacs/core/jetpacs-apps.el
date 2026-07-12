@@ -46,6 +46,29 @@ PLIST keys: :label :icon :views (list of shell view names) :order.")
 (defvar jetpacs-apps--current nil
   "Id of the app whose views are currently shown, or nil for the first.")
 
+(defcustom jetpacs-apps-show-vanilla-app t
+  "When non-nil, register Jetpacs itself as an app in the launcher.
+Disable this if you start adding more apps and want the core views (Buffers, Tools, etc.)
+to show up in those apps instead of being isolated in a 'Jetpacs' app."
+  :type 'boolean
+  :group 'jetpacs
+  :set (lambda (sym val)
+         (set-default sym val)
+         (if (fboundp 'jetpacs-apps--update-vanilla)
+             (jetpacs-apps--update-vanilla))))
+
+(defun jetpacs-apps--update-vanilla ()
+  "Register or unregister the vanilla Jetpacs app based on settings."
+  (if jetpacs-apps-show-vanilla-app
+      (jetpacs-defapp "jetpacs" :label "Jetpacs" :icon "rocket_launch"
+                      :views '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize")
+                      :order 900)
+    ;; Unregister manually to avoid tearing down the core views entirely.
+    (dolist (v '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize"))
+      (jetpacs--unclaim "view" v))
+    (jetpacs-apps-remove "jetpacs")))
+
+
 (cl-defun jetpacs-defapp (id &key label icon views (order 100))
   "Register (or replace) app ID grouping VIEWS (shell view names).
 LABEL and ICON draw the app's launcher-home card; the first :tab view
@@ -103,10 +126,27 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
     (setq jetpacs-settings-links
           (cl-remove-if (lambda (e) (equal (cddr e) id))
                         jetpacs-settings-links)))
+  (when (boundp 'jetpacs-settings-native-links)
+    (setq jetpacs-settings-native-links
+          (cl-remove-if (lambda (e) (equal (cddr e) id))
+                        jetpacs-settings-native-links)))
   (setf (alist-get id jetpacs-apps--fabs nil t #'equal) nil)
   ;; Drop UI-state and its subscriptions keyed under the app's id prefix.
   (jetpacs-ui-state-clear (concat id "."))
   (jetpacs-on-state-change-clear (concat id "."))
+  ;; Surfaces
+  (dolist (name (jetpacs--owned-names "surface" id))
+    (jetpacs-surface-remove name)
+    (jetpacs--unclaim "surface" name))
+  ;; Triggers (batch to avoid N redundant pushes)
+  (let ((trigger-names (jetpacs--owned-names "trigger" id)))
+    (dolist (name trigger-names)
+      (remhash name jetpacs-triggers--table)
+      (jetpacs--unclaim "trigger" name))
+    (when trigger-names
+      (jetpacs-triggers-push)
+      (when (boundp 'jetpacs-triggers-changed-hook)
+        (run-hooks 'jetpacs-triggers-changed-hook))))
   (jetpacs-apps-remove id)
   (jetpacs-shell--schedule-repush)
   id)
@@ -247,6 +287,13 @@ on another app's views."
           (if tab
               (jetpacs-shell-push tab :switch-to tab)
             (jetpacs-shell-push)))))))
+
+(with-eval-after-load 'jetpacs-settings
+  (jetpacs-settings-register-section
+   "Jetpacs System"
+   '((jetpacs-apps-show-vanilla-app :label "Show Jetpacs in App drawer"))))
+
+(jetpacs-apps--update-vanilla)
 
 (provide 'jetpacs-apps)
 ;;; jetpacs-apps.el ends here

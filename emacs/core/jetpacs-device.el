@@ -294,20 +294,21 @@ refreshes on the next reconnect after granting."
       (jetpacs-dismiss-dialog)
       (jetpacs-device-settings-open panel))))
 
-;; Entry point: a card on the settings screen (satellite contract).
+;; Entry point: native Jetpacs settings. The builtin is intentionally
+;; local so permissions and Android configuration remain reachable offline.
 (with-eval-after-load 'jetpacs-settings
-  (jetpacs-settings-add-link
-   18 (lambda ()
+  (jetpacs-settings-add-native-link
+   0 (lambda ()
         (jetpacs-card
          (list (jetpacs-row
-                (jetpacs-icon "key")
+                (jetpacs-icon "settings")
                 (jetpacs-box (list (jetpacs-column
-                                 (jetpacs-text "Device permissions" 'label)
-                                 (jetpacs-text "Grant special access for effectors and triggers"
+                                 (jetpacs-text "Open Jetpacs settings" 'label)
+                                 (jetpacs-text "Android access, notifications, offline data, pairing"
                                             'caption)))
                           :weight 1)
                 (jetpacs-icon "chevron_right")))
-         :on-tap (jetpacs-action "device.perms" :when-offline "drop")))))
+         :on-tap (jetpacs-native-settings-action)))))
 
 (provide 'jetpacs-device)
 ;;; jetpacs-device.el ends here

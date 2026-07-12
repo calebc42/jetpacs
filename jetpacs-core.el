@@ -1224,6 +1224,10 @@ Handled entirely on-device (like the `view.switch' builtin) — no
 round-trip to Emacs, works offline."
   (jetpacs--node nil 'builtin "clipboard.copy" 'text text))
 
+(defun jetpacs-native-settings-action ()
+  "Open native Jetpacs settings, even while Emacs is offline."
+  (jetpacs--node nil 'builtin "jetpacs.settings.open"))
+
 (cl-defun jetpacs-button (label action &key icon variant weight padding)
   "A button. VARIANT is filled/outlined/text/tonal."
   (jetpacs--node "button"
@@ -2125,6 +2129,7 @@ so one bad subtree degrades instead of blanking the whole push."
 
 (defun jetpacs-surface-push (surface spec &optional ttl-s stale-spec current-view)
   "Send SURFACE with an auto-incremented monotonic revision."
+  (jetpacs--claim "surface" surface)
   (jetpacs-surface-update surface (jetpacs--next-revision) spec ttl-s stale-spec current-view))
 
 (defun jetpacs-surface-remove (surface)
@@ -2386,6 +2391,7 @@ Re-registering an existing ID replaces it."
     (error "Trigger id must be a non-empty string"))
   (unless (stringp type)
     (error "Trigger %s needs a :type string" id))
+  (jetpacs--claim "trigger" id)
   (puthash id (list :type type :params params :policy policy
                     :dedupe dedupe :throttle-s throttle-s
                     :on-fire on-fire :handler handler)
@@ -2409,6 +2415,7 @@ name.  Re-evaluating replaces the registration and re-pushes the set:
 (defun jetpacs-trigger-unregister (id)
   "Remove trigger ID and push the updated set (so it can never fire stale)."
   (remhash id jetpacs-triggers--table)
+  (jetpacs--unclaim "trigger" id)
   (jetpacs-triggers-push)
   (run-hooks 'jetpacs-triggers-changed-hook))
 
@@ -2859,20 +2866,21 @@ refreshes on the next reconnect after granting."
       (jetpacs-dismiss-dialog)
       (jetpacs-device-settings-open panel))))
 
-;; Entry point: a card on the settings screen (satellite contract).
+;; Entry point: native Jetpacs settings. The builtin is intentionally
+;; local so permissions and Android configuration remain reachable offline.
 (with-eval-after-load 'jetpacs-settings
-  (jetpacs-settings-add-link
-   18 (lambda ()
+  (jetpacs-settings-add-native-link
+   0 (lambda ()
         (jetpacs-card
          (list (jetpacs-row
-                (jetpacs-icon "key")
+                (jetpacs-icon "settings")
                 (jetpacs-box (list (jetpacs-column
-                                 (jetpacs-text "Device permissions" 'label)
-                                 (jetpacs-text "Grant special access for effectors and triggers"
+                                 (jetpacs-text "Open Jetpacs settings" 'label)
+                                 (jetpacs-text "Android access, notifications, offline data, pairing"
                                             'caption)))
                           :weight 1)
                 (jetpacs-icon "chevron_right")))
-         :on-tap (jetpacs-action "device.perms" :when-offline "drop")))))
+         :on-tap (jetpacs-native-settings-action)))))
 
 (provide 'jetpacs-device)
 ;;; jetpacs-device.el ends here
@@ -4777,7 +4785,7 @@ passes `jetpacs-shell-chrome-filter-function'."
                                                    (funcall (cadr e))))
                                                jetpacs-shell-top-actions)))))
 
-(cl-defun jetpacs-shell-tab-view (name body &key top-bar (fab nil fab-given) snackbar)
+(cl-defun jetpacs-shell-tab-view (name body &key top-bar (fab nil fab-given) snackbar snackbar-action floating-toolbar)
   "A standard tab view: drawer, bottom bar, pull-to-refresh, default chrome.
 NAME selects the bottom-bar highlight; BODY is the content node.  TOP-BAR
 defaults to `jetpacs-shell-default-top-bar' on the capitalized name.  When FAB
@@ -4791,13 +4799,15 @@ explicit nil to render no FAB."
                    :bottom-bar (jetpacs-shell-bottom-bar name)
                    :drawer (jetpacs-shell-drawer)
                    :snackbar snackbar
+                   :snackbar-action snackbar-action
+                   :floating-toolbar floating-toolbar
                    ;; Tab views support pull-to-refresh; navigation/detail
                    ;; views don't (a stray pull mustn't rebuild them).
                    :on-refresh (jetpacs-action "dashboard.refresh"
                                             :when-offline "drop"))))))
 
 (cl-defun jetpacs-shell-nav-view (title body &key back-to nav-action actions
-                                     fab snackbar bottom-bar floating-toolbar)
+                                     fab snackbar snackbar-action bottom-bar floating-toolbar)
   "A navigation view: back arrow in the top bar, no tabs or drawer.
 BACK-TO names the view the arrow switches to (default: the current tab)
 as a companion-local switch; NAV-ACTION overrides it with an explicit
@@ -4814,6 +4824,7 @@ action descriptor.  ACTIONS are trailing top-bar buttons."
                    :body body
                    :fab fab
                    :snackbar snackbar
+                   :snackbar-action snackbar-action
                    :bottom-bar bottom-bar
                    :floating-toolbar floating-toolbar)))))
 
@@ -4984,7 +4995,7 @@ Never nest this node inside another scroll container."
 
 (defun jetpacs-shell--settings-view (snackbar)
   "The stock settings screen (see `jetpacs-shell-settings-body')."
-  (jetpacs-shell-nav-view "Settings" (jetpacs-shell-settings-body)
+  (jetpacs-shell-nav-view "Emacs Settings" (jetpacs-shell-settings-body)
                        :snackbar snackbar))
 
 (with-eval-after-load 'jetpacs-settings
@@ -4998,12 +5009,16 @@ Never nest this node inside another scroll container."
      (jetpacs-dialog-style :label "Dialog style")
      (jetpacs-reconnect :label "Auto-reconnect")))
   (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
-  ;; Everyday nav: the one affordance for the screen, between the Apps
-  ;; entry (5) and the shell's own Refresh (70).  Resolved per app: an
-  ;; app with its own "<appid>.settings" view gets it targeted here.
+  ;; Two explicit settings domains. Jetpacs Settings is companion-local and
+  ;; always works offline; Emacs Settings resolves through the current Tier 1
+  ;; so its own defcustom-backed preferences remain part of that screen.
+  (jetpacs-shell-add-drawer-item
+   59 (lambda ()
+        (jetpacs-drawer-item "settings" "Jetpacs Settings"
+                          (jetpacs-native-settings-action))))
   (jetpacs-shell-add-drawer-item
    60 (lambda ()
-        (jetpacs-drawer-item "settings" "Settings"
+        (jetpacs-drawer-item "tune" "Emacs Settings"
                           (jetpacs-shell-switch-view
                            (jetpacs-shell-resolve-view "settings"))))))
 
@@ -5075,6 +5090,29 @@ PLIST keys: :label :icon :views (list of shell view names) :order.")
 (defvar jetpacs-apps--current nil
   "Id of the app whose views are currently shown, or nil for the first.")
 
+(defcustom jetpacs-apps-show-vanilla-app t
+  "When non-nil, register Jetpacs itself as an app in the launcher.
+Disable this if you start adding more apps and want the core views (Buffers, Tools, etc.)
+to show up in those apps instead of being isolated in a 'Jetpacs' app."
+  :type 'boolean
+  :group 'jetpacs
+  :set (lambda (sym val)
+         (set-default sym val)
+         (if (fboundp 'jetpacs-apps--update-vanilla)
+             (jetpacs-apps--update-vanilla))))
+
+(defun jetpacs-apps--update-vanilla ()
+  "Register or unregister the vanilla Jetpacs app based on settings."
+  (if jetpacs-apps-show-vanilla-app
+      (jetpacs-defapp "jetpacs" :label "Jetpacs" :icon "rocket_launch"
+                      :views '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize")
+                      :order 900)
+    ;; Unregister manually to avoid tearing down the core views entirely.
+    (dolist (v '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize"))
+      (jetpacs--unclaim "view" v))
+    (jetpacs-apps-remove "jetpacs")))
+
+
 (cl-defun jetpacs-defapp (id &key label icon views (order 100))
   "Register (or replace) app ID grouping VIEWS (shell view names).
 LABEL and ICON draw the app's launcher-home card; the first :tab view
@@ -5132,10 +5170,27 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
     (setq jetpacs-settings-links
           (cl-remove-if (lambda (e) (equal (cddr e) id))
                         jetpacs-settings-links)))
+  (when (boundp 'jetpacs-settings-native-links)
+    (setq jetpacs-settings-native-links
+          (cl-remove-if (lambda (e) (equal (cddr e) id))
+                        jetpacs-settings-native-links)))
   (setf (alist-get id jetpacs-apps--fabs nil t #'equal) nil)
   ;; Drop UI-state and its subscriptions keyed under the app's id prefix.
   (jetpacs-ui-state-clear (concat id "."))
   (jetpacs-on-state-change-clear (concat id "."))
+  ;; Surfaces
+  (dolist (name (jetpacs--owned-names "surface" id))
+    (jetpacs-surface-remove name)
+    (jetpacs--unclaim "surface" name))
+  ;; Triggers (batch to avoid N redundant pushes)
+  (let ((trigger-names (jetpacs--owned-names "trigger" id)))
+    (dolist (name trigger-names)
+      (remhash name jetpacs-triggers--table)
+      (jetpacs--unclaim "trigger" name))
+    (when trigger-names
+      (jetpacs-triggers-push)
+      (when (boundp 'jetpacs-triggers-changed-hook)
+        (run-hooks 'jetpacs-triggers-changed-hook))))
   (jetpacs-apps-remove id)
   (jetpacs-shell--schedule-repush)
   id)
@@ -5276,6 +5331,13 @@ on another app's views."
           (if tab
               (jetpacs-shell-push tab :switch-to tab)
             (jetpacs-shell-push)))))))
+
+(with-eval-after-load 'jetpacs-settings
+  (jetpacs-settings-register-section
+   "Jetpacs System"
+   '((jetpacs-apps-show-vanilla-app :label "Show Jetpacs in App drawer"))))
+
+(jetpacs-apps--update-vanilla)
 
 (provide 'jetpacs-apps)
 ;;; jetpacs-apps.el ends here
@@ -7963,13 +8025,19 @@ name under `name' — the settings screen uses the registry-gated
   (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
 (defvar jetpacs-settings-links nil
-  "Ordered list of (ORDER BUILDER . OWNER) navigation entries for the settings screen.
+  "Ordered list of (ORDER BUILDER . OWNER) Emacs navigation entries.
 BUILDER is a nullary function returning a node (usually a tappable card
-leading to another screen).  Apps register their satellite screens here
-— the package browser, the customize browser — instead of each claiming
-a drawer slot; `jetpacs-settings-sections' renders them under a trailing
-\"Emacs\" section.  OWNER is the `jetpacs-current-owner' captured at
+leading to another screen). Apps register satellite screens here—the
+package browser, Customize, tools—instead of each claiming a drawer slot;
+`jetpacs-settings-sections' renders them under \"Emacs Settings\".
+OWNER is the `jetpacs-current-owner' captured at
 registration (nil = core).")
+
+(defvar jetpacs-settings-native-links nil
+  "Ordered native Jetpacs entries rendered before Emacs settings.
+These actions must be local builtins so Android configuration
+remains reachable while Emacs is disconnected. Entries have the same
+(ORDER BUILDER . OWNER) shape and ownership filtering as `jetpacs-settings-links'.")
 
 (defun jetpacs-settings-add-link (order builder)
   "Add BUILDER (a nullary node builder) to the settings screen at ORDER.
@@ -7979,6 +8047,16 @@ and shown only while it is current (once a second app exists)."
         (sort (cons (cons order (cons builder
                                       (bound-and-true-p jetpacs-current-owner)))
                     jetpacs-settings-links)
+              (lambda (a b) (< (car a) (car b))))))
+
+(defun jetpacs-settings-add-native-link (order builder)
+  "Add native Jetpacs settings BUILDER at ORDER.
+The card renders under \"Jetpacs Settings\" before Emacs-owned preferences.
+BUILDER should dispatch a local builtin."
+  (setq jetpacs-settings-native-links
+        (sort (cons (cons order (cons builder
+                                      (bound-and-true-p jetpacs-current-owner)))
+                    jetpacs-settings-native-links)
               (lambda (a b) (< (car a) (car b))))))
 
 (defvar jetpacs-settings-section-filter-function nil
@@ -8000,24 +8078,33 @@ blank the settings screen."
         (error t))))
 
 (defun jetpacs-settings-sections ()
-  "Flat list of nodes rendering every registry section, then the links.
+  "Flat list of native Jetpacs settings followed by Emacs settings.
 Sections and links attributed to an app (registered under
 `with-jetpacs-owner') render only while that app passes
 `jetpacs-settings-section-filter-function'."
-  (append
-   (cl-loop for (title . entries) in jetpacs-settings-registry
-            when (jetpacs-settings--owner-visible-p
-                  (and (fboundp 'jetpacs--owner-of)
-                       (jetpacs--owner-of "settings" title)))
-            append (append (list (jetpacs-divider)
-                                 (jetpacs-section-header title))
-                           (mapcar #'jetpacs-settings--item entries)))
-   (let ((links (cl-remove-if-not
-                 (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
-                 jetpacs-settings-links)))
-     (when links
-       (append (list (jetpacs-divider) (jetpacs-section-header "Emacs"))
-               (mapcar (lambda (e) (funcall (cadr e))) links))))))
+  (let ((native-links
+         (cl-remove-if-not
+          (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+          jetpacs-settings-native-links))
+        (emacs-links
+         (cl-remove-if-not
+          (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+          jetpacs-settings-links)))
+    (append
+     (when native-links
+       (append (list (jetpacs-divider)
+                     (jetpacs-section-header "Jetpacs Settings"))
+               (mapcar (lambda (e) (funcall (cadr e))) native-links)))
+     (when (or jetpacs-settings-registry emacs-links)
+       (append (list (jetpacs-divider)
+                     (jetpacs-section-header "Emacs Settings"))
+               (cl-loop for (title . entries) in jetpacs-settings-registry
+                        when (jetpacs-settings--owner-visible-p
+                              (and (fboundp 'jetpacs--owner-of)
+                                   (jetpacs--owner-of "settings" title)))
+                        append (append (list (jetpacs-section-header title))
+                                       (mapcar #'jetpacs-settings--item entries)))
+               (mapcar (lambda (e) (funcall (cadr e))) emacs-links))))))
 
 ;; ─── Actions and state handlers ──────────────────────────────────────────────
 
@@ -8124,6 +8211,24 @@ full listing — the same view you get from the Buffers tab on its dired
 buffer — instead of a separate shortcut screen."
   :type 'directory :group 'jetpacs)
 
+(defcustom jetpacs-files-shared-storage 'auto
+  "How the Files browser exposes Android shared storage (/sdcard).
+Emacs's HOME is a private per-app sandbox, so /sdcard is otherwise
+unreachable from the Files tab even though the phone and the rest of the
+platform live there.  When `auto' (the default) the browser probes for the
+device's primary shared-storage directory and, if it is accessible, offers a
+one-tap shortcut to it from the landing view — the standalone counterpart to
+what Termux's `termux-setup-storage' arranges via ~/storage/shared.  A
+string names an explicit directory to expose instead; nil disables the
+shortcut entirely.
+
+Access still depends on Emacs holding the storage permission: when it does
+not, no directory is accessible and the shortcut simply does not appear."
+  :type '(choice (const :tag "Auto-detect /sdcard" auto)
+                 (const :tag "Disabled" nil)
+                 (directory :tag "Explicit path"))
+  :group 'jetpacs)
+
 (defcustom jetpacs-files-max-bytes (* 256 1024)
   "Files larger than this open read-only.
 Editor saves travel inside a broadcast intent on the companion side,
@@ -8185,6 +8290,71 @@ the phone can trigger."
     (cl-some (lambda (root)
                (file-in-directory-p full (expand-file-name (cdr root))))
              jetpacs-files-roots)))
+
+;; ─── Shared storage (/sdcard) ────────────────────────────────────────────────
+;;
+;; Emacs runs in a private sandbox whose HOME is nowhere near /sdcard, so a
+;; standalone (non-Termux) install can't browse to the shared storage where the
+;; phone, downloaded app bundles, and org files all live.  Termux users get
+;; ~/storage/shared from `termux-setup-storage'; this gives everyone the same
+;; reach, without requiring Termux — but only when Emacs actually holds the
+;; storage permission (else the directory isn't accessible and we stay quiet).
+
+(defun jetpacs-files--detect-shared-dir ()
+  "Detect the primary shared-storage directory, or nil.
+Honours `jetpacs-files-shared-storage'.  For `auto', returns the first of the
+usual Android locations that exists and is readable; a string is taken as an
+explicit directory (still gated on accessibility)."
+  (pcase jetpacs-files-shared-storage
+    ('nil nil)
+    ((and (pred stringp) dir)
+     (and (file-accessible-directory-p dir) (file-name-as-directory dir)))
+    (_
+     (cl-some (lambda (d)
+                (and d (file-accessible-directory-p d) (file-name-as-directory d)))
+              (list (getenv "EXTERNAL_STORAGE")
+                    "/sdcard"
+                    "/storage/emulated/0"
+                    "/storage/self/primary")))))
+
+(defvar jetpacs-files--shared-dir 'unset
+  "Memoized `jetpacs-files-shared-dir' result — a directory, nil, or the
+`unset' sentinel before first detection.")
+
+(defun jetpacs-files-shared-dir ()
+  "The shared-storage directory the Files browser exposes, or nil.
+Detected once (see `jetpacs-files--detect-shared-dir').  On first successful
+detection the directory is also added to `jetpacs-files-roots', so navigation
+and file operations there clear the within-root guard — this is what widens
+the sandbox to reach /sdcard.  Returns nil (adding nothing) when no shared
+storage is accessible, so the feature degrades silently without it."
+  (when (eq jetpacs-files--shared-dir 'unset)
+    (setq jetpacs-files--shared-dir (jetpacs-files--detect-shared-dir))
+    (when jetpacs-files--shared-dir
+      (add-to-list 'jetpacs-files-roots
+                   (cons "Storage" jetpacs-files--shared-dir) t)))
+  jetpacs-files--shared-dir)
+
+(defun jetpacs-files--shared-storage-card ()
+  "Shortcut card to shared storage for the Files landing view, or nil.
+Shown only at the landing directory, when shared storage is accessible and is
+not itself the landing — one tap to the /sdcard tree Termux exposes at
+~/storage/shared."
+  (when-let (((null jetpacs-files--dir))
+             (shared (jetpacs-files-shared-dir)))
+    (unless (file-equal-p shared (jetpacs-files--current-dir))
+      (jetpacs-card
+       (list (jetpacs-row
+              (jetpacs-icon "sd_storage")
+              (jetpacs-box (list (jetpacs-column
+                               (jetpacs-text "Shared storage" 'body)
+                               (jetpacs-text (abbreviate-file-name
+                                           (directory-file-name shared))
+                                          'caption)))
+                        :weight 1)
+              (jetpacs-icon "chevron_right")))
+       :on-tap (jetpacs-action "files.cd"
+                            :args `((dir . ,(directory-file-name shared))))))))
 
 (defun jetpacs-files--entry-menu (path)
   "Overflow menu of single-file operations for PATH.
@@ -8277,10 +8447,12 @@ There is no separate roots screen — the view always shows a directory
 \(`jetpacs-files--current-dir'), so it matches the Buffers-tab listing.
 While content-search results exist, a re-entry card heads the list."
   (let ((buf (jetpacs-files--dired-buffer (jetpacs-files--current-dir)))
-        (results-card (jetpacs-files--grep-results-card)))
+        (results-card (jetpacs-files--grep-results-card))
+        (shared-card (jetpacs-files--shared-storage-card)))
     (if buf
         (apply #'jetpacs-lazy-column
                (append (and results-card (list results-card))
+                       (and shared-card (list shared-card))
                        (jetpacs-render-buffer buf)))
       (jetpacs-empty-state :icon "info"
                         :title "Can't open folder"

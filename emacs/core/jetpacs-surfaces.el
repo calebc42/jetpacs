@@ -110,6 +110,7 @@ so one bad subtree degrades instead of blanking the whole push."
 
 (defun jetpacs-surface-push (surface spec &optional ttl-s stale-spec current-view)
   "Send SURFACE with an auto-incremented monotonic revision."
+  (jetpacs--claim "surface" surface)
   (jetpacs-surface-update surface (jetpacs--next-revision) spec ttl-s stale-spec current-view))
 
 (defun jetpacs-surface-remove (surface)

@@ -60,6 +60,28 @@
     (should-not (jetpacs-files--within-root-p "/tmp/jetpacs-root-evil/x.org"))
     (should-not (jetpacs-files--within-root-p "/tmp/jetpacs-root/../etc/passwd"))))
 
+(ert-deftest jetpacs-files-shared-storage-root ()
+  "An accessible shared-storage dir is detected and authorized as a root;
+disabling it (`nil') detects nothing and authorizes nothing."
+  (let* ((dir (file-name-as-directory (make-temp-file "jetpacs-shared" t)))
+         (probe (expand-file-name "x.org" dir)))
+    (unwind-protect
+        (progn
+          ;; An explicit, accessible path is detected and added to the roots,
+          ;; so the within-root guard now clears files beneath it.
+          (let ((jetpacs-files-shared-storage dir)
+                (jetpacs-files--shared-dir 'unset)
+                (jetpacs-files-roots nil))
+            (should (equal (jetpacs-files-shared-dir) dir))
+            (should (jetpacs-files--within-root-p probe)))
+          ;; Disabled: no detection, no root, nothing authorized.
+          (let ((jetpacs-files-shared-storage nil)
+                (jetpacs-files--shared-dir 'unset)
+                (jetpacs-files-roots nil))
+            (should-not (jetpacs-files-shared-dir))
+            (should-not (jetpacs-files--within-root-p probe))))
+      (delete-directory dir t))))
+
 ;; ─── Keymap labels ──────────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-keymap-labels ()
@@ -1549,7 +1571,8 @@ core views) are included."
   (let ((jetpacs-apps--registry nil)
         (jetpacs-apps--current nil)
         (jetpacs-settings-registry nil)
-        (jetpacs-settings-links nil))
+        (jetpacs-settings-links nil)
+        (jetpacs-settings-native-links nil))
     (jetpacs-settings-register-section "Shared" '())
     (with-jetpacs-owner "one"
       (jetpacs-settings-register-section "One's section" '()))
@@ -1605,17 +1628,20 @@ core views) are included."
         (jetpacs-shell-drawer-items nil)
         (jetpacs-shell-top-actions nil)
         (jetpacs-settings-links nil)
+        (jetpacs-settings-native-links nil)
         (jetpacs-apps--fabs nil))
     (with-jetpacs-owner "gone"
       (jetpacs-shell-add-drawer-item 10 (lambda () '((label . "gone"))))
       (jetpacs-shell-add-top-action 10 (lambda () '((label . "gone"))))
-      (jetpacs-settings-add-link 10 (lambda () '((label . "gone")))))
+      (jetpacs-settings-add-link 10 (lambda () '((label . "gone"))))
+      (jetpacs-settings-add-native-link 10 (lambda () '((label . "gone-native")))))
     (jetpacs-apps-set-default-fab "gone" #'ignore)
     (jetpacs-defapp "gone" :views '())
     (jetpacs-app-unregister "gone")
     (should-not jetpacs-shell-drawer-items)
     (should-not jetpacs-shell-top-actions)
     (should-not jetpacs-settings-links)
+    (should-not jetpacs-settings-native-links)
     (should-not (assoc "gone" jetpacs-apps--fabs))))
 
 ;; ─── Protocol frame shapes (golden snapshot, SPEC §10–§11) ──────────────────
@@ -1929,17 +1955,24 @@ don't even apply (min-colors) but the palette variables are plain data."
 ;; ─── Stock settings screen ──────────────────────────────────────────────────
 
 (ert-deftest jetpacs-shell-stock-settings-screen ()
-  "The foundation registers the settings view, drawer entry, and Bridge knobs."
+  "The foundation separates native Jetpacs and Emacs settings."
   (should (assoc "settings" jetpacs-shell-views))
   (should (assoc "Bridge" jetpacs-settings-registry))
-  ;; Exactly one Settings affordance in the drawer.
+  ;; Both settings domains are first-class drawer destinations.
   (let ((items (delq nil (mapcar (lambda (e) (funcall (cadr e)))
                                  jetpacs-shell-drawer-items))))
     (should (= 1 (cl-count-if
-                  (lambda (item) (equal (alist-get 'label item) "Settings"))
+                  (lambda (item) (equal (alist-get 'label item) "Jetpacs Settings"))
+                  items)))
+    (should (= 1 (cl-count-if
+                  (lambda (item) (equal (alist-get 'label item) "Emacs Settings"))
                   items))))
-  ;; The stock body renders the Bridge knobs from their custom-type.
+  ;; The stock body renders native Jetpacs settings separately from every
+  ;; Emacs-owned defcustom and satellite destination.
   (let ((body (prin1-to-string (jetpacs-shell-settings-body))))
+    (should (string-search "Jetpacs Settings" body))
+    (should (string-search "jetpacs.settings.open" body))
+    (should (string-search "Emacs Settings" body))
     (should (string-search "setting/jetpacs-theme-sync" body))
     (should (string-search "setting/jetpacs-dialog-style" body))
     (should (string-search "setting/jetpacs-reconnect" body))))

@@ -345,6 +345,10 @@ Handled entirely on-device (like the `view.switch' builtin) — no
 round-trip to Emacs, works offline."
   (jetpacs--node nil 'builtin "clipboard.copy" 'text text))
 
+(defun jetpacs-native-settings-action ()
+  "Open native Jetpacs settings, even while Emacs is offline."
+  (jetpacs--node nil 'builtin "jetpacs.settings.open"))
+
 (cl-defun jetpacs-button (label action &key icon variant weight padding)
   "A button. VARIANT is filled/outlined/text/tonal."
   (jetpacs--node "button"

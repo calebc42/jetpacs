@@ -11,6 +11,10 @@
 
     <!-- Runtime-requested on API 33+ (the host activity drives the request). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+    <!-- For rendering local file:// images mapped by apps via Coil -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <!-- Foreground service + the API 34 type-specific companion permission. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

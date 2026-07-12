@@ -302,7 +302,7 @@ passes `jetpacs-shell-chrome-filter-function'."
                                                    (funcall (cadr e))))
                                                jetpacs-shell-top-actions)))))
 
-(cl-defun jetpacs-shell-tab-view (name body &key top-bar (fab nil fab-given) snackbar)
+(cl-defun jetpacs-shell-tab-view (name body &key top-bar (fab nil fab-given) snackbar snackbar-action floating-toolbar)
   "A standard tab view: drawer, bottom bar, pull-to-refresh, default chrome.
 NAME selects the bottom-bar highlight; BODY is the content node.  TOP-BAR
 defaults to `jetpacs-shell-default-top-bar' on the capitalized name.  When FAB
@@ -316,13 +316,15 @@ explicit nil to render no FAB."
                    :bottom-bar (jetpacs-shell-bottom-bar name)
                    :drawer (jetpacs-shell-drawer)
                    :snackbar snackbar
+                   :snackbar-action snackbar-action
+                   :floating-toolbar floating-toolbar
                    ;; Tab views support pull-to-refresh; navigation/detail
                    ;; views don't (a stray pull mustn't rebuild them).
                    :on-refresh (jetpacs-action "dashboard.refresh"
                                             :when-offline "drop"))))))
 
 (cl-defun jetpacs-shell-nav-view (title body &key back-to nav-action actions
-                                     fab snackbar bottom-bar floating-toolbar)
+                                     fab snackbar snackbar-action bottom-bar floating-toolbar)
   "A navigation view: back arrow in the top bar, no tabs or drawer.
 BACK-TO names the view the arrow switches to (default: the current tab)
 as a companion-local switch; NAV-ACTION overrides it with an explicit
@@ -339,6 +341,7 @@ action descriptor.  ACTIONS are trailing top-bar buttons."
                    :body body
                    :fab fab
                    :snackbar snackbar
+                   :snackbar-action snackbar-action
                    :bottom-bar bottom-bar
                    :floating-toolbar floating-toolbar)))))
 
@@ -509,7 +512,7 @@ Never nest this node inside another scroll container."
 
 (defun jetpacs-shell--settings-view (snackbar)
   "The stock settings screen (see `jetpacs-shell-settings-body')."
-  (jetpacs-shell-nav-view "Settings" (jetpacs-shell-settings-body)
+  (jetpacs-shell-nav-view "Emacs Settings" (jetpacs-shell-settings-body)
                        :snackbar snackbar))
 
 (with-eval-after-load 'jetpacs-settings
@@ -523,12 +526,16 @@ Never nest this node inside another scroll container."
      (jetpacs-dialog-style :label "Dialog style")
      (jetpacs-reconnect :label "Auto-reconnect")))
   (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
-  ;; Everyday nav: the one affordance for the screen, between the Apps
-  ;; entry (5) and the shell's own Refresh (70).  Resolved per app: an
-  ;; app with its own "<appid>.settings" view gets it targeted here.
+  ;; Two explicit settings domains. Jetpacs Settings is companion-local and
+  ;; always works offline; Emacs Settings resolves through the current Tier 1
+  ;; so its own defcustom-backed preferences remain part of that screen.
+  (jetpacs-shell-add-drawer-item
+   59 (lambda ()
+        (jetpacs-drawer-item "settings" "Jetpacs Settings"
+                          (jetpacs-native-settings-action))))
   (jetpacs-shell-add-drawer-item
    60 (lambda ()
-        (jetpacs-drawer-item "settings" "Settings"
+        (jetpacs-drawer-item "tune" "Emacs Settings"
                           (jetpacs-shell-switch-view
                            (jetpacs-shell-resolve-view "settings"))))))
 

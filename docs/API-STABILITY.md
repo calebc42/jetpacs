@@ -125,10 +125,14 @@ Files/editor (`jetpacs-files.el`): `jetpacs-files-editor-body-functions`
 
 Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
 `jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`
-`jetpacs-settings-add-link` `jetpacs-settings-sections` (since 1.1.0:
+`jetpacs-settings-add-link` `jetpacs-settings-add-native-link`
+`jetpacs-settings-sections` (since 1.1.0:
 the flat node list an app splices into its own body when it replaces
-the stock "settings" view). Registered sections and links render on the
-foundation's stock "settings" view without further wiring.
+the stock "settings" view), plus `jetpacs-native-settings-action`
+from `jetpacs-widgets.el`. Native links render first and must remain
+useful offline; regular links render under Emacs Settings. Registered
+sections and links render on the foundation's stock "settings" view
+without further wiring.
 
 ### Validation (`jetpacs-lint.el`)
 

@@ -71,6 +71,7 @@ Re-registering an existing ID replaces it."
     (error "Trigger id must be a non-empty string"))
   (unless (stringp type)
     (error "Trigger %s needs a :type string" id))
+  (jetpacs--claim "trigger" id)
   (puthash id (list :type type :params params :policy policy
                     :dedupe dedupe :throttle-s throttle-s
                     :on-fire on-fire :handler handler)
@@ -94,6 +95,7 @@ name.  Re-evaluating replaces the registration and re-pushes the set:
 (defun jetpacs-trigger-unregister (id)
   "Remove trigger ID and push the updated set (so it can never fire stale)."
   (remhash id jetpacs-triggers--table)
+  (jetpacs--unclaim "trigger" id)
   (jetpacs-triggers-push)
   (run-hooks 'jetpacs-triggers-changed-hook))
 

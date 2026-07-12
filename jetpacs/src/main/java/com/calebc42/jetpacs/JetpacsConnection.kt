@@ -323,6 +323,10 @@ class JetpacsConnection(
             try {
                 replayLocked(requestFrame)
             } finally {
+                // A send can fail after some rows were already delivered and
+                // deleted. Keep the UI's waiting count truthful on every exit,
+                // not only after a completely drained replay.
+                JetpacsRuntime.refreshQueuedCount()
                 replayInFlight.set(false)
             }
         }
@@ -369,7 +373,6 @@ class JetpacsConnection(
 
         send(Frame(kind = "queue.drained", replyTo = requestFrame.id,
             payload = JSONObject().put("delivered", delivered).put("expired", expired)))
-        JetpacsRuntime.refreshQueuedCount()
     }
 
     /** Shape-preserving payload; reconstructs legacy v1 rows. */

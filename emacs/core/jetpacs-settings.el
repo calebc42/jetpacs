@@ -313,13 +313,19 @@ name under `name' — the settings screen uses the registry-gated
   (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))
 
 (defvar jetpacs-settings-links nil
-  "Ordered list of (ORDER BUILDER . OWNER) navigation entries for the settings screen.
+  "Ordered list of (ORDER BUILDER . OWNER) Emacs navigation entries.
 BUILDER is a nullary function returning a node (usually a tappable card
-leading to another screen).  Apps register their satellite screens here
-— the package browser, the customize browser — instead of each claiming
-a drawer slot; `jetpacs-settings-sections' renders them under a trailing
-\"Emacs\" section.  OWNER is the `jetpacs-current-owner' captured at
+leading to another screen). Apps register satellite screens here—the
+package browser, Customize, tools—instead of each claiming a drawer slot;
+`jetpacs-settings-sections' renders them under \"Emacs Settings\".
+OWNER is the `jetpacs-current-owner' captured at
 registration (nil = core).")
+
+(defvar jetpacs-settings-native-links nil
+  "Ordered native Jetpacs entries rendered before Emacs settings.
+These actions must be local builtins so Android configuration
+remains reachable while Emacs is disconnected. Entries have the same
+(ORDER BUILDER . OWNER) shape and ownership filtering as `jetpacs-settings-links'.")
 
 (defun jetpacs-settings-add-link (order builder)
   "Add BUILDER (a nullary node builder) to the settings screen at ORDER.
@@ -329,6 +335,16 @@ and shown only while it is current (once a second app exists)."
         (sort (cons (cons order (cons builder
                                       (bound-and-true-p jetpacs-current-owner)))
                     jetpacs-settings-links)
+              (lambda (a b) (< (car a) (car b))))))
+
+(defun jetpacs-settings-add-native-link (order builder)
+  "Add native Jetpacs settings BUILDER at ORDER.
+The card renders under \"Jetpacs Settings\" before Emacs-owned preferences.
+BUILDER should dispatch a local builtin."
+  (setq jetpacs-settings-native-links
+        (sort (cons (cons order (cons builder
+                                      (bound-and-true-p jetpacs-current-owner)))
+                    jetpacs-settings-native-links)
               (lambda (a b) (< (car a) (car b))))))
 
 (defvar jetpacs-settings-section-filter-function nil
@@ -350,24 +366,33 @@ blank the settings screen."
         (error t))))
 
 (defun jetpacs-settings-sections ()
-  "Flat list of nodes rendering every registry section, then the links.
+  "Flat list of native Jetpacs settings followed by Emacs settings.
 Sections and links attributed to an app (registered under
 `with-jetpacs-owner') render only while that app passes
 `jetpacs-settings-section-filter-function'."
-  (append
-   (cl-loop for (title . entries) in jetpacs-settings-registry
-            when (jetpacs-settings--owner-visible-p
-                  (and (fboundp 'jetpacs--owner-of)
-                       (jetpacs--owner-of "settings" title)))
-            append (append (list (jetpacs-divider)
-                                 (jetpacs-section-header title))
-                           (mapcar #'jetpacs-settings--item entries)))
-   (let ((links (cl-remove-if-not
-                 (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
-                 jetpacs-settings-links)))
-     (when links
-       (append (list (jetpacs-divider) (jetpacs-section-header "Emacs"))
-               (mapcar (lambda (e) (funcall (cadr e))) links))))))
+  (let ((native-links
+         (cl-remove-if-not
+          (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+          jetpacs-settings-native-links))
+        (emacs-links
+         (cl-remove-if-not
+          (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+          jetpacs-settings-links)))
+    (append
+     (when native-links
+       (append (list (jetpacs-divider)
+                     (jetpacs-section-header "Jetpacs Settings"))
+               (mapcar (lambda (e) (funcall (cadr e))) native-links)))
+     (when (or jetpacs-settings-registry emacs-links)
+       (append (list (jetpacs-divider)
+                     (jetpacs-section-header "Emacs Settings"))
+               (cl-loop for (title . entries) in jetpacs-settings-registry
+                        when (jetpacs-settings--owner-visible-p
+                              (and (fboundp 'jetpacs--owner-of)
+                                   (jetpacs--owner-of "settings" title)))
+                        append (append (list (jetpacs-section-header title))
+                                       (mapcar #'jetpacs-settings--item entries)))
+               (mapcar (lambda (e) (funcall (cadr e))) emacs-links))))))
 
 ;; ─── Actions and state handlers ──────────────────────────────────────────────
 

@@ -9,6 +9,11 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Long-lived host for [JetpacsServer] and the [SurfaceManager].
@@ -22,6 +27,7 @@ class BridgeService : Service() {
 
     private lateinit var server: JetpacsServer
     private lateinit var surfaces: SurfaceManager
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
         super.onCreate()
@@ -41,7 +47,13 @@ class BridgeService : Service() {
         val triggers = TriggerHost(applicationContext)
         JetpacsRuntime.triggerHost = triggers
 
-        startForeground(NOTIF_ID, buildNotification())
+        startForeground(NOTIF_ID, buildNotification(connected = false))
+        serviceScope.launch {
+            JetpacsRuntime.connected.collect { connected ->
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.notify(NOTIF_ID, buildNotification(connected))
+            }
+        }
 
         // Render anything we already hold BEFORE Emacs connects — principle #1.
         surfaces.renderAllCached()
@@ -65,12 +77,13 @@ class BridgeService : Service() {
         // Receivers must not leak past the process's trigger-hosting span.
         JetpacsRuntime.triggerHost?.shutdown()
         JetpacsRuntime.triggerHost = null
+        serviceScope.cancel()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(connected: Boolean): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             mgr.createNotificationChannel(
@@ -80,7 +93,7 @@ class BridgeService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Jetpacs bridge")
-            .setContentText("Listening for Emacs")
+            .setContentText(if (connected) "Connected to Emacs" else "Listening for Emacs")
             .setOngoing(true)
             .build()
     }

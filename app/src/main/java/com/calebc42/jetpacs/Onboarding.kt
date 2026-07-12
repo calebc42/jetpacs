@@ -430,6 +430,8 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     val token = remember { JetpacsAuth.token(context) }
     var installResult by remember { mutableStateOf<String?>(null) }
     var coreInstalled by remember { mutableStateOf(false) }
+    var showAdvancedSave by remember(byo, termux) { mutableStateOf(byo || termux) }
+    var showOptional by remember { mutableStateOf(false) }
 
     // On (re-)entry, detect an already-installed bundle so a repeat run reflects
     // that state instead of pretending nothing happened.
@@ -449,9 +451,12 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     ) { uri ->
         if (uri != null) {
             installResult = try {
-                context.contentResolver.openOutputStream(uri)?.use {
+                val output = context.contentResolver.openOutputStream(uri)
+                    ?: error("The selected location could not be opened")
+                output.use {
                     it.write(readAsset(context, "jetpacs-core.el"))
                 }
+                coreInstalled = true
                 "Saved. If the folder you chose isn't Documents or Download, edit init.el's " +
                     "adopt paths to point there."
             } catch (e: Exception) {
@@ -475,9 +480,13 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                         if (pendingInstall == "jetpacs-core.el") coreInstalled = true
                         "Installed to $it"
                     },
-                    { "Install failed: ${it.message}" },
+                    {
+                        showAdvancedSave = true
+                        "Install failed: ${it.message}"
+                    },
                 )
         } else {
+            showAdvancedSave = true
             "Storage permission denied — use \"Save elsewhere…\" instead."
         }
     }
@@ -497,16 +506,25 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                         if (name == "jetpacs-core.el") coreInstalled = true
                         "Installed to $it"
                     },
-                    { "Install failed: ${it.message}" },
+                    {
+                        showAdvancedSave = true
+                        "Install failed: ${it.message}"
+                    },
                 )
         }
     }
 
     SetupProgressScaffold(onBack = onBack) {
-        Text("Copy these onto your device", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Jetpacs can't write into Emacs's private folders (Android sandboxing), so " +
-                "paste each snippet into the file named on its card, then install the bundle.",
+            if (byo || termux) "Finish advanced setup" else "Finish setting up Jetpacs",
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        Text(
+            if (byo || termux) {
+                "Copy the configuration into Emacs, then install the Jetpacs foundation."
+            } else {
+                "Two quick steps prepare Emacs and install Jetpacs on this device."
+            },
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 6.dp, bottom = 16.dp),
         )
@@ -514,6 +532,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
         var stepNo = 1
 
         if (termux) {
+            TermuxStorageCard(number = stepNo++)
             SnippetCard(
                 number = stepNo++,
                 title = "Termux redirect → early-init.el",
@@ -526,7 +545,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
 
         SnippetCard(
             number = stepNo++,
-            title = if (byo) "Bootstrap → your init.el" else "Starter init.el",
+            title = if (byo) "Bootstrap → your init.el" else "Copy the starter configuration",
             body = if (byo) {
                 "You keep your own init — just add these lines (bundle adopt, require, " +
                     "and your pairing token) somewhere in it."
@@ -536,15 +555,15 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             },
             path = initPath(termux),
             copyText = if (byo) byoSnippet(token) else starterInit(context, token),
+            showPathInitially = byo || termux,
         )
 
         // Install the foundation bundle.
         Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
             Column(Modifier.padding(16.dp)) {
-                Text("$stepNo. Install jetpacs-core.el", style = MaterialTheme.typography.titleMedium)
+                Text("$stepNo. Install Jetpacs", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The foundation bundle is too big for the clipboard. This writes it to " +
-                        "/sdcard/Documents, where the init above adopts it on next launch.",
+                    "Save the Jetpacs foundation where the starter configuration can find it.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                 )
@@ -555,19 +574,28 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.size(6.dp))
-                        Text("Installed — reinstall")
+                        Text("Jetpacs installed — reinstall")
                     }
                 } else {
                     Button(onClick = { installAsset("jetpacs-core.el") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Install to Documents")
+                        Text("Install Jetpacs")
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { saf.launch("jetpacs-core.el") },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Save elsewhere…")
+                if (!showAdvancedSave) {
+                    TextButton(
+                        onClick = { showAdvancedSave = true },
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    ) {
+                        Text("Choose another save location")
+                    }
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { saf.launch("jetpacs-core.el") },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Save somewhere else…")
+                    }
                 }
                 installResult?.let {
                     Text(
@@ -580,47 +608,114 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
             }
         }
 
-        // Apps are not shipped by this companion — explain the generic path.
-        Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Get apps", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Apps for Jetpacs (like Glasspane) ship as single .el bundles from " +
-                        "their own projects. Download one in your browser — it lands in " +
-                        "Download — then add its file name to the bundle list in your " +
-                        "init.el and restart Emacs. Each app's own instructions cover " +
-                        "the rest.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+        TextButton(
+            onClick = { showOptional = !showOptional },
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
+            Text(if (showOptional) "Hide optional extras" else "Optional: apps and hello demo")
         }
 
-        // The built-in demo: the smallest possible Tier-1 app.
-        Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Try the hello demo", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "jetpacs-hello.el is a complete app in ~60 lines. Install it, then — " +
-                        "once paired — evaluate this from the Eval tab to grow a Hello tab " +
-                        "live:\n\n(load \"/sdcard/Documents/jetpacs-hello.el\")",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
-                )
-                OutlinedButton(
-                    onClick = { installAsset("jetpacs-hello.el") },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Install jetpacs-hello.el")
+        if (showOptional) {
+            // Apps are not shipped by this companion — explain the generic path.
+            Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Get apps", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Apps for Jetpacs (like Glasspane) ship as single .el bundles from " +
+                            "their own projects. Download one in your browser — it lands in " +
+                            "Download — then add its file name to the bundle list in your " +
+                            "init.el and restart Emacs. Each app's own instructions cover " +
+                            "the rest.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+
+            // The built-in demo: the smallest possible Tier-1 app.
+            Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Try the hello demo", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "jetpacs-hello.el is a complete app in ~60 lines. Install it, then — " +
+                            "once paired — evaluate this from the Eval tab to grow a Hello tab " +
+                            "live:\n\n(load \"/sdcard/Documents/jetpacs-hello.el\")",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                    )
+                    OutlinedButton(
+                        onClick = { installAsset("jetpacs-hello.el") },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Install jetpacs-hello.el")
+                    }
                 }
             }
         }
 
         Spacer(Modifier.height(8.dp))
-        Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
-            Text("Done — pair Emacs")
+        Button(
+            onClick = onNext,
+            enabled = coreInstalled || byo || termux,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (coreInstalled) "Continue to connection" else "Install Jetpacs to continue")
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * The Termux storage-access step, shown only on the shared-Termux path. Emacs
+ * shares Termux's identity and redirects HOME there, so it reaches the staged
+ * Jetpacs bundle in /sdcard through Termux's storage grant — not the companion's.
+ * `termux-setup-storage` requests that permission (and creates the ~/storage
+ * symlinks) once. It runs in the Termux app; the companion can't reach into
+ * Termux's sandbox to do it.
+ */
+@Composable
+private fun TermuxStorageCard(number: Int) {
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            Text("$number. Grant Termux storage access", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Emacs shares Termux's identity, so it reads the Jetpacs bundle from " +
+                    "shared storage through Termux's permission. Run this once in the " +
+                    "Termux app and approve the storage prompt.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+            )
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            ) {
+                Text(
+                    "termux-setup-storage",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                )
+            }
+            val onCopy = {
+                copyToClipboard(context, "termux-setup-storage", "termux-setup-storage")
+                copied = true
+            }
+            if (copied) {
+                FilledTonalButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Copied — copy again")
+                }
+            } else {
+                Button(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+                    Text("Copy command")
+                }
+            }
+        }
     }
 }
 
@@ -631,9 +726,11 @@ private fun SnippetCard(
     body: String,
     path: String,
     copyText: String,
+    showPathInitially: Boolean = true,
 ) {
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
+    var showPath by remember(showPathInitially) { mutableStateOf(showPathInitially) }
     Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         Column(Modifier.padding(16.dp)) {
             Text("$number. $title", style = MaterialTheme.typography.titleMedium)
@@ -642,18 +739,27 @@ private fun SnippetCard(
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
             )
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
-            ) {
-                Text(
-                    path,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                )
+            if (showPath) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                ) {
+                    Text(
+                        path,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    )
+                }
+            } else {
+                TextButton(
+                    onClick = { showPath = true },
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Text("Show init.el location")
+                }
             }
             val onCopy = { copyToClipboard(context, "jetpacs-$number", copyText); copied = true }
             if (copied) {

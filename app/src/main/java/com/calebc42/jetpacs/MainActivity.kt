@@ -1,21 +1,19 @@
 package com.calebc42.jetpacs
 
-import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +29,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -43,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,9 +54,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
-import androidx.core.content.ContextCompat
 import com.calebc42.jetpacs.ui.theme.JetpacsTheme
 import org.json.JSONObject
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -143,15 +143,7 @@ private const val DASHBOARD_SURFACE = "app:dashboard"
 @Composable
 private fun BridgeScreen() {
     val context = LocalContext.current
-
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) JetpacsRuntime.surfaceManager?.renderAllCached()
-    }
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPermission(context)) {
-            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    var showJetpacsSettings by remember { mutableStateOf(false) }
 
     // Reactive, not polled: the flow fires when BridgeService publishes the
     // manager (and again if the service is ever recreated).
@@ -180,6 +172,11 @@ private fun BridgeScreen() {
      */
     val dispatch = { action: JSONObject ->
         when (action.optString("builtin")) {
+            "jetpacs.settings.open" -> {
+                JetpacsRuntime.dialogState.dismiss()
+                JetpacsRuntime.pieMenuState.dismiss()
+                showJetpacsSettings = true
+            }
             "view.switch" -> {
                 val view = action.optString("view")
                 if (view.isNotEmpty()) {
@@ -241,7 +238,7 @@ private fun BridgeScreen() {
         }
     }
 
-    BackHandler(enabled = viewStack.size > 1) {
+    BackHandler(enabled = !showJetpacsSettings && viewStack.size > 1) {
         val previousView = viewStack[viewStack.size - 2]
         dispatch(JSONObject().apply {
             put("builtin", "view.switch")
@@ -257,9 +254,18 @@ private fun BridgeScreen() {
     // content inside a fill-size Box and let the scaffold node own the layout.
     val connected by JetpacsRuntime.connected.collectAsState()
     val pairedEver by JetpacsRuntime.pairedEver.collectAsState()
+    val queuedCount by JetpacsRuntime.queuedCount.collectAsState()
+
+    BackHandler(enabled = showJetpacsSettings) { showJetpacsSettings = false }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        if (showJetpacsSettings) {
+            JetpacsSettingsScreen(
+                dashboardUpdatedAt = dashboardRecord?.updatedAt,
+                cachedSurfaceCount = surfaceManager?.revisionSnapshot()?.length() ?: 0,
+                onBack = { showJetpacsSettings = false },
+            )
+        } else Box(modifier = Modifier.fillMaxSize()) {
             // Until an Emacs has paired at least once, the pairing screen wins even
             // over a cached dashboard — otherwise a stale surface from a pre-auth
             // session would hide the token the user needs to pair.
@@ -276,15 +282,20 @@ private fun BridgeScreen() {
             // Paired but Emacs is away: make the cached/offline state explicit
             // and keep pairing details available without making the token the
             // primary dashboard affordance.
-            if (!connected) {
-                DisconnectedBanner(modifier = Modifier.align(Alignment.BottomCenter))
+            if (!connected || queuedCount > 0) {
+                ConnectionStatusBanner(
+                    connected = connected,
+                    queuedCount = queuedCount,
+                    updatedAt = dashboardRecord.updatedAt,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
             }
         }
     }
 }
 
     val dialogSpec by JetpacsRuntime.dialogState.currentDialog.collectAsState()
-    if (dialogSpec != null) {
+    if (!showJetpacsSettings && dialogSpec != null) {
         val onDismiss = {
             // Notify Emacs if this was a prompt dialog (fires prompt.dismiss action).
             JetpacsRuntime.dialogState.onDismissed?.invoke()
@@ -329,7 +340,7 @@ private fun BridgeScreen() {
     }
 
     val pieMenuSpec by JetpacsRuntime.pieMenuState.currentMenu.collectAsState()
-    if (pieMenuSpec != null) {
+    if (!showJetpacsSettings && pieMenuSpec != null) {
         RadialMenu(
             spec = pieMenuSpec!!,
             onAction = { action ->
@@ -405,7 +416,7 @@ internal fun PairingScreen(instructions: String = DEFAULT_PAIR_INSTRUCTIONS) {
 
 /**
  * The pairing token plus its ready-to-paste setq line (tap to copy). Shown on
- * the pairing screen and inside [DisconnectedBanner]. Displaying it is no more
+ * the pairing screen and inside [ConnectionStatusBanner]. Displaying it is no more
  * exposed than the token already is in app-private prefs or the user's init —
  * its job is to keep OTHER APPS from completing the handshake, not to hide
  * from someone holding an unlocked phone.
@@ -444,16 +455,42 @@ internal fun PairingTokenBlock(modifier: Modifier = Modifier) {
 }
 
 /**
- * Snackbar-style connection status shown over cached content while Emacs is
- * away. Pairing is available under Details, but the primary message is that
- * the visible dashboard is saved content rather than a live connection.
+ * Snackbar-style lifecycle status. Offline it identifies the age of the cached
+ * dashboard and any queued actions; immediately after reconnect it stays up
+ * until those actions have drained. Details offers recovery without making
+ * pairing the primary dashboard affordance.
  */
 @Composable
-private fun DisconnectedBanner(modifier: Modifier = Modifier) {
+private fun ConnectionStatusBanner(
+    connected: Boolean,
+    queuedCount: Int,
+    updatedAt: Long,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
     var show by remember { mutableStateOf(false) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(updatedAt) {
+        now = System.currentTimeMillis()
+        while (true) {
+            delay(60_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    val containerColor = if (connected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.inverseSurface
+    }
+    val contentColor = if (connected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.inverseOnSurface
+    }
+    val age = relativeAge(updatedAt, now)
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.inverseSurface,
+        color = containerColor,
         shadowElevation = 6.dp,
         modifier = modifier
             .fillMaxWidth()
@@ -468,40 +505,88 @@ private fun DisconnectedBanner(modifier: Modifier = Modifier) {
             Icon(
                 Icons.Default.Cable,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.inverseOnSurface,
+                tint = contentColor,
             )
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Emacs is offline",
+                    if (connected) "Connected to Emacs" else "Emacs is offline",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    color = contentColor,
                 )
                 Text(
-                    "Showing saved content",
+                    connectionSummary(connected, queuedCount, age),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.75f),
+                    color = contentColor.copy(alpha = 0.75f),
                 )
             }
             TextButton(onClick = { show = true }) {
-                Text("Details", color = MaterialTheme.colorScheme.inversePrimary)
+                Text(
+                    "Details",
+                    color = if (connected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.inversePrimary,
+                )
             }
         }
     }
     if (show) {
         Dialog(onDismissRequest = { show = false }) {
             Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
                     Text("Connection details", style = MaterialTheme.typography.titleMedium)
+                    StatusRow("Bridge", if (connected) "Connected" else "Listening", connected)
+                    StatusRow("Dashboard", "Saved $age", true)
+                    StatusRow(
+                        "Offline actions",
+                        if (queuedCount == 0) "None waiting"
+                        else "$queuedCount waiting to sync",
+                        queuedCount == 0,
+                    )
+                    if (!connected) {
+                        Button(
+                            onClick = {
+                                val launch = context.packageManager
+                                    .getLaunchIntentForPackage(EmacsWaker.EMACS_PACKAGE)
+                                if (launch == null) {
+                                    Toast.makeText(context, "Emacs is not installed", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    context.startActivity(launch)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                        ) {
+                            Text("Open Emacs")
+                        }
+                    }
                     Text(
-                        "Jetpacs will reconnect automatically. To connect a new Emacs, " +
-                            "copy the pairing line below into its configuration.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 8.dp),
+                        "To connect a different Emacs, copy this pairing line into its configuration.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 16.dp),
                     )
                     PairingTokenBlock(modifier = Modifier.padding(top = 12.dp))
                 }
             }
         }
+    }
+}
+
+internal fun relativeAge(updatedAt: Long, now: Long = System.currentTimeMillis()): String {
+    val seconds = ((now - updatedAt).coerceAtLeast(0L) / 1000L)
+    if (seconds < 60) return "just now"
+    val minutes = seconds / 60
+    if (minutes < 60) return "$minutes ${if (minutes == 1L) "minute" else "minutes"} ago"
+    val hours = minutes / 60
+    if (hours < 24) return "$hours ${if (hours == 1L) "hour" else "hours"} ago"
+    val days = hours / 24
+    return "$days ${if (days == 1L) "day" else "days"} ago"
+}
+
+internal fun connectionSummary(connected: Boolean, queuedCount: Int, age: String): String {
+    val actions = "$queuedCount saved ${if (queuedCount == 1) "action" else "actions"}"
+    return when {
+        connected && queuedCount > 0 -> "$actions waiting to sync"
+        connected -> "Up to date"
+        queuedCount > 0 -> "Saved $age · $actions waiting"
+        else -> "Showing content saved $age"
     }
 }
 
@@ -520,9 +605,3 @@ private fun StatusRow(label: String, value: String, ok: Boolean) {
     }
 }
 
-private fun hasNotifPermission(context: Context): Boolean =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.checkSelfPermission(
-            context, Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-    } else true

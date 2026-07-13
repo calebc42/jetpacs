@@ -186,13 +186,60 @@ Lets async continuations of a phone-initiated flow (e.g. git calling back
 into Emacs for a commit message after `magit-commit' already returned)
 distinguish themselves from desktop-initiated activity.")
 
-(defun jetpacs-defaction (name fn)
+(defvar jetpacs--action-catalog (make-hash-table :test 'equal)
+  "Map of action NAME -> plist (:args :doc :owner) — metadata only, no handler.")
+
+(defun jetpacs--action-arg-json (a)
+  "Serializable form of an action-arg descriptor A (symbol keys)."
+  (append (list (cons 'name (format "%s" (plist-get a :name)))
+                (cons 'type (plist-get a :type))
+                (cons 'required (if (plist-get a :required) t :false)))
+          (when (plist-get a :values) (list (cons 'values (plist-get a :values))))))
+
+(cl-defun jetpacs-defaction (name fn &key args doc)
   "Register FN as the handler for action NAME.
-Attributes NAME to `jetpacs-current-owner' (see `with-jetpacs-owner'); a
-cross-owner re-registration warns (or errors under
-`jetpacs-strict-namespaces')."
+FN is called with the action's ARGS-alist and the raw PAYLOAD.  Attributes
+NAME to `jetpacs-current-owner' (see `with-jetpacs-owner'); a cross-owner
+re-registration warns (or errors under `jetpacs-strict-namespaces').
+
+ARGS, when given, is a closed arg schema — each entry
+\(:name SYM :type text|number|enum|date|ref|bool :required BOOL [:values VEC]) —
+and DOC a one-line description, published through `jetpacs-action-catalog' so
+an editor can enumerate the action.  Metadata is optional and never gates
+dispatch; a re-registration without it clears any stale metadata."
   (jetpacs--claim "action" name)
-  (puthash name fn jetpacs-action-handlers))
+  (puthash name fn jetpacs-action-handlers)
+  (if (or args doc)
+      (puthash name (list :args args :doc doc :owner jetpacs-current-owner)
+               jetpacs--action-catalog)
+    (remhash name jetpacs--action-catalog))
+  name)
+
+(defun jetpacs-action-catalog (&optional owner)
+  "Serializable action metadata (name, doc, args), optionally filtered to OWNER.
+Metadata only — never the handler function."
+  (let (out)
+    (maphash
+     (lambda (name meta)
+       (when (or (null owner) (equal (plist-get meta :owner) owner))
+         (push (append (list (cons 'action name)
+                             (cons 'doc (or (plist-get meta :doc) :null)))
+                       (when (plist-get meta :args)
+                         (list (cons 'args (vconcat (mapcar #'jetpacs--action-arg-json
+                                                            (plist-get meta :args)))))))
+               out)))
+     jetpacs--action-catalog)
+    (nreverse out)))
+
+(defvar jetpacs--in-action-handler nil
+  "Non-nil while a Jetpacs action handler runs (bound by `jetpacs--on-action').
+Read it through the public predicate `jetpacs-in-action-p'.")
+
+(defun jetpacs-in-action-p ()
+  "Non-nil when called within the dynamic extent of an action handler.
+True only for the synchronous body of a handler; an async continuation a
+handler schedules runs after the flag is unbound and so sees nil."
+  jetpacs--in-action-handler)
 
 (defun jetpacs--on-action (payload _frame)
   "Dispatch an inbound `event.action' PAYLOAD to its registered handler.
@@ -265,6 +312,87 @@ The subscription counterpart to `jetpacs-ui-state-clear'; used by
              jetpacs--ui-state)
     (dolist (k keys)
       (remhash k jetpacs--ui-state))))
+
+(defun jetpacs-ui-state-list (id)
+  "The value of widget ID coerced to a list of strings.
+A multi-select or enum value arrives as a vector, a list, a plain string, or
+a JSON-array string; normalize to a list of strings: nil -> nil; a vector or
+list keeps only its string members; a JSON-array string is decoded (keeping
+string members); any other string becomes a one-element list; a malformed
+JSON-array string and non-string members are discarded."
+  (let ((v (jetpacs-ui-state id)))
+    (cond
+     ((null v) nil)
+     ((vectorp v) (seq-filter #'stringp (append v nil)))
+     ((consp v) (seq-filter #'stringp v))
+     ((stringp v)
+      (if (string-match-p "\\`[[:space:]]*\\[" v)
+          (let ((parsed (ignore-errors
+                          (json-parse-string v :array-type 'list))))
+            (and (listp parsed) (seq-filter #'stringp parsed)))
+        (list v)))
+     (t nil))))
+
+;; ─── Form lifecycle registry ─────────────────────────────────────────────────
+;; The reset idiom every dialog needs: seed -> read -> clear.  A field's widget
+;; id carries a generation suffix; bumping it on reset is what actually empties
+;; the on-device widget (the companion keys field state by id).  Forms are
+;; owned, so `jetpacs-app-unregister' disposes them.
+
+(cl-defstruct (jetpacs-form (:constructor jetpacs--make-form) (:copier nil))
+  ns (gen 0) owner)
+
+(defvar jetpacs--forms (make-hash-table :test 'equal)
+  "Registry of \"OWNER\\0NS\" -> `jetpacs-form'.")
+
+(defun jetpacs--form-key (ns owner)
+  "The registry key for form NS under OWNER."
+  (format "%s\0%s" (or owner "") ns))
+
+(defun jetpacs-form (ns &optional owner)
+  "The form for namespace NS under OWNER (default `jetpacs-current-owner').
+Created on first use.  NS should be app-unique; field ids are prefixed with
+it so one clear resets the whole form."
+  (let* ((owner (or owner jetpacs-current-owner))
+         (key (jetpacs--form-key ns owner)))
+    (or (gethash key jetpacs--forms)
+        (puthash key (jetpacs--make-form :ns ns :owner owner) jetpacs--forms))))
+
+(defun jetpacs-form-field-id (form field)
+  "The current widget id for FIELD in FORM — \"NS-FIELD-GEN\".
+The GEN suffix rotates on `jetpacs-form-reset'."
+  (format "%s-%s-%d" (jetpacs-form-ns form) field (jetpacs-form-gen form)))
+
+(defun jetpacs-form-value (form field)
+  "The current UI-state value of FIELD in FORM."
+  (jetpacs-ui-state (jetpacs-form-field-id form field)))
+
+(defun jetpacs-form-seed (form field value)
+  "Set FIELD to VALUE only when it has no value yet (pre-fill an edit dialog)."
+  (let ((id (jetpacs-form-field-id form field)))
+    (unless (jetpacs-ui-state id) (jetpacs-ui-state-put id value))))
+
+(defun jetpacs-form-reset (form)
+  "Clear FORM's field state and subscriptions and rotate its generation.
+The rotation empties the on-device widgets."
+  (let ((prefix (concat (jetpacs-form-ns form) "-")))
+    (jetpacs-ui-state-clear prefix)
+    (jetpacs-on-state-change-clear prefix))
+  (cl-incf (jetpacs-form-gen form)))
+
+(defun jetpacs-form-dispose (form)
+  "Reset FORM and drop it from the registry."
+  (jetpacs-form-reset form)
+  (remhash (jetpacs--form-key (jetpacs-form-ns form) (jetpacs-form-owner form))
+           jetpacs--forms))
+
+(defun jetpacs--forms-of-owner (owner)
+  "The registered forms owned by OWNER."
+  (let (forms)
+    (maphash (lambda (_k form) (when (equal (jetpacs-form-owner form) owner)
+                                 (push form forms)))
+             jetpacs--forms)
+    forms))
 
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."

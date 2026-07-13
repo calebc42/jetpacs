@@ -38,7 +38,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.3.0"
+(defconst jetpacs-api-version "1.5.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -355,6 +355,15 @@ catalog that omits NODE-TYPE returns nil."
     (cond ((null jetpacs--session) nil)   ; not connected
           ((null catalog) t)           ; companion predates negotiation
           (t (and (seq-contains-p catalog name) t)))))
+
+(defmacro jetpacs-node-or (node-type primary fallback)
+  "Evaluate PRIMARY when the companion renders NODE-TYPE, else FALLBACK.
+Only one branch runs; both are local node-building forms (never wire data).
+A disconnected companion, or a connected one whose catalog omits NODE-TYPE,
+takes FALLBACK; a connected companion that sent no catalog at all is treated
+permissively and takes PRIMARY (see `jetpacs-node-supported-p')."
+  (declare (indent 1))
+  `(if (jetpacs-node-supported-p ,node-type) ,primary ,fallback))
 
 (defun jetpacs-device-caps ()
   "Capability names invocable via `jetpacs-capability-invoke', or nil.

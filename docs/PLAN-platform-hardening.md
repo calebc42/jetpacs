@@ -10,6 +10,16 @@ connect hook) plus one genuine latent-bug fix — the multi-app isolation
 seams are clobberable top-level `setq`s. See **Phase G** at the bottom.
 Phase G status: **in progress (2026-07-12)**.
 
+**UPDATE (2026-07-12, second pass): Phase H appended — exploit the 30.1
+baseline.** An audit of what the Emacs 30.1 floor actually guarantees found
+three gaps: adopted bundles load as raw `.el` (no byte-compile step anywhere
+in the adopt flow), the APK's optional-build feature matrix
+(sqlite/treesit/native-comp/libxml) is never probed even though three queued
+decisions read it, and `package-vc-install` (29) was never considered as the
+pre-MELPA distribution path. See **Phase H** at the bottom.
+Phase H status: **not started** (Task 23 anytime; Task 22 rides Phase G's
+Task 19 seam; Task 24 anytime).
+
 **STATUS (2026-07-09): ALL PHASES DONE — this plan is complete.** Phase F
 (the repo split) executed 2026-07-09: this repo is the standalone
 jetpacs foundation + companion; Glasspane lives in
@@ -835,3 +845,159 @@ directory work — it fixes a real isolation bug. One commit per task; regen the
 bundle (`emacs --batch -l emacs/build-bundle.el`) on any core touch; build
 `:app` on the Kotlin task. Bundles upgrade together (per the multi-app
 isolation contract).
+
+---
+
+## Phase H — exploit the 30.1 baseline (appended 2026-07-12)
+
+**Why.** The floor is Emacs 30.1 — the first Android-capable release, pinned
+in CI (`.github/workflows/ci.yml:21`). An audit of what 28/29/30 guarantee at
+that floor found the hot paths already sound (the wire has been on C-level
+`json-serialize`/`json-parse-string` since day one, `jetpacs.el:13`, and 30
+made native JSON unconditional; skin dispatch already uses `derived-mode-p`)
+but three gaps. The common thread for two of them: **a version floor is not a
+build guarantee** — sqlite/treesit/native-comp/libxml are compile-time
+options of the particular APK, so anything gated on them needs *positive
+knowledge*, the same discipline `node_types` (Task 2) and
+`device.trigger_types` already established.
+
+### Task 22: Byte-compile adopted bundles (native-comp = measured opt-in)
+
+**Goal:** stop re-reading ~10k lines of raw elisp on every boot of a
+battery-first product. `build-bundle.el` emits concatenated `.el`, `*.elc`
+is gitignored (`.gitignore:46`), and no step in the adopt flow compiles —
+so every Emacs start (frequent: Android kills the process) `read`s+`eval`s
+`jetpacs-core.el` (~827KB) plus each app bundle from source.
+
+**Files:** `emacs/core/jetpacs-config.el` (the Task 17 sync/ensure verbs),
+Task 19's `jetpacs-init.el` (the adopt + `require` path),
+`docs/TESTING-ON-DEVICE.md` (new section).
+
+**Implementation:**
+
+- Compile **on-device at adopt time**, not in CI: when a bundle lands in
+  `jetpacs/lib/` (adopt or re-sync), `byte-compile-file` it if the `.el`
+  is newer than its `.elc` (`file-newer-than-file-p`). The companion
+  can't write into the Emacs sandbox anyway (the Phase G grounding), so
+  Emacs doing it is the only possible placement — and it sidesteps
+  cross-build `.elc` portability questions entirely.
+- Loading needs no change of shape: `lib/` is on `load-path` and bundles
+  arrive via `require` (Task 19's design), which prefers `.elc` once it
+  exists. Set `load-prefer-newer t` in `jetpacs-init.el` as the backstop
+  against a stale `.elc` shadowing a freshly synced `.el`.
+- A compile failure must never brick boot: demote to `display-warning`,
+  delete any stale `.elc`, load the `.el`. (The sources already
+  byte-compile clean in CI — Phase B/F acceptance — so this is a safety
+  net, not an expected path.)
+- **Native compilation is a separate, measured decision — not this task.**
+  Gate on `(native-comp-available-p)` (the 2026-07-12 dev-machine 30.1
+  build reports NO — proof it's a build property, not a version property).
+  Async JIT compilation is the battery-hostile shape (background CPU +
+  `eln-cache` flash writes at unpredictable times); if it ever goes in:
+  explicit `native-compile` at adopt time (user is in the wizard, likely
+  on charger), never JIT, default-off defcustom, and only after an
+  on-device boot-time/battery number beats plain byte-code. Read Task 23's
+  probe before spending any effort here.
+
+**Pitfalls:** the first adopt gets seconds slower (compiling ~800KB) — do
+it once inside the adopt step with a progress message, never lazily at
+load; the Phase G migration shim must compile (or at least not orphan) the
+bundles it moves into `lib/`; bind `byte-compile-warnings` down during the
+adopt compile so warning noise can't hit the bridged minibuffer mid-boot.
+
+**Acceptance:** batch ERT against a temp root — adopt produces
+`lib/*.elc`; a re-sync with a newer `.el` recompiles; a
+deliberately-broken bundle warns and still boots from source. On-device
+(new TESTING-ON-DEVICE section): second boot's `load-history` shows the
+`.elc`, and the cold-boot delta is recorded.
+
+### Task 23: Probe the build-feature matrix (hello + Bridge)
+
+**Goal:** the APK's optional-build matrix — `sqlite-available-p`,
+`treesit-available-p`, `native-comp-available-p`, `libxml-available-p` —
+becomes positive knowledge instead of folklore. Three queued decisions
+read it: the SQLite-backed org index / FTS grep direction, Task 22's
+native-comp rung, and shr/libxml for the hypertext-substrate idea. Same
+discipline as node-type negotiation: support is what the running build
+*says*, not what 30.1 implies. `docs/demo-init.el:316` already models the
+consumer side (`(use-package vulpea :if (... (sqlite-available-p)))`).
+
+**Files:** `emacs/core/jetpacs.el` (the `hello` `client` object),
+`emacs/core/jetpacs-shell.el` (the Bridge settings section, ~line 524),
+`docs/SPEC.md` §3.
+
+**Implementation:**
+
+- `(defconst jetpacs-build-features ...)` computed at load from the four
+  predicates (each `fboundp`-guarded), plus a `jetpacs-feature-p`
+  accessor. This is a *reporting* surface: nothing in core gates on it —
+  consumers keep feature-local guards exactly like the demo-init vulpea
+  stanza, or a lean APK build would lose unrelated functionality.
+- Echo the list in `hello`'s `client` object as `features: [...]`
+  (additive wire field; SPEC §3 delta) so build skew shows up in
+  companion logs the same way version skew already does.
+- One row in the Bridge settings section rendering the matrix (present =
+  check, absent = dash) — the user-visible doctor line.
+
+**Pitfalls:** keep the constant a flat list of symbols — no versions, no
+open-ended metadata, or it becomes a second negotiation vocabulary to
+maintain. Don't move existing guards onto it; degradation stays at the
+point of consumption.
+
+**Acceptance:** the constant is a subset of the known symbol set with
+nothing unbound; `hello` round-trips `features`; the Bridge row renders;
+TESTING-ON-DEVICE records the actual APK matrix (its sqlite and
+native-comp answers unblock the org-index direction and Task 22's
+native-comp call).
+
+### Task 24: `package-vc-install` — the pre-MELPA distribution path
+
+**Goal:** MELPA packaging is explicitly deferred until after the repo
+split (`docs/ROADMAP.md:38`), which today leaves "clone and hand-copy
+files" as the only BYO/desktop install. Emacs 29's `package-vc-install`
+closes that gap with zero packaging infrastructure: install and track
+straight from the git URL, with autoloads and byte-compilation done by
+package.el at install time. For the handoff thesis this is the difference
+between "adopters wait for MELPA" and "adopters track upstream today."
+
+**Files:** `emacs/core/jetpacs.el` (library headers), `README.md` (install
+section), `docs/BUILDING-TIER1.md`; `docs/ROADMAP.md` (one line on the
+MELPA bullet).
+
+**Implementation:**
+
+- Give `emacs/core/jetpacs.el` real package headers: `Version:` (assert
+  equal to `jetpacs-api-version` in a test so they can't drift) and
+  `Package-Requires: ((emacs "30.1"))`.
+- Document the one-liner:
+  `(package-vc-install '(jetpacs :url "https://github.com/calebc42/jetpacs" :lisp-dir "emacs/core"))`
+  — `:lisp-dir` means the repo layout doesn't change.
+- Position it precisely: this is the **BYO-desktop / fork-maintainer**
+  path. The phone path stays bundle adoption (the wizard's staged files);
+  on-device package-vc needs git and network inside Emacs — available via
+  the Termux signature share, but that's the advanced footnote, not the
+  default.
+- ROADMAP delta: the MELPA-deferral bullet gains "middle path available
+  now: `package-vc-install` (hardening Task 24)" — the deferral itself
+  doesn't move.
+
+**Pitfalls:** a `:lisp-dir` install loads the *multi-file* core, not the
+concatenated bundle — the per-file require graph must keep standing on its
+own outside the bundle's concatenation order (CI's `core-load-test.el` and
+the per-file byte-compile gate already enforce this; keep it that way).
+Don't let package.el see the generated root `jetpacs-core.el` — it would
+double-provide every feature.
+
+**Acceptance:** on a clean 30.1, `package-vc-install-from-checkout` over
+the repo (the network-free CI variant) yields a working
+`(require 'jetpacs)` and `jetpacs-api-version` equal to the `Version:`
+header; README documents both install paths and when each applies.
+
+### Sequencing
+
+23 first — it is purely additive and its on-device answers gate the other
+two calls (Task 22's native-comp rung, the org-index direction). 22 rides
+Phase G's Task 19: the compile hook lands in the Task 17 verbs plus the
+Task 19 entry file — same seam, same commit window. 24 is independent
+(headers + docs) and can land anytime. One commit per task; regen the
+bundle on any core touch; the repo conventions above apply unchanged.

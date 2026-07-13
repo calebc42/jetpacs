@@ -51,7 +51,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.3.0"
+(defconst jetpacs-api-version "1.5.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -368,6 +368,15 @@ catalog that omits NODE-TYPE returns nil."
     (cond ((null jetpacs--session) nil)   ; not connected
           ((null catalog) t)           ; companion predates negotiation
           (t (and (seq-contains-p catalog name) t)))))
+
+(defmacro jetpacs-node-or (node-type primary fallback)
+  "Evaluate PRIMARY when the companion renders NODE-TYPE, else FALLBACK.
+Only one branch runs; both are local node-building forms (never wire data).
+A disconnected companion, or a connected one whose catalog omits NODE-TYPE,
+takes FALLBACK; a connected companion that sent no catalog at all is treated
+permissively and takes PRIMARY (see `jetpacs-node-supported-p')."
+  (declare (indent 1))
+  `(if (jetpacs-node-supported-p ,node-type) ,primary ,fallback))
 
 (defun jetpacs-device-caps ()
   "Capability names invocable via `jetpacs-capability-invoke', or nil.
@@ -2154,6 +2163,12 @@ button is shown beneath the text."
    "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"]
   "Short month labels used by `jetpacs-date-stamp'.")
 
+(defun jetpacs-month-abbrev (n)
+  "The three-letter English abbreviation for month N (1 = Jan .. 12 = Dec).
+Returns nil when N is not an integer in 1..12."
+  (and (integerp n) (>= n 1) (<= n 12)
+       (aref jetpacs--month-abbrevs (1- n))))
+
 (cl-defun jetpacs-date-stamp (&key date day month month-index year time padding)
   "A compact date/time chip-card.
 Pass DATE as \"YYYY-MM-DD\" to derive DAY, MONTH (abbrev), YEAR and
@@ -2167,7 +2182,7 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
           (d (string-to-number (match-string 3 date))))
       (setq year (or year y)
             month-index (or month-index m)
-            month (or month (aref jetpacs--month-abbrevs (1- m)))
+            month (or month (jetpacs-month-abbrev m))
             day (or day (number-to-string d)))))
   (jetpacs--node "date_stamp"
               'day (and day (format "%s" day))
@@ -2416,8 +2431,25 @@ companion gates on `jetpacs-node-supported-p' instead.")
 (defconst jetpacs-lint--action-keys
   '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
     nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger
-    on_day_tap on_month_change)
+    on_day_tap on_month_change on_point_tap on_button)
   "Node keys whose value is an embedded action object (SPEC §9).")
+
+(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe)
+  "The fields an action object may carry (SPEC §5).
+`action' and `builtin' are mutually exclusive; a `builtin' additionally
+carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
+
+(defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
+  "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
+
+(defconst jetpacs-lint-action-builtins
+  '(("view.switch" view)
+    ("clipboard.copy" text)
+    ("jetpacs.settings.open"))
+  "Companion-local builtins → the payload keys each requires (SPEC §5).
+Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
+must name one of these and carry every listed key.  `build-contract.el'
+derives the discriminated action schema in `contract.json' from this.")
 
 (defconst jetpacs-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
@@ -2437,6 +2469,22 @@ companion gates on `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--toolbar-line-ops '("promote" "demote" "move-up" "move-down")
   "Valid builtin `line' op names on a toolbar item.")
+
+;; ─── Declarative view specs (jetpacs-spec.el) ────────────────────────────────
+
+(defconst jetpacs-lint-spec-layouts '("list" "board" "calendar")
+  "Layouts a declarative view `:spec' may request.")
+
+(defconst jetpacs-lint-spec-transforms
+  '("raw" "string" "date" "date-label" "tags-list" "count" "bool" "ref")
+  "The closed transform names a template placeholder's `as' may name.")
+
+(defconst jetpacs-lint-spec-keys
+  '(:source :params :layout :template :header :group-by :empty-state :chrome)
+  "The keys a view `:spec' plist may carry.")
+
+(defconst jetpacs-lint-spec-chrome-kinds '("tab" "nav")
+  "The `:kind' values a spec `:chrome' may declare.")
 
 ;; ─── Shape predicates ────────────────────────────────────────────────────────
 
@@ -2480,7 +2528,17 @@ recursion, not here."
              (funcall report path (format "action name must be a string: %S" action)))
             ((and builtin (not (stringp builtin)))
              (funcall report path (format "builtin name must be a string: %S" builtin))))
-      (when (and wo (not (member wo '("queue" "drop" "wake"))))
+      ;; A `builtin' names a companion-local action from a closed set; validate
+      ;; the name and the payload keys its kind requires (SPEC §5).
+      (when (stringp builtin)
+        (let ((spec (assoc builtin jetpacs-lint-action-builtins)))
+          (if (not spec)
+              (funcall report path (format "unknown builtin: %S" builtin))
+            (dolist (req (cdr spec))
+              (unless (assq req val)
+                (funcall report path
+                         (format "builtin %s requires `%s'" builtin req)))))))
+      (when (and wo (not (member wo jetpacs-lint--when-offline-values)))
         (funcall report path (format "invalid when_offline: %S" wo)))
       (when (and args-cell (cdr args-cell) (not (jetpacs-lint--alist-p (cdr args-cell))))
         (funcall report path "action `args' must be an object")))))
@@ -2648,6 +2706,71 @@ subtree is lost."
            (cons key (jetpacs-lint-sanitize-spec val)))
           (t pair))))
      node))))
+
+;; ─── Declarative view-spec validation ───────────────────────────────────────
+
+(defun jetpacs-lint--plist-keys (plist)
+  "The keys of PLIST, in order."
+  (let (ks) (while (cdr plist) (push (car plist) ks) (setq plist (cddr plist)))
+       (nreverse ks)))
+
+(defun jetpacs-lint--walk-template (node fields path report)
+  "Walk template NODE, reporting placeholders that bind outside FIELDS,
+unknown transforms, and malformed embedded actions.  PATH is the reversed
+key list; REPORT is called with (PATH MESSAGE)."
+  (cond
+   ((not (jetpacs-lint--alist-p node))
+    (when (vectorp node)
+      (let ((i 0)) (dolist (x (append node nil))
+                     (jetpacs-lint--walk-template x fields (cons i path) report)
+                     (setq i (1+ i))))))
+   ((assq 'bind node)                   ; a placeholder
+    (let ((f (alist-get 'bind node)) (as (alist-get 'as node)))
+      (unless (and (stringp f) (member f fields))
+        (funcall report path (format "placeholder binds unknown field: %S" f)))
+      (when (and as (not (member as jetpacs-lint-spec-transforms)))
+        (funcall report path (format "unknown transform: %S" as)))))
+   ((or (assq 'action node) (assq 'builtin node))   ; an embedded action
+    (jetpacs-lint--check-action node path report)
+    (when-let ((args (cdr (assq 'args node))))
+      (jetpacs-lint--walk-template args fields (cons 'args path) report)))
+   (t                                   ; an ordinary node: walk its attrs
+    (dolist (pair node)
+      (unless (memq (car pair) '(t args))
+        (jetpacs-lint--walk-template (cdr pair) fields (cons (car pair) path) report))))))
+
+;;;###autoload
+(defun jetpacs-lint-view-spec (spec fields)
+  "Return a list of (PATH . PROBLEM) for declarative view SPEC, nil if clean.
+FIELDS is the field-name strings the bound source declares (from
+`jetpacs-source-fields'); every `((bind . F))' must name one.  Proves the spec
+is closed data referencing only registered fields, transforms, and actions —
+the SPEC §5 enforcement point for the binding grammar."
+  (let* (problems
+         (report (lambda (path msg) (push (cons (reverse path) msg) problems))))
+    (if (not (and (listp spec) (plistp spec)))
+        (funcall report nil (format "spec is not a plist: %S" spec))
+      (let ((ks (jetpacs-lint--plist-keys spec)))
+        (dolist (k ks)
+          (unless (memq k jetpacs-lint-spec-keys)
+            (funcall report (list k) (format "unknown spec key: %s" k))))
+        (unless (memq :source ks) (funcall report nil "spec has no :source"))
+        (unless (memq :template ks) (funcall report nil "spec has no :template")))
+      (unless (stringp (plist-get spec :source))
+        (funcall report (list :source) "must be a string"))
+      (let ((layout (plist-get spec :layout)))
+        (when (and layout (not (member layout jetpacs-lint-spec-layouts)))
+          (funcall report (list :layout) (format "unknown layout: %S" layout))))
+      (let ((kind (plist-get (plist-get spec :chrome) :kind)))
+        (when (and kind (not (member kind jetpacs-lint-spec-chrome-kinds)))
+          (funcall report (list :chrome) (format "unknown chrome kind: %S" kind))))
+      (let ((gbf (plist-get (plist-get spec :group-by) :field)))
+        (when (and gbf (not (member gbf fields)))
+          (funcall report (list :group-by) (format "group-by unknown field: %S" gbf))))
+      (dolist (key '(:template :header))
+        (when (plist-get spec key)
+          (jetpacs-lint--walk-template (plist-get spec key) fields (list key) report))))
+    (nreverse problems)))
 
 (provide 'jetpacs-lint)
 ;;; jetpacs-lint.el ends here
@@ -2844,13 +2967,60 @@ Lets async continuations of a phone-initiated flow (e.g. git calling back
 into Emacs for a commit message after `magit-commit' already returned)
 distinguish themselves from desktop-initiated activity.")
 
-(defun jetpacs-defaction (name fn)
+(defvar jetpacs--action-catalog (make-hash-table :test 'equal)
+  "Map of action NAME -> plist (:args :doc :owner) — metadata only, no handler.")
+
+(defun jetpacs--action-arg-json (a)
+  "Serializable form of an action-arg descriptor A (symbol keys)."
+  (append (list (cons 'name (format "%s" (plist-get a :name)))
+                (cons 'type (plist-get a :type))
+                (cons 'required (if (plist-get a :required) t :false)))
+          (when (plist-get a :values) (list (cons 'values (plist-get a :values))))))
+
+(cl-defun jetpacs-defaction (name fn &key args doc)
   "Register FN as the handler for action NAME.
-Attributes NAME to `jetpacs-current-owner' (see `with-jetpacs-owner'); a
-cross-owner re-registration warns (or errors under
-`jetpacs-strict-namespaces')."
+FN is called with the action's ARGS-alist and the raw PAYLOAD.  Attributes
+NAME to `jetpacs-current-owner' (see `with-jetpacs-owner'); a cross-owner
+re-registration warns (or errors under `jetpacs-strict-namespaces').
+
+ARGS, when given, is a closed arg schema — each entry
+\(:name SYM :type text|number|enum|date|ref|bool :required BOOL [:values VEC]) —
+and DOC a one-line description, published through `jetpacs-action-catalog' so
+an editor can enumerate the action.  Metadata is optional and never gates
+dispatch; a re-registration without it clears any stale metadata."
   (jetpacs--claim "action" name)
-  (puthash name fn jetpacs-action-handlers))
+  (puthash name fn jetpacs-action-handlers)
+  (if (or args doc)
+      (puthash name (list :args args :doc doc :owner jetpacs-current-owner)
+               jetpacs--action-catalog)
+    (remhash name jetpacs--action-catalog))
+  name)
+
+(defun jetpacs-action-catalog (&optional owner)
+  "Serializable action metadata (name, doc, args), optionally filtered to OWNER.
+Metadata only — never the handler function."
+  (let (out)
+    (maphash
+     (lambda (name meta)
+       (when (or (null owner) (equal (plist-get meta :owner) owner))
+         (push (append (list (cons 'action name)
+                             (cons 'doc (or (plist-get meta :doc) :null)))
+                       (when (plist-get meta :args)
+                         (list (cons 'args (vconcat (mapcar #'jetpacs--action-arg-json
+                                                            (plist-get meta :args)))))))
+               out)))
+     jetpacs--action-catalog)
+    (nreverse out)))
+
+(defvar jetpacs--in-action-handler nil
+  "Non-nil while a Jetpacs action handler runs (bound by `jetpacs--on-action').
+Read it through the public predicate `jetpacs-in-action-p'.")
+
+(defun jetpacs-in-action-p ()
+  "Non-nil when called within the dynamic extent of an action handler.
+True only for the synchronous body of a handler; an async continuation a
+handler schedules runs after the flag is unbound and so sees nil."
+  jetpacs--in-action-handler)
 
 (defun jetpacs--on-action (payload _frame)
   "Dispatch an inbound `event.action' PAYLOAD to its registered handler.
@@ -2924,6 +3094,87 @@ The subscription counterpart to `jetpacs-ui-state-clear'; used by
     (dolist (k keys)
       (remhash k jetpacs--ui-state))))
 
+(defun jetpacs-ui-state-list (id)
+  "The value of widget ID coerced to a list of strings.
+A multi-select or enum value arrives as a vector, a list, a plain string, or
+a JSON-array string; normalize to a list of strings: nil -> nil; a vector or
+list keeps only its string members; a JSON-array string is decoded (keeping
+string members); any other string becomes a one-element list; a malformed
+JSON-array string and non-string members are discarded."
+  (let ((v (jetpacs-ui-state id)))
+    (cond
+     ((null v) nil)
+     ((vectorp v) (seq-filter #'stringp (append v nil)))
+     ((consp v) (seq-filter #'stringp v))
+     ((stringp v)
+      (if (string-match-p "\\`[[:space:]]*\\[" v)
+          (let ((parsed (ignore-errors
+                          (json-parse-string v :array-type 'list))))
+            (and (listp parsed) (seq-filter #'stringp parsed)))
+        (list v)))
+     (t nil))))
+
+;; ─── Form lifecycle registry ─────────────────────────────────────────────────
+;; The reset idiom every dialog needs: seed -> read -> clear.  A field's widget
+;; id carries a generation suffix; bumping it on reset is what actually empties
+;; the on-device widget (the companion keys field state by id).  Forms are
+;; owned, so `jetpacs-app-unregister' disposes them.
+
+(cl-defstruct (jetpacs-form (:constructor jetpacs--make-form) (:copier nil))
+  ns (gen 0) owner)
+
+(defvar jetpacs--forms (make-hash-table :test 'equal)
+  "Registry of \"OWNER\\0NS\" -> `jetpacs-form'.")
+
+(defun jetpacs--form-key (ns owner)
+  "The registry key for form NS under OWNER."
+  (format "%s\0%s" (or owner "") ns))
+
+(defun jetpacs-form (ns &optional owner)
+  "The form for namespace NS under OWNER (default `jetpacs-current-owner').
+Created on first use.  NS should be app-unique; field ids are prefixed with
+it so one clear resets the whole form."
+  (let* ((owner (or owner jetpacs-current-owner))
+         (key (jetpacs--form-key ns owner)))
+    (or (gethash key jetpacs--forms)
+        (puthash key (jetpacs--make-form :ns ns :owner owner) jetpacs--forms))))
+
+(defun jetpacs-form-field-id (form field)
+  "The current widget id for FIELD in FORM — \"NS-FIELD-GEN\".
+The GEN suffix rotates on `jetpacs-form-reset'."
+  (format "%s-%s-%d" (jetpacs-form-ns form) field (jetpacs-form-gen form)))
+
+(defun jetpacs-form-value (form field)
+  "The current UI-state value of FIELD in FORM."
+  (jetpacs-ui-state (jetpacs-form-field-id form field)))
+
+(defun jetpacs-form-seed (form field value)
+  "Set FIELD to VALUE only when it has no value yet (pre-fill an edit dialog)."
+  (let ((id (jetpacs-form-field-id form field)))
+    (unless (jetpacs-ui-state id) (jetpacs-ui-state-put id value))))
+
+(defun jetpacs-form-reset (form)
+  "Clear FORM's field state and subscriptions and rotate its generation.
+The rotation empties the on-device widgets."
+  (let ((prefix (concat (jetpacs-form-ns form) "-")))
+    (jetpacs-ui-state-clear prefix)
+    (jetpacs-on-state-change-clear prefix))
+  (cl-incf (jetpacs-form-gen form)))
+
+(defun jetpacs-form-dispose (form)
+  "Reset FORM and drop it from the registry."
+  (jetpacs-form-reset form)
+  (remhash (jetpacs--form-key (jetpacs-form-ns form) (jetpacs-form-owner form))
+           jetpacs--forms))
+
+(defun jetpacs--forms-of-owner (owner)
+  "The registered forms owned by OWNER."
+  (let (forms)
+    (maphash (lambda (_k form) (when (equal (jetpacs-form-owner form) owner)
+                                 (push form forms)))
+             jetpacs--forms)
+    forms))
+
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."
   (let* ((id (alist-get 'id payload))
@@ -2953,6 +3204,179 @@ The subscription counterpart to `jetpacs-ui-state-clear'; used by
 ;; but that's fine because jetpacs-minibuffer is evaluated immediately afterward.
 (require 'jetpacs-minibuffer nil t)
 ;;; jetpacs-surfaces.el ends here
+;;; ==================================================================
+;;; BEGIN core/jetpacs-source.el
+;;; ==================================================================
+
+;;; jetpacs-source.el --- named, owned, engine-agnostic data sources -*- lexical-binding: t; -*-
+
+;; A *source* is a named producer of a list of item alists — the data half of
+;; a declarative view (`:spec', jetpacs-spec.el).  Core knows no query engine:
+;; an app registers a source with a `:query' thunk (the sole funcall, run
+;; server-side, never serialized — §5-safe: the name is data, the function is
+;; local) plus machine-readable `:params' and `:fields' metadata so an editor
+;; can enumerate what a source takes and produces.
+;;
+;;   (jetpacs-defsource "glasspane.org"
+;;     :params '((:name query :type "text" :required t))
+;;     :fields '((:name "headline" :type "text") (:name "scheduled" :type "date")
+;;               (:name "tags" :type "string-list") (:name "ref" :type "ref"))
+;;     :query   (lambda (p) (glasspane-org-query
+;;                           (glasspane-org-parse-query (alist-get 'query p))))
+;;     :cache-key (lambda (_p) (glasspane-org--agenda-mtime)))
+;;
+;; Sources are OWNED (via `jetpacs-current-owner') exactly like actions/views,
+;; so `jetpacs-app-unregister' tears them down.  They are UNCACHED by default;
+;; supplying `:cache-key' memoises one result per (name, canonical-params,
+;; freshness-token).  An error is never cached.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'jetpacs-surfaces)             ; jetpacs--claim / --unclaim / --owned-names / current-owner
+
+(defconst jetpacs-source-field-types
+  '("text" "number" "boolean" "date" "string-list" "enum" "ref")
+  "The closed, domain-neutral field/param types a source declares.
+A source normalizes engine-specific data (Org timestamps, TODO keywords,
+tags) into these before core sees it; an `enum' requires a `:values' vector.")
+
+(defvar jetpacs--sources (make-hash-table :test 'equal)
+  "Registry of source NAME -> plist (:params :fields :query :cache-key :owner).")
+
+(defvar jetpacs--source-cache (make-hash-table :test 'equal)
+  "Memo for sources that opt in via `:cache-key'.
+Key is (NAME CANONICAL-PARAMS FRESHNESS-TOKEN); absent for uncached sources.")
+
+;; ─── Schema validation ───────────────────────────────────────────────────────
+
+(defun jetpacs-source--check-type (ctx type values)
+  "Validate TYPE is a known field type (enum needs VALUES); CTX labels errors."
+  (unless (member type jetpacs-source-field-types)
+    (error "jetpacs source %s: unknown type %S (want one of %S)"
+           ctx type jetpacs-source-field-types))
+  (when (and (equal type "enum") (not (vectorp values)))
+    (error "jetpacs source %s: enum type requires a :values vector" ctx)))
+
+(defun jetpacs-source--validate-schema (name params fields)
+  "Validate the :params and :fields metadata of source NAME."
+  (dolist (p params)
+    (jetpacs-source--check-type (format "%s param %s" name (plist-get p :name))
+                                (plist-get p :type) (plist-get p :values)))
+  (dolist (f fields)
+    (jetpacs-source--check-type (format "%s field %s" name (plist-get f :name))
+                                (plist-get f :type) (plist-get f :values))))
+
+;; ─── Registration ────────────────────────────────────────────────────────────
+
+(cl-defun jetpacs-defsource (name &key params fields query cache-key)
+  "Register (or replace) data source NAME (a string).
+PARAMS is a list of `(:name SYM :type TYPE :required BOOL [:values VEC])'
+descriptors validated and canonicalized before each query.  FIELDS is the
+list of `(:name STRING :type TYPE [:values VEC])' a `:spec' template may
+bind.  QUERY is `(PARAMS-ALIST) -> (list item-alist...)', app-supplied and
+never serialized.  CACHE-KEY, when non-nil, is `(PARAMS-ALIST) -> TOKEN'
+enabling one memoised result per params + token.  Returns NAME."
+  (jetpacs-source--validate-schema name params fields)
+  (jetpacs--claim "source" name)
+  (puthash name (list :params params :fields fields :query query
+                      :cache-key cache-key :owner jetpacs-current-owner)
+           jetpacs--sources)
+  (jetpacs-source-invalidate name)      ; a re-registration must not serve stale rows
+  name)
+
+(defun jetpacs-source-remove (name)
+  "Unregister source NAME, dropping its cache and ownership record."
+  (remhash name jetpacs--sources)
+  (jetpacs-source-invalidate name)
+  (jetpacs--unclaim "source" name))
+
+(defun jetpacs-source-p (name)
+  "Non-nil when NAME is a registered source."
+  (and (gethash name jetpacs--sources) t))
+
+(defun jetpacs-source-fields (name)
+  "The declared output fields of source NAME (a list of field plists)."
+  (plist-get (gethash name jetpacs--sources) :fields))
+
+;; ─── Query + cache ───────────────────────────────────────────────────────────
+
+(defun jetpacs-source--canonical-params (src params)
+  "Validate PARAMS against SRC's schema; return a canonical (name-sorted) alist.
+A missing required param signals an error.  Only declared params survive, so
+the cache key is stable regardless of the caller's alist order or extras."
+  (let (out)
+    (dolist (pspec (plist-get src :params))
+      (let* ((pname (plist-get pspec :name))
+             (cell (assq pname params)))
+        (when (and (plist-get pspec :required) (null cell))
+          (error "jetpacs source: missing required param `%s'" pname))
+        (when cell (push (cons pname (cdr cell)) out))))
+    (sort out (lambda (a b) (string< (symbol-name (car a)) (symbol-name (car b)))))))
+
+(defun jetpacs-source-query (name params)
+  "Run source NAME with PARAMS (a symbol-keyed alist); return its item list.
+Validates and canonicalizes PARAMS first.  Uncached unless the source
+declared a `:cache-key', in which case the result is memoised per (name,
+canonical-params, freshness-token).  A query that errors is never cached."
+  (let* ((src (or (gethash name jetpacs--sources)
+                  (error "No such jetpacs source: %s" name)))
+         (canon (jetpacs-source--canonical-params src params))
+         (ckfn (plist-get src :cache-key)))
+    (if (null ckfn)
+        (funcall (plist-get src :query) canon)
+      (let* ((key (list name canon (funcall ckfn canon)))
+             (hit (gethash key jetpacs--source-cache 'jetpacs--miss)))
+        (if (not (eq hit 'jetpacs--miss))
+            hit
+          ;; puthash only after a successful call, so an error is never cached.
+          (let ((result (funcall (plist-get src :query) canon)))
+            (puthash key result jetpacs--source-cache)
+            result))))))
+
+(defun jetpacs-source-invalidate (&optional name)
+  "Drop cached results for source NAME (all sources when NAME is nil)."
+  (if (null name)
+      (clrhash jetpacs--source-cache)
+    (let (keys)
+      (maphash (lambda (k _v) (when (equal (car k) name) (push k keys)))
+               jetpacs--source-cache)
+      (dolist (k keys) (remhash k jetpacs--source-cache)))))
+
+;; ─── Enumeration (for editors / the composer) ────────────────────────────────
+
+(defun jetpacs-source--param-json (p)
+  "Serializable form of param descriptor P (symbol keys, per the wire convention)."
+  (append (list (cons 'name (symbol-name (plist-get p :name)))
+                (cons 'type (plist-get p :type))
+                (cons 'required (if (plist-get p :required) t :false)))
+          (when (plist-get p :values) (list (cons 'values (plist-get p :values))))))
+
+(defun jetpacs-source--field-json (f)
+  "Serializable form of field descriptor F (symbol keys)."
+  (append (list (cons 'name (format "%s" (plist-get f :name)))
+                (cons 'type (plist-get f :type)))
+          (when (plist-get f :values) (list (cons 'values (plist-get f :values))))))
+
+(defun jetpacs-source-catalog ()
+  "A JSON-serializable inventory of registered sources — metadata only.
+Each entry is (name, params, fields); the `:query' function is never
+included.  Lets an editor enumerate available sources and their fields."
+  (let (out)
+    (maphash
+     (lambda (name src)
+       (push (list (cons 'name name)
+                   (cons 'params (vconcat (mapcar #'jetpacs-source--param-json
+                                                  (plist-get src :params))))
+                   (cons 'fields (vconcat (mapcar #'jetpacs-source--field-json
+                                                  (plist-get src :fields)))))
+             out))
+     jetpacs--sources)
+    (nreverse out)))
+
+(provide 'jetpacs-source)
+;;; jetpacs-source.el ends here
+
 ;;; ==================================================================
 ;;; BEGIN core/jetpacs-triggers.el
 ;;; ==================================================================
@@ -3602,10 +4026,9 @@ After this the prompt is cancelled (as if the user dismissed the dialog)."
 
 ;; ─── Internal state ──────────────────────────────────────────────────────────
 
-(defvar jetpacs--in-action-handler nil
-  "Non-nil while an Jetpacs action handler is executing.
-Bound by `jetpacs--on-action' in jetpacs-surfaces.el.  The minibuffer advice
-checks this to decide whether to intercept.")
+;; Owned by jetpacs-surfaces.el (read it via `jetpacs-in-action-p'); declared
+;; here so a standalone byte-compile of this file stays warning-clean.
+(defvar jetpacs--in-action-handler)
 
 (defvar jetpacs--prompt-reply nil
   "Alist of prompt-id → reply value, filled by the `prompt.reply' action.")
@@ -5216,10 +5639,18 @@ section.  Runs inside an action handler, so any prompt is bridged."
   "Ordered list of (NAME . PLIST) registered shell views.
 Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 
-(cl-defun jetpacs-shell-define-view (name &key builder tab when overlay (order 100))
+(declare-function jetpacs-spec--compile "jetpacs-spec")
+;; Declarative :spec views are compiled by jetpacs-spec.el, which requires this
+;; file; autoload avoids the load cycle (in the bundle the real function is
+;; defined after this one, before any push occurs).
+(autoload 'jetpacs-spec--compile "jetpacs-spec")
+
+(cl-defun jetpacs-shell-define-view (name &key builder spec tab when overlay (order 100))
   "Register (or replace) shell view NAME.
 BUILDER is a function of one argument (snackbar text or nil) returning
-the view's scaffold alist.  TAB, when non-nil, is a plist
+the view's scaffold alist.  SPEC is a declarative data-view plist compiled
+by jetpacs-spec.el (see docs/BINDING.md) — an alternative to BUILDER;
+exactly one of the two is required.  TAB, when non-nil, is a plist
 \(:icon :label :badge) placing the view in the bottom bar; landing on a
 tab view makes it the current tab.  :badge, when non-nil, is a nullary
 function called on every push whose result overlays the tab icon — a
@@ -5229,8 +5660,12 @@ WHEN, when non-nil, is a predicate gating the view's inclusion in each
 push.  OVERLAY, when non-nil, is a predicate: while it holds, this view
 is the active one shown on a background push (a detail drill-in over
 the current tab).  ORDER sorts views and bottom-bar items."
+  (unless (or builder spec)
+    (error "jetpacs-shell-define-view %s: needs :builder or :spec" name))
+  (when (and builder spec)
+    (error "jetpacs-shell-define-view %s: :builder and :spec are exclusive" name))
   (setq jetpacs-shell-views
-        (sort (cons (cons name (list :builder builder :tab tab :when when
+        (sort (cons (cons name (list :builder builder :spec spec :tab tab :when when
                                      :overlay overlay :order order))
                     (assoc-delete-all name jetpacs-shell-views))
               (lambda (a b)
@@ -5292,6 +5727,17 @@ view, not the push."
                          (and (plist-get (cdr e) :tab)
                               (jetpacs-shell--view-filtered-p (car e))))
                        jetpacs-shell-views))))
+
+(defun jetpacs-shell-set-current-tab (name)
+  "Switch to the registered bottom-bar tab NAME.
+A NAME that is not a registered tab is rejected (returns nil and warns).
+A valid switch routes through `jetpacs-shell-push' — running
+`jetpacs-shell-view-switched-hook' and repushing — and returns NAME; it
+never setqs the internal tab var directly."
+  (if (jetpacs-shell--tab-p name)
+      (progn (jetpacs-shell-push name) name)
+    (message "Jetpacs: cannot switch to %S — not a registered tab" name)
+    nil))
 
 (defun jetpacs-shell--active-view ()
   "The view a push should land on: a firing overlay, else the current tab."
@@ -5526,7 +5972,9 @@ A broken builder must cost its own screen, not the whole push — with a
 Tier 1 being live-coded against a running session, the rest of the app
 keeps updating and the broken view *shows* its error."
   (condition-case err
-      (funcall (plist-get plist :builder) snackbar)
+      (if (plist-get plist :spec)
+          (jetpacs-spec--compile name (plist-get plist :spec) snackbar)
+        (funcall (plist-get plist :builder) snackbar))
     (error
      (jetpacs-shell-nav-view
       (capitalize name)
@@ -5725,6 +6173,264 @@ Never nest this node inside another scroll container."
 ;;; jetpacs-shell.el ends here
 
 ;;; ==================================================================
+;;; BEGIN core/jetpacs-spec.el
+;;; ==================================================================
+
+;;; jetpacs-spec.el --- declarative data-view compiler -*- lexical-binding: t; -*-
+
+;; The UI half of a declarative view.  `jetpacs-shell-define-view' accepts a
+;; `:spec' (a plist) beside `:builder'; this module compiles it, at push time,
+;; into the same scaffold node tree a hand-written builder returns:
+;;
+;;   query a named source -> group -> per-item template instantiation -> layout
+;;   -> chrome (tab/nav).
+;;
+;; The template is RAW wire-node data (ordinary widget constructors are not
+;; promised to preserve placeholders, so a template is authored as raw nodes).
+;; A leaf may be a PLACEHOLDER `((bind . "field") (as . "transform"))' — the
+;; only dynamic element, resolved server-side from the item's fields through a
+;; CLOSED, domain-neutral transform set (SPEC §5: no expressions on the wire).
+;; `jetpacs-lint-view-spec' (jetpacs-lint.el) proves a spec carries only closed
+;; data and registered names.
+;;
+;; Layouts: list (header + one template per item), calendar (ISO-date groups,
+;; ascending, unscheduled last), board (grouped columns; the per-card
+;; cross-column "move" menu is a Glasspane opinion left to :builder in v1).
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'jetpacs-widgets)
+(require 'jetpacs-surfaces)
+(require 'jetpacs-source)
+(require 'jetpacs-shell)
+(require 'jetpacs-lint)
+
+;; ─── Placeholders + transforms ───────────────────────────────────────────────
+
+(defun jetpacs-spec--placeholder-p (x)
+  "Non-nil when X is a `((bind . FIELD) [(as . TRANSFORM)])' placeholder."
+  (and (jetpacs-lint--alist-p x) (assq 'bind x) t))
+
+(defun jetpacs-spec--field-value (item field)
+  "The raw value of FIELD (a string) in ITEM (a symbol-keyed alist)."
+  (and field (alist-get (intern field) item)))
+
+(defun jetpacs-spec--date-label (iso)
+  "\"Mon D\" for an ISO date string ISO, or nil."
+  (when (and (stringp iso)
+             (string-match "\\`\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)" iso))
+    (format "%s %d" (jetpacs-month-abbrev (string-to-number (match-string 2 iso)))
+            (string-to-number (match-string 3 iso)))))
+
+(defun jetpacs-spec--transform (as raw)
+  "Apply the closed transform named AS to RAW; nil means \"absent\" (dropped).
+Transforms are domain-neutral: a source normalizes engine data to canonical
+types (ISO dates, string lists) before core sees it."
+  (pcase as
+    ("raw" raw)
+    ("string" (and raw (if (stringp raw) raw (format "%s" raw))))
+    ("date" (and (stringp raw)
+                 (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" raw) raw))
+    ("date-label" (jetpacs-spec--date-label raw))
+    ("tags-list" (let ((l (cond ((vectorp raw) (append raw nil)) ((listp raw) raw))))
+                   (and l (mapconcat (lambda (s) (format "%s" s)) l " "))))
+    ("count" (length (cond ((vectorp raw) (append raw nil)) ((listp raw) raw) (t nil))))
+    ("bool" (if raw t :false))
+    ("ref" raw)
+    (_ raw)))
+
+(defun jetpacs-spec--resolve (ph item source)
+  "Resolve placeholder PH against ITEM (SOURCE labels errors)."
+  (ignore source)
+  (jetpacs-spec--transform (or (alist-get 'as ph) "raw")
+                           (jetpacs-spec--field-value item (alist-get 'bind ph))))
+
+;; ─── Instantiation (the only place a field value is computed) ────────────────
+
+(defun jetpacs-spec--instantiate-args (args item source)
+  "Instantiate an action's ARGS for ITEM.
+ARGS is a placeholder binding the whole args object (e.g. a ref), or an alist
+whose values are literals/placeholders and which may carry one `_spread' entry
+\(a placeholder for a base object to merge under the literal keys).  A key that
+collides with a spread key is an error."
+  (cond
+   ((jetpacs-spec--placeholder-p args) (jetpacs-spec--resolve args item source))
+   ((jetpacs-lint--alist-p args)
+    (let* ((spread-cell (assq '_spread args))
+           (base (and spread-cell (jetpacs-spec--resolve (cdr spread-cell) item source)))
+           (rest (assq-delete-all '_spread (copy-alist args)))
+           (merged (delq nil
+                         (mapcar (lambda (pair)
+                                   (let ((v (jetpacs-spec--instantiate (cdr pair) item source)))
+                                     (and v (cons (car pair) v))))
+                                 rest))))
+      (dolist (pair merged)
+        (when (assq (car pair) base)
+          (error "jetpacs-spec: args key `%s' collides with the spread object" (car pair))))
+      (append base merged)))
+   (t args)))
+
+(defun jetpacs-spec--instantiate (node item source)
+  "Return NODE with every placeholder resolved against ITEM.
+A placeholder resolving to nil drops its containing attribute/child."
+  (cond
+   ((jetpacs-spec--placeholder-p node) (jetpacs-spec--resolve node item source))
+   ((vectorp node)
+    (vconcat (delq nil (mapcar (lambda (x) (jetpacs-spec--instantiate x item source))
+                               (append node nil)))))
+   ((jetpacs-lint--alist-p node)
+    (delq nil
+          (mapcar
+           (lambda (pair)
+             (let ((v (if (eq (car pair) 'args)
+                          (jetpacs-spec--instantiate-args (cdr pair) item source)
+                        (jetpacs-spec--instantiate (cdr pair) item source))))
+               (and v (cons (car pair) v))))
+           node)))
+   (t node)))
+
+;; ─── Grouping ────────────────────────────────────────────────────────────────
+
+(defun jetpacs-spec--group-key (item field)
+  "The group key of ITEM by FIELD — its value, or \"\" when absent."
+  (or (jetpacs-spec--field-value item field) ""))
+
+(defun jetpacs-spec--column-order (items field order source empty-last)
+  "The ordered distinct group values of ITEMS by FIELD.
+ORDER is an explicit values vector, else the source field's enum values, else
+encounter order; present groups not covered are appended; \"\" goes last when
+EMPTY-LAST."
+  (let* ((present (delete-dups (mapcar (lambda (it) (jetpacs-spec--group-key it field)) items)))
+         (base (cond ((vectorp order) (append order nil))
+                     ((and source (jetpacs-source-p source))
+                      (let ((fspec (cl-find field (jetpacs-source-fields source)
+                                            :key (lambda (f) (plist-get f :name)) :test #'equal)))
+                        (and (equal (plist-get fspec :type) "enum")
+                             (append (plist-get fspec :values) nil))))))
+         (ordered (append (cl-remove-if-not (lambda (v) (member v present)) base)
+                          (cl-remove-if (lambda (v) (member v base)) present))))
+    (if empty-last
+        (append (cl-remove "" ordered :test #'equal)
+                (and (member "" ordered) '("")))
+      ordered)))
+
+(defun jetpacs-spec--group-label (g layout)
+  "A human label for group value G under LAYOUT."
+  (cond ((and (stringp g) (string-empty-p g))
+         (if (equal layout "calendar") "Unscheduled" "None"))
+        ((equal layout "calendar") (or (jetpacs-spec--date-label g) g))
+        (t g)))
+
+;; ─── Layouts ─────────────────────────────────────────────────────────────────
+
+(defun jetpacs-spec--cards (template items source)
+  "Instantiate TEMPLATE for each of ITEMS."
+  (mapcar (lambda (it) (jetpacs-spec--instantiate template it source)) items))
+
+(defun jetpacs-spec--list (spec items template source)
+  "The list layout: optional header then one template per item, in a lazy column."
+  (apply #'jetpacs-lazy-column
+         (append (when (plist-get spec :header)
+                   (list (jetpacs-spec--instantiate (plist-get spec :header) nil source)))
+                 (jetpacs-spec--cards template items source))))
+
+(defun jetpacs-spec--calendar (spec items template source)
+  "The calendar layout: ISO-date groups ascending (unscheduled last), each a
+section header + its item templates, flattened into a lazy column."
+  (let* ((field (or (plist-get (plist-get spec :group-by) :field) "scheduled"))
+         (buckets (make-hash-table :test 'equal)))
+    (dolist (it items)
+      (let ((k (jetpacs-spec--group-key it field)))
+        (puthash k (cons it (gethash k buckets)) buckets)))
+    (let ((dates (sort (hash-table-keys buckets)
+                       (lambda (a b) (cond ((string-empty-p a) nil)
+                                           ((string-empty-p b) t)
+                                           (t (string< a b)))))))
+      (apply #'jetpacs-lazy-column
+             (cl-loop for d in dates append
+                      (cons (jetpacs-section-header (jetpacs-spec--group-label d "calendar"))
+                            (jetpacs-spec--cards template (nreverse (gethash d buckets)) source)))))))
+
+(defun jetpacs-spec--board (spec items template source)
+  "The board layout: one column per group value, panning sideways."
+  (let* ((gb (plist-get spec :group-by))
+         (field (or (plist-get gb :field) "todo"))
+         (groups (jetpacs-spec--column-order items field (plist-get gb :order)
+                                             source (plist-get gb :empty-last))))
+    (apply #'jetpacs-scroll-row
+           (mapcar
+            (lambda (g)
+              (let ((in-col (cl-remove-if-not
+                             (lambda (it) (equal (jetpacs-spec--group-key it field) g)) items)))
+                (jetpacs-box
+                 (list (apply #'jetpacs-column
+                              (cons (jetpacs-section-header
+                                     (format "%s (%d)" (jetpacs-spec--group-label g "board")
+                                             (length in-col)))
+                                    (jetpacs-spec--cards template in-col source))))
+                 :padding 4)))
+            groups))))
+
+(defun jetpacs-spec--layout-body (spec items)
+  "The body node for SPEC over ITEMS."
+  (let ((template (plist-get spec :template))
+        (source (plist-get spec :source)))
+    (pcase (plist-get spec :layout)
+      ("board" (jetpacs-spec--board spec items template source))
+      ("calendar" (jetpacs-spec--calendar spec items template source))
+      (_ (jetpacs-spec--list spec items template source)))))
+
+(defun jetpacs-spec--empty-body (spec)
+  "The empty-state node for SPEC (a default when none is declared)."
+  (let ((es (plist-get spec :empty-state)))
+    (jetpacs-empty-state :icon (or (plist-get es :icon) "inbox")
+                         :title (or (plist-get es :title) "Nothing here")
+                         :caption (plist-get es :caption))))
+
+;; ─── Chrome + compile ────────────────────────────────────────────────────────
+
+(defun jetpacs-spec--seq (x)
+  "X (a vector or list of nodes) as a list, or nil."
+  (and x (append x nil)))
+
+(defun jetpacs-spec--wrap (name chrome body snackbar)
+  "Wrap BODY in the tab/nav chrome for view NAME."
+  (pcase (or (plist-get chrome :kind) "tab")
+    ("nav"
+     (jetpacs-shell-nav-view (or (plist-get chrome :title) (capitalize name)) body
+                             :back-to (plist-get chrome :back)
+                             :actions (jetpacs-spec--seq (plist-get chrome :actions))
+                             :fab (plist-get chrome :fab)
+                             :snackbar snackbar))
+    (_
+     (apply #'jetpacs-shell-tab-view name body
+            :snackbar snackbar
+            (append
+             (when (plist-get chrome :title)
+               (list :top-bar (jetpacs-shell-default-top-bar (plist-get chrome :title))))
+             (when (plist-member chrome :fab) (list :fab (plist-get chrome :fab))))))))
+
+(defun jetpacs-spec--compile (name spec snackbar)
+  "Compile view NAME's declarative SPEC into a scaffold node tree.
+Runs inside `jetpacs-shell--build-view''s condition-case, so a failure here
+degrades to that view's error card rather than dropping the push."
+  ;; Structural lint before querying: prove the spec is closed data over the
+  ;; source's declared fields.  A problem aborts to the shell's error card.
+  (let ((problems (jetpacs-lint-view-spec
+                   spec (mapcar (lambda (f) (plist-get f :name))
+                                (jetpacs-source-fields (plist-get spec :source))))))
+    (when problems (error "invalid :spec for %s: %s" name (cdar problems))))
+  (let* ((items (jetpacs-source-query (plist-get spec :source) (plist-get spec :params)))
+         (body  (if items (jetpacs-spec--layout-body spec items)
+                  (jetpacs-spec--empty-body spec))))
+    (jetpacs-spec--wrap name (plist-get spec :chrome) body snackbar)))
+
+(provide 'jetpacs-spec)
+;;; jetpacs-spec.el ends here
+
+;;; ==================================================================
 ;;; BEGIN core/jetpacs-apps.el
 ;;; ==================================================================
 
@@ -5842,6 +6548,7 @@ Registrations a Tier 1 made without an owner are not tracked and are not
 torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   (dolist (name (jetpacs--owned-names "action" id))
     (remhash name jetpacs-action-handlers)
+    (remhash name jetpacs--action-catalog)
     (jetpacs--unclaim "action" name))
   (dolist (name (jetpacs--owned-names "view" id))
     (jetpacs-shell-remove-view name)
@@ -5868,6 +6575,11 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   (dolist (name (jetpacs--owned-names "surface" id))
     (jetpacs-surface-remove name)
     (jetpacs--unclaim "surface" name))
+  ;; Data sources (jetpacs-source.el; guard for a lean build without it)
+  (dolist (name (jetpacs--owned-names "source" id))
+    (when (fboundp 'jetpacs-source-remove) (jetpacs-source-remove name)))
+  ;; Forms (jetpacs-form registry)
+  (dolist (form (jetpacs--forms-of-owner id)) (jetpacs-form-dispose form))
   ;; Triggers (batch to avoid N redundant pushes)
   (let ((trigger-names (jetpacs--owned-names "trigger" id)))
     (dolist (name trigger-names)
@@ -9893,6 +10605,24 @@ otherwise the plain-text editor."
             (when (and (equal view "files") jetpacs-files--file)
               (setq jetpacs-files--file nil))))
 
+(defun jetpacs-files-current-file ()
+  "Absolute path of the file currently open in the editor, or nil."
+  jetpacs-files--file)
+
+(defun jetpacs-files-open (file)
+  "Open FILE in the editor and switch to the editor view.
+FILE must be a readable path within the browsable roots; otherwise nothing
+happens and nil is returned.  On success sets the open file, runs
+`jetpacs-files-open-hook' with the expanded path, switches to the editor
+view, and returns that path."
+  (when (and (stringp file)
+             (file-readable-p file)
+             (jetpacs-files--within-root-p file))
+    (setq jetpacs-files--file (expand-file-name file))
+    (run-hook-with-args 'jetpacs-files-open-hook jetpacs-files--file)
+    (jetpacs-shell-push nil :switch-to "edit")
+    jetpacs-files--file))
+
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 
 (jetpacs-defaction "files.cd"
@@ -9907,13 +10637,7 @@ otherwise the plain-text editor."
 
 (jetpacs-defaction "files.open"
   (lambda (args _)
-    (let ((file (alist-get 'file args)))
-      (when (and (stringp file)
-                 (file-readable-p file)
-                 (jetpacs-files--within-root-p file))
-        (setq jetpacs-files--file (expand-file-name file))
-        (run-hook-with-args 'jetpacs-files-open-hook jetpacs-files--file)
-        (jetpacs-shell-push nil :switch-to "edit")))))
+    (jetpacs-files-open (alist-get 'file args))))
 
 (jetpacs-defaction "files.grep"
   ;; The query arrives through the bridged minibuffer (this runs inside an

@@ -87,7 +87,9 @@ below is weighed against that.
   (the ARCHITECTURE conformance table is the tripwire); protocol in
   `:jetpacs`, opinion in `:app`.
 - **Boundary:** every new wire action is allowlisted, validated, and
-  documented in SPEC §5 — no exceptions for "internal" features.
+  documented in SPEC §5 — no exceptions for "internal" features. The
+  declarative binding grammar ([BINDING.md](BINDING.md)) is likewise closed
+  data compiled to allowlisted nodes/actions, never code on the wire.
 - **Bundle + goldens:** `jetpacs-core.el` regenerated with every
   `emacs/` change; goldens regenerated only for intentional wire
   changes, documented in SPEC.

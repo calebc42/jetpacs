@@ -1,0 +1,168 @@
+{
+  "contract_format": 1,
+  "api_version": "1.5.0",
+  "protocol_version": 1,
+  "node_types": [
+    "text",
+    "rich_text",
+    "row",
+    "flow_row",
+    "column",
+    "box",
+    "surface",
+    "lazy_column",
+    "spacer",
+    "divider",
+    "card",
+    "collapsible",
+    "reorderable_list",
+    "table",
+    "tabs",
+    "chart",
+    "canvas",
+    "month_grid",
+    "icon",
+    "image",
+    "date_stamp",
+    "section_header",
+    "empty_state",
+    "progress",
+    "menu",
+    "button",
+    "icon_button",
+    "chip",
+    "assist_chip",
+    "text_input",
+    "editor",
+    "checkbox",
+    "switch",
+    "enum_list",
+    "date_button",
+    "time_button",
+    "slider",
+    "scaffold"
+  ],
+  "action_hook_keys": [
+    "on_tap",
+    "on_change",
+    "on_submit",
+    "on_save",
+    "on_pick",
+    "on_reorder",
+    "on_refresh",
+    "nav_action",
+    "on_long_tap",
+    "on_swipe",
+    "on_add_row",
+    "on_add_col",
+    "on_trigger",
+    "on_day_tap",
+    "on_month_change",
+    "on_point_tap",
+    "on_button"
+  ],
+  "action_fields": [
+    "action",
+    "builtin",
+    "args",
+    "when_offline",
+    "dedupe"
+  ],
+  "offline_policies": [
+    "queue",
+    "drop",
+    "wake"
+  ],
+  "offline_default": "queue",
+  "action_schema": {
+    "remote": {
+      "required": [
+        "action"
+      ],
+      "optional": [
+        "args",
+        "when_offline",
+        "dedupe"
+      ]
+    },
+    "view.switch": {
+      "required": [
+        "builtin",
+        "view"
+      ],
+      "optional": []
+    },
+    "clipboard.copy": {
+      "required": [
+        "builtin",
+        "text"
+      ],
+      "optional": []
+    },
+    "jetpacs.settings.open": {
+      "required": [
+        "builtin"
+      ],
+      "optional": []
+    }
+  },
+  "toolbar": {
+    "ops": [
+      "snippet",
+      "line",
+      "on_tap",
+      "menu"
+    ],
+    "placements": [
+      "cursor",
+      "line-start",
+      "block"
+    ],
+    "line_ops": [
+      "promote",
+      "demote",
+      "move-up",
+      "move-down"
+    ]
+  },
+  "binding": {
+    "layouts": [
+      "list",
+      "board",
+      "calendar"
+    ],
+    "transforms": [
+      "raw",
+      "string",
+      "date",
+      "date-label",
+      "tags-list",
+      "count",
+      "bool",
+      "ref"
+    ],
+    "spec_keys": [
+      "source",
+      "params",
+      "layout",
+      "template",
+      "header",
+      "group-by",
+      "empty-state",
+      "chrome"
+    ],
+    "chrome_kinds": [
+      "tab",
+      "nav"
+    ],
+    "source_field_types": [
+      "text",
+      "number",
+      "boolean",
+      "date",
+      "string-list",
+      "enum",
+      "ref"
+    ]
+  }
+}

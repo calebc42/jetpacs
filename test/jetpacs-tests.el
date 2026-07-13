@@ -29,7 +29,9 @@
 (require 'jetpacs-apps)
 (require 'jetpacs-widgets)
 (require 'jetpacs-lint)
+(require 'jetpacs-source)
 (require 'jetpacs-shell)
+(require 'jetpacs-spec)
 (require 'jetpacs-keymap)
 (require 'jetpacs-results)
 (require 'jetpacs-files)
@@ -1397,6 +1399,29 @@ records the last-fired time."
   (should (jetpacs-lint-spec `((t . "button")
                             (on_tap . ((action . "a.b") (when_offline . "sometimes")))))))
 
+(ert-deftest jetpacs-lint-builtin-vocabulary ()
+  "Builtins are a closed set with required payloads (SPEC §5)."
+  ;; Unknown builtin.
+  (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "does.not.exist"))))))
+  ;; Known builtins missing their required payload key.
+  (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "view.switch"))))))
+  (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "clipboard.copy"))))))
+  ;; Well-formed builtins pass.
+  (should-not (jetpacs-lint-spec
+               `((t . "button") (on_tap . ((builtin . "view.switch") (view . "app:dashboard"))))))
+  (should-not (jetpacs-lint-spec
+               `((t . "button") (on_tap . ((builtin . "clipboard.copy") (text . "hi"))))))
+  (should-not (jetpacs-lint-spec
+               `((t . "button") (on_tap . ((builtin . "jetpacs.settings.open")))))))
+
+(ert-deftest jetpacs-lint-recognizes-chart-and-widget-action-keys ()
+  "`on_point_tap' and `on_button' are validated as embedded actions."
+  ;; A malformed action under each new key is caught.
+  (should (jetpacs-lint-spec `((t . "chart") (on_point_tap . ((args . ((k . "v"))))))))
+  (should (jetpacs-lint-spec `((t . "text") (on_button . ((action . "a.b") (when_offline . "nope"))))))
+  ;; A well-formed one passes.
+  (should-not (jetpacs-lint-spec `((t . "chart") (on_point_tap . ((action . "x.y")))))))
+
 (ert-deftest jetpacs-lint-flags-nonserializable-and-typed-attrs ()
   "A symbol attr value and a non-numeric padding are caught before the wire."
   (should (jetpacs-lint-spec `((t . "text") (text . some-symbol))))
@@ -1584,6 +1609,475 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
     (should seen)                       ; sanity: we actually parsed some
     (dolist (ty seen)
       (should (member ty jetpacs-lint-node-types)))))
+
+;; ─── Drift gates (Stage-1 T1.3) ──────────────────────────────────────────────
+
+(defun jetpacs-tests--golden-node-types ()
+  "The distinct `t' discriminators emitted across test/widgets.golden."
+  (let ((golden (expand-file-name "widgets.golden" jetpacs-tests--dir)) (seen nil))
+    (with-temp-buffer
+      (insert-file-contents golden)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (string-trim (buffer-substring (line-beginning-position)
+                                                   (line-end-position)))))
+          (when (and (> (length line) 0) (string-match "{.*}" line))
+            (let* ((obj (ignore-errors
+                          (json-parse-string (match-string 0 line) :object-type 'alist)))
+                   (ty (and obj (alist-get 't obj))))
+              (when ty (cl-pushnew ty seen :test #'equal)))))
+        (forward-line 1)))
+    seen))
+
+(defun jetpacs-tests--sdui-node-types ()
+  "The SDUI_NODE_TYPES set parsed from SduiRenderer.kt (the Kotlin source)."
+  (let ((f (expand-file-name
+            "../jetpacs/src/main/java/com/calebc42/jetpacs/SduiRenderer.kt"
+            jetpacs-tests--dir))
+        (types nil))
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (when (re-search-forward "SDUI_NODE_TYPES[^=]*=[ \t]*setOf(" nil t)
+        (let* ((open (1- (match-end 0)))
+               (end (save-excursion (goto-char open) (forward-sexp) (point))))
+          (while (re-search-forward "\"\\([a-z_]+\\)\"" end t)
+            (cl-pushnew (match-string 1) types :test #'equal)))))
+    types))
+
+(defun jetpacs-tests--api-stability-symbols ()
+  "Public jetpacs symbols named under `## The public surface' in API-STABILITY.md."
+  (let ((f (expand-file-name "../docs/API-STABILITY.md" jetpacs-tests--dir)) (syms nil))
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (when (re-search-forward "^## The public surface" nil t)
+        (while (re-search-forward "`\\(\\(?:with-\\)?jetpacs-[a-z0-9-]+\\)`" nil t)
+          (let ((name (match-string 1)))
+            (unless (string-match-p "--" name)
+              (cl-pushnew (intern name) syms))))))
+    (nreverse syms)))
+
+(ert-deftest jetpacs-contract-artifact-current ()
+  "The committed docs/contract.json byte-matches a fresh generation.
+Regenerate after an intentional wire-vocabulary change:
+  emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write"
+  (load (expand-file-name "../emacs/build-contract.el" jetpacs-tests--dir) nil t)
+  (let ((committed (with-temp-buffer
+                     (let ((coding-system-for-read 'utf-8-unix))
+                       (insert-file-contents (jetpacs-contract-file)))
+                     (buffer-string))))
+    (should (string= committed (jetpacs-contract-string)))))
+
+(ert-deftest jetpacs-node-types-mirror ()
+  "lint node types = widgets.golden `t' set = Kotlin SDUI_NODE_TYPES.
+The cross-language leg: a node type added on one side but not the others
+fails CI.  The Kotlin dispatcher-vs-SDUI_NODE_TYPES leg lives in
+SduiRendererNodeTypesTest.kt."
+  (let ((lint   (sort (copy-sequence jetpacs-lint-node-types) #'string<))
+        (golden (sort (jetpacs-tests--golden-node-types) #'string<))
+        (kotlin (sort (jetpacs-tests--sdui-node-types) #'string<)))
+    (should golden)
+    (should kotlin)
+    (should (equal lint golden))
+    (should (equal lint kotlin))))
+
+(ert-deftest jetpacs-api-stability-symbols-bound ()
+  "Every public symbol named in API-STABILITY.md is actually defined.
+Extends the `--'-internal rule into a machine-checked sweep of the surface."
+  (let ((syms (jetpacs-tests--api-stability-symbols)) (missing nil))
+    (should syms)
+    (dolist (s syms)
+      (unless (or (fboundp s) (boundp s)) (push s missing)))
+    (should (null missing))))
+
+;; ─── Promoted public seams (Stage-1 T1.4) ────────────────────────────────────
+
+(ert-deftest jetpacs-seam-month-abbrev ()
+  "`jetpacs-month-abbrev' is bounds-checked and 1-indexed."
+  (should (equal (jetpacs-month-abbrev 1) "Jan"))
+  (should (equal (jetpacs-month-abbrev 12) "Dec"))
+  (should-not (jetpacs-month-abbrev 0))
+  (should-not (jetpacs-month-abbrev 13))
+  (should-not (jetpacs-month-abbrev "x")))
+
+(ert-deftest jetpacs-seam-ui-state-list ()
+  "`jetpacs-ui-state-list' coerces every shape to a list of strings."
+  (let ((jetpacs--ui-state (make-hash-table :test 'equal)))
+    (jetpacs-ui-state-put "a" "one")
+    (should (equal (jetpacs-ui-state-list "a") '("one")))          ; plain string
+    (jetpacs-ui-state-put "b" ["x" "y"])
+    (should (equal (jetpacs-ui-state-list "b") '("x" "y")))        ; vector
+    (jetpacs-ui-state-put "c" (vector "x" 5 "z"))
+    (should (equal (jetpacs-ui-state-list "c") '("x" "z")))        ; non-string dropped
+    (jetpacs-ui-state-put "d" "[\"p\",\"q\"]")
+    (should (equal (jetpacs-ui-state-list "d") '("p" "q")))        ; JSON array decoded
+    (jetpacs-ui-state-put "e" "[not json")
+    (should-not (jetpacs-ui-state-list "e"))                       ; malformed discarded
+    (should-not (jetpacs-ui-state-list "missing"))))               ; absent -> nil
+
+(ert-deftest jetpacs-seam-in-action-p ()
+  "`jetpacs-in-action-p' reflects the dynamic action-handler flag."
+  (should-not (jetpacs-in-action-p))
+  (let ((jetpacs--in-action-handler t))
+    (should (jetpacs-in-action-p))))
+
+(ert-deftest jetpacs-seam-files-open ()
+  "`jetpacs-files-open' guards on readable/in-root, runs the hook, returns the path."
+  (let ((jetpacs-files--file nil) (fired nil)
+        (tmp (make-temp-file "jetpacs-open")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'jetpacs-shell-push) #'ignore)
+                  ((symbol-function 'jetpacs-files--within-root-p) (lambda (_f) t)))
+          (let ((jetpacs-files-open-hook (list (lambda (p) (setq fired p)))))
+            (should (equal (jetpacs-files-open tmp) (expand-file-name tmp)))
+            (should (equal fired (expand-file-name tmp)))
+            (should (equal (jetpacs-files-current-file) (expand-file-name tmp)))
+            ;; Out of root: refused, hook not run, returns nil.
+            (cl-letf (((symbol-function 'jetpacs-files--within-root-p) (lambda (_f) nil)))
+              (setq fired nil)
+              (should-not (jetpacs-files-open tmp))
+              (should-not fired))))
+      (delete-file tmp))))
+
+(ert-deftest jetpacs-seam-set-current-tab ()
+  "`jetpacs-shell-set-current-tab' routes a valid tab through push, rejects others."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (pushed 'unset))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+              ((symbol-function 'jetpacs-shell-push)
+               (lambda (&optional tab &rest _) (setq pushed tab))))
+      (jetpacs-shell-define-view "t.tab" :builder #'ignore :tab '(:label "T"))
+      (should (equal (jetpacs-shell-set-current-tab "t.tab") "t.tab"))
+      (should (equal pushed "t.tab"))
+      (setq pushed 'unset)
+      (should-not (jetpacs-shell-set-current-tab "t.nope"))
+      (should (eq pushed 'unset)))))
+
+;; ─── Source registry (Stage-2 T2.1) ──────────────────────────────────────────
+
+(defmacro jetpacs-tests--with-sources (&rest body)
+  "Run BODY with fresh source + ownership registries."
+  (declare (indent 0))
+  `(let ((jetpacs--sources (make-hash-table :test 'equal))
+         (jetpacs--source-cache (make-hash-table :test 'equal))
+         (jetpacs--registration-owners (make-hash-table :test 'equal)))
+     ,@body))
+
+(ert-deftest jetpacs-source-uncached-requeries ()
+  "An uncached source runs its query on every call."
+  (jetpacs-tests--with-sources
+    (let ((calls 0))
+      (jetpacs-defsource "s.plain"
+        :params '((:name q :type "text" :required t))
+        :fields '((:name "a" :type "text"))
+        :query (lambda (p) (cl-incf calls) (list (list (cons 'a (alist-get 'q p))))))
+      (should (equal (jetpacs-source-query "s.plain" '((q . "x"))) '(((a . "x")))))
+      (jetpacs-source-query "s.plain" '((q . "x")))
+      (should (= calls 2)))))
+
+(ert-deftest jetpacs-source-cache-key-memoises ()
+  "A :cache-key source memoises per params + token; a new token re-queries."
+  (jetpacs-tests--with-sources
+    (let ((token 1) (calls 0))
+      (jetpacs-defsource "s.cached"
+        :params '((:name q :type "text"))
+        :fields '((:name "a" :type "text"))
+        :cache-key (lambda (_p) token)
+        :query (lambda (_p) (cl-incf calls) (list)))
+      (jetpacs-source-query "s.cached" '((q . "x")))
+      (jetpacs-source-query "s.cached" '((q . "x")))
+      (should (= calls 1))                                 ; memoised
+      (setq token 2)
+      (jetpacs-source-query "s.cached" '((q . "x")))
+      (should (= calls 2))                                 ; new token -> re-query
+      (jetpacs-source-query "s.cached" '((q . "y")))
+      (should (= calls 3)))))                              ; new params -> re-query
+
+(ert-deftest jetpacs-source-error-not-cached ()
+  "A query that errors is not cached; the next call re-runs it."
+  (jetpacs-tests--with-sources
+    (let ((calls 0))
+      (jetpacs-defsource "s.err"
+        :params '((:name q :type "text"))
+        :fields '((:name "a" :type "text"))
+        :cache-key (lambda (_p) 1)
+        :query (lambda (_p) (cl-incf calls) (error "boom")))
+      (should-error (jetpacs-source-query "s.err" '((q . "x"))))
+      (should-error (jetpacs-source-query "s.err" '((q . "x"))))
+      (should (= calls 2)))))
+
+(ert-deftest jetpacs-source-required-and-canonical ()
+  "A missing required param errors; canonical params drop extras."
+  (jetpacs-tests--with-sources
+    (let ((seen nil))
+      (jetpacs-defsource "s.req"
+        :params '((:name q :type "text" :required t))
+        :fields '((:name "a" :type "text"))
+        :query (lambda (p) (setq seen p) (list)))
+      (should-error (jetpacs-source-query "s.req" '((other . "z"))))
+      (jetpacs-source-query "s.req" '((q . "x") (extra . "drop")))
+      (should (equal seen '((q . "x")))))))
+
+(ert-deftest jetpacs-source-schema-validation ()
+  "defsource rejects an unknown type and an enum without :values."
+  (jetpacs-tests--with-sources
+    (should-error (jetpacs-defsource "s.bad" :fields '((:name "a" :type "wat"))))
+    (should-error (jetpacs-defsource "s.enum" :fields '((:name "a" :type "enum"))))
+    (should (jetpacs-defsource "s.ok"
+              :fields (list (list :name "a" :type "enum" :values ["x" "y"]))
+              :query #'ignore))))
+
+(ert-deftest jetpacs-source-catalog-serializable ()
+  "The catalog round-trips through the wire encoder (metadata only)."
+  (jetpacs-tests--with-sources
+    (jetpacs-defsource "s.cat"
+      :params '((:name q :type "text" :required t))
+      :fields '((:name "a" :type "text"))
+      :query #'ignore)
+    (let ((cat (jetpacs-source-catalog)))
+      (should (jetpacs-render-to-json (vconcat cat)))     ; the catalog as a JSON array
+      (should (equal (alist-get 'name (car cat)) "s.cat")))))
+
+(ert-deftest jetpacs-source-teardown-by-owner ()
+  "`jetpacs-app-unregister' removes an app's owned sources and action metadata."
+  (let ((jetpacs--sources (make-hash-table :test 'equal))
+        (jetpacs--source-cache (make-hash-table :test 'equal))
+        (jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--action-catalog (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (jetpacs-shell-views nil)
+        (jetpacs-apps--registry nil)
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (with-jetpacs-owner "app1"
+        (jetpacs-defsource "app1.src" :fields '((:name "a" :type "text")) :query #'ignore)
+        (jetpacs-defaction "app1.do" #'ignore :doc "d"))
+      (should (jetpacs-source-p "app1.src"))
+      (should (gethash "app1.do" jetpacs--action-catalog))
+      (jetpacs-app-unregister "app1")
+      (should-not (jetpacs-source-p "app1.src"))
+      (should-not (gethash "app1.do" jetpacs--action-catalog)))))
+
+(ert-deftest jetpacs-action-catalog-metadata ()
+  "jetpacs-defaction records optional args/doc; the catalog filters by owner + serializes."
+  (let ((jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--action-catalog (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (jetpacs-defaction "a.plain" #'ignore)                 ; legacy 2-arg, no metadata
+    (should (gethash "a.plain" jetpacs-action-handlers))
+    (should-not (gethash "a.plain" jetpacs--action-catalog))
+    (with-jetpacs-owner "app1"
+      (jetpacs-defaction "app1.do" #'ignore
+                      :args '((:name id :type "ref" :required t)) :doc "Do it"))
+    (let ((all (jetpacs-action-catalog))
+          (mine (jetpacs-action-catalog "app1")))
+      (should (jetpacs-render-to-json (vconcat all)))      ; serializable
+      (should (= (length mine) 1))
+      (should (equal (alist-get 'action (car mine)) "app1.do"))
+      (should (equal (alist-get 'doc (car mine)) "Do it")))
+    (jetpacs-defaction "app1.do" #'ignore)                 ; re-register w/o metadata clears it
+    (should-not (gethash "app1.do" jetpacs--action-catalog))))
+
+;; ─── Form registry + node-or (Stage-2 T2.6) ──────────────────────────────────
+
+(ert-deftest jetpacs-form-lifecycle ()
+  "Seed-if-absent, value, reset (rotates gen + clears), dispose."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal)))
+    (let* ((f (jetpacs-form "cap" "app1"))
+           (id0 (jetpacs-form-field-id f "title")))
+      (jetpacs-form-seed f "title" "hi")
+      (should (equal (jetpacs-form-value f "title") "hi"))
+      (jetpacs-form-seed f "title" "other")               ; seed-if-absent won't clobber
+      (should (equal (jetpacs-form-value f "title") "hi"))
+      (jetpacs-form-reset f)                               ; clears + rotates the id
+      (should-not (jetpacs-form-value f "title"))
+      (should-not (equal (jetpacs-form-field-id f "title") id0))
+      (should (eq f (jetpacs-form "cap" "app1")))          ; same (ns,owner) -> same object
+      (jetpacs-form-dispose f)
+      (should-not (eq f (jetpacs-form "cap" "app1"))))))
+
+(ert-deftest jetpacs-form-teardown-by-owner ()
+  "`jetpacs-app-unregister' disposes an app's owned forms."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--sources (make-hash-table :test 'equal))
+        (jetpacs--source-cache (make-hash-table :test 'equal))
+        (jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--action-catalog (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (jetpacs-shell-views nil)
+        (jetpacs-apps--registry nil)
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (jetpacs-form "cap" "app1")
+      (should (= (length (jetpacs--forms-of-owner "app1")) 1))
+      (jetpacs-app-unregister "app1")
+      (should (= (length (jetpacs--forms-of-owner "app1")) 0)))))
+
+(ert-deftest jetpacs-node-or-fallback ()
+  "`jetpacs-node-or' picks per `jetpacs-node-supported-p'."
+  (let ((jetpacs--session nil))                            ; disconnected -> fallback
+    (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'fb)))
+  (let ((jetpacs--session '((granted))))                   ; connected, no catalog -> primary
+    (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'prim)))
+  (let ((jetpacs--session '((node_types . ["chart"]))))    ; catalog omits it -> fallback
+    (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'fb))
+    (should (eq (jetpacs-node-or "chart" 'prim 'fb) 'prim))))
+
+;; ─── Declarative :spec compiler (Stage-2 T2.2/T2.3/T2.4) ──────────────────────
+
+(ert-deftest jetpacs-spec-transforms ()
+  "The closed, domain-neutral transform set."
+  (should (equal (jetpacs-spec--transform "raw" "x") "x"))
+  (should (equal (jetpacs-spec--transform "string" 5) "5"))
+  (should (equal (jetpacs-spec--transform "date" "2026-07-05") "2026-07-05"))
+  (should-not (jetpacs-spec--transform "date" "nope"))
+  (should (equal (jetpacs-spec--transform "date-label" "2026-07-05") "Jul 5"))
+  (should (equal (jetpacs-spec--transform "tags-list" ["a" "b"]) "a b"))
+  (should (= (jetpacs-spec--transform "count" ["a" "b" "c"]) 3))
+  (should (eq (jetpacs-spec--transform "bool" "x") t))
+  (should (eq (jetpacs-spec--transform "bool" nil) :false)))
+
+(ert-deftest jetpacs-spec-instantiate ()
+  "A template's placeholders resolve; a nil resolution drops its attribute."
+  (let ((item '((headline . "Hi") (ref . ((id . "1"))) (todo)))
+        (template '((t . "card")
+                    (on_tap . ((action . "heading.tap") (args . ((bind . "ref")))))
+                    (subtitle . ((bind . "todo")))          ; nil -> dropped
+                    (children . [((t . "text") (text . ((bind . "headline"))))]))))
+    (let ((out (jetpacs-spec--instantiate template item "s")))
+      (should (equal (alist-get 'text (aref (alist-get 'children out) 0)) "Hi"))
+      (should (equal (alist-get 'args (alist-get 'on_tap out)) '((id . "1"))))
+      (should-not (assq 'subtitle out)))))            ; dropped, not (subtitle . nil)
+
+(ert-deftest jetpacs-spec-instantiate-args-spread ()
+  "The _spread form merges a bound object under literal keys; collisions error."
+  (let ((item '((ref . ((id . "1"))) (todo . "NEXT"))))
+    (should (equal (jetpacs-spec--instantiate-args
+                    '((_spread . ((bind . "ref"))) (state . ((bind . "todo")))) item "s")
+                   '((id . "1") (state . "NEXT"))))
+    (should-error (jetpacs-spec--instantiate-args
+                   '((_spread . ((bind . "ref"))) (id . "clash")) item "s"))))
+
+(ert-deftest jetpacs-lint-view-spec-checks ()
+  "The view-spec validator flags every out-of-vocabulary element."
+  (let ((fields '("headline" "ref" "todo" "scheduled")))
+    (should-not (jetpacs-lint-view-spec
+                 '(:source "s" :layout "list"
+                   :template ((t . "text") (text . ((bind . "headline")))))
+                 fields))
+    (should (jetpacs-lint-view-spec                       ; unknown field
+             '(:source "s" :template ((t . "text") (text . ((bind . "nope"))))) fields))
+    (should (jetpacs-lint-view-spec                       ; unknown transform
+             '(:source "s" :template ((t . "text") (text . ((bind . "todo") (as . "wat"))))) fields))
+    (should (jetpacs-lint-view-spec                       ; unknown spec key
+             '(:source "s" :template ((t . "text")) :bogus 1) fields))
+    (should (jetpacs-lint-view-spec                       ; bad layout
+             '(:source "s" :layout "grid" :template ((t . "text"))) fields))
+    (should (jetpacs-lint-view-spec '(:template ((t . "text"))) fields))   ; no :source
+    (should (jetpacs-lint-view-spec                       ; group-by unknown field
+             '(:source "s" :template ((t . "text")) :group-by (:field "xxx")) fields))
+    (should (jetpacs-lint-view-spec                       ; bad chrome kind
+             '(:source "s" :template ((t . "text")) :chrome (:kind "sheet")) fields))))
+
+(ert-deftest jetpacs-spec-list-layout ()
+  "list: header + one template per item in a lazy column; lints clean."
+  (let* ((items '(((headline . "A") (ref . ((id . "1"))))
+                  ((headline . "B") (ref . ((id . "2"))))))
+         (spec '(:source "s" :layout "list"
+                 :template ((t . "card")
+                            (on_tap . ((action . "heading.tap") (args . ((bind . "ref")))))
+                            (children . [((t . "text") (text . ((bind . "headline"))))]))))
+         (body (jetpacs-spec--layout-body spec items))
+         (cards (append (alist-get 'children body) nil)))
+    (should (equal (alist-get 't body) "lazy_column"))
+    (should (= (length cards) 2))
+    (should (equal (alist-get 'text (aref (alist-get 'children (car cards)) 0)) "A"))
+    (should-not (jetpacs-lint-spec body))))
+
+(ert-deftest jetpacs-spec-calendar-order ()
+  "calendar: ISO-date groups ascending, unscheduled last."
+  (let* ((items '(((headline . "A") (scheduled . "2026-07-05"))
+                  ((headline . "B") (scheduled . "2026-07-01"))
+                  ((headline . "C"))))
+         (spec '(:source "s" :layout "calendar" :group-by (:field "scheduled")
+                 :template ((t . "text") (text . ((bind . "headline"))))))
+         (body (jetpacs-spec--layout-body spec items))
+         (kids (append (alist-get 'children body) nil))
+         (texts (delq nil (mapcar (lambda (n) (and (equal (alist-get 't n) "text")
+                                                   (alist-get 'text n)))
+                                  kids))))
+    (should (equal texts '("B" "A" "C")))
+    (should-not (jetpacs-lint-spec body))))
+
+(ert-deftest jetpacs-spec-column-order ()
+  "board grouping: explicit order first, unseen appended, empty last."
+  (should (equal (jetpacs-spec--column-order
+                  '(((todo . "DONE")) ((todo . "TODO")) ((todo)) ((todo . "WAIT")))
+                  "todo" ["TODO" "DONE"] nil t)
+                 '("TODO" "DONE" "WAIT" "")))
+  ;; empty not forced last when empty-last nil
+  (should (member "" (jetpacs-spec--column-order '(((todo))) "todo" nil nil nil))))
+
+(ert-deftest jetpacs-spec-board-layout ()
+  "board: one column per group value; lints clean."
+  (let* ((items '(((headline . "A") (todo . "DONE"))
+                  ((headline . "B") (todo . "TODO"))
+                  ((headline . "C"))))
+         (spec '(:source "s" :layout "board"
+                 :group-by (:field "todo" :order ["TODO" "DONE"] :empty-last t)
+                 :template ((t . "text") (text . ((bind . "headline"))))))
+         (body (jetpacs-spec--layout-body spec items)))
+    (should (= (length (append (alist-get 'children body) nil)) 3))
+    (should-not (jetpacs-lint-spec body))))
+
+(ert-deftest jetpacs-spec-compile-and-empty ()
+  "Full compile: query -> layout -> chrome; empty items -> empty_state."
+  (jetpacs-tests--with-sources
+    (cl-letf (((symbol-function 'jetpacs-shell-nav-view) (lambda (_title body &rest _) body)))
+      (jetpacs-defsource "t.src"
+        :fields '((:name "headline" :type "text") (:name "ref" :type "ref"))
+        :query (lambda (_p) (list '((headline . "A") (ref . ((id . "1")))))))
+      (let ((view (jetpacs-spec--compile "t.view"
+                    '(:source "t.src" :layout "list"
+                      :template ((t . "card")
+                                 (children . [((t . "text") (text . ((bind . "headline"))))]))
+                      :chrome (:kind "nav" :title "T"))
+                    nil)))
+        (should (equal (alist-get 't view) "lazy_column"))
+        (should (jetpacs-render-to-json view)))
+      ;; empty result -> empty_state body
+      (jetpacs-defsource "t.empty" :fields '((:name "a" :type "text"))
+        :query (lambda (_p) nil))
+      (let ((view (jetpacs-spec--compile "t.e"
+                    '(:source "t.empty" :template ((t . "text") (text . ((bind . "a"))))
+                      :chrome (:kind "nav" :title "T"))
+                    nil)))
+        (should (equal (alist-get 't view) "empty_state"))))))
+
+(ert-deftest jetpacs-spec-compile-bad-spec-signals ()
+  "A spec binding an undeclared field fails lint at compile (shell degrades it)."
+  (jetpacs-tests--with-sources
+    (jetpacs-defsource "t.src" :fields '((:name "headline" :type "text"))
+      :query (lambda (_p) (list '((headline . "A")))))
+    (should-error (jetpacs-spec--compile "t.view"
+                    '(:source "t.src" :template ((t . "text") (text . ((bind . "nope")))))
+                    nil))))
+
+(ert-deftest jetpacs-spec-define-view-exclusive ()
+  "jetpacs-shell-define-view requires exactly one of :builder / :spec."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (should-error (jetpacs-shell-define-view "v"))
+      (should-error (jetpacs-shell-define-view "v" :builder #'ignore :spec '(:source "s")))
+      (should (jetpacs-shell-define-view "v" :spec '(:source "s" :template ((t . "text")))))
+      (should (plist-get (cdr (assoc "v" jetpacs-shell-views)) :spec)))))
 
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."

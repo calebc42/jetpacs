@@ -12,6 +12,14 @@ change signature incompatibly. Everything else is internal.
   additions are negotiated per-connection (see `jetpacs-node-supported-p`),
   not gated on this.
 
+> **Note on `1.3.0`.** That version exposes *two* independently landed
+> additive batches under one number — owner-scoped reminders and the
+> foundation-root invariants — so `(version<= "1.3.0" …)` cannot tell them
+> apart. Policy going forward: **one minor bump per independently landed API
+> batch** (not per individual addition). `1.4.0` opens the binding-layer track
+> (the machine-readable wire contract in `contract.json`, and the promoted
+> shell/files/action seams below).
+
 ## The two rules
 
 1. **`--` means internal.** Any symbol with a double dash after the
@@ -35,7 +43,9 @@ the authoring reference is [WIDGETS.md](WIDGETS.md).
 
 Content: `jetpacs-text` `jetpacs-markup` `jetpacs-rich-text` `jetpacs-span`
 `jetpacs-icon` `jetpacs-image` `jetpacs-date-stamp` `jetpacs-divider`
-`jetpacs-section-header` `jetpacs-empty-state` `jetpacs-progress`.
+`jetpacs-section-header` `jetpacs-empty-state` `jetpacs-progress`
+`jetpacs-month-abbrev` (since 1.4.0: the 1–12 → abbrev helper behind
+`jetpacs-date-stamp`).
 
 Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 `jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-border`
@@ -78,7 +88,9 @@ Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
 
 `jetpacs-defaction` `jetpacs-on-state-change` `jetpacs-on-state-change-clear`
 `jetpacs-ui-state` `jetpacs-ui-state-put` `jetpacs-ui-state-clear`
-`jetpacs-surface-push` `jetpacs-surface-remove`.
+`jetpacs-ui-state-list` `jetpacs-in-action-p` (since 1.4.0: coerce a
+multi-select value to a list of strings; report whether code runs inside an
+action handler) `jetpacs-surface-push` `jetpacs-surface-remove`.
 
 ### Multi-tenant ownership (`jetpacs-surfaces.el`, `jetpacs-apps.el`)
 
@@ -105,7 +117,10 @@ own lazy column instead), `jetpacs-shell-resolve-view` (since 1.2.0: a
 logical core view name through the per-app override resolver — the
 stock Settings drawer entry targets `(jetpacs-shell-resolve-view
 "settings")`), and the hooks `jetpacs-shell-view-switched-hook`
-`jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.
+`jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.  Tab access
+(since 1.4.0): `jetpacs-shell-current-tab` reads the active tab and
+`jetpacs-shell-set-current-tab` switches to a registered tab through
+`jetpacs-shell-push`.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
 `jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`
@@ -121,7 +136,9 @@ Tablist skins (`jetpacs-tablist.el`): the `jetpacs-tablist-header-functions`
 
 Files/editor (`jetpacs-files.el`): `jetpacs-files-editor-body-functions`
 `jetpacs-files-editor-actions-functions` `jetpacs-files-editor-toolbar-function`
-`jetpacs-files-open-hook` `jetpacs-files-after-save-hook`.
+`jetpacs-files-open-hook` `jetpacs-files-after-save-hook` (since 1.4.0:
+`jetpacs-files-open` opens a readable in-root path in the editor, and
+`jetpacs-files-current-file` reads the currently open path).
 
 Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
 `jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`
@@ -137,6 +154,29 @@ without further wiring.
 ### Validation (`jetpacs-lint.el`)
 
 `jetpacs-lint-spec` `jetpacs-render-to-json` (see Phase B).
+`jetpacs-lint-view-spec` (since 1.5.0: validate a declarative view `:spec`),
+plus the vocabulary defconsts `jetpacs-lint-spec-layouts`
+`jetpacs-lint-spec-transforms` `jetpacs-lint-spec-keys`
+`jetpacs-lint-spec-chrome-kinds`.
+
+### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
+
+Sources (`jetpacs-source.el`): `jetpacs-defsource` `jetpacs-source-query`
+`jetpacs-source-fields` `jetpacs-source-invalidate` `jetpacs-source-remove`
+`jetpacs-source-p` `jetpacs-source-catalog` `jetpacs-source-field-types`.
+
+Views (`jetpacs-shell.el`, `jetpacs-spec.el`): the `:spec` keyword on
+`jetpacs-shell-define-view` (an alternative to `:builder`, exactly one
+required); the compiler itself is internal.
+
+Forms (`jetpacs-surfaces.el`): `jetpacs-form` `jetpacs-form-field-id`
+`jetpacs-form-value` `jetpacs-form-seed` `jetpacs-form-reset`
+`jetpacs-form-dispose`.
+
+Action metadata (`jetpacs-surfaces.el`): `jetpacs-action-catalog`, and the
+`&key args doc` on `jetpacs-defaction`.
+
+Capability fallback (`jetpacs.el`): `jetpacs-node-or`.
 
 ## Anything not listed here
 

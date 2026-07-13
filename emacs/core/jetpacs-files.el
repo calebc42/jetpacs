@@ -557,6 +557,24 @@ otherwise the plain-text editor."
             (when (and (equal view "files") jetpacs-files--file)
               (setq jetpacs-files--file nil))))
 
+(defun jetpacs-files-current-file ()
+  "Absolute path of the file currently open in the editor, or nil."
+  jetpacs-files--file)
+
+(defun jetpacs-files-open (file)
+  "Open FILE in the editor and switch to the editor view.
+FILE must be a readable path within the browsable roots; otherwise nothing
+happens and nil is returned.  On success sets the open file, runs
+`jetpacs-files-open-hook' with the expanded path, switches to the editor
+view, and returns that path."
+  (when (and (stringp file)
+             (file-readable-p file)
+             (jetpacs-files--within-root-p file))
+    (setq jetpacs-files--file (expand-file-name file))
+    (run-hook-with-args 'jetpacs-files-open-hook jetpacs-files--file)
+    (jetpacs-shell-push nil :switch-to "edit")
+    jetpacs-files--file))
+
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 
 (jetpacs-defaction "files.cd"
@@ -571,13 +589,7 @@ otherwise the plain-text editor."
 
 (jetpacs-defaction "files.open"
   (lambda (args _)
-    (let ((file (alist-get 'file args)))
-      (when (and (stringp file)
-                 (file-readable-p file)
-                 (jetpacs-files--within-root-p file))
-        (setq jetpacs-files--file (expand-file-name file))
-        (run-hook-with-args 'jetpacs-files-open-hook jetpacs-files--file)
-        (jetpacs-shell-push nil :switch-to "edit")))))
+    (jetpacs-files-open (alist-get 'file args))))
 
 (jetpacs-defaction "files.grep"
   ;; The query arrives through the bridged minibuffer (this runs inside an

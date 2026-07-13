@@ -22,6 +22,7 @@
 (require 'jetpacs-surfaces)
 (require 'jetpacs-widgets)
 (require 'jetpacs-buffer) ; Tier 0 renderer + the major-mode→skin registry
+(require 'jetpacs-results) ; content-search results ride the shared loci substrate
 (require 'jetpacs-complete) ; capf bridge: the editor's `complete' flag
 (require 'jetpacs-shell)
 (require 'dired)
@@ -324,13 +325,6 @@ Search from a subdirectory rather than the root to keep scans quick."
   "Latest content search, or nil.
 A plist (:query Q :dir D :hits ((FILE LINE TEXT) ...) :truncated BOOL).")
 
-(defvar jetpacs-files-view-region-function
-  (lambda (name &rest _) (message "Jetpacs: no host to view %s" name))
-  "Function of (BUFFER-NAME BEG END LABEL &optional POINT) showing a
-buffer slice with POINT's line as the scroll target.  Set by
-jetpacs-emacs-ui (its buffer view); kept as a seam so this module never
-depends on the buffer-view host.")
-
 (defun jetpacs-files--grep-scan (dir query)
   "Search QUERY (a literal, case-insensitive) under DIR.
 Returns the plist stored in `jetpacs-files--grep'; one hit per line."
@@ -377,10 +371,20 @@ Returns the plist stored in `jetpacs-files--grep'; one hit per line."
     (list :query query :dir dir :hits (nreverse hits) :truncated truncated)))
 
 (defun jetpacs-files--grep-body ()
-  "The search-results view body: one tappable card per matching line."
+  "The search-results view body: one tappable card per matching line.
+The hits are handed to the shared results substrate as file loci
+\(`jetpacs-results-set-file-loci'), so a card tap follows the locus — the
+same visit path as occur/grep/xref — and arms the prev/next-match stepper
+in the source view.  A tap reads the hit in context; the pencil opens it
+in the editor."
   (let* ((g jetpacs-files--grep)
          (dir (plist-get g :dir))
-         (hits (plist-get g :hits)))
+         (hits (plist-get g :hits))
+         (loci (mapcar (lambda (hit)
+                         (pcase-let ((`(,file ,line ,text) hit))
+                           (list :file file :line line :text text)))
+                       hits)))
+    (jetpacs-results-set-file-loci loci)
     (if (null hits)
         (jetpacs-empty-state :icon "manage_search" :title "No matches"
                           :caption (format "\"%s\" under %s"
@@ -396,38 +400,35 @@ Returns the plist stored in `jetpacs-files--grep'; one hit per line."
                                      " — stopped early, narrow the search"
                                    ""))
                          'caption)
-              (mapcar (lambda (hit)
-                        (pcase-let* ((`(,file ,line ,text) hit)
-                                     (rel (file-relative-name file dir))
-                                     (subdir (file-name-directory rel)))
-                          (jetpacs-card
-                           (list (jetpacs-column
-                                  (jetpacs-row
-                                   (jetpacs-box
-                                    (list (apply #'jetpacs-column
-                                                 (delq nil
-                                                       (list
-                                                        (jetpacs-text (file-name-nondirectory file)
-                                                                   'label)
-                                                        (when subdir
-                                                          (jetpacs-text subdir 'caption
-                                                                     nil nil nil 1))))))
-                                    :weight 1)
-                                   (jetpacs-text (format "L%d" line) 'caption)
-                                   (jetpacs-icon-button
-                                    "edit"
-                                    (jetpacs-action "files.open"
-                                                 :args `((file . ,file)))
-                                    :content-description "Open in editor"))
-                                  (jetpacs-rich-text
-                                   (list (jetpacs-span (string-trim text) :mono t)))))
-                           ;; Tap = read the hit in context (scrolled to the
-                           ;; line); the pencil opens the editor.
-                           :on-tap (jetpacs-action "files.grep-visit"
-                                                :args `((file . ,file)
-                                                        (line . ,line))
-                                                :when-offline "drop"))))
-                      hits))))))
+              (cl-loop
+               for hit in hits for i from 0 collect
+               (pcase-let* ((`(,file ,line ,text) hit)
+                            (rel (file-relative-name file dir))
+                            (subdir (file-name-directory rel)))
+                 (jetpacs-card
+                  (list (jetpacs-column
+                         (jetpacs-row
+                          (jetpacs-box
+                           (list (apply #'jetpacs-column
+                                        (delq nil
+                                              (list
+                                               (jetpacs-text (file-name-nondirectory file)
+                                                          'label)
+                                               (when subdir
+                                                 (jetpacs-text subdir 'caption
+                                                            nil nil nil 1))))))
+                           :weight 1)
+                          (jetpacs-text (format "L%d" line) 'caption)
+                          (jetpacs-icon-button
+                           "edit"
+                           (jetpacs-action "files.open"
+                                        :args `((file . ,file)))
+                           :content-description "Open in editor"))
+                         (jetpacs-rich-text
+                          (list (jetpacs-span (string-trim text) :mono t)))))
+                  :on-tap (jetpacs-action "results.visit"
+                                       :args `((index . ,i))
+                                       :when-offline "drop")))))))))
 
 (defun jetpacs-files--grep-results-card ()
   "The re-entry card the browser shows while results exist, or nil."
@@ -600,32 +601,10 @@ otherwise the plain-text editor."
     (setq jetpacs-files--grep nil)
     (jetpacs-shell-push nil :switch-to "files")))
 
-(jetpacs-defaction "files.grep-visit"
-  ;; Show a hit in context: the file's buffer in the buffer view,
-  ;; narrowed around the line with the hit marked as the scroll target.
-  ;; Region render dodges the buffer view's from-the-top line cap, so
-  ;; hits deep in big files are reachable.
-  (lambda (args _)
-    (let ((file (alist-get 'file args))
-          (line (alist-get 'line args)))
-      (when (and (stringp file) (numberp line)
-                 (jetpacs-files--within-root-p file)
-                 (file-readable-p file))
-        (condition-case err
-            (let ((buf (find-file-noselect file)))
-              (with-current-buffer buf
-                (save-excursion
-                  (goto-char (point-min))
-                  (forward-line (1- (max 1 (truncate line))))
-                  (let ((target (point))
-                        (beg (save-excursion (forward-line -30) (point)))
-                        (end (save-excursion (forward-line 170) (point))))
-                    (funcall jetpacs-files-view-region-function
-                             (buffer-name buf) beg end
-                             (format "%s:%d" (file-name-nondirectory file)
-                                     (truncate line))
-                             target)))))
-          (error (jetpacs-shell-notify (error-message-string err))))))))
+;; The content-search hits are visited through the shared results
+;; substrate (`results.visit' by index into the file-locus set armed in
+;; `jetpacs-files--grep-body'), which also arms the prev/next stepper — so
+;; there is no files-specific visit action or view-region seam anymore.
 
 (jetpacs-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a

@@ -31,6 +31,7 @@
 (require 'jetpacs-lint)
 (require 'jetpacs-shell)
 (require 'jetpacs-keymap)
+(require 'jetpacs-results)
 (require 'jetpacs-files)
 (require 'jetpacs-minibuffer)
 (require 'jetpacs-emacs-ui)
@@ -39,6 +40,7 @@
 (require 'jetpacs-settings)
 (require 'jetpacs-theme)
 (require 'jetpacs-automations)
+(require 'jetpacs-org)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -667,6 +669,304 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
 ;; ─── Demo org corpus ─────────────────────────────────────────────────────────
 
 ;; ─── App-managed config directory ────────────────────────────────────────────
+
+;; ─── Results / xref navigator substrate ──────────────────────────────────────
+;;
+;; occur / grep / compilation / xref all render as tappable loci cards, and a
+;; tap follows the locus into the source and shows it on the phone via the
+;; region seam.  The visit reuses each mode's own goto command under a
+;; display shim, so these tests exercise the real occur/compilation machinery
+;; rather than a parser of our own.
+
+(defmacro jetpacs-tests--with-occur (var text query &rest body)
+  "Run BODY with VAR bound to the *Occur* buffer for QUERY over TEXT.
+The temp source buffer and *Occur* are cleaned up afterwards."
+  (declare (indent 3))
+  (let ((src (make-symbol "src")))
+    `(let ((,src (generate-new-buffer "jetpacs-occur-src")))
+       (unwind-protect
+           (progn
+             (with-current-buffer ,src
+               (insert ,text)
+               (goto-char (point-min))
+               (occur ,query))
+             (let ((,var (get-buffer "*Occur*")))
+               ,@body))
+         (when (get-buffer "*Occur*") (kill-buffer "*Occur*"))
+         (when (buffer-live-p ,src) (kill-buffer ,src))))))
+
+(ert-deftest jetpacs-results-occur-loci ()
+  "occur match lines become loci; headings and blanks do not."
+  (jetpacs-tests--with-occur ob
+      "alpha needle one\nbeta\ngamma needle two\ndelta\nneedle three\n" "needle"
+    (let ((loci (jetpacs-results--loci ob)))
+      (should (= 3 (length loci)))
+      (should (cl-every (lambda (l) (and (integerp (car l)) (stringp (cdr l)))) loci))
+      ;; the trimmed row text carries the matched line
+      (should (cl-every (lambda (l) (string-match-p "needle" (cdr l))) loci)))))
+
+(ert-deftest jetpacs-results-render-shape ()
+  "The skin renders a count header plus one card per locus."
+  (jetpacs-tests--with-occur ob
+      "one needle\ntwo needle\nthree\n" "needle"
+    (let ((nodes (jetpacs-results-render ob)))
+      ;; header caption + 2 cards
+      (should (= 3 (length nodes)))
+      ;; a card carries a results.visit on_tap with a numeric position
+      (let ((card (jetpacs-tests--find-node
+                   nodes
+                   (lambda (n) (equal (alist-get 'action n) "results.visit")))))
+        (should card)
+        (should (numberp (alist-get 'pos (alist-get 'args card))))))))
+
+(ert-deftest jetpacs-results-occur-follow ()
+  "Following an occur locus lands in the source buffer on the matched line."
+  (jetpacs-tests--with-occur ob
+      "alpha needle one\nbeta\ngamma needle two\n" "needle"
+    (let* ((loci (jetpacs-results--loci ob))
+           (dest (jetpacs-results--follow ob (car (car loci)))))
+      (should dest)
+      (should (buffer-live-p (car dest)))
+      (with-current-buffer (car dest)
+        (goto-char (cdr dest))
+        (should (string-match-p
+                 "needle"
+                 (buffer-substring-no-properties
+                  (line-beginning-position) (line-end-position))))))))
+
+(ert-deftest jetpacs-results-visit-action-invokes-seam ()
+  "results.visit follows the locus and calls the region seam with buffer:line."
+  (jetpacs-tests--with-occur ob
+      "x needle\ny\nz needle\n" "needle"
+    (let* ((loci (jetpacs-results--loci ob))
+           (pos (car (car loci)))
+           captured
+           (jetpacs-results-visit-region-function
+            (lambda (name beg end label &optional point)
+              (setq captured (list name beg end label point))))
+           (fn (gethash "results.visit" jetpacs-action-handlers)))
+      (should fn)
+      (funcall fn `((buffer . ,(buffer-name ob)) (pos . ,pos)) nil)
+      (should captured)
+      (pcase-let ((`(,name ,beg ,end ,label ,point) captured))
+        (should (stringp name))
+        (should (and (integerp beg) (integerp end) (< beg end)))
+        (should (integerp point))
+        ;; label is "buffer:line  ·  i/N" — carries the file:line and counter
+        (should (string-match-p ":[0-9]+" label))
+        (should (string-match-p "[0-9]+/[0-9]+\\'" label))))))
+
+(ert-deftest jetpacs-results-visit-boundary ()
+  "results.visit refuses a buffer that is not a results-mode buffer."
+  (let ((plain (generate-new-buffer "jetpacs-not-results"))
+        called
+        (jetpacs-results-visit-region-function
+         (lambda (&rest _) (setq called t)))
+        (fn (gethash "results.visit" jetpacs-action-handlers)))
+    (unwind-protect
+        (with-current-buffer plain
+          (fundamental-mode)
+          (insert "just some text\n")
+          (funcall fn `((buffer . ,(buffer-name plain)) (pos . 1)) nil)
+          (should-not called))
+      (kill-buffer plain))))
+
+(ert-deftest jetpacs-results-compilation-follow ()
+  "A compilation locus over a real file follows into that file."
+  (let* ((dir (file-name-as-directory (make-temp-file "jetpacs-comp" t)))
+         (f (expand-file-name "real.txt" dir))
+         (cb (get-buffer-create "*jetpacs-compile-test*")))
+    (unwind-protect
+        (progn
+          (with-temp-file f
+            (insert "alpha needle one\nbeta\ngamma needle two\n"))
+          (with-current-buffer cb
+            (setq default-directory dir)
+            (insert "-*- mode: compilation -*-\n"
+                    (format "%s:1:alpha needle one\n" f)
+                    (format "%s:3:gamma needle two\n" f))
+            (compilation-mode)
+            (let ((inhibit-read-only t))
+              (compilation-parse-errors (point-min) (point-max))))
+          (let ((loci (jetpacs-results--loci cb)))
+            (should (= 2 (length loci)))
+            (let ((dest (jetpacs-results--follow cb (car (car loci)))))
+              (should dest)
+              (should (equal (expand-file-name f)
+                             (expand-file-name
+                              (buffer-file-name (car dest))))))))
+      (when (get-buffer cb) (kill-buffer cb))
+      (ignore-errors (delete-directory dir t)))))
+
+(ert-deftest jetpacs-results-step-advances-and-clamps ()
+  "Stepping walks the result set and clamps at both ends."
+  (jetpacs-tests--with-occur ob
+      "a needle\nb\nc needle\nd\ne needle\n" "needle"   ; 3 matches
+    (let* ((jetpacs-results--nav nil)
+           (loci (jetpacs-results--loci ob))
+           captured
+           (jetpacs-results-visit-region-function
+            (lambda (_name _beg _end label &optional _point)
+              (setq captured label)))
+           (visit (gethash "results.visit" jetpacs-action-handlers))
+           (step (gethash "results.step" jetpacs-action-handlers)))
+      (should (= 3 (length loci)))
+      (funcall visit `((buffer . ,(buffer-name ob)) (pos . ,(car (nth 0 loci)))) nil)
+      (should (= 0 (plist-get jetpacs-results--nav :index)))
+      (should (string-match-p "1/3" captured))
+      (funcall step '((dir . 1)) nil)
+      (should (= 1 (plist-get jetpacs-results--nav :index)))
+      (should (string-match-p "2/3" captured))
+      (funcall step '((dir . 1)) nil)
+      (should (= 2 (plist-get jetpacs-results--nav :index)))
+      (should (string-match-p "3/3" captured))
+      ;; Clamp past the end: index unchanged, seam not re-invoked.
+      (let ((before captured))
+        (funcall step '((dir . 1)) nil)
+        (should (= 2 (plist-get jetpacs-results--nav :index)))
+        (should (equal before captured)))
+      ;; Back down, then clamp past the start.
+      (funcall step '((dir . -1)) nil)
+      (funcall step '((dir . -1)) nil)
+      (should (= 0 (plist-get jetpacs-results--nav :index)))
+      (let ((before captured))
+        (funcall step '((dir . -1)) nil)
+        (should (= 0 (plist-get jetpacs-results--nav :index)))
+        (should (equal before captured))))))
+
+(ert-deftest jetpacs-results-stepper-actions ()
+  "Stepper chrome shows only for the visited source buffer, one direction per end."
+  (jetpacs-tests--with-occur ob
+      "a needle\nb\nc needle\nd\ne needle\n" "needle"
+    (let* ((jetpacs-results--nav nil)
+           (loci (jetpacs-results--loci ob))
+           (jetpacs-results-visit-region-function (lambda (&rest _) nil))
+           (visit (gethash "results.visit" jetpacs-action-handlers))
+           (step (gethash "results.step" jetpacs-action-handlers)))
+      (funcall visit `((buffer . ,(buffer-name ob)) (pos . ,(car (nth 0 loci)))) nil)
+      (let ((dest (plist-get jetpacs-results--nav :dest)))
+        ;; A different buffer gets no stepper chrome.
+        (should-not (jetpacs-results-buffer-view-actions "no-such-buffer"))
+        ;; At the first locus only the forward button is offered (dir +1).
+        (let ((btns (jetpacs-results-buffer-view-actions dest)))
+          (should (= 1 (length btns)))
+          (should (= 1 (alist-get 'dir (alist-get 'args
+                                        (alist-get 'on_tap (car btns)))))))
+        ;; In the middle, both directions.
+        (funcall step '((dir . 1)) nil)
+        (should (= 2 (length (jetpacs-results-buffer-view-actions dest))))
+        ;; At the last locus only the back button remains (dir -1).
+        (funcall step '((dir . 1)) nil)
+        (let ((btns (jetpacs-results-buffer-view-actions dest)))
+          (should (= 1 (length btns)))
+          (should (= -1 (alist-get 'dir (alist-get 'args
+                                         (alist-get 'on_tap (car btns)))))))))))
+
+(ert-deftest jetpacs-results-file-loci-visit-and-step ()
+  "Files content-search hits ride the shared substrate: visit by index + stepper."
+  (let* ((dir (file-name-as-directory (make-temp-file "jetpacs-grep" t)))
+         (f (expand-file-name "notes.txt" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file f
+            (insert "needle one\nplain\nneedle two\nplain\nneedle three\n"))
+          (let* ((jetpacs-files-roots (list (cons "R" dir)))
+                 (jetpacs-files--grep (jetpacs-files--grep-scan dir "needle"))
+                 (jetpacs-results--nav nil)
+                 (jetpacs-results--file-set nil)
+                 captured
+                 (jetpacs-results-visit-region-function
+                  (lambda (name _beg _end label &optional _point)
+                    (setq captured (list name label))))
+                 (visit (gethash "results.visit" jetpacs-action-handlers))
+                 (step (gethash "results.step" jetpacs-action-handlers)))
+            (should (= 3 (length (plist-get jetpacs-files--grep :hits))))
+            ;; Rendering the results body arms the shared file-locus set.
+            (jetpacs-files--grep-body)
+            (should (= 3 (length jetpacs-results--file-set)))
+            (should (equal f (plist-get (car jetpacs-results--file-set) :file)))
+            ;; Visit the first hit by index; nav is file-kind with a counter.
+            (funcall visit '((index . 0)) nil)
+            (should (eq 'file (plist-get jetpacs-results--nav :kind)))
+            (should (= 0 (plist-get jetpacs-results--nav :index)))
+            (should (= 3 (plist-get jetpacs-results--nav :count)))
+            (should (string-match-p "1/3" (nth 1 captured)))
+            (let ((dest (plist-get jetpacs-results--nav :dest)))
+              ;; Stepper chrome shows for the visited file buffer, first end only.
+              (should (= 1 (length (jetpacs-results-buffer-view-actions dest))))
+              (should-not (jetpacs-results-buffer-view-actions "no-such-buffer"))
+              ;; Step to the last hit, then clamp.
+              (funcall step '((dir . 1)) nil)
+              (funcall step '((dir . 1)) nil)
+              (should (= 2 (plist-get jetpacs-results--nav :index)))
+              (should (string-match-p "3/3" (nth 1 captured)))
+              (let ((before (nth 1 captured)))
+                (funcall step '((dir . 1)) nil)
+                (should (= 2 (plist-get jetpacs-results--nav :index)))
+                (should (equal before (nth 1 captured)))))))
+      (when (get-file-buffer f) (kill-buffer (get-file-buffer f)))
+      (ignore-errors (delete-directory dir t)))))
+
+;; ─── jetpacs-org primitives ──────────────────────────────────────────────────
+;;
+;; The core org layer shipped its planning mutation broken (string vs symbol
+;; planning type, and a call to the nonexistent `org-remove-planning-info');
+;; these smoke tests exercise the parser, typed extraction, and every mutation
+;; primitive so that class of bug can't ship silently.
+
+(defmacro jetpacs-tests--with-org-file (var content &rest body)
+  "Bind VAR to a live org buffer visiting a temp file with CONTENT; run BODY."
+  (declare (indent 2))
+  (let ((f (make-symbol "f")))
+    `(let ((,f (make-temp-file "jetpacs-org" nil ".org")))
+       (unwind-protect
+           (progn
+             (with-temp-file ,f (insert ,content))
+             (let ((,var (find-file-noselect ,f)))
+               (with-current-buffer ,var ,@body)))
+         (when (get-file-buffer ,f) (kill-buffer (get-file-buffer ,f)))
+         (ignore-errors (delete-file ,f))))))
+
+(ert-deftest jetpacs-org-parse-query-shapes ()
+  "The query parser handles sexp passthrough, filter tokens, and free text."
+  (should (equal '(todo "TODO") (jetpacs-org-parse-query "'(todo \"TODO\")")))
+  (should (equal '(and (todo "TODO" "NEXT") (tags "work"))
+                 (jetpacs-org-parse-query "todo:TODO,NEXT tags:work")))
+  (should (equal '(regexp "hello") (jetpacs-org-parse-query "hello")))
+  (should (null (jetpacs-org-parse-query "   ")))
+  (should-error (jetpacs-org-parse-query "(and (todo") :type 'user-error))
+
+(ert-deftest jetpacs-org-typed-value ()
+  "Typed extraction reads checkbox/number/list per the requested type."
+  ;; NB: avoid property names org treats as special (TAGS, TODO, …); a
+  ;; drawer \"Tags\" is shadowed by the heading's real tags.
+  (jetpacs-tests--with-org-file buf
+      "* Rec\n:PROPERTIES:\n:Done: [X]\n:Qty: 7\n:Items: a, b, c\n:END:\n"
+    (goto-char (point-min))
+    (should (eq t (jetpacs-org-entry-typed-value "Done" 'checkbox)))
+    (should (= 7 (jetpacs-org-entry-typed-value "Qty" 'number)))
+    (should (equal '("a" "b" "c") (jetpacs-org-entry-typed-value "Items" 'list)))))
+
+(ert-deftest jetpacs-org-mutations ()
+  "Property, TODO, and planning mutations apply at a heading ref.
+The planning add+remove path was previously non-functional."
+  (jetpacs-tests--with-org-file buf
+      "* Task\n"
+    (goto-char (point-min))
+    (let ((ref (jetpacs-org-heading-ref)))
+      (jetpacs-org-set-property ref 'test "Owner" "cc")
+      (should (equal "cc" (org-entry-get (point-min) "Owner")))
+      (jetpacs-org-toggle-todo ref 'test "TODO")
+      (goto-char (point-min))
+      (should (equal "TODO" (org-get-todo-state)))
+      ;; planning: add both types, then remove
+      (jetpacs-org-set-planning ref 'test "SCHEDULED" "2026-07-15")
+      (should (org-entry-get (point-min) "SCHEDULED"))
+      (jetpacs-org-set-planning ref 'test "DEADLINE" "2026-07-20")
+      (should (org-entry-get (point-min) "DEADLINE"))
+      (jetpacs-org-set-planning ref 'test "SCHEDULED" "")
+      (should-not (org-entry-get (point-min) "SCHEDULED"))
+      (should (org-entry-get (point-min) "DEADLINE")))))
 
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 

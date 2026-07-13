@@ -16,6 +16,7 @@
 (require 'jetpacs-widgets)
 (require 'jetpacs-buffer)
 (require 'jetpacs-tablist)
+(require 'jetpacs-results)
 (require 'jetpacs-shell)
 (require 'jetpacs-witheditor)
 (require 'imenu)
@@ -44,11 +45,11 @@ that buffer\" — grep hits, and any future jump affordance."
                                      :label label :point point))
   (jetpacs-shell-push nil :switch-to "buffers"))
 
-;; jetpacs-files stays independent of this module (it loads first); its
-;; grep hits navigate here through the seam.
-(defvar jetpacs-files-view-region-function)
-(with-eval-after-load 'jetpacs-files
-  (setq jetpacs-files-view-region-function #'jetpacs-emacs-ui-view-region))
+;; The results/xref navigator (occur, grep, compilation, xref, and the
+;; Files content search) shows every visited locus in this region view —
+;; one host jump primitive for every "list of loci → source location"
+;; surface.
+(setq jetpacs-results-visit-region-function #'jetpacs-emacs-ui-view-region)
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and
 ;; list buffers this way) is this module's buffer view.
@@ -565,12 +566,20 @@ with a keyboard FAB that opens the buffer's keymap."
        ;; Content swap within the buffers view: stays an Emacs round-trip
        ;; (the list must be rebuilt).
        :nav-action (jetpacs-action "emacs.buffer.back")
-       :actions (list (jetpacs-icon-button
-                       "toc"
-                       (jetpacs-action "imenu.show"
-                                    :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))
-                                    :when-offline "drop")
-                       :content-description "Sections (imenu)"))
+       ;; When a section is showing a locus reached from occur/grep/xref,
+       ;; the results substrate contributes prev/next-match chrome; else
+       ;; nil.  Gated on an active section so it never shows on the whole
+       ;; buffer.  Then the imenu sections button.
+       :actions (append
+                 (when jetpacs-emacs-ui--section
+                   (jetpacs-results-buffer-view-actions
+                    jetpacs-emacs-ui--viewing-buffer))
+                 (list (jetpacs-icon-button
+                        "toc"
+                        (jetpacs-action "imenu.show"
+                                     :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))
+                                     :when-offline "drop")
+                        :content-description "Sections (imenu)")))
        :fab (jetpacs-fab "keyboard"
                       :on-tap (jetpacs-action "jetpacs.keymap.show"
                                :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))

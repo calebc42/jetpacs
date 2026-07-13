@@ -17,7 +17,7 @@
 
 (dolist (feature '(jetpacs jetpacs-widgets jetpacs-lint jetpacs-surfaces jetpacs-triggers
                    jetpacs-device jetpacs-minibuffer jetpacs-buffer jetpacs-shell
-                   jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-transient
+                   jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-results jetpacs-transient
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
                    jetpacs-package-browser jetpacs-customize
@@ -28,10 +28,21 @@
   (when (featurep feature)
     (error "Core pulled in app feature %s" feature)))
 
-;; The core is org-agnostic by contract; org loads only when a Tier 1
-;; app (or the user) asks for it.
+;; Org stays confined to the jetpacs-org primitive layer: the rest of the
+;; foundation must not pull org in on its own, so app authors who don't
+;; touch org pay none of its weight.  jetpacs-org (loaded next) is the one
+;; sanctioned exception.
 (when (featurep 'org)
-  (error "Core loaded org — an org dependency leaked into emacs/core/"))
+  (error "Core (excluding jetpacs-org) loaded org — an org dependency leaked into emacs/core/"))
+
+;; jetpacs-org is the foundation's unopinionated org-primitive layer (query,
+;; cache, heading refs, typed extraction, safe mutations).  Apps and
+;; declarative runtimes build on it; it alone may require org.
+(require 'jetpacs-org)
+(unless (featurep 'jetpacs-org)
+  (error "jetpacs-org failed to load"))
+(unless (featurep 'org)
+  (error "jetpacs-org did not provide org support"))
 
 ;; The shell must be servable on its own: views registered by core
 ;; feature modules exist even with no app loaded.

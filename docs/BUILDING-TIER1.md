@@ -46,6 +46,10 @@ is [TUTORIAL.md](TUTORIAL.md).
 
 ## The extension surfaces, smallest first
 
+Most data-bound screens can be a **declarative `:spec`** — a named source plus
+a card template, no elisp view function — see [BINDING.md](BINDING.md). The
+surfaces below are the general escape hatch for when you need code.
+
 ### 1. A buffer skin — restyle one major mode
 
 Register a function that turns a buffer into a list of widget nodes, and

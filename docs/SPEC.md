@@ -319,12 +319,20 @@ degrades to a plain stack of its contents) or nothing if it is a leaf —
 never a crash (§12). The welcome's `node_types` (§3) is the companion's
 catalog of the `t` values it *does* render, so a client can gate a newer
 node and emit a fallback rather than depend on this degradation. Actions embed as objects under
-`on_tap` / `on_change` / `on_submit` / `on_save` / `on_pick` /
-`on_reorder` / `on_refresh` / `nav_action`. Value-carrying callbacks
-(`on_change`, `on_submit`, `on_save`, `on_pick`) dispatch their action
-with the widget's current value injected into `args` as `value` — a
+a node's action key — `on_tap`, `on_change`, `on_submit`, `on_save`,
+`on_pick`, `on_reorder`, `on_refresh`, `nav_action`, `on_point_tap`,
+`on_button`, and the rest (the full set is `action_hook_keys` in
+[`docs/contract.json`](contract.json)). Value-carrying callbacks
+(`on_change`, `on_submit`, `on_save`, `on_pick`, `on_point_tap`) dispatch their
+action with the widget's current value injected into `args` as `value` — a
 switch's `on_change` arrives with `args.value` true/false, a text
 input's `on_submit` with the text.
+
+Declarative data-views (API 1.5.0) compile *on the client* to exactly these
+nodes and actions. Their authoring grammar — `:spec` views, named sources,
+closed template placeholders — is a local concern documented in
+[BINDING.md](BINDING.md), **not** a wire addition; the compiled output obeys
+this section and the §5 allowlist like any other node tree.
 
 The normative, machine-checked reference for every node's wire shape is
 [`test/widgets.golden`](../test/widgets.golden) — one JSON line per

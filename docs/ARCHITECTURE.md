@@ -19,7 +19,8 @@ and everything above it is one replaceable opinion.
   org app and the magit radial menu (in the glasspane repo; this repo
   ships `jetpacs-hello.el` as the minimal example). This tier is the
   replaceable part — the whole point of the project is that you can
-  write your own (see [BUILDING-TIER1.md](BUILDING-TIER1.md)). A few
+  write your own (see [BUILDING-TIER1.md](BUILDING-TIER1.md); data-bound
+  screens can be declarative `:spec` views — [BINDING.md](BINDING.md)). A few
   Tier-1-shaped screens ship in the core itself — the package browser,
   the customize browser, the tools hub, and the automations view —
   because they are chrome every app's user needs, not app opinion.

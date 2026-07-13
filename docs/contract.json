@@ -1,6 +1,6 @@
 {
   "contract_format": 1,
-  "api_version": "1.4.0",
+  "api_version": "1.5.0",
   "protocol_version": 1,
   "node_types": [
     "text",
@@ -123,6 +123,46 @@
       "demote",
       "move-up",
       "move-down"
+    ]
+  },
+  "binding": {
+    "layouts": [
+      "list",
+      "board",
+      "calendar"
+    ],
+    "transforms": [
+      "raw",
+      "string",
+      "date",
+      "date-label",
+      "tags-list",
+      "count",
+      "bool",
+      "ref"
+    ],
+    "spec_keys": [
+      "source",
+      "params",
+      "layout",
+      "template",
+      "header",
+      "group-by",
+      "empty-state",
+      "chrome"
+    ],
+    "chrome_kinds": [
+      "tab",
+      "nav"
+    ],
+    "source_field_types": [
+      "text",
+      "number",
+      "boolean",
+      "date",
+      "string-list",
+      "enum",
+      "ref"
     ]
   }
 }

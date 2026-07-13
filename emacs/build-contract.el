@@ -25,6 +25,7 @@
 (add-to-list 'load-path (expand-file-name "emacs/core" jetpacs-contract--root))
 (require 'jetpacs)
 (require 'jetpacs-lint)
+(require 'jetpacs-source)
 
 (defconst jetpacs-contract-format 1
   "Schema version of `contract.json' itself — bump on a contract-shape change.")
@@ -66,7 +67,14 @@ builtin mapped to its required payload."
    (cons "toolbar"
          (list (cons "ops"        (jetpacs-contract--names jetpacs-lint--toolbar-ops))
                (cons "placements" (vconcat jetpacs-lint--toolbar-placements))
-               (cons "line_ops"   (vconcat jetpacs-lint--toolbar-line-ops))))))
+               (cons "line_ops"   (vconcat jetpacs-lint--toolbar-line-ops))))
+   (cons "binding"
+         (list (cons "layouts"            (vconcat jetpacs-lint-spec-layouts))
+               (cons "transforms"         (vconcat jetpacs-lint-spec-transforms))
+               (cons "spec_keys"          (vconcat (mapcar (lambda (k) (substring (symbol-name k) 1))
+                                                           jetpacs-lint-spec-keys)))
+               (cons "chrome_kinds"       (vconcat jetpacs-lint-spec-chrome-kinds))
+               (cons "source_field_types" (vconcat jetpacs-source-field-types))))))
 
 (defun jetpacs-contract-string ()
   "The canonical JSON text of the contract, with one terminal newline."

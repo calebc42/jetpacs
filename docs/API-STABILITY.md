@@ -154,6 +154,29 @@ without further wiring.
 ### Validation (`jetpacs-lint.el`)
 
 `jetpacs-lint-spec` `jetpacs-render-to-json` (see Phase B).
+`jetpacs-lint-view-spec` (since 1.5.0: validate a declarative view `:spec`),
+plus the vocabulary defconsts `jetpacs-lint-spec-layouts`
+`jetpacs-lint-spec-transforms` `jetpacs-lint-spec-keys`
+`jetpacs-lint-spec-chrome-kinds`.
+
+### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
+
+Sources (`jetpacs-source.el`): `jetpacs-defsource` `jetpacs-source-query`
+`jetpacs-source-fields` `jetpacs-source-invalidate` `jetpacs-source-remove`
+`jetpacs-source-p` `jetpacs-source-catalog` `jetpacs-source-field-types`.
+
+Views (`jetpacs-shell.el`, `jetpacs-spec.el`): the `:spec` keyword on
+`jetpacs-shell-define-view` (an alternative to `:builder`, exactly one
+required); the compiler itself is internal.
+
+Forms (`jetpacs-surfaces.el`): `jetpacs-form` `jetpacs-form-field-id`
+`jetpacs-form-value` `jetpacs-form-seed` `jetpacs-form-reset`
+`jetpacs-form-dispose`.
+
+Action metadata (`jetpacs-surfaces.el`): `jetpacs-action-catalog`, and the
+`&key args doc` on `jetpacs-defaction`.
+
+Capability fallback (`jetpacs.el`): `jetpacs-node-or`.
 
 ## Anything not listed here
 

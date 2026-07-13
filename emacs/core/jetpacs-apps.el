@@ -142,6 +142,8 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   ;; Data sources (jetpacs-source.el; guard for a lean build without it)
   (dolist (name (jetpacs--owned-names "source" id))
     (when (fboundp 'jetpacs-source-remove) (jetpacs-source-remove name)))
+  ;; Forms (jetpacs-form registry)
+  (dolist (form (jetpacs--forms-of-owner id)) (jetpacs-form-dispose form))
   ;; Triggers (batch to avoid N redundant pushes)
   (let ((trigger-names (jetpacs--owned-names "trigger" id)))
     (dolist (name trigger-names)

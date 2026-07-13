@@ -369,6 +369,15 @@ catalog that omits NODE-TYPE returns nil."
           ((null catalog) t)           ; companion predates negotiation
           (t (and (seq-contains-p catalog name) t)))))
 
+(defmacro jetpacs-node-or (node-type primary fallback)
+  "Evaluate PRIMARY when the companion renders NODE-TYPE, else FALLBACK.
+Only one branch runs; both are local node-building forms (never wire data).
+A disconnected companion, or a connected one whose catalog omits NODE-TYPE,
+takes FALLBACK; a connected companion that sent no catalog at all is treated
+permissively and takes PRIMARY (see `jetpacs-node-supported-p')."
+  (declare (indent 1))
+  `(if (jetpacs-node-supported-p ,node-type) ,primary ,fallback))
+
 (defun jetpacs-device-caps ()
   "Capability names invocable via `jetpacs-capability-invoke', or nil.
 From the welcome's `device' report; empty until a session with the
@@ -3023,6 +3032,67 @@ JSON-array string and non-string members are discarded."
             (and (listp parsed) (seq-filter #'stringp parsed)))
         (list v)))
      (t nil))))
+
+;; ─── Form lifecycle registry ─────────────────────────────────────────────────
+;; The reset idiom every dialog needs: seed -> read -> clear.  A field's widget
+;; id carries a generation suffix; bumping it on reset is what actually empties
+;; the on-device widget (the companion keys field state by id).  Forms are
+;; owned, so `jetpacs-app-unregister' disposes them.
+
+(cl-defstruct (jetpacs-form (:constructor jetpacs--make-form) (:copier nil))
+  ns (gen 0) owner)
+
+(defvar jetpacs--forms (make-hash-table :test 'equal)
+  "Registry of \"OWNER\\0NS\" -> `jetpacs-form'.")
+
+(defun jetpacs--form-key (ns owner)
+  "The registry key for form NS under OWNER."
+  (format "%s\0%s" (or owner "") ns))
+
+(defun jetpacs-form (ns &optional owner)
+  "The form for namespace NS under OWNER (default `jetpacs-current-owner').
+Created on first use.  NS should be app-unique; field ids are prefixed with
+it so one clear resets the whole form."
+  (let* ((owner (or owner jetpacs-current-owner))
+         (key (jetpacs--form-key ns owner)))
+    (or (gethash key jetpacs--forms)
+        (puthash key (jetpacs--make-form :ns ns :owner owner) jetpacs--forms))))
+
+(defun jetpacs-form-field-id (form field)
+  "The current widget id for FIELD in FORM — \"NS-FIELD-GEN\".
+The GEN suffix rotates on `jetpacs-form-reset'."
+  (format "%s-%s-%d" (jetpacs-form-ns form) field (jetpacs-form-gen form)))
+
+(defun jetpacs-form-value (form field)
+  "The current UI-state value of FIELD in FORM."
+  (jetpacs-ui-state (jetpacs-form-field-id form field)))
+
+(defun jetpacs-form-seed (form field value)
+  "Set FIELD to VALUE only when it has no value yet (pre-fill an edit dialog)."
+  (let ((id (jetpacs-form-field-id form field)))
+    (unless (jetpacs-ui-state id) (jetpacs-ui-state-put id value))))
+
+(defun jetpacs-form-reset (form)
+  "Clear FORM's field state and subscriptions and rotate its generation.
+The rotation empties the on-device widgets."
+  (let ((prefix (concat (jetpacs-form-ns form) "-")))
+    (jetpacs-ui-state-clear prefix)
+    (jetpacs-on-state-change-clear prefix))
+  (cl-incf (jetpacs-form-gen form)))
+
+(defun jetpacs-form-dispose (form)
+  "Reset FORM and drop it from the registry."
+  (jetpacs-form-reset form)
+  (remhash (jetpacs--form-key (jetpacs-form-ns form) (jetpacs-form-owner form))
+           jetpacs--forms))
+
+(defun jetpacs--forms-of-owner (owner)
+  "The registered forms owned by OWNER."
+  (let (forms)
+    (maphash (lambda (_k form) (when (equal (jetpacs-form-owner form) owner)
+                                 (push form forms)))
+             jetpacs--forms)
+    forms))
 
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."
@@ -6155,6 +6225,8 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   ;; Data sources (jetpacs-source.el; guard for a lean build without it)
   (dolist (name (jetpacs--owned-names "source" id))
     (when (fboundp 'jetpacs-source-remove) (jetpacs-source-remove name)))
+  ;; Forms (jetpacs-form registry)
+  (dolist (form (jetpacs--forms-of-owner id)) (jetpacs-form-dispose form))
   ;; Triggers (batch to avoid N redundant pushes)
   (let ((trigger-names (jetpacs--owned-names "trigger" id)))
     (dolist (name trigger-names)

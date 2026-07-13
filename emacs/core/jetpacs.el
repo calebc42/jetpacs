@@ -356,6 +356,15 @@ catalog that omits NODE-TYPE returns nil."
           ((null catalog) t)           ; companion predates negotiation
           (t (and (seq-contains-p catalog name) t)))))
 
+(defmacro jetpacs-node-or (node-type primary fallback)
+  "Evaluate PRIMARY when the companion renders NODE-TYPE, else FALLBACK.
+Only one branch runs; both are local node-building forms (never wire data).
+A disconnected companion, or a connected one whose catalog omits NODE-TYPE,
+takes FALLBACK; a connected companion that sent no catalog at all is treated
+permissively and takes PRIMARY (see `jetpacs-node-supported-p')."
+  (declare (indent 1))
+  `(if (jetpacs-node-supported-p ,node-type) ,primary ,fallback))
+
 (defun jetpacs-device-caps ()
   "Capability names invocable via `jetpacs-capability-invoke', or nil.
 From the welcome's `device' report; empty until a session with the

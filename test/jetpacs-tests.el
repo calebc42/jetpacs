@@ -1880,6 +1880,54 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
     (jetpacs-defaction "app1.do" #'ignore)                 ; re-register w/o metadata clears it
     (should-not (gethash "app1.do" jetpacs--action-catalog))))
 
+;; ─── Form registry + node-or (Stage-2 T2.6) ──────────────────────────────────
+
+(ert-deftest jetpacs-form-lifecycle ()
+  "Seed-if-absent, value, reset (rotates gen + clears), dispose."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal)))
+    (let* ((f (jetpacs-form "cap" "app1"))
+           (id0 (jetpacs-form-field-id f "title")))
+      (jetpacs-form-seed f "title" "hi")
+      (should (equal (jetpacs-form-value f "title") "hi"))
+      (jetpacs-form-seed f "title" "other")               ; seed-if-absent won't clobber
+      (should (equal (jetpacs-form-value f "title") "hi"))
+      (jetpacs-form-reset f)                               ; clears + rotates the id
+      (should-not (jetpacs-form-value f "title"))
+      (should-not (equal (jetpacs-form-field-id f "title") id0))
+      (should (eq f (jetpacs-form "cap" "app1")))          ; same (ns,owner) -> same object
+      (jetpacs-form-dispose f)
+      (should-not (eq f (jetpacs-form "cap" "app1"))))))
+
+(ert-deftest jetpacs-form-teardown-by-owner ()
+  "`jetpacs-app-unregister' disposes an app's owned forms."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--sources (make-hash-table :test 'equal))
+        (jetpacs--source-cache (make-hash-table :test 'equal))
+        (jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--action-catalog (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (jetpacs-shell-views nil)
+        (jetpacs-apps--registry nil)
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (jetpacs-form "cap" "app1")
+      (should (= (length (jetpacs--forms-of-owner "app1")) 1))
+      (jetpacs-app-unregister "app1")
+      (should (= (length (jetpacs--forms-of-owner "app1")) 0)))))
+
+(ert-deftest jetpacs-node-or-fallback ()
+  "`jetpacs-node-or' picks per `jetpacs-node-supported-p'."
+  (let ((jetpacs--session nil))                            ; disconnected -> fallback
+    (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'fb)))
+  (let ((jetpacs--session '((granted))))                   ; connected, no catalog -> primary
+    (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'prim)))
+  (let ((jetpacs--session '((node_types . ["chart"]))))    ; catalog omits it -> fallback
+    (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'fb))
+    (should (eq (jetpacs-node-or "chart" 'prim 'fb) 'prim))))
+
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."
   (let ((jetpacs--pending (make-hash-table :test 'equal))

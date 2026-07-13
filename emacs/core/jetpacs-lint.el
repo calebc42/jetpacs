@@ -84,6 +84,22 @@ derives the discriminated action schema in `contract.json' from this.")
 (defconst jetpacs-lint--toolbar-line-ops '("promote" "demote" "move-up" "move-down")
   "Valid builtin `line' op names on a toolbar item.")
 
+;; ─── Declarative view specs (jetpacs-spec.el) ────────────────────────────────
+
+(defconst jetpacs-lint-spec-layouts '("list" "board" "calendar")
+  "Layouts a declarative view `:spec' may request.")
+
+(defconst jetpacs-lint-spec-transforms
+  '("raw" "string" "date" "date-label" "tags-list" "count" "bool" "ref")
+  "The closed transform names a template placeholder's `as' may name.")
+
+(defconst jetpacs-lint-spec-keys
+  '(:source :params :layout :template :header :group-by :empty-state :chrome)
+  "The keys a view `:spec' plist may carry.")
+
+(defconst jetpacs-lint-spec-chrome-kinds '("tab" "nav")
+  "The `:kind' values a spec `:chrome' may declare.")
+
 ;; ─── Shape predicates ────────────────────────────────────────────────────────
 
 (defun jetpacs-lint--alist-p (x)
@@ -304,6 +320,71 @@ subtree is lost."
            (cons key (jetpacs-lint-sanitize-spec val)))
           (t pair))))
      node))))
+
+;; ─── Declarative view-spec validation ───────────────────────────────────────
+
+(defun jetpacs-lint--plist-keys (plist)
+  "The keys of PLIST, in order."
+  (let (ks) (while (cdr plist) (push (car plist) ks) (setq plist (cddr plist)))
+       (nreverse ks)))
+
+(defun jetpacs-lint--walk-template (node fields path report)
+  "Walk template NODE, reporting placeholders that bind outside FIELDS,
+unknown transforms, and malformed embedded actions.  PATH is the reversed
+key list; REPORT is called with (PATH MESSAGE)."
+  (cond
+   ((not (jetpacs-lint--alist-p node))
+    (when (vectorp node)
+      (let ((i 0)) (dolist (x (append node nil))
+                     (jetpacs-lint--walk-template x fields (cons i path) report)
+                     (setq i (1+ i))))))
+   ((assq 'bind node)                   ; a placeholder
+    (let ((f (alist-get 'bind node)) (as (alist-get 'as node)))
+      (unless (and (stringp f) (member f fields))
+        (funcall report path (format "placeholder binds unknown field: %S" f)))
+      (when (and as (not (member as jetpacs-lint-spec-transforms)))
+        (funcall report path (format "unknown transform: %S" as)))))
+   ((or (assq 'action node) (assq 'builtin node))   ; an embedded action
+    (jetpacs-lint--check-action node path report)
+    (when-let ((args (cdr (assq 'args node))))
+      (jetpacs-lint--walk-template args fields (cons 'args path) report)))
+   (t                                   ; an ordinary node: walk its attrs
+    (dolist (pair node)
+      (unless (memq (car pair) '(t args))
+        (jetpacs-lint--walk-template (cdr pair) fields (cons (car pair) path) report))))))
+
+;;;###autoload
+(defun jetpacs-lint-view-spec (spec fields)
+  "Return a list of (PATH . PROBLEM) for declarative view SPEC, nil if clean.
+FIELDS is the field-name strings the bound source declares (from
+`jetpacs-source-fields'); every `((bind . F))' must name one.  Proves the spec
+is closed data referencing only registered fields, transforms, and actions —
+the SPEC §5 enforcement point for the binding grammar."
+  (let* (problems
+         (report (lambda (path msg) (push (cons (reverse path) msg) problems))))
+    (if (not (and (listp spec) (plistp spec)))
+        (funcall report nil (format "spec is not a plist: %S" spec))
+      (let ((ks (jetpacs-lint--plist-keys spec)))
+        (dolist (k ks)
+          (unless (memq k jetpacs-lint-spec-keys)
+            (funcall report (list k) (format "unknown spec key: %s" k))))
+        (unless (memq :source ks) (funcall report nil "spec has no :source"))
+        (unless (memq :template ks) (funcall report nil "spec has no :template")))
+      (unless (stringp (plist-get spec :source))
+        (funcall report (list :source) "must be a string"))
+      (let ((layout (plist-get spec :layout)))
+        (when (and layout (not (member layout jetpacs-lint-spec-layouts)))
+          (funcall report (list :layout) (format "unknown layout: %S" layout))))
+      (let ((kind (plist-get (plist-get spec :chrome) :kind)))
+        (when (and kind (not (member kind jetpacs-lint-spec-chrome-kinds)))
+          (funcall report (list :chrome) (format "unknown chrome kind: %S" kind))))
+      (let ((gbf (plist-get (plist-get spec :group-by) :field)))
+        (when (and gbf (not (member gbf fields)))
+          (funcall report (list :group-by) (format "group-by unknown field: %S" gbf))))
+      (dolist (key '(:template :header))
+        (when (plist-get spec key)
+          (jetpacs-lint--walk-template (plist-get spec key) fields (list key) report))))
+    (nreverse problems)))
 
 (provide 'jetpacs-lint)
 ;;; jetpacs-lint.el ends here

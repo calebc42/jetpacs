@@ -16,7 +16,7 @@
                                 (or load-file-name buffer-file-name))))
 
 (dolist (feature '(jetpacs jetpacs-widgets jetpacs-lint jetpacs-surfaces jetpacs-source jetpacs-triggers
-                   jetpacs-device jetpacs-minibuffer jetpacs-buffer jetpacs-shell
+                   jetpacs-device jetpacs-minibuffer jetpacs-buffer jetpacs-shell jetpacs-spec
                    jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-results jetpacs-transient
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui

@@ -31,6 +31,7 @@
 (require 'jetpacs-lint)
 (require 'jetpacs-source)
 (require 'jetpacs-shell)
+(require 'jetpacs-spec)
 (require 'jetpacs-keymap)
 (require 'jetpacs-results)
 (require 'jetpacs-files)
@@ -1927,6 +1928,156 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
   (let ((jetpacs--session '((node_types . ["chart"]))))    ; catalog omits it -> fallback
     (should (eq (jetpacs-node-or "month_grid" 'prim 'fb) 'fb))
     (should (eq (jetpacs-node-or "chart" 'prim 'fb) 'prim))))
+
+;; ─── Declarative :spec compiler (Stage-2 T2.2/T2.3/T2.4) ──────────────────────
+
+(ert-deftest jetpacs-spec-transforms ()
+  "The closed, domain-neutral transform set."
+  (should (equal (jetpacs-spec--transform "raw" "x") "x"))
+  (should (equal (jetpacs-spec--transform "string" 5) "5"))
+  (should (equal (jetpacs-spec--transform "date" "2026-07-05") "2026-07-05"))
+  (should-not (jetpacs-spec--transform "date" "nope"))
+  (should (equal (jetpacs-spec--transform "date-label" "2026-07-05") "Jul 5"))
+  (should (equal (jetpacs-spec--transform "tags-list" ["a" "b"]) "a b"))
+  (should (= (jetpacs-spec--transform "count" ["a" "b" "c"]) 3))
+  (should (eq (jetpacs-spec--transform "bool" "x") t))
+  (should (eq (jetpacs-spec--transform "bool" nil) :false)))
+
+(ert-deftest jetpacs-spec-instantiate ()
+  "A template's placeholders resolve; a nil resolution drops its attribute."
+  (let ((item '((headline . "Hi") (ref . ((id . "1"))) (todo)))
+        (template '((t . "card")
+                    (on_tap . ((action . "heading.tap") (args . ((bind . "ref")))))
+                    (subtitle . ((bind . "todo")))          ; nil -> dropped
+                    (children . [((t . "text") (text . ((bind . "headline"))))]))))
+    (let ((out (jetpacs-spec--instantiate template item "s")))
+      (should (equal (alist-get 'text (aref (alist-get 'children out) 0)) "Hi"))
+      (should (equal (alist-get 'args (alist-get 'on_tap out)) '((id . "1"))))
+      (should-not (assq 'subtitle out)))))            ; dropped, not (subtitle . nil)
+
+(ert-deftest jetpacs-spec-instantiate-args-spread ()
+  "The _spread form merges a bound object under literal keys; collisions error."
+  (let ((item '((ref . ((id . "1"))) (todo . "NEXT"))))
+    (should (equal (jetpacs-spec--instantiate-args
+                    '((_spread . ((bind . "ref"))) (state . ((bind . "todo")))) item "s")
+                   '((id . "1") (state . "NEXT"))))
+    (should-error (jetpacs-spec--instantiate-args
+                   '((_spread . ((bind . "ref"))) (id . "clash")) item "s"))))
+
+(ert-deftest jetpacs-lint-view-spec-checks ()
+  "The view-spec validator flags every out-of-vocabulary element."
+  (let ((fields '("headline" "ref" "todo" "scheduled")))
+    (should-not (jetpacs-lint-view-spec
+                 '(:source "s" :layout "list"
+                   :template ((t . "text") (text . ((bind . "headline")))))
+                 fields))
+    (should (jetpacs-lint-view-spec                       ; unknown field
+             '(:source "s" :template ((t . "text") (text . ((bind . "nope"))))) fields))
+    (should (jetpacs-lint-view-spec                       ; unknown transform
+             '(:source "s" :template ((t . "text") (text . ((bind . "todo") (as . "wat"))))) fields))
+    (should (jetpacs-lint-view-spec                       ; unknown spec key
+             '(:source "s" :template ((t . "text")) :bogus 1) fields))
+    (should (jetpacs-lint-view-spec                       ; bad layout
+             '(:source "s" :layout "grid" :template ((t . "text"))) fields))
+    (should (jetpacs-lint-view-spec '(:template ((t . "text"))) fields))   ; no :source
+    (should (jetpacs-lint-view-spec                       ; group-by unknown field
+             '(:source "s" :template ((t . "text")) :group-by (:field "xxx")) fields))
+    (should (jetpacs-lint-view-spec                       ; bad chrome kind
+             '(:source "s" :template ((t . "text")) :chrome (:kind "sheet")) fields))))
+
+(ert-deftest jetpacs-spec-list-layout ()
+  "list: header + one template per item in a lazy column; lints clean."
+  (let* ((items '(((headline . "A") (ref . ((id . "1"))))
+                  ((headline . "B") (ref . ((id . "2"))))))
+         (spec '(:source "s" :layout "list"
+                 :template ((t . "card")
+                            (on_tap . ((action . "heading.tap") (args . ((bind . "ref")))))
+                            (children . [((t . "text") (text . ((bind . "headline"))))]))))
+         (body (jetpacs-spec--layout-body spec items))
+         (cards (append (alist-get 'children body) nil)))
+    (should (equal (alist-get 't body) "lazy_column"))
+    (should (= (length cards) 2))
+    (should (equal (alist-get 'text (aref (alist-get 'children (car cards)) 0)) "A"))
+    (should-not (jetpacs-lint-spec body))))
+
+(ert-deftest jetpacs-spec-calendar-order ()
+  "calendar: ISO-date groups ascending, unscheduled last."
+  (let* ((items '(((headline . "A") (scheduled . "2026-07-05"))
+                  ((headline . "B") (scheduled . "2026-07-01"))
+                  ((headline . "C"))))
+         (spec '(:source "s" :layout "calendar" :group-by (:field "scheduled")
+                 :template ((t . "text") (text . ((bind . "headline"))))))
+         (body (jetpacs-spec--layout-body spec items))
+         (kids (append (alist-get 'children body) nil))
+         (texts (delq nil (mapcar (lambda (n) (and (equal (alist-get 't n) "text")
+                                                   (alist-get 'text n)))
+                                  kids))))
+    (should (equal texts '("B" "A" "C")))
+    (should-not (jetpacs-lint-spec body))))
+
+(ert-deftest jetpacs-spec-column-order ()
+  "board grouping: explicit order first, unseen appended, empty last."
+  (should (equal (jetpacs-spec--column-order
+                  '(((todo . "DONE")) ((todo . "TODO")) ((todo)) ((todo . "WAIT")))
+                  "todo" ["TODO" "DONE"] nil t)
+                 '("TODO" "DONE" "WAIT" "")))
+  ;; empty not forced last when empty-last nil
+  (should (member "" (jetpacs-spec--column-order '(((todo))) "todo" nil nil nil))))
+
+(ert-deftest jetpacs-spec-board-layout ()
+  "board: one column per group value; lints clean."
+  (let* ((items '(((headline . "A") (todo . "DONE"))
+                  ((headline . "B") (todo . "TODO"))
+                  ((headline . "C"))))
+         (spec '(:source "s" :layout "board"
+                 :group-by (:field "todo" :order ["TODO" "DONE"] :empty-last t)
+                 :template ((t . "text") (text . ((bind . "headline"))))))
+         (body (jetpacs-spec--layout-body spec items)))
+    (should (= (length (append (alist-get 'children body) nil)) 3))
+    (should-not (jetpacs-lint-spec body))))
+
+(ert-deftest jetpacs-spec-compile-and-empty ()
+  "Full compile: query -> layout -> chrome; empty items -> empty_state."
+  (jetpacs-tests--with-sources
+    (cl-letf (((symbol-function 'jetpacs-shell-nav-view) (lambda (_title body &rest _) body)))
+      (jetpacs-defsource "t.src"
+        :fields '((:name "headline" :type "text") (:name "ref" :type "ref"))
+        :query (lambda (_p) (list '((headline . "A") (ref . ((id . "1")))))))
+      (let ((view (jetpacs-spec--compile "t.view"
+                    '(:source "t.src" :layout "list"
+                      :template ((t . "card")
+                                 (children . [((t . "text") (text . ((bind . "headline"))))]))
+                      :chrome (:kind "nav" :title "T"))
+                    nil)))
+        (should (equal (alist-get 't view) "lazy_column"))
+        (should (jetpacs-render-to-json view)))
+      ;; empty result -> empty_state body
+      (jetpacs-defsource "t.empty" :fields '((:name "a" :type "text"))
+        :query (lambda (_p) nil))
+      (let ((view (jetpacs-spec--compile "t.e"
+                    '(:source "t.empty" :template ((t . "text") (text . ((bind . "a"))))
+                      :chrome (:kind "nav" :title "T"))
+                    nil)))
+        (should (equal (alist-get 't view) "empty_state"))))))
+
+(ert-deftest jetpacs-spec-compile-bad-spec-signals ()
+  "A spec binding an undeclared field fails lint at compile (shell degrades it)."
+  (jetpacs-tests--with-sources
+    (jetpacs-defsource "t.src" :fields '((:name "headline" :type "text"))
+      :query (lambda (_p) (list '((headline . "A")))))
+    (should-error (jetpacs-spec--compile "t.view"
+                    '(:source "t.src" :template ((t . "text") (text . ((bind . "nope")))))
+                    nil))))
+
+(ert-deftest jetpacs-spec-define-view-exclusive ()
+  "jetpacs-shell-define-view requires exactly one of :builder / :spec."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (should-error (jetpacs-shell-define-view "v"))
+      (should-error (jetpacs-shell-define-view "v" :builder #'ignore :spec '(:source "s")))
+      (should (jetpacs-shell-define-view "v" :spec '(:source "s" :template ((t . "text")))))
+      (should (plist-get (cdr (assoc "v" jetpacs-shell-views)) :spec)))))
 
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."

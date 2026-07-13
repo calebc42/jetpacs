@@ -47,10 +47,18 @@
   "Ordered list of (NAME . PLIST) registered shell views.
 Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 
-(cl-defun jetpacs-shell-define-view (name &key builder tab when overlay (order 100))
+(declare-function jetpacs-spec--compile "jetpacs-spec")
+;; Declarative :spec views are compiled by jetpacs-spec.el, which requires this
+;; file; autoload avoids the load cycle (in the bundle the real function is
+;; defined after this one, before any push occurs).
+(autoload 'jetpacs-spec--compile "jetpacs-spec")
+
+(cl-defun jetpacs-shell-define-view (name &key builder spec tab when overlay (order 100))
   "Register (or replace) shell view NAME.
 BUILDER is a function of one argument (snackbar text or nil) returning
-the view's scaffold alist.  TAB, when non-nil, is a plist
+the view's scaffold alist.  SPEC is a declarative data-view plist compiled
+by jetpacs-spec.el (see docs/BINDING.md) — an alternative to BUILDER;
+exactly one of the two is required.  TAB, when non-nil, is a plist
 \(:icon :label :badge) placing the view in the bottom bar; landing on a
 tab view makes it the current tab.  :badge, when non-nil, is a nullary
 function called on every push whose result overlays the tab icon — a
@@ -60,8 +68,12 @@ WHEN, when non-nil, is a predicate gating the view's inclusion in each
 push.  OVERLAY, when non-nil, is a predicate: while it holds, this view
 is the active one shown on a background push (a detail drill-in over
 the current tab).  ORDER sorts views and bottom-bar items."
+  (unless (or builder spec)
+    (error "jetpacs-shell-define-view %s: needs :builder or :spec" name))
+  (when (and builder spec)
+    (error "jetpacs-shell-define-view %s: :builder and :spec are exclusive" name))
   (setq jetpacs-shell-views
-        (sort (cons (cons name (list :builder builder :tab tab :when when
+        (sort (cons (cons name (list :builder builder :spec spec :tab tab :when when
                                      :overlay overlay :order order))
                     (assoc-delete-all name jetpacs-shell-views))
               (lambda (a b)
@@ -368,7 +380,9 @@ A broken builder must cost its own screen, not the whole push — with a
 Tier 1 being live-coded against a running session, the rest of the app
 keeps updating and the broken view *shows* its error."
   (condition-case err
-      (funcall (plist-get plist :builder) snackbar)
+      (if (plist-get plist :spec)
+          (jetpacs-spec--compile name (plist-get plist :spec) snackbar)
+        (funcall (plist-get plist :builder) snackbar))
     (error
      (jetpacs-shell-nav-view
       (capitalize name)

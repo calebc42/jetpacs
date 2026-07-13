@@ -39,6 +39,7 @@
                      "core/jetpacs-minibuffer.el"
                      "core/jetpacs-buffer.el"
                      "core/jetpacs-shell.el"
+                     "core/jetpacs-spec.el"
                      "core/jetpacs-apps.el"
                      "core/jetpacs-tablist.el"
                      "core/jetpacs-comint.el"

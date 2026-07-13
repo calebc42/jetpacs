@@ -40,6 +40,7 @@
 (require 'jetpacs-settings)
 (require 'jetpacs-theme)
 (require 'jetpacs-automations)
+(require 'jetpacs-org)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -905,6 +906,67 @@ The temp source buffer and *Occur* are cleaned up afterwards."
                 (should (equal before (nth 1 captured)))))))
       (when (get-file-buffer f) (kill-buffer (get-file-buffer f)))
       (ignore-errors (delete-directory dir t)))))
+
+;; ─── jetpacs-org primitives ──────────────────────────────────────────────────
+;;
+;; The core org layer shipped its planning mutation broken (string vs symbol
+;; planning type, and a call to the nonexistent `org-remove-planning-info');
+;; these smoke tests exercise the parser, typed extraction, and every mutation
+;; primitive so that class of bug can't ship silently.
+
+(defmacro jetpacs-tests--with-org-file (var content &rest body)
+  "Bind VAR to a live org buffer visiting a temp file with CONTENT; run BODY."
+  (declare (indent 2))
+  (let ((f (make-symbol "f")))
+    `(let ((,f (make-temp-file "jetpacs-org" nil ".org")))
+       (unwind-protect
+           (progn
+             (with-temp-file ,f (insert ,content))
+             (let ((,var (find-file-noselect ,f)))
+               (with-current-buffer ,var ,@body)))
+         (when (get-file-buffer ,f) (kill-buffer (get-file-buffer ,f)))
+         (ignore-errors (delete-file ,f))))))
+
+(ert-deftest jetpacs-org-parse-query-shapes ()
+  "The query parser handles sexp passthrough, filter tokens, and free text."
+  (should (equal '(todo "TODO") (jetpacs-org-parse-query "'(todo \"TODO\")")))
+  (should (equal '(and (todo "TODO" "NEXT") (tags "work"))
+                 (jetpacs-org-parse-query "todo:TODO,NEXT tags:work")))
+  (should (equal '(regexp "hello") (jetpacs-org-parse-query "hello")))
+  (should (null (jetpacs-org-parse-query "   ")))
+  (should-error (jetpacs-org-parse-query "(and (todo") :type 'user-error))
+
+(ert-deftest jetpacs-org-typed-value ()
+  "Typed extraction reads checkbox/number/list per the requested type."
+  ;; NB: avoid property names org treats as special (TAGS, TODO, …); a
+  ;; drawer \"Tags\" is shadowed by the heading's real tags.
+  (jetpacs-tests--with-org-file buf
+      "* Rec\n:PROPERTIES:\n:Done: [X]\n:Qty: 7\n:Items: a, b, c\n:END:\n"
+    (goto-char (point-min))
+    (should (eq t (jetpacs-org-entry-typed-value "Done" 'checkbox)))
+    (should (= 7 (jetpacs-org-entry-typed-value "Qty" 'number)))
+    (should (equal '("a" "b" "c") (jetpacs-org-entry-typed-value "Items" 'list)))))
+
+(ert-deftest jetpacs-org-mutations ()
+  "Property, TODO, and planning mutations apply at a heading ref.
+The planning add+remove path was previously non-functional."
+  (jetpacs-tests--with-org-file buf
+      "* Task\n"
+    (goto-char (point-min))
+    (let ((ref (jetpacs-org-heading-ref)))
+      (jetpacs-org-set-property ref 'test "Owner" "cc")
+      (should (equal "cc" (org-entry-get (point-min) "Owner")))
+      (jetpacs-org-toggle-todo ref 'test "TODO")
+      (goto-char (point-min))
+      (should (equal "TODO" (org-get-todo-state)))
+      ;; planning: add both types, then remove
+      (jetpacs-org-set-planning ref 'test "SCHEDULED" "2026-07-15")
+      (should (org-entry-get (point-min) "SCHEDULED"))
+      (jetpacs-org-set-planning ref 'test "DEADLINE" "2026-07-20")
+      (should (org-entry-get (point-min) "DEADLINE"))
+      (jetpacs-org-set-planning ref 'test "SCHEDULED" "")
+      (should-not (org-entry-get (point-min) "SCHEDULED"))
+      (should (org-entry-get (point-min) "DEADLINE")))))
 
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 

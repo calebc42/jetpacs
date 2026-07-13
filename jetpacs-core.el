@@ -815,6 +815,368 @@ Invariants are re-asserted separately at connect (`jetpacs-before-connect-hook')
 ;;; jetpacs-config.el ends here
 
 ;;; ==================================================================
+;;; BEGIN core/jetpacs-org.el
+;;; ==================================================================
+
+;;; jetpacs-org.el --- Jetpacs Org-Mode Core Layer -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 calebc42 and contributors
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;; Provides the unopinionated, primitive-first Org-mode extraction layer
+;; for the Jetpacs foundation. Included are the query parser, the built-in
+;; org-ql interpreter, heading identity mapping, and typed property extraction.
+;;
+;; This is the core engine for third-party Tier-1 apps (like Glasspane)
+;; or declarative runtimes (like jetpacs-crud.el) to read and query org data.
+
+;;; Code:
+
+(require 'org)
+(require 'org-agenda)
+(require 'org-id)
+(require 'cl-lib)
+
+;; ─── Cache layer ───────────────────────────────────────────────────────────────
+
+(defvar jetpacs-org--cache (make-hash-table :test 'equal)
+  "Memoised org extraction results.")
+
+(defun jetpacs-org--files-mtime (files)
+  "Return the maximum modification time of FILES (or 0 if none exist)."
+  (let ((mtime 0.0))
+    (dolist (file files)
+      (when (file-exists-p file)
+        (let* ((attrs (file-attributes (file-truename file)))
+               (t-val (float-time (file-attribute-modification-time attrs))))
+          (when (> t-val mtime)
+            (setq mtime t-val)))))
+    mtime))
+
+(defun jetpacs-org--cache-key (namespace &rest parts)
+  "Build a cache key from NAMESPACE and PARTS.
+Scoped to today's date and the agenda files' mtime to automatically bust
+the cache on external edits or date roll-over."
+  (cons (format-time-string "%Y-%m-%d")
+        (cons (jetpacs-org--files-mtime (org-agenda-files))
+              (cons namespace parts))))
+
+(defmacro jetpacs-org-with-cache (namespace key &rest body)
+  "Memoise BODY's result in `jetpacs-org--cache' under NAMESPACE and KEY."
+  (declare (indent 2))
+  (let ((k (gensym "key")) (hit (gensym "hit")))
+    `(let* ((,k (jetpacs-org--cache-key ,namespace ,key))
+            (,hit (gethash ,k jetpacs-org--cache 'jetpacs-org--miss)))
+       (if (eq ,hit 'jetpacs-org--miss)
+           (puthash ,k (progn ,@body) jetpacs-org--cache)
+         ,hit))))
+
+(defun jetpacs-org-cache-invalidate (&optional namespace)
+  "Drop memoised org extractions.
+If NAMESPACE is provided, only clear entries matching it. Otherwise clear all."
+  (if namespace
+      (maphash (lambda (k _v)
+                 ;; k is (date mtime namespace . parts)
+                 (when (equal (nth 2 k) namespace)
+                   (remhash k jetpacs-org--cache)))
+               jetpacs-org--cache)
+    (clrhash jetpacs-org--cache)))
+
+;; ─── Heading references ────────────────────────────────────────────────────────
+
+(defun jetpacs-org-heading-ref ()
+  "Build a location ref for the org heading at point.
+Returns an alist with `file'/`pos'/`headline', plus `id' when the entry
+already has an ID property. This reference is stable for JSON serialization
+and round-trips over the wire."
+  (save-excursion
+    (unless (org-at-heading-p)
+      (ignore-errors (org-back-to-heading t)))
+    (let ((id (org-entry-get nil "ID"))
+          (ref `((file . ,(or (buffer-file-name) ""))
+                 (pos . ,(point))
+                 (headline . ,(or (nth 4 (org-heading-components)) "")))))
+      (if (and (stringp id) (not (string-empty-p id)))
+          (cons `(id . ,id) ref)
+        ref))))
+
+(defun jetpacs-org-resolve-ref (ref)
+  "Resolve REF to a live marker at its org heading, or signal an error.
+REF is an alist as built by `jetpacs-org-heading-ref'. Resolution tries:
+1. the stable `id' (survives edits anywhere)
+2. the recorded `pos' (trusted only if its headline still matches)
+3. a headline search through the file."
+  (let ((id (alist-get 'id ref))
+        (file (alist-get 'file ref))
+        (pos (alist-get 'pos ref))
+        (headline (alist-get 'headline ref)))
+    (or
+     (and (stringp id) (not (string-empty-p id))
+          (ignore-errors (org-id-find id 'marker)))
+     (and (stringp file) (file-readable-p file)
+          (let ((buf (find-file-noselect file)))
+            (with-current-buffer buf
+              (org-with-wide-buffer
+               (when (and (integerp pos) (<= (point-min) pos (point-max)))
+                 (goto-char pos)
+                 (when (ignore-errors (org-back-to-heading t) t)
+                   (when (or (not (stringp headline)) (string-empty-p headline)
+                             (equal (nth 4 (org-heading-components)) headline))
+                     (copy-marker (point)))))))))
+     (and (stringp file) (file-readable-p file)
+          (stringp headline) (not (string-empty-p headline))
+          (let ((buf (find-file-noselect file)))
+            (with-current-buffer buf
+              (org-with-wide-buffer
+               (goto-char (point-min))
+               (catch 'found
+                 (while (re-search-forward org-heading-regexp nil t)
+                   (when (equal (nth 4 (org-heading-components)) headline)
+                     (throw 'found (copy-marker (line-beginning-position)))))
+                 nil)))))
+     (error "Heading not found: %s"
+            (or headline id file "?")))))
+
+;; ─── Query Parser ──────────────────────────────────────────────────────────────
+
+(defconst jetpacs-org-ql-literals '(today nil t < <= > >= =)
+  "Symbols with meaning to org-ql that normalization must not stringify.")
+
+(defun jetpacs-org--normalize-ql-arg (arg)
+  "Normalize ARG, a clause argument inside a sexp query."
+  (cond
+   ((and (consp arg) (eq (car arg) 'quote) (cdr arg))
+    (jetpacs-org--normalize-ql-arg (cadr arg)))
+   ((consp arg) (jetpacs-org--normalize-ql arg))
+   ((keywordp arg) arg)
+   ((memq arg jetpacs-org-ql-literals) arg)
+   ((symbolp arg) (symbol-name arg))
+   (t arg)))
+
+(defun jetpacs-org--normalize-ql (form)
+  "Return sexp query FORM with elisp-isms rewritten to org-ql shape.
+Quotes are unwrapped and bare symbols in argument positions become strings."
+  (if (and (consp form) (eq (car form) 'quote) (cdr form))
+      (jetpacs-org--normalize-ql (cadr form))
+    (if (not (consp form))
+        form
+      (cons (car form)
+            (mapcar #'jetpacs-org--normalize-ql-arg (cdr form))))))
+
+(defun jetpacs-org--query-tokens (q)
+  "Split query Q on whitespace, keeping \"quoted phrases\" whole."
+  (let ((pos 0) (tokens nil))
+    (while (string-match "\"\\([^\"]*\\)\"\\|\\S-+" q pos)
+      (push (or (match-string 1 q) (match-string 0 q)) tokens)
+      (setq pos (match-end 0)))
+    (nreverse tokens)))
+
+(defun jetpacs-org-parse-query (query)
+  "Parse the search QUERY string into an org-ql sexp, or nil if empty.
+Accepts three input shapes:
+- an org-ql sexp:  (and (todo \"TODO\") (tags \"work\"))
+- filter tokens:   todo:TODO,NEXT tags:work priority:A
+- free text:       \"exact phrase\" or bare words
+Signals `user-error' on a malformed sexp."
+  (let ((q (string-trim (or query ""))))
+    (cond
+     ((string-empty-p q) nil)
+     ((string-match-p "\\`'?(" q)
+      (let ((form (condition-case nil (read q)
+                    (error (user-error "Query has unbalanced parentheses: %s" q)))))
+        (jetpacs-org--normalize-ql form)))
+     (t
+      (let ((clauses
+             (mapcar
+              (lambda (tok)
+                (cond
+                 ((string-prefix-p "todo:" tok)
+                  `(todo ,@(split-string (substring tok 5) "," t)))
+                 ((string-prefix-p "tags:" tok)
+                  `(tags ,@(split-string (substring tok 5) "," t)))
+                 ((string-prefix-p "priority:" tok)
+                  `(priority ,@(split-string (substring tok 9) "," t)))
+                 (t `(regexp ,(regexp-quote tok)))))
+              (jetpacs-org--query-tokens q))))
+        (if (cdr clauses) `(and ,@clauses) (car clauses)))))))
+
+;; ─── Built-in Query Interpreter ────────────────────────────────────────────────
+
+(defun jetpacs-org--planning-day (spec)
+  "Resolve a query date SPEC to an absolute day number."
+  (cond
+   ((eq spec 'today) (time-to-days (current-time)))
+   ((integerp spec) (+ (time-to-days (current-time)) spec))
+   ((stringp spec) (time-to-days (org-time-string-to-time spec)))
+   (t (user-error "Unsupported query date %S" spec))))
+
+(defun jetpacs-org--planning-match-p (which args)
+  "Match the WHICH (\"SCHEDULED\"/\"DEADLINE\") stamp at point against ARGS."
+  (let ((ts (org-entry-get (point) which)))
+    (and ts
+         (let ((day (time-to-days (org-time-string-to-time ts)))
+               (on (plist-get args :on))
+               (from (plist-get args :from))
+               (to (plist-get args :to)))
+           (and (or (not on) (equal day (jetpacs-org--planning-day on)))
+                (or (not from) (>= day (jetpacs-org--planning-day from)))
+                (or (not to) (<= day (jetpacs-org--planning-day to))))))))
+
+(defun jetpacs-org--entry-priority ()
+  "The priority character of the heading at point, or nil."
+  (save-excursion (org-back-to-heading t) (nth 3 (org-heading-components))))
+
+(defun jetpacs-org-entry-matches-p (tree)
+  "Non-nil when the org entry at point matches org-ql sexp TREE.
+This is the built-in fallback interpreter implementing the common subset
+of org-ql. Signals `user-error' on unsupported terms."
+  (pcase tree
+    (`(and . ,cs) (cl-every #'jetpacs-org-entry-matches-p cs))
+    (`(or . ,cs) (and (cl-some #'jetpacs-org-entry-matches-p cs) t))
+    (`(not ,c) (not (jetpacs-org-entry-matches-p c)))
+    (`(todo . ,kws)
+     (let ((st (org-get-todo-state)))
+       (and st (if kws (and (member st kws) t)
+                 (not (member st org-done-keywords))))))
+    (`(done)
+     (let ((st (org-get-todo-state)))
+       (and st (member st org-done-keywords) t)))
+    (`(tags . ,tags)
+     (let ((have (org-get-tags nil t)))
+       (if tags (and (cl-some (lambda (tg) (member tg have)) tags) t)
+         (and have t))))
+    (`(priority ,(and op (pred symbolp)) ,val)
+     (let ((pr (jetpacs-org--entry-priority))
+           (want (if (stringp val) (string-to-char val) val)))
+       (and pr (pcase op
+                 ('< (> pr want)) ('<= (>= pr want))
+                 ('> (< pr want)) ('>= (<= pr want))
+                 ('= (= pr want))
+                 (_ (user-error "Unsupported priority comparator %s" op))))))
+    (`(priority . ,ps)
+     (let ((pr (jetpacs-org--entry-priority)))
+       (if ps (and pr (member (char-to-string pr) ps) t)
+         (and pr t))))
+    (`(heading . ,texts)
+     (let ((hl (or (nth 4 (org-heading-components)) ""))
+           (case-fold-search t))
+       (cl-every (lambda (s) (string-match-p (regexp-quote s) hl)) texts)))
+    (`(regexp . ,res)
+     (let ((end (save-excursion (outline-next-heading) (point)))
+           (case-fold-search t))
+       (cl-every (lambda (re)
+                   (save-excursion (re-search-forward re end t)))
+                 res)))
+    (`(property ,name . ,val)
+     (let ((v (org-entry-get (point) name)))
+       (if val (equal v (car val)) (and v t))))
+    (`(level ,n) (eql (org-current-level) n))
+    (`(level ,n ,m) (let ((l (org-current-level))) (and l (<= n l m))))
+    (`(scheduled . ,args) (jetpacs-org--planning-match-p "SCHEDULED" args))
+    (`(deadline . ,args) (jetpacs-org--planning-match-p "DEADLINE" args))
+    (_ (user-error "Query term %S needs the org-ql package installed" tree))))
+
+;; ─── High-Level Query ──────────────────────────────────────────────────────────
+
+(defun jetpacs-org--search-fallback (tree action)
+  "Run parsed query TREE over the agenda files without org-ql.
+Calls ACTION at each matching heading."
+  (let (items)
+    (org-map-entries
+     (lambda ()
+       (when (jetpacs-org-entry-matches-p tree)
+         (push (funcall action) items)))
+     nil 'agenda)
+    (nreverse items)))
+
+(defun jetpacs-org-query (namespace tree action)
+  "Run parsed query sexp TREE over the agenda files, calling ACTION at matches.
+Results are cached under NAMESPACE. Automatically dispatches to `org-ql-select'
+if available, otherwise falls back to the built-in interpreter."
+  (when tree
+    (jetpacs-org-with-cache namespace (format "%S" tree)
+      (if (fboundp 'org-ql-select)
+          (condition-case err
+              (org-ql-select (org-agenda-files) tree
+                             :action action)
+            (user-error (signal (car err) (cdr err)))
+            (error (user-error "Query failed: %s" (error-message-string err))))
+        (jetpacs-org--search-fallback tree action)))))
+
+;; ─── Mutations ─────────────────────────────────────────────────────────────────
+
+(defun jetpacs-org-defer-save ()
+  "Schedule a save for the current buffer during the next idle moment."
+  (let ((buf (current-buffer)))
+    (run-with-idle-timer 0.5 nil
+      (lambda ()
+        (when (buffer-live-p buf)
+          (with-current-buffer buf
+            (when (buffer-modified-p)
+              (save-buffer))))))))
+
+(defmacro jetpacs-org-with-mutation (ref namespace &rest body)
+  "Resolve REF, execute BODY at its heading, bust cache NAMESPACE, and defer save."
+  (declare (indent 2))
+  `(let ((marker (jetpacs-org-resolve-ref ,ref)))
+     (with-current-buffer (marker-buffer marker)
+       (save-excursion
+         (goto-char marker)
+         (prog1 (progn ,@body)
+           (jetpacs-org-cache-invalidate ,namespace)
+           (jetpacs-org-defer-save))))))
+
+(defun jetpacs-org-set-property (ref namespace prop value)
+  "Set PROP to VALUE on the heading at REF."
+  (jetpacs-org-with-mutation ref namespace
+    (org-entry-put (point) prop value)))
+
+(defun jetpacs-org-toggle-todo (ref namespace &optional state)
+  "Set the TODO state at REF to STATE, or toggle if nil."
+  (jetpacs-org-with-mutation ref namespace
+    (org-todo state)))
+
+(defun jetpacs-org-set-planning (ref namespace which date-str)
+  "Set the WHICH planning stamp at REF to DATE-STR.
+WHICH is \"SCHEDULED\" or \"DEADLINE\"; an empty or nil DATE-STR removes
+the stamp.  `org-add-planning-info' wants the planning type as a symbol
+\(scheduled/deadline), and removal is expressed as a trailing remove arg
+with no time — the string form and the nonexistent
+`org-remove-planning-info' both signalled."
+  (let ((type (pcase (upcase (or which ""))
+                ("SCHEDULED" 'scheduled)
+                ("DEADLINE" 'deadline)
+                (_ (user-error "Unsupported planning type: %s" which)))))
+    (jetpacs-org-with-mutation ref namespace
+      (if (or (null date-str) (string-empty-p date-str))
+          (org-add-planning-info nil nil type)
+        (org-add-planning-info type date-str)))))
+
+;; ─── Typed extraction ──────────────────────────────────────────────────────────
+
+(defun jetpacs-org-entry-typed-value (prop type)
+  "Extract the value of PROP at point according to TYPE.
+TYPE is one of `text', `checkbox', `date', `enum', `number', `list'."
+  (let ((val (org-entry-get (point) prop)))
+    (pcase type
+      ('checkbox (equal val "[X]"))
+      ('date (and val (not (string-empty-p val)) val))
+      ('number (and val (string-to-number val)))
+      ('enum
+       ;; If there's an allowed values constraint (PROP_ALL), enforce it.
+       (let ((allowed (org-entry-get (point) (concat prop "_ALL") t)))
+         (if allowed
+             (let ((options (split-string allowed "[ \t]+" t)))
+               (if (member val options) val nil))
+           (and val (not (string-empty-p val)) val))))
+      ('list
+       (and val (split-string val "[, \t]+" t)))
+      (_ (or val "")))))
+
+(provide 'jetpacs-org)
+;;; jetpacs-org.el ends here
+
+;;; ==================================================================
 ;;; BEGIN core/jetpacs-theme.el
 ;;; ==================================================================
 
@@ -6047,8 +6409,14 @@ ever reach the process of an already-open comint buffer."
 ;; command, which pops a *desktop* window and leaves the phone sitting on
 ;; the results buffer.  This substrate re-points the tap at the phone: it
 ;; follows the locus and shows the *source location* in the companion's
-;; buffer view (narrowed around the line, scrolled to it), reusing the
-;; same host seam files.grep-visit already uses.
+;; buffer view (narrowed around the line, scrolled to it).
+;;
+;; Two kinds of producer feed the same visit/stepper/seam:
+;;   * buffer-loci — a position in a results buffer whose own goto command
+;;     jumps to source (occur/compilation/xref).  Addressed by (buffer,pos).
+;;   * file-loci  — a plain (file,line), e.g. the Files content search,
+;;     handed in via `jetpacs-results-set-file-loci' and addressed by index
+;;     into that server-built set (no path travels over the wire).
 ;;
 ;; The visit mechanism is uniform and parses no mode internals: place
 ;; point on the locus row, run the row's own RET/mouse-2 command (from its
@@ -6064,9 +6432,9 @@ ever reach the process of an already-open comint buffer."
 ;; host asks for that chrome through `jetpacs-results-buffer-view-actions'.
 ;;
 ;; Host seam (this module depends on no UI layer): the source location is
-;; shown through `jetpacs-results-visit-region-function', which the buffer
-;; view host (jetpacs-emacs-ui) points at its region view — the same
-;; indirection `jetpacs-files-view-region-function' uses.
+;; shown through `jetpacs-results-visit-region-function', the single jump
+;; primitive the buffer view host (jetpacs-emacs-ui) points at its region
+;; view for every producer.
 
 ;;; Code:
 
@@ -6104,10 +6472,26 @@ on the UI layer.")
 
 (defvar jetpacs-results--nav nil
   "The active locus-stepper context, or nil.
-A plist (:buffer RESULTS-BUFFER-NAME :index I :count N :dest SRC-NAME) set
-by `results.visit'/`results.step'.  While it holds and the buffer view is
-showing SRC-NAME's locus, the drill-in top bar offers prev/next-match
-chrome (`jetpacs-results-buffer-view-actions').")
+A plist set by `results.visit'/`results.step': always (:kind KIND :index I
+:count N :dest SRC-NAME), plus the kind-specific source to step from —
+:buffer RESULTS-BUFFER-NAME for `buffer', or :loci FILE-LOCI for `file'.
+While it holds and the buffer view is showing SRC-NAME's locus, the drill-in
+top bar offers prev/next-match chrome (`jetpacs-results-buffer-view-actions').")
+
+(defvar jetpacs-results--file-set nil
+  "The active file-locus result set, or nil.
+A list of file loci (each a plist (:file PATH :line N :text STRING)) set by
+a file-producing search (e.g. the Files content search) through
+`jetpacs-results-set-file-loci'.  Its result cards tap `results.visit' with
+their index into this list; nothing off the wire carries a file path.")
+
+(defun jetpacs-results-set-file-loci (loci)
+  "Store LOCI as the active file-locus result set for `results.visit'.
+LOCI is a list of plists (:file PATH :line N :text STRING).  A file
+producer calls this as it renders its result cards (which tap
+`results.visit' with the matching index), so the visit and the prev/next
+stepper are shared with the buffer-backed occur/grep/xref producers."
+  (setq jetpacs-results--file-set loci))
 
 ;; Modes this substrate skins.  compilation-mode covers grep-mode, rgrep,
 ;; and any `define-compilation-mode' derivative by derivation; occur and
@@ -6282,82 +6666,134 @@ The window runs `jetpacs-results-context-before' lines above POS and
   "Index in LOCI of the locus at POS, or 0 if not found."
   (or (cl-position pos loci :key #'car :test #'=) 0))
 
-(defun jetpacs-results--goto (results-buf loci index)
-  "Visit LOCI[INDEX] of RESULTS-BUF and record the stepper nav; non-nil on jump.
-Follows the locus (reusing the mode's own goto command, shimmed so nothing
-pops a desktop window), opens the source location in the buffer view —
-narrowed, scrolled to the line, its header carrying the i/N counter — and
-stores `jetpacs-results--nav' so the drill-in can step.  INDEX is clamped
-into the loci range."
+(defun jetpacs-results--show (dest index count nav-extra)
+  "Open DEST (a (BUFFER . POS) pair) in the buffer view; arm the stepper.
+Narrows to the locus, scrolls to the line, and heads the slice with an
+i/N counter; NAV-EXTRA (a plist) supplies the kind-specific step source
+merged into `jetpacs-results--nav'.  Returns non-nil."
+  (pcase-let ((`(,beg ,end ,label ,point)
+               (jetpacs-results--region-around (car dest) (cdr dest))))
+    (setq jetpacs-results--nav
+          (append (list :index index :count count :dest (buffer-name (car dest)))
+                  nav-extra))
+    (funcall jetpacs-results-visit-region-function
+             (buffer-name (car dest)) beg end
+             (format "%s  ·  %d/%d" label (1+ index) count)
+             point)
+    t))
+
+(defun jetpacs-results--goto-buffer (results-buf loci index)
+  "Visit buffer-locus LOCI[INDEX] of RESULTS-BUF; arm a `buffer'-kind nav.
+Follows via the mode's own goto command (shimmed so nothing pops a desktop
+window).  INDEX is clamped into the loci range."
   (let* ((count (length loci))
          (index (max 0 (min index (1- count))))
          (pos (car (nth index loci)))
          (dest (and pos (ignore-errors (jetpacs-results--follow results-buf pos)))))
     (if (null dest)
         (progn (message "Couldn't open that location") nil)
-      (pcase-let ((`(,beg ,end ,label ,point)
-                   (jetpacs-results--region-around (car dest) (cdr dest))))
-        (setq jetpacs-results--nav
-              (list :buffer (buffer-name results-buf) :index index :count count
-                    :dest (buffer-name (car dest))))
-        (funcall jetpacs-results-visit-region-function
-                 (buffer-name (car dest)) beg end
-                 (format "%s  ·  %d/%d" label (1+ index) count)
-                 point)
-        t))))
+      (jetpacs-results--show dest index count
+                          (list :kind 'buffer :buffer (buffer-name results-buf))))))
+
+(defun jetpacs-results--file-dest (locus)
+  "Resolve a file LOCUS (:file :line) to (BUFFER . POS), or nil.
+Visits the file read-only-safely via `find-file-noselect'; nil when the
+file is gone or unreadable."
+  (let ((file (plist-get locus :file))
+        (line (plist-get locus :line)))
+    (when (and (stringp file) (file-readable-p file))
+      (condition-case nil
+          (let ((buf (find-file-noselect file)))
+            (with-current-buffer buf
+              (save-excursion
+                (goto-char (point-min))
+                (forward-line (1- (max 1 (truncate (or line 1)))))
+                (cons buf (point)))))
+        (error nil)))))
+
+(defun jetpacs-results--goto-file (loci index)
+  "Visit file-locus LOCI[INDEX]; arm a `file'-kind nav.  INDEX is clamped."
+  (let* ((count (length loci))
+         (index (max 0 (min index (1- count))))
+         (dest (jetpacs-results--file-dest (nth index loci))))
+    (if (null dest)
+        (progn (message "Couldn't open that location") nil)
+      (jetpacs-results--show dest index count (list :kind 'file :loci loci)))))
 
 (jetpacs-defaction "results.visit"
-  ;; Show a locus in context and arm the stepper.  The buffer must be one
-  ;; of `jetpacs-results-modes', so a name off the wire can only ever drive
-  ;; a real results buffer's own visit.
+  ;; Show a locus in context and arm the stepper.  Two entry shapes:
+  ;;   (buffer NAME) (pos P) — a results-mode buffer's own goto at P; NAME
+  ;;     must be one of `jetpacs-results-modes', so a name off the wire can
+  ;;     only ever drive a real results buffer's own visit.
+  ;;   (index I)             — entry I of the active `jetpacs-results--file-set'
+  ;;     (a server-built list; no path travels over the wire).
   (lambda (args _)
-    (let ((buf (get-buffer (or (alist-get 'buffer args) "")))
-          (pos (alist-get 'pos args)))
+    (let ((buf-name (alist-get 'buffer args))
+          (pos (alist-get 'pos args))
+          (index (alist-get 'index args)))
       (cond
-       ((not (jetpacs-results--buffer-p buf))
-        (message "%s is not a results buffer" (alist-get 'buffer args)))
-       ((not (numberp pos))
-        (message "results.visit: bad position"))
-       (t
-        (let ((loci (jetpacs-results--loci buf)))
-          (when loci
-            (jetpacs-results--goto buf loci
-                                (jetpacs-results--index-of loci pos)))))))))
+       ((and buf-name (numberp pos))
+        (let ((buf (get-buffer buf-name)))
+          (if (not (jetpacs-results--buffer-p buf))
+              (message "%s is not a results buffer" buf-name)
+            (let ((loci (jetpacs-results--loci buf)))
+              (when loci
+                (jetpacs-results--goto-buffer
+                 buf loci (jetpacs-results--index-of loci pos)))))))
+       ((numberp index)
+        (let ((set jetpacs-results--file-set))
+          (if (and set (>= index 0) (< index (length set)))
+              (jetpacs-results--goto-file set index)
+            (message "results.visit: no such result"))))
+       (t (message "results.visit: nothing to visit"))))))
 
 (jetpacs-defaction "results.step"
   ;; Step to the prev/next locus of the armed result set without returning
-  ;; to the list.  DIR is +1 or -1; loci are recomputed each step so a
-  ;; reverted results buffer still steps sanely.
+  ;; to the list.  DIR is +1 or -1.  Buffer-kind loci are recomputed each
+  ;; step (so a reverted results buffer still steps sanely); file-kind loci
+  ;; step over the snapshot armed at visit time.
   (lambda (args _)
     (let* ((nav jetpacs-results--nav)
-           (dir (alist-get 'dir args))
-           (buf (and nav (get-buffer (plist-get nav :buffer)))))
-      (cond
-       ((not (and nav (numberp dir)))
-        (message "No results to step through"))
-       ((not (jetpacs-results--buffer-p buf))
-        (setq jetpacs-results--nav nil)
-        (message "Those results are gone"))
-       (t
-        (let ((loci (jetpacs-results--loci buf))
-              (target (+ (plist-get nav :index) dir)))
-          (cond
-           ((null loci) (message "No results"))
-           ((< target 0) (message "First match"))
-           ((>= target (length loci)) (message "Last match"))
-           (t (jetpacs-results--goto buf loci target)))))))))
+           (dir (alist-get 'dir args)))
+      (if (not (and nav (numberp dir)))
+          (message "No results to step through")
+        (let ((target (+ (plist-get nav :index) dir)))
+          (cl-flet ((step (loci goto)
+                      (cond
+                       ((null loci) (message "No results"))
+                       ((< target 0) (message "First match"))
+                       ((>= target (length loci)) (message "Last match"))
+                       (t (funcall goto loci target)))))
+            (pcase (plist-get nav :kind)
+              ('buffer
+               (let ((buf (get-buffer (plist-get nav :buffer))))
+                 (if (not (jetpacs-results--buffer-p buf))
+                     (progn (setq jetpacs-results--nav nil)
+                            (message "Those results are gone"))
+                   (step (jetpacs-results--loci buf)
+                         (lambda (loci i) (jetpacs-results--goto-buffer buf loci i))))))
+              ('file
+               (step (plist-get nav :loci) #'jetpacs-results--goto-file))
+              (_ (message "No results to step through")))))))))
+
+(defun jetpacs-results--nav-live-p (nav)
+  "Non-nil when the stepper NAV can still step (its source survives)."
+  (pcase (plist-get nav :kind)
+    ('buffer (get-buffer (plist-get nav :buffer)))
+    ('file (plist-get nav :loci))
+    (_ nil)))
 
 (defun jetpacs-results-buffer-view-actions (viewed-buffer-name)
   "Prev/next-match top-bar actions for the buffer view, or nil.
 Returns icon-button nodes when `jetpacs-results--nav' is armed and
 VIEWED-BUFFER-NAME is the source buffer the last locus visit navigated to
-\(and the results buffer is still alive); only the in-range direction is
-offered at each end.  The buffer view host calls this to add stepper chrome
-to the drill-in top bar — see jetpacs-emacs-ui."
+\(and the result set is still live); only the in-range direction is offered
+at each end.  The buffer view host calls this to add stepper chrome to the
+drill-in top bar — see jetpacs-emacs-ui."
   (let ((nav jetpacs-results--nav))
     (when (and nav
                (equal viewed-buffer-name (plist-get nav :dest))
-               (get-buffer (plist-get nav :buffer)))
+               (jetpacs-results--nav-live-p nav))
       (let ((i (plist-get nav :index)) (n (plist-get nav :count)))
         (delq nil
               (list
@@ -8922,6 +9358,7 @@ render."
 (require 'jetpacs-surfaces)
 (require 'jetpacs-widgets)
 (require 'jetpacs-buffer) ; Tier 0 renderer + the major-mode→skin registry
+(require 'jetpacs-results) ; content-search results ride the shared loci substrate
 (require 'jetpacs-complete) ; capf bridge: the editor's `complete' flag
 (require 'jetpacs-shell)
 (require 'dired)
@@ -9224,13 +9661,6 @@ Search from a subdirectory rather than the root to keep scans quick."
   "Latest content search, or nil.
 A plist (:query Q :dir D :hits ((FILE LINE TEXT) ...) :truncated BOOL).")
 
-(defvar jetpacs-files-view-region-function
-  (lambda (name &rest _) (message "Jetpacs: no host to view %s" name))
-  "Function of (BUFFER-NAME BEG END LABEL &optional POINT) showing a
-buffer slice with POINT's line as the scroll target.  Set by
-jetpacs-emacs-ui (its buffer view); kept as a seam so this module never
-depends on the buffer-view host.")
-
 (defun jetpacs-files--grep-scan (dir query)
   "Search QUERY (a literal, case-insensitive) under DIR.
 Returns the plist stored in `jetpacs-files--grep'; one hit per line."
@@ -9277,10 +9707,20 @@ Returns the plist stored in `jetpacs-files--grep'; one hit per line."
     (list :query query :dir dir :hits (nreverse hits) :truncated truncated)))
 
 (defun jetpacs-files--grep-body ()
-  "The search-results view body: one tappable card per matching line."
+  "The search-results view body: one tappable card per matching line.
+The hits are handed to the shared results substrate as file loci
+\(`jetpacs-results-set-file-loci'), so a card tap follows the locus — the
+same visit path as occur/grep/xref — and arms the prev/next-match stepper
+in the source view.  A tap reads the hit in context; the pencil opens it
+in the editor."
   (let* ((g jetpacs-files--grep)
          (dir (plist-get g :dir))
-         (hits (plist-get g :hits)))
+         (hits (plist-get g :hits))
+         (loci (mapcar (lambda (hit)
+                         (pcase-let ((`(,file ,line ,text) hit))
+                           (list :file file :line line :text text)))
+                       hits)))
+    (jetpacs-results-set-file-loci loci)
     (if (null hits)
         (jetpacs-empty-state :icon "manage_search" :title "No matches"
                           :caption (format "\"%s\" under %s"
@@ -9296,38 +9736,35 @@ Returns the plist stored in `jetpacs-files--grep'; one hit per line."
                                      " — stopped early, narrow the search"
                                    ""))
                          'caption)
-              (mapcar (lambda (hit)
-                        (pcase-let* ((`(,file ,line ,text) hit)
-                                     (rel (file-relative-name file dir))
-                                     (subdir (file-name-directory rel)))
-                          (jetpacs-card
-                           (list (jetpacs-column
-                                  (jetpacs-row
-                                   (jetpacs-box
-                                    (list (apply #'jetpacs-column
-                                                 (delq nil
-                                                       (list
-                                                        (jetpacs-text (file-name-nondirectory file)
-                                                                   'label)
-                                                        (when subdir
-                                                          (jetpacs-text subdir 'caption
-                                                                     nil nil nil 1))))))
-                                    :weight 1)
-                                   (jetpacs-text (format "L%d" line) 'caption)
-                                   (jetpacs-icon-button
-                                    "edit"
-                                    (jetpacs-action "files.open"
-                                                 :args `((file . ,file)))
-                                    :content-description "Open in editor"))
-                                  (jetpacs-rich-text
-                                   (list (jetpacs-span (string-trim text) :mono t)))))
-                           ;; Tap = read the hit in context (scrolled to the
-                           ;; line); the pencil opens the editor.
-                           :on-tap (jetpacs-action "files.grep-visit"
-                                                :args `((file . ,file)
-                                                        (line . ,line))
-                                                :when-offline "drop"))))
-                      hits))))))
+              (cl-loop
+               for hit in hits for i from 0 collect
+               (pcase-let* ((`(,file ,line ,text) hit)
+                            (rel (file-relative-name file dir))
+                            (subdir (file-name-directory rel)))
+                 (jetpacs-card
+                  (list (jetpacs-column
+                         (jetpacs-row
+                          (jetpacs-box
+                           (list (apply #'jetpacs-column
+                                        (delq nil
+                                              (list
+                                               (jetpacs-text (file-name-nondirectory file)
+                                                          'label)
+                                               (when subdir
+                                                 (jetpacs-text subdir 'caption
+                                                            nil nil nil 1))))))
+                           :weight 1)
+                          (jetpacs-text (format "L%d" line) 'caption)
+                          (jetpacs-icon-button
+                           "edit"
+                           (jetpacs-action "files.open"
+                                        :args `((file . ,file)))
+                           :content-description "Open in editor"))
+                         (jetpacs-rich-text
+                          (list (jetpacs-span (string-trim text) :mono t)))))
+                  :on-tap (jetpacs-action "results.visit"
+                                       :args `((index . ,i))
+                                       :when-offline "drop")))))))))
 
 (defun jetpacs-files--grep-results-card ()
   "The re-entry card the browser shows while results exist, or nil."
@@ -9500,32 +9937,10 @@ otherwise the plain-text editor."
     (setq jetpacs-files--grep nil)
     (jetpacs-shell-push nil :switch-to "files")))
 
-(jetpacs-defaction "files.grep-visit"
-  ;; Show a hit in context: the file's buffer in the buffer view,
-  ;; narrowed around the line with the hit marked as the scroll target.
-  ;; Region render dodges the buffer view's from-the-top line cap, so
-  ;; hits deep in big files are reachable.
-  (lambda (args _)
-    (let ((file (alist-get 'file args))
-          (line (alist-get 'line args)))
-      (when (and (stringp file) (numberp line)
-                 (jetpacs-files--within-root-p file)
-                 (file-readable-p file))
-        (condition-case err
-            (let ((buf (find-file-noselect file)))
-              (with-current-buffer buf
-                (save-excursion
-                  (goto-char (point-min))
-                  (forward-line (1- (max 1 (truncate line))))
-                  (let ((target (point))
-                        (beg (save-excursion (forward-line -30) (point)))
-                        (end (save-excursion (forward-line 170) (point))))
-                    (funcall jetpacs-files-view-region-function
-                             (buffer-name buf) beg end
-                             (format "%s:%d" (file-name-nondirectory file)
-                                     (truncate line))
-                             target)))))
-          (error (jetpacs-shell-notify (error-message-string err))))))))
+;; The content-search hits are visited through the shared results
+;; substrate (`results.visit' by index into the file-locus set armed in
+;; `jetpacs-files--grep-body'), which also arms the prev/next stepper — so
+;; there is no files-specific visit action or view-region seam anymore.
 
 (jetpacs-defaction "files.delete"
   ;; Allowlisted op: delete the one tapped path, root-guarded, after a
@@ -9959,15 +10374,10 @@ that buffer\" — grep hits, and any future jump affordance."
                                      :label label :point point))
   (jetpacs-shell-push nil :switch-to "buffers"))
 
-;; jetpacs-files stays independent of this module (it loads first); its
-;; grep hits navigate here through the seam.
-(defvar jetpacs-files-view-region-function)
-(with-eval-after-load 'jetpacs-files
-  (setq jetpacs-files-view-region-function #'jetpacs-emacs-ui-view-region))
-
-;; The results/xref navigator (occur, grep, compilation, xref) shows a
-;; visited locus in this same region view — one host jump primitive for
-;; every "list of loci → source location" surface.
+;; The results/xref navigator (occur, grep, compilation, xref, and the
+;; Files content search) shows every visited locus in this region view —
+;; one host jump primitive for every "list of loci → source location"
+;; surface.
 (setq jetpacs-results-visit-region-function #'jetpacs-emacs-ui-view-region)
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and

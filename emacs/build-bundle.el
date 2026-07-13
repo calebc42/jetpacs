@@ -28,6 +28,7 @@
        ;; graph.
        (core-files '("core/jetpacs.el"
                      "core/jetpacs-config.el"
+                     "core/jetpacs-org.el"
                      "core/jetpacs-theme.el"
                      "core/jetpacs-widgets.el"
                      "core/jetpacs-lint.el"

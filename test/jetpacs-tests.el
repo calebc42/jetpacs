@@ -1608,6 +1608,87 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
     (dolist (ty seen)
       (should (member ty jetpacs-lint-node-types)))))
 
+;; ─── Drift gates (Stage-1 T1.3) ──────────────────────────────────────────────
+
+(defun jetpacs-tests--golden-node-types ()
+  "The distinct `t' discriminators emitted across test/widgets.golden."
+  (let ((golden (expand-file-name "widgets.golden" jetpacs-tests--dir)) (seen nil))
+    (with-temp-buffer
+      (insert-file-contents golden)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (string-trim (buffer-substring (line-beginning-position)
+                                                   (line-end-position)))))
+          (when (and (> (length line) 0) (string-match "{.*}" line))
+            (let* ((obj (ignore-errors
+                          (json-parse-string (match-string 0 line) :object-type 'alist)))
+                   (ty (and obj (alist-get 't obj))))
+              (when ty (cl-pushnew ty seen :test #'equal)))))
+        (forward-line 1)))
+    seen))
+
+(defun jetpacs-tests--sdui-node-types ()
+  "The SDUI_NODE_TYPES set parsed from SduiRenderer.kt (the Kotlin source)."
+  (let ((f (expand-file-name
+            "../jetpacs/src/main/java/com/calebc42/jetpacs/SduiRenderer.kt"
+            jetpacs-tests--dir))
+        (types nil))
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (when (re-search-forward "SDUI_NODE_TYPES[^=]*=[ \t]*setOf(" nil t)
+        (let* ((open (1- (match-end 0)))
+               (end (save-excursion (goto-char open) (forward-sexp) (point))))
+          (while (re-search-forward "\"\\([a-z_]+\\)\"" end t)
+            (cl-pushnew (match-string 1) types :test #'equal)))))
+    types))
+
+(defun jetpacs-tests--api-stability-symbols ()
+  "Public jetpacs symbols named under `## The public surface' in API-STABILITY.md."
+  (let ((f (expand-file-name "../docs/API-STABILITY.md" jetpacs-tests--dir)) (syms nil))
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (when (re-search-forward "^## The public surface" nil t)
+        (while (re-search-forward "`\\(\\(?:with-\\)?jetpacs-[a-z0-9-]+\\)`" nil t)
+          (let ((name (match-string 1)))
+            (unless (string-match-p "--" name)
+              (cl-pushnew (intern name) syms))))))
+    (nreverse syms)))
+
+(ert-deftest jetpacs-contract-artifact-current ()
+  "The committed docs/contract.json byte-matches a fresh generation.
+Regenerate after an intentional wire-vocabulary change:
+  emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write"
+  (load (expand-file-name "../emacs/build-contract.el" jetpacs-tests--dir) nil t)
+  (let ((committed (with-temp-buffer
+                     (let ((coding-system-for-read 'utf-8-unix))
+                       (insert-file-contents (jetpacs-contract-file)))
+                     (buffer-string))))
+    (should (string= committed (jetpacs-contract-string)))))
+
+(ert-deftest jetpacs-node-types-mirror ()
+  "lint node types = widgets.golden `t' set = Kotlin SDUI_NODE_TYPES.
+The cross-language leg: a node type added on one side but not the others
+fails CI.  The Kotlin dispatcher-vs-SDUI_NODE_TYPES leg lives in
+SduiRendererNodeTypesTest.kt."
+  (let ((lint   (sort (copy-sequence jetpacs-lint-node-types) #'string<))
+        (golden (sort (jetpacs-tests--golden-node-types) #'string<))
+        (kotlin (sort (jetpacs-tests--sdui-node-types) #'string<)))
+    (should golden)
+    (should kotlin)
+    (should (equal lint golden))
+    (should (equal lint kotlin))))
+
+(ert-deftest jetpacs-api-stability-symbols-bound ()
+  "Every public symbol named in API-STABILITY.md is actually defined.
+Extends the `--'-internal rule into a machine-checked sweep of the surface."
+  (let ((syms (jetpacs-tests--api-stability-symbols)) (missing nil))
+    (should syms)
+    (dolist (s syms)
+      (unless (or (fboundp s) (boundp s)) (push s missing)))
+    (should (null missing))))
+
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."
   (let ((jetpacs--pending (make-hash-table :test 'equal))

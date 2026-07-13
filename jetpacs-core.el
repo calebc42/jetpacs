@@ -60,7 +60,7 @@ obsolete.  The frozen public-symbol list lives in docs/API-STABILITY.md.")
 
 (defcustom jetpacs-wants
   '("surfaces.widget" "surfaces.notification" "surfaces.dialog"
-    "capabilities" "triggers" "queue.replay" "theme")
+    "capabilities" "triggers" "queue.replay" "theme" "reminders.owner")
   "Capability set Emacs requests during the handshake.
 The companion grants the intersection with what it supports; anything it
 doesn't recognise is simply not granted (forward-compat)."
@@ -2999,6 +2999,53 @@ outright rather than truncated."
                       (jetpacs-device--shortcut-spec
                        id label action icon-file long-label)))
                   shortcuts))))))
+
+;; ─── Reminders (owner-scoped exact alarms) ───────────────────────────────────
+
+(defvar jetpacs-reminders--warned nil
+  "Owners already warned that this companion can't scope reminders per app.")
+
+(defun jetpacs-reminders--warn-unscoped (owner)
+  "Warn once per OWNER that reminders can't be armed without clobbering others."
+  (unless (member owner jetpacs-reminders--warned)
+    (push owner jetpacs-reminders--warned)
+    (display-warning
+     'jetpacs
+     (format "%s: this Jetpacs companion can't scope reminders per app (no \
+`reminders.owner' capability) and another app is registered — arming nothing \
+rather than erasing another app's alarms.  Update the companion to arm these."
+             (or owner "core"))
+     :warning)))
+
+(defun jetpacs-reminders-owner-set (reminders &optional owner)
+  "Arm REMINDERS as exact alarms scoped to OWNER, replacing only OWNER's set.
+REMINDERS is a sequence of reminder objects (each an alist/plist carrying the
+wire keys `id', `at_ms', `title', `body').  The set REPLACES this owner's
+previously-armed reminders and leaves alarms belonging to OTHER apps
+untouched — the safety a bare global `reminders.set' cannot promise.  OWNER
+defaults to `jetpacs-current-owner' (the app whose `with-jetpacs-owner' or
+`jetpacs-defapp' is active); a nil owner is the unowned/core set.
+
+Negotiates with the companion:
+ - granted `reminders.owner' -> send the owner-scoped set;
+ - else, only ONE app registered -> a plain global `reminders.set' is safe
+   (there is nothing else to clobber);
+ - else (owner-unaware companion, a second app present) -> refuse: warn once
+   and arm nothing rather than erase another app's alarms.
+Returns non-nil when a set was sent."
+  (let ((owner (or owner jetpacs-current-owner))
+        (vec (vconcat reminders)))
+    (cond
+     ((jetpacs-granted-p "reminders.owner")
+      (jetpacs-send "reminders.set"
+                    `((owner . ,(or owner "")) (reminders . ,vec)))
+      t)
+     ((not (and (fboundp 'jetpacs-apps--multi-p) (jetpacs-apps--multi-p)))
+      (jetpacs-send "reminders.set" `((reminders . ,vec)))
+      t)
+     (t
+      (jetpacs-reminders--warn-unscoped owner)
+      nil))))
 
 ;; ─── Permission-free effectors ───────────────────────────────────────────────
 

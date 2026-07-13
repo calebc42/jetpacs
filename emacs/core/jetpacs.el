@@ -47,7 +47,7 @@ obsolete.  The frozen public-symbol list lives in docs/API-STABILITY.md.")
 
 (defcustom jetpacs-wants
   '("surfaces.widget" "surfaces.notification" "surfaces.dialog"
-    "capabilities" "triggers" "queue.replay" "theme")
+    "capabilities" "triggers" "queue.replay" "theme" "reminders.owner")
   "Capability set Emacs requests during the handshake.
 The companion grants the intersection with what it supports; anything it
 doesn't recognise is simply not granted (forward-compat)."

@@ -1397,6 +1397,29 @@ records the last-fired time."
   (should (jetpacs-lint-spec `((t . "button")
                             (on_tap . ((action . "a.b") (when_offline . "sometimes")))))))
 
+(ert-deftest jetpacs-lint-builtin-vocabulary ()
+  "Builtins are a closed set with required payloads (SPEC §5)."
+  ;; Unknown builtin.
+  (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "does.not.exist"))))))
+  ;; Known builtins missing their required payload key.
+  (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "view.switch"))))))
+  (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "clipboard.copy"))))))
+  ;; Well-formed builtins pass.
+  (should-not (jetpacs-lint-spec
+               `((t . "button") (on_tap . ((builtin . "view.switch") (view . "app:dashboard"))))))
+  (should-not (jetpacs-lint-spec
+               `((t . "button") (on_tap . ((builtin . "clipboard.copy") (text . "hi"))))))
+  (should-not (jetpacs-lint-spec
+               `((t . "button") (on_tap . ((builtin . "jetpacs.settings.open")))))))
+
+(ert-deftest jetpacs-lint-recognizes-chart-and-widget-action-keys ()
+  "`on_point_tap' and `on_button' are validated as embedded actions."
+  ;; A malformed action under each new key is caught.
+  (should (jetpacs-lint-spec `((t . "chart") (on_point_tap . ((args . ((k . "v"))))))))
+  (should (jetpacs-lint-spec `((t . "text") (on_button . ((action . "a.b") (when_offline . "nope"))))))
+  ;; A well-formed one passes.
+  (should-not (jetpacs-lint-spec `((t . "chart") (on_point_tap . ((action . "x.y")))))))
+
 (ert-deftest jetpacs-lint-flags-nonserializable-and-typed-attrs ()
   "A symbol attr value and a non-numeric padding are caught before the wire."
   (should (jetpacs-lint-spec `((t . "text") (text . some-symbol))))

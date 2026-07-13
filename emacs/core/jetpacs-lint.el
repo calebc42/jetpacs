@@ -45,8 +45,25 @@ companion gates on `jetpacs-node-supported-p' instead.")
 (defconst jetpacs-lint--action-keys
   '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
     nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger
-    on_day_tap on_month_change)
+    on_day_tap on_month_change on_point_tap on_button)
   "Node keys whose value is an embedded action object (SPEC §9).")
+
+(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe)
+  "The fields an action object may carry (SPEC §5).
+`action' and `builtin' are mutually exclusive; a `builtin' additionally
+carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
+
+(defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
+  "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
+
+(defconst jetpacs-lint-action-builtins
+  '(("view.switch" view)
+    ("clipboard.copy" text)
+    ("jetpacs.settings.open"))
+  "Companion-local builtins → the payload keys each requires (SPEC §5).
+Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
+must name one of these and carry every listed key.  `build-contract.el'
+derives the discriminated action schema in `contract.json' from this.")
 
 (defconst jetpacs-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
@@ -109,7 +126,17 @@ recursion, not here."
              (funcall report path (format "action name must be a string: %S" action)))
             ((and builtin (not (stringp builtin)))
              (funcall report path (format "builtin name must be a string: %S" builtin))))
-      (when (and wo (not (member wo '("queue" "drop" "wake"))))
+      ;; A `builtin' names a companion-local action from a closed set; validate
+      ;; the name and the payload keys its kind requires (SPEC §5).
+      (when (stringp builtin)
+        (let ((spec (assoc builtin jetpacs-lint-action-builtins)))
+          (if (not spec)
+              (funcall report path (format "unknown builtin: %S" builtin))
+            (dolist (req (cdr spec))
+              (unless (assq req val)
+                (funcall report path
+                         (format "builtin %s requires `%s'" builtin req)))))))
+      (when (and wo (not (member wo jetpacs-lint--when-offline-values)))
         (funcall report path (format "invalid when_offline: %S" wo)))
       (when (and args-cell (cdr args-cell) (not (jetpacs-lint--alist-p (cdr args-cell))))
         (funcall report path "action `args' must be an object")))))

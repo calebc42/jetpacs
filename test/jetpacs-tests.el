@@ -1840,10 +1840,11 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (should (equal (alist-get 'name (car cat)) "s.cat")))))
 
 (ert-deftest jetpacs-source-teardown-by-owner ()
-  "`jetpacs-app-unregister' removes an app's owned sources."
+  "`jetpacs-app-unregister' removes an app's owned sources and action metadata."
   (let ((jetpacs--sources (make-hash-table :test 'equal))
         (jetpacs--source-cache (make-hash-table :test 'equal))
         (jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--action-catalog (make-hash-table :test 'equal))
         (jetpacs--registration-owners (make-hash-table :test 'equal))
         (jetpacs-shell-views nil)
         (jetpacs-apps--registry nil)
@@ -1851,10 +1852,33 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
         (jetpacs--state-handlers (make-hash-table :test 'equal)))
     (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
       (with-jetpacs-owner "app1"
-        (jetpacs-defsource "app1.src" :fields '((:name "a" :type "text")) :query #'ignore))
+        (jetpacs-defsource "app1.src" :fields '((:name "a" :type "text")) :query #'ignore)
+        (jetpacs-defaction "app1.do" #'ignore :doc "d"))
       (should (jetpacs-source-p "app1.src"))
+      (should (gethash "app1.do" jetpacs--action-catalog))
       (jetpacs-app-unregister "app1")
-      (should-not (jetpacs-source-p "app1.src")))))
+      (should-not (jetpacs-source-p "app1.src"))
+      (should-not (gethash "app1.do" jetpacs--action-catalog)))))
+
+(ert-deftest jetpacs-action-catalog-metadata ()
+  "jetpacs-defaction records optional args/doc; the catalog filters by owner + serializes."
+  (let ((jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--action-catalog (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (jetpacs-defaction "a.plain" #'ignore)                 ; legacy 2-arg, no metadata
+    (should (gethash "a.plain" jetpacs-action-handlers))
+    (should-not (gethash "a.plain" jetpacs--action-catalog))
+    (with-jetpacs-owner "app1"
+      (jetpacs-defaction "app1.do" #'ignore
+                      :args '((:name id :type "ref" :required t)) :doc "Do it"))
+    (let ((all (jetpacs-action-catalog))
+          (mine (jetpacs-action-catalog "app1")))
+      (should (jetpacs-render-to-json (vconcat all)))      ; serializable
+      (should (= (length mine) 1))
+      (should (equal (alist-get 'action (car mine)) "app1.do"))
+      (should (equal (alist-get 'doc (car mine)) "Do it")))
+    (jetpacs-defaction "app1.do" #'ignore)                 ; re-register w/o metadata clears it
+    (should-not (gethash "app1.do" jetpacs--action-catalog))))
 
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."

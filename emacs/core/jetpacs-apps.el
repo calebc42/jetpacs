@@ -112,6 +112,7 @@ Registrations a Tier 1 made without an owner are not tracked and are not
 torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   (dolist (name (jetpacs--owned-names "action" id))
     (remhash name jetpacs-action-handlers)
+    (remhash name jetpacs--action-catalog)
     (jetpacs--unclaim "action" name))
   (dolist (name (jetpacs--owned-names "view" id))
     (jetpacs-shell-remove-view name)

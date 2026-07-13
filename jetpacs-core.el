@@ -2877,13 +2877,50 @@ Lets async continuations of a phone-initiated flow (e.g. git calling back
 into Emacs for a commit message after `magit-commit' already returned)
 distinguish themselves from desktop-initiated activity.")
 
-(defun jetpacs-defaction (name fn)
+(defvar jetpacs--action-catalog (make-hash-table :test 'equal)
+  "Map of action NAME -> plist (:args :doc :owner) — metadata only, no handler.")
+
+(defun jetpacs--action-arg-json (a)
+  "Serializable form of an action-arg descriptor A (symbol keys)."
+  (append (list (cons 'name (format "%s" (plist-get a :name)))
+                (cons 'type (plist-get a :type))
+                (cons 'required (if (plist-get a :required) t :false)))
+          (when (plist-get a :values) (list (cons 'values (plist-get a :values))))))
+
+(cl-defun jetpacs-defaction (name fn &key args doc)
   "Register FN as the handler for action NAME.
-Attributes NAME to `jetpacs-current-owner' (see `with-jetpacs-owner'); a
-cross-owner re-registration warns (or errors under
-`jetpacs-strict-namespaces')."
+FN is called with the action's ARGS-alist and the raw PAYLOAD.  Attributes
+NAME to `jetpacs-current-owner' (see `with-jetpacs-owner'); a cross-owner
+re-registration warns (or errors under `jetpacs-strict-namespaces').
+
+ARGS, when given, is a closed arg schema — each entry
+\(:name SYM :type text|number|enum|date|ref|bool :required BOOL [:values VEC]) —
+and DOC a one-line description, published through `jetpacs-action-catalog' so
+an editor can enumerate the action.  Metadata is optional and never gates
+dispatch; a re-registration without it clears any stale metadata."
   (jetpacs--claim "action" name)
-  (puthash name fn jetpacs-action-handlers))
+  (puthash name fn jetpacs-action-handlers)
+  (if (or args doc)
+      (puthash name (list :args args :doc doc :owner jetpacs-current-owner)
+               jetpacs--action-catalog)
+    (remhash name jetpacs--action-catalog))
+  name)
+
+(defun jetpacs-action-catalog (&optional owner)
+  "Serializable action metadata (name, doc, args), optionally filtered to OWNER.
+Metadata only — never the handler function."
+  (let (out)
+    (maphash
+     (lambda (name meta)
+       (when (or (null owner) (equal (plist-get meta :owner) owner))
+         (push (append (list (cons 'action name)
+                             (cons 'doc (or (plist-get meta :doc) :null)))
+                       (when (plist-get meta :args)
+                         (list (cons 'args (vconcat (mapcar #'jetpacs--action-arg-json
+                                                            (plist-get meta :args)))))))
+               out)))
+     jetpacs--action-catalog)
+    (nreverse out)))
 
 (defvar jetpacs--in-action-handler nil
   "Non-nil while a Jetpacs action handler runs (bound by `jetpacs--on-action').
@@ -6088,6 +6125,7 @@ Registrations a Tier 1 made without an owner are not tracked and are not
 torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   (dolist (name (jetpacs--owned-names "action" id))
     (remhash name jetpacs-action-handlers)
+    (remhash name jetpacs--action-catalog)
     (jetpacs--unclaim "action" name))
   (dolist (name (jetpacs--owned-names "view" id))
     (jetpacs-shell-remove-view name)

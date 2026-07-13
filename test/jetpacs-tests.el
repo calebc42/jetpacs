@@ -2002,5 +2002,39 @@ don't even apply (min-colors) but the palette variables are plain data."
   ;; Disconnected `M-x jetpacs-theme-send' must message, not error or hang.
   (jetpacs-theme-send))
 
+;; ─── Owner-scoped reminders ──────────────────────────────────────────────────
+
+(ert-deftest jetpacs-reminders-owner-set-negotiation ()
+  "Owner-scoped when the capability is granted; a plain global set when a lone
+app; warn-and-arm-nothing when owner-unaware and a second app is present."
+  (let (sent)
+    (cl-letf (((symbol-function 'jetpacs-send)
+               (lambda (&rest args) (push args sent) t)))
+      ;; 1. Granted `reminders.owner' -> scoped send carrying the owner.
+      (cl-letf (((symbol-function 'jetpacs-granted-p)
+                 (lambda (cap) (equal cap "reminders.owner"))))
+        (setq sent nil)
+        (should (jetpacs-reminders-owner-set '(((id . "a") (at_ms . 1))) "glasspane"))
+        (let ((call (car sent)))
+          (should (equal (car call) "reminders.set"))
+          (should (equal (alist-get 'owner (cadr call)) "glasspane"))))
+      ;; 2. Owner-unaware companion, only one app -> plain global set (no owner).
+      (cl-letf (((symbol-function 'jetpacs-granted-p) (lambda (_) nil))
+                ((symbol-function 'jetpacs-apps--multi-p) (lambda () nil)))
+        (setq sent nil)
+        (should (jetpacs-reminders-owner-set '() "glasspane"))
+        (let ((call (car sent)))
+          (should (equal (car call) "reminders.set"))
+          (should-not (assq 'owner (cadr call)))))
+      ;; 3. Owner-unaware companion, a second app present -> refuse: nothing sent.
+      (cl-letf (((symbol-function 'jetpacs-granted-p) (lambda (_) nil))
+                ((symbol-function 'jetpacs-apps--multi-p) (lambda () t))
+                ((symbol-function 'display-warning) (lambda (&rest _) nil)))
+        (setq sent nil)
+        (let ((jetpacs-reminders--warned nil))
+          (should-not (jetpacs-reminders-owner-set
+                       '(((id . "a") (at_ms . 1))) "glasspane")))
+        (should (null sent))))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

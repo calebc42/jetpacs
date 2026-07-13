@@ -15,38 +15,76 @@ import org.json.JSONArray
 /**
  * Exact-alarm reminders for timed org items (SCHEDULED/DEADLINE with a
  * clock time). Emacs computes the upcoming set and sends `reminders.set`
- * on every dashboard push (deduplicated Emacs-side); each set REPLACES
- * the previous one, so cancelled/rescheduled items never fire stale.
+ * on every dashboard push (deduplicated Emacs-side).
  *
- * The set is persisted so [BootReceiver] can reschedule after a reboot
- * (alarms don't survive one); the next Emacs connection replaces it
- * again anyway.
+ * Sets are partitioned by OWNER (the app-id in the wire payload; a blank
+ * owner is the unowned/core bucket). A `reminders.set` REPLACES only its
+ * owner's previous set, so two coexisting apps never cancel each other's
+ * alarms — the safety `jetpacs-reminders-owner-set` promises. Request codes
+ * are hashed with the owner, so distinct apps can't collide.
+ *
+ * Each owner's set is persisted so [BootReceiver] can reschedule every
+ * owner after a reboot (alarms don't survive one); the next Emacs
+ * connection replaces them again anyway.
  */
 object ReminderScheduler {
     private const val TAG = "JetpacsReminders"
     private const val PREFS = "jetpacs_reminders"
-    private const val KEY_CODES = "codes"
-    private const val KEY_SET = "set"
+    private const val KEY_OWNERS = "owners"
+    // Pre-owner global keys, migrated away (cancelled + cleared) on first use.
+    private const val LEGACY_CODES = "codes"
+    private const val LEGACY_SET = "set"
 
-    fun replaceAll(context: Context, reminders: JSONArray?) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_SET, reminders?.toString() ?: "[]").apply()
-        arm(context, reminders)
+    private fun setKey(owner: String) = "set:$owner"
+    private fun codesKey(owner: String) = "codes:$owner"
+
+    /**
+     * Replace OWNER's reminder set, leaving every other owner's alarms armed.
+     * A null/blank [owner] is the unowned "" bucket (a legacy global set,
+     * or an owner-unaware Emacs, lands here). Only this owner's
+     * previously-armed alarms are cancelled and replaced.
+     */
+    fun replaceAll(context: Context, owner: String?, reminders: JSONArray?) {
+        val key = owner?.takeIf { it.isNotEmpty() } ?: ""
+        migrateLegacy(context)
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(setKey(key), reminders?.toString() ?: "[]")
+            .putStringSet(KEY_OWNERS, prefs.getStringSet(KEY_OWNERS, emptySet())!! + key)
+            .apply()
+        arm(context, key, reminders)
     }
 
-    /** Re-arm the persisted set ([BootReceiver]); past items just drop. */
+    /** Re-arm every owner's persisted set ([BootReceiver]); past items drop. */
     fun rescheduleAfterBoot(context: Context) {
-        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_SET, null) ?: return
-        arm(context, runCatching { JSONArray(stored) }.getOrNull())
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        for (owner in prefs.getStringSet(KEY_OWNERS, emptySet())!!) {
+            val stored = prefs.getString(setKey(owner), null) ?: continue
+            arm(context, owner, runCatching { JSONArray(stored) }.getOrNull())
+        }
     }
 
-    private fun arm(context: Context, reminders: JSONArray?) {
+    /**
+     * One-time move off the pre-owner global keys: cancel their alarms (the
+     * new per-owner codes wouldn't match them) and clear the keys. A no-op
+     * once done.
+     */
+    private fun migrateLegacy(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val legacy = prefs.getStringSet(LEGACY_CODES, null) ?: return
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        legacy.forEach { code ->
+            code.toIntOrNull()?.let { am.cancel(pending(context, it, null, null)) }
+        }
+        prefs.edit().remove(LEGACY_CODES).remove(LEGACY_SET).apply()
+    }
+
+    private fun arm(context: Context, owner: String, reminders: JSONArray?) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-        // Cancel everything from the previous set (stable request codes).
-        prefs.getStringSet(KEY_CODES, emptySet())!!.forEach { code ->
+        // Cancel only THIS owner's previous alarms (stable per-owner codes).
+        prefs.getStringSet(codesKey(owner), emptySet())!!.forEach { code ->
             code.toIntOrNull()?.let { am.cancel(pending(context, it, null, null)) }
         }
 
@@ -58,7 +96,7 @@ object ReminderScheduler {
                 val r = reminders.optJSONObject(i) ?: continue
                 val at = r.optLong("at_ms")
                 if (at <= System.currentTimeMillis()) continue
-                val code = r.optString("id").hashCode()
+                val code = requestCode(owner, r.optString("id"))
                 val pi = pending(context, code, r.optString("title"), r.optString("body"))
                 if (canExact) {
                     am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
@@ -68,10 +106,13 @@ object ReminderScheduler {
                 }
                 codes.add(code.toString())
             }
-            Log.i(TAG, "Armed ${codes.size} reminder(s), exact=$canExact")
+            Log.i(TAG, "Armed ${codes.size} reminder(s) for owner='$owner', exact=$canExact")
         }
-        prefs.edit().putStringSet(KEY_CODES, codes).apply()
+        prefs.edit().putStringSet(codesKey(owner), codes).apply()
     }
+
+    /** Owner-scoped, stable request code so distinct apps never collide. */
+    private fun requestCode(owner: String, id: String) = java.util.Objects.hash(owner, id)
 
     private fun pending(context: Context, code: Int, title: String?, body: String?): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).apply {

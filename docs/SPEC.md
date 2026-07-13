@@ -220,7 +220,7 @@ mutated state the cached views no longer reflect).
 | `dialog.show` / `dialog.dismiss`  | → comp.   | a UI-tree spec rendered modally                     | `surfaces.dialog` |
 | `toast.show`                      | → comp.   | `{text}` transient toast                            | optional |
 | `pie_menu.show` / `.dismiss`      | → comp.   | radial menu spec (curated, ≤ ~10 items)             | optional |
-| `reminders.set`                   | → comp.   | `{reminders: [{title, body, at_ms, ...}]}` — the set **replaces** the previous one, so cancelled items never fire stale; the companion persists it across reboots | optional |
+| `reminders.set`                   | → comp.   | `{owner?, reminders: [{id, title, body, at_ms}]}` — **replaces** only `owner`'s set (blank/absent = the unowned bucket), so cancelled items never fire stale and coexisting apps never cancel each other; the companion persists each owner's set across reboots | `reminders.owner` for scoping |
 | `theme.set`                       | → comp.   | `{dark, colors, syntax}` — mirror the client's theme onto the companion's UI | `theme` |
 
 A `dialog.show` spec's **root node** may carry `dialog_style`:
@@ -230,6 +230,18 @@ menus); anything else, or its absence, keeps the centered dialog window.
 Additive: an old companion ignores the key and centers the dialog. The
 elisp side sets it per-call (`jetpacs-send-dialog`'s STYLE) or globally
 (`jetpacs-dialog-style`).
+
+**Owner-scoped reminders.** `reminders.set` carries an optional `owner` (an
+app-id string). The companion partitions armed alarms by owner, so a set
+replaces only that owner's previous alarms; a blank/absent `owner` is the
+unowned/core bucket, and request codes are hashed with the owner so distinct
+apps never collide. This lets two Tier 1 apps arm reminders without one's
+set cancelling the other's — a bare owner-less set could not. A companion
+advertising the `reminders.owner` capability is owner-aware:
+`jetpacs-reminders-owner-set` sends the scoped set only when it is granted,
+and otherwise degrades — a plain global set when only one app is registered,
+else it warns and arms nothing rather than clobber another app. Additive: an
+old companion ignores `owner` (treating every set as the one global set).
 
 `theme.set` lets the client's theme win over the companion's own scheme
 (Material You, or its static fallback). `colors` maps Material color-role

@@ -39,6 +39,10 @@ class JetpacsConnection(
     private val supported = setOf(
         "surfaces.widget", "surfaces.notification", "surfaces.dialog",
         "capabilities", "triggers", "queue.replay", "theme",
+        // This companion partitions reminder alarms by owner, so one app's
+        // `reminders.set` never cancels another's. Emacs gates the scoped
+        // send on this grant (else it degrades — see jetpacs-reminders-owner-set).
+        "reminders.owner",
     )
 
     fun start() {
@@ -155,11 +159,14 @@ class JetpacsConnection(
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 
-            // Upcoming timed org items → exact alarms. Each set replaces the
-            // previous one, so stale reminders can't fire.
+            // Upcoming timed org items → exact alarms. Each set replaces only
+            // its owner's previous set (blank = the unowned bucket), so
+            // coexisting apps never cancel each other's reminders.
             "reminders.set" -> {
                 ReminderScheduler.replaceAll(
-                    context, frame.payload.optJSONArray("reminders"))
+                    context,
+                    frame.payload.optString("owner"),
+                    frame.payload.optJSONArray("reminders"))
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
 

@@ -38,7 +38,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.2.0"
+(defconst jetpacs-api-version "1.3.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -47,7 +47,7 @@ obsolete.  The frozen public-symbol list lives in docs/API-STABILITY.md.")
 
 (defcustom jetpacs-wants
   '("surfaces.widget" "surfaces.notification" "surfaces.dialog"
-    "capabilities" "triggers" "queue.replay" "theme")
+    "capabilities" "triggers" "queue.replay" "theme" "reminders.owner")
   "Capability set Emacs requests during the handshake.
 The companion grants the intersection with what it supports; anything it
 doesn't recognise is simply not granted (forward-compat)."

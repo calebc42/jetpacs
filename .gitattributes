@@ -1,0 +1,3 @@
+# Generated canonical artifact — pin to LF so byte-for-byte drift checks are
+# stable across platforms (the working tree stays LF even with core.autocrlf).
+docs/contract.json text eol=lf

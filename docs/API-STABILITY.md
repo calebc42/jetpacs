@@ -12,6 +12,14 @@ change signature incompatibly. Everything else is internal.
   additions are negotiated per-connection (see `jetpacs-node-supported-p`),
   not gated on this.
 
+> **Note on `1.3.0`.** That version exposes *two* independently landed
+> additive batches under one number — owner-scoped reminders and the
+> foundation-root invariants — so `(version<= "1.3.0" …)` cannot tell them
+> apart. Policy going forward: **one minor bump per independently landed API
+> batch** (not per individual addition). `1.4.0` opens the binding-layer track
+> (the machine-readable wire contract in `contract.json`, and the promoted
+> shell/files/action seams below).
+
 ## The two rules
 
 1. **`--` means internal.** Any symbol with a double dash after the

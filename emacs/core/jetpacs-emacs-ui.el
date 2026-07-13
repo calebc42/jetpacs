@@ -45,15 +45,10 @@ that buffer\" — grep hits, and any future jump affordance."
                                      :label label :point point))
   (jetpacs-shell-push nil :switch-to "buffers"))
 
-;; jetpacs-files stays independent of this module (it loads first); its
-;; grep hits navigate here through the seam.
-(defvar jetpacs-files-view-region-function)
-(with-eval-after-load 'jetpacs-files
-  (setq jetpacs-files-view-region-function #'jetpacs-emacs-ui-view-region))
-
-;; The results/xref navigator (occur, grep, compilation, xref) shows a
-;; visited locus in this same region view — one host jump primitive for
-;; every "list of loci → source location" surface.
+;; The results/xref navigator (occur, grep, compilation, xref, and the
+;; Files content search) shows every visited locus in this region view —
+;; one host jump primitive for every "list of loci → source location"
+;; surface.
 (setq jetpacs-results-visit-region-function #'jetpacs-emacs-ui-view-region)
 
 ;; Navigating to a buffer (the tablist skins open package descriptions and

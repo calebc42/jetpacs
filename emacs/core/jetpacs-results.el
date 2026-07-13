@@ -12,8 +12,14 @@
 ;; command, which pops a *desktop* window and leaves the phone sitting on
 ;; the results buffer.  This substrate re-points the tap at the phone: it
 ;; follows the locus and shows the *source location* in the companion's
-;; buffer view (narrowed around the line, scrolled to it), reusing the
-;; same host seam files.grep-visit already uses.
+;; buffer view (narrowed around the line, scrolled to it).
+;;
+;; Two kinds of producer feed the same visit/stepper/seam:
+;;   * buffer-loci — a position in a results buffer whose own goto command
+;;     jumps to source (occur/compilation/xref).  Addressed by (buffer,pos).
+;;   * file-loci  — a plain (file,line), e.g. the Files content search,
+;;     handed in via `jetpacs-results-set-file-loci' and addressed by index
+;;     into that server-built set (no path travels over the wire).
 ;;
 ;; The visit mechanism is uniform and parses no mode internals: place
 ;; point on the locus row, run the row's own RET/mouse-2 command (from its
@@ -29,9 +35,9 @@
 ;; host asks for that chrome through `jetpacs-results-buffer-view-actions'.
 ;;
 ;; Host seam (this module depends on no UI layer): the source location is
-;; shown through `jetpacs-results-visit-region-function', which the buffer
-;; view host (jetpacs-emacs-ui) points at its region view — the same
-;; indirection `jetpacs-files-view-region-function' uses.
+;; shown through `jetpacs-results-visit-region-function', the single jump
+;; primitive the buffer view host (jetpacs-emacs-ui) points at its region
+;; view for every producer.
 
 ;;; Code:
 
@@ -69,10 +75,26 @@ on the UI layer.")
 
 (defvar jetpacs-results--nav nil
   "The active locus-stepper context, or nil.
-A plist (:buffer RESULTS-BUFFER-NAME :index I :count N :dest SRC-NAME) set
-by `results.visit'/`results.step'.  While it holds and the buffer view is
-showing SRC-NAME's locus, the drill-in top bar offers prev/next-match
-chrome (`jetpacs-results-buffer-view-actions').")
+A plist set by `results.visit'/`results.step': always (:kind KIND :index I
+:count N :dest SRC-NAME), plus the kind-specific source to step from —
+:buffer RESULTS-BUFFER-NAME for `buffer', or :loci FILE-LOCI for `file'.
+While it holds and the buffer view is showing SRC-NAME's locus, the drill-in
+top bar offers prev/next-match chrome (`jetpacs-results-buffer-view-actions').")
+
+(defvar jetpacs-results--file-set nil
+  "The active file-locus result set, or nil.
+A list of file loci (each a plist (:file PATH :line N :text STRING)) set by
+a file-producing search (e.g. the Files content search) through
+`jetpacs-results-set-file-loci'.  Its result cards tap `results.visit' with
+their index into this list; nothing off the wire carries a file path.")
+
+(defun jetpacs-results-set-file-loci (loci)
+  "Store LOCI as the active file-locus result set for `results.visit'.
+LOCI is a list of plists (:file PATH :line N :text STRING).  A file
+producer calls this as it renders its result cards (which tap
+`results.visit' with the matching index), so the visit and the prev/next
+stepper are shared with the buffer-backed occur/grep/xref producers."
+  (setq jetpacs-results--file-set loci))
 
 ;; Modes this substrate skins.  compilation-mode covers grep-mode, rgrep,
 ;; and any `define-compilation-mode' derivative by derivation; occur and
@@ -247,82 +269,134 @@ The window runs `jetpacs-results-context-before' lines above POS and
   "Index in LOCI of the locus at POS, or 0 if not found."
   (or (cl-position pos loci :key #'car :test #'=) 0))
 
-(defun jetpacs-results--goto (results-buf loci index)
-  "Visit LOCI[INDEX] of RESULTS-BUF and record the stepper nav; non-nil on jump.
-Follows the locus (reusing the mode's own goto command, shimmed so nothing
-pops a desktop window), opens the source location in the buffer view —
-narrowed, scrolled to the line, its header carrying the i/N counter — and
-stores `jetpacs-results--nav' so the drill-in can step.  INDEX is clamped
-into the loci range."
+(defun jetpacs-results--show (dest index count nav-extra)
+  "Open DEST (a (BUFFER . POS) pair) in the buffer view; arm the stepper.
+Narrows to the locus, scrolls to the line, and heads the slice with an
+i/N counter; NAV-EXTRA (a plist) supplies the kind-specific step source
+merged into `jetpacs-results--nav'.  Returns non-nil."
+  (pcase-let ((`(,beg ,end ,label ,point)
+               (jetpacs-results--region-around (car dest) (cdr dest))))
+    (setq jetpacs-results--nav
+          (append (list :index index :count count :dest (buffer-name (car dest)))
+                  nav-extra))
+    (funcall jetpacs-results-visit-region-function
+             (buffer-name (car dest)) beg end
+             (format "%s  ·  %d/%d" label (1+ index) count)
+             point)
+    t))
+
+(defun jetpacs-results--goto-buffer (results-buf loci index)
+  "Visit buffer-locus LOCI[INDEX] of RESULTS-BUF; arm a `buffer'-kind nav.
+Follows via the mode's own goto command (shimmed so nothing pops a desktop
+window).  INDEX is clamped into the loci range."
   (let* ((count (length loci))
          (index (max 0 (min index (1- count))))
          (pos (car (nth index loci)))
          (dest (and pos (ignore-errors (jetpacs-results--follow results-buf pos)))))
     (if (null dest)
         (progn (message "Couldn't open that location") nil)
-      (pcase-let ((`(,beg ,end ,label ,point)
-                   (jetpacs-results--region-around (car dest) (cdr dest))))
-        (setq jetpacs-results--nav
-              (list :buffer (buffer-name results-buf) :index index :count count
-                    :dest (buffer-name (car dest))))
-        (funcall jetpacs-results-visit-region-function
-                 (buffer-name (car dest)) beg end
-                 (format "%s  ·  %d/%d" label (1+ index) count)
-                 point)
-        t))))
+      (jetpacs-results--show dest index count
+                          (list :kind 'buffer :buffer (buffer-name results-buf))))))
+
+(defun jetpacs-results--file-dest (locus)
+  "Resolve a file LOCUS (:file :line) to (BUFFER . POS), or nil.
+Visits the file read-only-safely via `find-file-noselect'; nil when the
+file is gone or unreadable."
+  (let ((file (plist-get locus :file))
+        (line (plist-get locus :line)))
+    (when (and (stringp file) (file-readable-p file))
+      (condition-case nil
+          (let ((buf (find-file-noselect file)))
+            (with-current-buffer buf
+              (save-excursion
+                (goto-char (point-min))
+                (forward-line (1- (max 1 (truncate (or line 1)))))
+                (cons buf (point)))))
+        (error nil)))))
+
+(defun jetpacs-results--goto-file (loci index)
+  "Visit file-locus LOCI[INDEX]; arm a `file'-kind nav.  INDEX is clamped."
+  (let* ((count (length loci))
+         (index (max 0 (min index (1- count))))
+         (dest (jetpacs-results--file-dest (nth index loci))))
+    (if (null dest)
+        (progn (message "Couldn't open that location") nil)
+      (jetpacs-results--show dest index count (list :kind 'file :loci loci)))))
 
 (jetpacs-defaction "results.visit"
-  ;; Show a locus in context and arm the stepper.  The buffer must be one
-  ;; of `jetpacs-results-modes', so a name off the wire can only ever drive
-  ;; a real results buffer's own visit.
+  ;; Show a locus in context and arm the stepper.  Two entry shapes:
+  ;;   (buffer NAME) (pos P) — a results-mode buffer's own goto at P; NAME
+  ;;     must be one of `jetpacs-results-modes', so a name off the wire can
+  ;;     only ever drive a real results buffer's own visit.
+  ;;   (index I)             — entry I of the active `jetpacs-results--file-set'
+  ;;     (a server-built list; no path travels over the wire).
   (lambda (args _)
-    (let ((buf (get-buffer (or (alist-get 'buffer args) "")))
-          (pos (alist-get 'pos args)))
+    (let ((buf-name (alist-get 'buffer args))
+          (pos (alist-get 'pos args))
+          (index (alist-get 'index args)))
       (cond
-       ((not (jetpacs-results--buffer-p buf))
-        (message "%s is not a results buffer" (alist-get 'buffer args)))
-       ((not (numberp pos))
-        (message "results.visit: bad position"))
-       (t
-        (let ((loci (jetpacs-results--loci buf)))
-          (when loci
-            (jetpacs-results--goto buf loci
-                                (jetpacs-results--index-of loci pos)))))))))
+       ((and buf-name (numberp pos))
+        (let ((buf (get-buffer buf-name)))
+          (if (not (jetpacs-results--buffer-p buf))
+              (message "%s is not a results buffer" buf-name)
+            (let ((loci (jetpacs-results--loci buf)))
+              (when loci
+                (jetpacs-results--goto-buffer
+                 buf loci (jetpacs-results--index-of loci pos)))))))
+       ((numberp index)
+        (let ((set jetpacs-results--file-set))
+          (if (and set (>= index 0) (< index (length set)))
+              (jetpacs-results--goto-file set index)
+            (message "results.visit: no such result"))))
+       (t (message "results.visit: nothing to visit"))))))
 
 (jetpacs-defaction "results.step"
   ;; Step to the prev/next locus of the armed result set without returning
-  ;; to the list.  DIR is +1 or -1; loci are recomputed each step so a
-  ;; reverted results buffer still steps sanely.
+  ;; to the list.  DIR is +1 or -1.  Buffer-kind loci are recomputed each
+  ;; step (so a reverted results buffer still steps sanely); file-kind loci
+  ;; step over the snapshot armed at visit time.
   (lambda (args _)
     (let* ((nav jetpacs-results--nav)
-           (dir (alist-get 'dir args))
-           (buf (and nav (get-buffer (plist-get nav :buffer)))))
-      (cond
-       ((not (and nav (numberp dir)))
-        (message "No results to step through"))
-       ((not (jetpacs-results--buffer-p buf))
-        (setq jetpacs-results--nav nil)
-        (message "Those results are gone"))
-       (t
-        (let ((loci (jetpacs-results--loci buf))
-              (target (+ (plist-get nav :index) dir)))
-          (cond
-           ((null loci) (message "No results"))
-           ((< target 0) (message "First match"))
-           ((>= target (length loci)) (message "Last match"))
-           (t (jetpacs-results--goto buf loci target)))))))))
+           (dir (alist-get 'dir args)))
+      (if (not (and nav (numberp dir)))
+          (message "No results to step through")
+        (let ((target (+ (plist-get nav :index) dir)))
+          (cl-flet ((step (loci goto)
+                      (cond
+                       ((null loci) (message "No results"))
+                       ((< target 0) (message "First match"))
+                       ((>= target (length loci)) (message "Last match"))
+                       (t (funcall goto loci target)))))
+            (pcase (plist-get nav :kind)
+              ('buffer
+               (let ((buf (get-buffer (plist-get nav :buffer))))
+                 (if (not (jetpacs-results--buffer-p buf))
+                     (progn (setq jetpacs-results--nav nil)
+                            (message "Those results are gone"))
+                   (step (jetpacs-results--loci buf)
+                         (lambda (loci i) (jetpacs-results--goto-buffer buf loci i))))))
+              ('file
+               (step (plist-get nav :loci) #'jetpacs-results--goto-file))
+              (_ (message "No results to step through")))))))))
+
+(defun jetpacs-results--nav-live-p (nav)
+  "Non-nil when the stepper NAV can still step (its source survives)."
+  (pcase (plist-get nav :kind)
+    ('buffer (get-buffer (plist-get nav :buffer)))
+    ('file (plist-get nav :loci))
+    (_ nil)))
 
 (defun jetpacs-results-buffer-view-actions (viewed-buffer-name)
   "Prev/next-match top-bar actions for the buffer view, or nil.
 Returns icon-button nodes when `jetpacs-results--nav' is armed and
 VIEWED-BUFFER-NAME is the source buffer the last locus visit navigated to
-\(and the results buffer is still alive); only the in-range direction is
-offered at each end.  The buffer view host calls this to add stepper chrome
-to the drill-in top bar — see jetpacs-emacs-ui."
+\(and the result set is still live); only the in-range direction is offered
+at each end.  The buffer view host calls this to add stepper chrome to the
+drill-in top bar — see jetpacs-emacs-ui."
   (let ((nav jetpacs-results--nav))
     (when (and nav
                (equal viewed-buffer-name (plist-get nav :dest))
-               (get-buffer (plist-get nav :buffer)))
+               (jetpacs-results--nav-live-p nav))
       (let ((i (plist-get nav :index)) (n (plist-get nav :count)))
         (delq nil
               (list

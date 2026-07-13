@@ -861,6 +861,51 @@ The temp source buffer and *Occur* are cleaned up afterwards."
           (should (= -1 (alist-get 'dir (alist-get 'args
                                          (alist-get 'on_tap (car btns)))))))))))
 
+(ert-deftest jetpacs-results-file-loci-visit-and-step ()
+  "Files content-search hits ride the shared substrate: visit by index + stepper."
+  (let* ((dir (file-name-as-directory (make-temp-file "jetpacs-grep" t)))
+         (f (expand-file-name "notes.txt" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file f
+            (insert "needle one\nplain\nneedle two\nplain\nneedle three\n"))
+          (let* ((jetpacs-files-roots (list (cons "R" dir)))
+                 (jetpacs-files--grep (jetpacs-files--grep-scan dir "needle"))
+                 (jetpacs-results--nav nil)
+                 (jetpacs-results--file-set nil)
+                 captured
+                 (jetpacs-results-visit-region-function
+                  (lambda (name _beg _end label &optional _point)
+                    (setq captured (list name label))))
+                 (visit (gethash "results.visit" jetpacs-action-handlers))
+                 (step (gethash "results.step" jetpacs-action-handlers)))
+            (should (= 3 (length (plist-get jetpacs-files--grep :hits))))
+            ;; Rendering the results body arms the shared file-locus set.
+            (jetpacs-files--grep-body)
+            (should (= 3 (length jetpacs-results--file-set)))
+            (should (equal f (plist-get (car jetpacs-results--file-set) :file)))
+            ;; Visit the first hit by index; nav is file-kind with a counter.
+            (funcall visit '((index . 0)) nil)
+            (should (eq 'file (plist-get jetpacs-results--nav :kind)))
+            (should (= 0 (plist-get jetpacs-results--nav :index)))
+            (should (= 3 (plist-get jetpacs-results--nav :count)))
+            (should (string-match-p "1/3" (nth 1 captured)))
+            (let ((dest (plist-get jetpacs-results--nav :dest)))
+              ;; Stepper chrome shows for the visited file buffer, first end only.
+              (should (= 1 (length (jetpacs-results-buffer-view-actions dest))))
+              (should-not (jetpacs-results-buffer-view-actions "no-such-buffer"))
+              ;; Step to the last hit, then clamp.
+              (funcall step '((dir . 1)) nil)
+              (funcall step '((dir . 1)) nil)
+              (should (= 2 (plist-get jetpacs-results--nav :index)))
+              (should (string-match-p "3/3" (nth 1 captured)))
+              (let ((before (nth 1 captured)))
+                (funcall step '((dir . 1)) nil)
+                (should (= 2 (plist-get jetpacs-results--nav :index)))
+                (should (equal before (nth 1 captured)))))))
+      (when (get-file-buffer f) (kill-buffer (get-file-buffer f)))
+      (ignore-errors (delete-directory dir t)))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst jetpacs-tests--golden-file

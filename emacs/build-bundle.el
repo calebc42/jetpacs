@@ -33,6 +33,7 @@
                      "core/jetpacs-widgets.el"
                      "core/jetpacs-lint.el"
                      "core/jetpacs-surfaces.el"
+                     "core/jetpacs-source.el"
                      "core/jetpacs-triggers.el"
                      "core/jetpacs-device.el"
                      "core/jetpacs-minibuffer.el"

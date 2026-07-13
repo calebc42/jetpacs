@@ -15,7 +15,7 @@
                                (file-name-directory
                                 (or load-file-name buffer-file-name))))
 
-(dolist (feature '(jetpacs jetpacs-widgets jetpacs-lint jetpacs-surfaces jetpacs-triggers
+(dolist (feature '(jetpacs jetpacs-widgets jetpacs-lint jetpacs-surfaces jetpacs-source jetpacs-triggers
                    jetpacs-device jetpacs-minibuffer jetpacs-buffer jetpacs-shell
                    jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-results jetpacs-transient
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings

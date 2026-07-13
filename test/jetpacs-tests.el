@@ -29,6 +29,7 @@
 (require 'jetpacs-apps)
 (require 'jetpacs-widgets)
 (require 'jetpacs-lint)
+(require 'jetpacs-source)
 (require 'jetpacs-shell)
 (require 'jetpacs-keymap)
 (require 'jetpacs-results)
@@ -1752,6 +1753,108 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (setq pushed 'unset)
       (should-not (jetpacs-shell-set-current-tab "t.nope"))
       (should (eq pushed 'unset)))))
+
+;; ─── Source registry (Stage-2 T2.1) ──────────────────────────────────────────
+
+(defmacro jetpacs-tests--with-sources (&rest body)
+  "Run BODY with fresh source + ownership registries."
+  (declare (indent 0))
+  `(let ((jetpacs--sources (make-hash-table :test 'equal))
+         (jetpacs--source-cache (make-hash-table :test 'equal))
+         (jetpacs--registration-owners (make-hash-table :test 'equal)))
+     ,@body))
+
+(ert-deftest jetpacs-source-uncached-requeries ()
+  "An uncached source runs its query on every call."
+  (jetpacs-tests--with-sources
+    (let ((calls 0))
+      (jetpacs-defsource "s.plain"
+        :params '((:name q :type "text" :required t))
+        :fields '((:name "a" :type "text"))
+        :query (lambda (p) (cl-incf calls) (list (list (cons 'a (alist-get 'q p))))))
+      (should (equal (jetpacs-source-query "s.plain" '((q . "x"))) '(((a . "x")))))
+      (jetpacs-source-query "s.plain" '((q . "x")))
+      (should (= calls 2)))))
+
+(ert-deftest jetpacs-source-cache-key-memoises ()
+  "A :cache-key source memoises per params + token; a new token re-queries."
+  (jetpacs-tests--with-sources
+    (let ((token 1) (calls 0))
+      (jetpacs-defsource "s.cached"
+        :params '((:name q :type "text"))
+        :fields '((:name "a" :type "text"))
+        :cache-key (lambda (_p) token)
+        :query (lambda (_p) (cl-incf calls) (list)))
+      (jetpacs-source-query "s.cached" '((q . "x")))
+      (jetpacs-source-query "s.cached" '((q . "x")))
+      (should (= calls 1))                                 ; memoised
+      (setq token 2)
+      (jetpacs-source-query "s.cached" '((q . "x")))
+      (should (= calls 2))                                 ; new token -> re-query
+      (jetpacs-source-query "s.cached" '((q . "y")))
+      (should (= calls 3)))))                              ; new params -> re-query
+
+(ert-deftest jetpacs-source-error-not-cached ()
+  "A query that errors is not cached; the next call re-runs it."
+  (jetpacs-tests--with-sources
+    (let ((calls 0))
+      (jetpacs-defsource "s.err"
+        :params '((:name q :type "text"))
+        :fields '((:name "a" :type "text"))
+        :cache-key (lambda (_p) 1)
+        :query (lambda (_p) (cl-incf calls) (error "boom")))
+      (should-error (jetpacs-source-query "s.err" '((q . "x"))))
+      (should-error (jetpacs-source-query "s.err" '((q . "x"))))
+      (should (= calls 2)))))
+
+(ert-deftest jetpacs-source-required-and-canonical ()
+  "A missing required param errors; canonical params drop extras."
+  (jetpacs-tests--with-sources
+    (let ((seen nil))
+      (jetpacs-defsource "s.req"
+        :params '((:name q :type "text" :required t))
+        :fields '((:name "a" :type "text"))
+        :query (lambda (p) (setq seen p) (list)))
+      (should-error (jetpacs-source-query "s.req" '((other . "z"))))
+      (jetpacs-source-query "s.req" '((q . "x") (extra . "drop")))
+      (should (equal seen '((q . "x")))))))
+
+(ert-deftest jetpacs-source-schema-validation ()
+  "defsource rejects an unknown type and an enum without :values."
+  (jetpacs-tests--with-sources
+    (should-error (jetpacs-defsource "s.bad" :fields '((:name "a" :type "wat"))))
+    (should-error (jetpacs-defsource "s.enum" :fields '((:name "a" :type "enum"))))
+    (should (jetpacs-defsource "s.ok"
+              :fields (list (list :name "a" :type "enum" :values ["x" "y"]))
+              :query #'ignore))))
+
+(ert-deftest jetpacs-source-catalog-serializable ()
+  "The catalog round-trips through the wire encoder (metadata only)."
+  (jetpacs-tests--with-sources
+    (jetpacs-defsource "s.cat"
+      :params '((:name q :type "text" :required t))
+      :fields '((:name "a" :type "text"))
+      :query #'ignore)
+    (let ((cat (jetpacs-source-catalog)))
+      (should (jetpacs-render-to-json (vconcat cat)))     ; the catalog as a JSON array
+      (should (equal (alist-get 'name (car cat)) "s.cat")))))
+
+(ert-deftest jetpacs-source-teardown-by-owner ()
+  "`jetpacs-app-unregister' removes an app's owned sources."
+  (let ((jetpacs--sources (make-hash-table :test 'equal))
+        (jetpacs--source-cache (make-hash-table :test 'equal))
+        (jetpacs-action-handlers (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (jetpacs-shell-views nil)
+        (jetpacs-apps--registry nil)
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (with-jetpacs-owner "app1"
+        (jetpacs-defsource "app1.src" :fields '((:name "a" :type "text")) :query #'ignore))
+      (should (jetpacs-source-p "app1.src"))
+      (jetpacs-app-unregister "app1")
+      (should-not (jetpacs-source-p "app1.src")))))
 
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."

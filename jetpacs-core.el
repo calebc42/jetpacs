@@ -2154,6 +2154,12 @@ button is shown beneath the text."
    "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"]
   "Short month labels used by `jetpacs-date-stamp'.")
 
+(defun jetpacs-month-abbrev (n)
+  "The three-letter English abbreviation for month N (1 = Jan .. 12 = Dec).
+Returns nil when N is not an integer in 1..12."
+  (and (integerp n) (>= n 1) (<= n 12)
+       (aref jetpacs--month-abbrevs (1- n))))
+
 (cl-defun jetpacs-date-stamp (&key date day month month-index year time padding)
   "A compact date/time chip-card.
 Pass DATE as \"YYYY-MM-DD\" to derive DAY, MONTH (abbrev), YEAR and
@@ -2167,7 +2173,7 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
           (d (string-to-number (match-string 3 date))))
       (setq year (or year y)
             month-index (or month-index m)
-            month (or month (aref jetpacs--month-abbrevs (1- m)))
+            month (or month (jetpacs-month-abbrev m))
             day (or day (number-to-string d)))))
   (jetpacs--node "date_stamp"
               'day (and day (format "%s" day))
@@ -2879,6 +2885,16 @@ cross-owner re-registration warns (or errors under
   (jetpacs--claim "action" name)
   (puthash name fn jetpacs-action-handlers))
 
+(defvar jetpacs--in-action-handler nil
+  "Non-nil while a Jetpacs action handler runs (bound by `jetpacs--on-action').
+Read it through the public predicate `jetpacs-in-action-p'.")
+
+(defun jetpacs-in-action-p ()
+  "Non-nil when called within the dynamic extent of an action handler.
+True only for the synchronous body of a handler; an async continuation a
+handler schedules runs after the flag is unbound and so sees nil."
+  jetpacs--in-action-handler)
+
 (defun jetpacs--on-action (payload _frame)
   "Dispatch an inbound `event.action' PAYLOAD to its registered handler.
 Binds `jetpacs--in-action-handler' so minibuffer prompts are intercepted
@@ -2950,6 +2966,26 @@ The subscription counterpart to `jetpacs-ui-state-clear'; used by
              jetpacs--ui-state)
     (dolist (k keys)
       (remhash k jetpacs--ui-state))))
+
+(defun jetpacs-ui-state-list (id)
+  "The value of widget ID coerced to a list of strings.
+A multi-select or enum value arrives as a vector, a list, a plain string, or
+a JSON-array string; normalize to a list of strings: nil -> nil; a vector or
+list keeps only its string members; a JSON-array string is decoded (keeping
+string members); any other string becomes a one-element list; a malformed
+JSON-array string and non-string members are discarded."
+  (let ((v (jetpacs-ui-state id)))
+    (cond
+     ((null v) nil)
+     ((vectorp v) (seq-filter #'stringp (append v nil)))
+     ((consp v) (seq-filter #'stringp v))
+     ((stringp v)
+      (if (string-match-p "\\`[[:space:]]*\\[" v)
+          (let ((parsed (ignore-errors
+                          (json-parse-string v :array-type 'list))))
+            (and (listp parsed) (seq-filter #'stringp parsed)))
+        (list v)))
+     (t nil))))
 
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."
@@ -3629,10 +3665,9 @@ After this the prompt is cancelled (as if the user dismissed the dialog)."
 
 ;; ─── Internal state ──────────────────────────────────────────────────────────
 
-(defvar jetpacs--in-action-handler nil
-  "Non-nil while an Jetpacs action handler is executing.
-Bound by `jetpacs--on-action' in jetpacs-surfaces.el.  The minibuffer advice
-checks this to decide whether to intercept.")
+;; Owned by jetpacs-surfaces.el (read it via `jetpacs-in-action-p'); declared
+;; here so a standalone byte-compile of this file stays warning-clean.
+(defvar jetpacs--in-action-handler)
 
 (defvar jetpacs--prompt-reply nil
   "Alist of prompt-id → reply value, filled by the `prompt.reply' action.")
@@ -5319,6 +5354,17 @@ view, not the push."
                          (and (plist-get (cdr e) :tab)
                               (jetpacs-shell--view-filtered-p (car e))))
                        jetpacs-shell-views))))
+
+(defun jetpacs-shell-set-current-tab (name)
+  "Switch to the registered bottom-bar tab NAME.
+A NAME that is not a registered tab is rejected (returns nil and warns).
+A valid switch routes through `jetpacs-shell-push' — running
+`jetpacs-shell-view-switched-hook' and repushing — and returns NAME; it
+never setqs the internal tab var directly."
+  (if (jetpacs-shell--tab-p name)
+      (progn (jetpacs-shell-push name) name)
+    (message "Jetpacs: cannot switch to %S — not a registered tab" name)
+    nil))
 
 (defun jetpacs-shell--active-view ()
   "The view a push should land on: a firing overlay, else the current tab."
@@ -9920,6 +9966,24 @@ otherwise the plain-text editor."
             (when (and (equal view "files") jetpacs-files--file)
               (setq jetpacs-files--file nil))))
 
+(defun jetpacs-files-current-file ()
+  "Absolute path of the file currently open in the editor, or nil."
+  jetpacs-files--file)
+
+(defun jetpacs-files-open (file)
+  "Open FILE in the editor and switch to the editor view.
+FILE must be a readable path within the browsable roots; otherwise nothing
+happens and nil is returned.  On success sets the open file, runs
+`jetpacs-files-open-hook' with the expanded path, switches to the editor
+view, and returns that path."
+  (when (and (stringp file)
+             (file-readable-p file)
+             (jetpacs-files--within-root-p file))
+    (setq jetpacs-files--file (expand-file-name file))
+    (run-hook-with-args 'jetpacs-files-open-hook jetpacs-files--file)
+    (jetpacs-shell-push nil :switch-to "edit")
+    jetpacs-files--file))
+
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 
 (jetpacs-defaction "files.cd"
@@ -9934,13 +9998,7 @@ otherwise the plain-text editor."
 
 (jetpacs-defaction "files.open"
   (lambda (args _)
-    (let ((file (alist-get 'file args)))
-      (when (and (stringp file)
-                 (file-readable-p file)
-                 (jetpacs-files--within-root-p file))
-        (setq jetpacs-files--file (expand-file-name file))
-        (run-hook-with-args 'jetpacs-files-open-hook jetpacs-files--file)
-        (jetpacs-shell-push nil :switch-to "edit")))))
+    (jetpacs-files-open (alist-get 'file args))))
 
 (jetpacs-defaction "files.grep"
   ;; The query arrives through the bridged minibuffer (this runs inside an

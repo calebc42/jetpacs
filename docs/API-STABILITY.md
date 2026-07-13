@@ -43,7 +43,9 @@ the authoring reference is [WIDGETS.md](WIDGETS.md).
 
 Content: `jetpacs-text` `jetpacs-markup` `jetpacs-rich-text` `jetpacs-span`
 `jetpacs-icon` `jetpacs-image` `jetpacs-date-stamp` `jetpacs-divider`
-`jetpacs-section-header` `jetpacs-empty-state` `jetpacs-progress`.
+`jetpacs-section-header` `jetpacs-empty-state` `jetpacs-progress`
+`jetpacs-month-abbrev` (since 1.4.0: the 1–12 → abbrev helper behind
+`jetpacs-date-stamp`).
 
 Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 `jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-border`
@@ -86,7 +88,9 @@ Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
 
 `jetpacs-defaction` `jetpacs-on-state-change` `jetpacs-on-state-change-clear`
 `jetpacs-ui-state` `jetpacs-ui-state-put` `jetpacs-ui-state-clear`
-`jetpacs-surface-push` `jetpacs-surface-remove`.
+`jetpacs-ui-state-list` `jetpacs-in-action-p` (since 1.4.0: coerce a
+multi-select value to a list of strings; report whether code runs inside an
+action handler) `jetpacs-surface-push` `jetpacs-surface-remove`.
 
 ### Multi-tenant ownership (`jetpacs-surfaces.el`, `jetpacs-apps.el`)
 
@@ -113,7 +117,10 @@ own lazy column instead), `jetpacs-shell-resolve-view` (since 1.2.0: a
 logical core view name through the per-app override resolver — the
 stock Settings drawer entry targets `(jetpacs-shell-resolve-view
 "settings")`), and the hooks `jetpacs-shell-view-switched-hook`
-`jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.
+`jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.  Tab access
+(since 1.4.0): `jetpacs-shell-current-tab` reads the active tab and
+`jetpacs-shell-set-current-tab` switches to a registered tab through
+`jetpacs-shell-push`.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
 `jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`
@@ -129,7 +136,9 @@ Tablist skins (`jetpacs-tablist.el`): the `jetpacs-tablist-header-functions`
 
 Files/editor (`jetpacs-files.el`): `jetpacs-files-editor-body-functions`
 `jetpacs-files-editor-actions-functions` `jetpacs-files-editor-toolbar-function`
-`jetpacs-files-open-hook` `jetpacs-files-after-save-hook`.
+`jetpacs-files-open-hook` `jetpacs-files-after-save-hook` (since 1.4.0:
+`jetpacs-files-open` opens a readable in-root path in the editor, and
+`jetpacs-files-current-file` reads the currently open path).
 
 Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
 `jetpacs-settings-remove-section` `jetpacs-settings-after-set-hook`

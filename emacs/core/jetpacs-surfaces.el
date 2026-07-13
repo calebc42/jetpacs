@@ -194,6 +194,16 @@ cross-owner re-registration warns (or errors under
   (jetpacs--claim "action" name)
   (puthash name fn jetpacs-action-handlers))
 
+(defvar jetpacs--in-action-handler nil
+  "Non-nil while a Jetpacs action handler runs (bound by `jetpacs--on-action').
+Read it through the public predicate `jetpacs-in-action-p'.")
+
+(defun jetpacs-in-action-p ()
+  "Non-nil when called within the dynamic extent of an action handler.
+True only for the synchronous body of a handler; an async continuation a
+handler schedules runs after the flag is unbound and so sees nil."
+  jetpacs--in-action-handler)
+
 (defun jetpacs--on-action (payload _frame)
   "Dispatch an inbound `event.action' PAYLOAD to its registered handler.
 Binds `jetpacs--in-action-handler' so minibuffer prompts are intercepted
@@ -265,6 +275,26 @@ The subscription counterpart to `jetpacs-ui-state-clear'; used by
              jetpacs--ui-state)
     (dolist (k keys)
       (remhash k jetpacs--ui-state))))
+
+(defun jetpacs-ui-state-list (id)
+  "The value of widget ID coerced to a list of strings.
+A multi-select or enum value arrives as a vector, a list, a plain string, or
+a JSON-array string; normalize to a list of strings: nil -> nil; a vector or
+list keeps only its string members; a JSON-array string is decoded (keeping
+string members); any other string becomes a one-element list; a malformed
+JSON-array string and non-string members are discarded."
+  (let ((v (jetpacs-ui-state id)))
+    (cond
+     ((null v) nil)
+     ((vectorp v) (seq-filter #'stringp (append v nil)))
+     ((consp v) (seq-filter #'stringp v))
+     ((stringp v)
+      (if (string-match-p "\\`[[:space:]]*\\[" v)
+          (let ((parsed (ignore-errors
+                          (json-parse-string v :array-type 'list))))
+            (and (listp parsed) (seq-filter #'stringp parsed)))
+        (list v)))
+     (t nil))))
 
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."

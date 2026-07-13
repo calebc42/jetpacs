@@ -636,6 +636,12 @@ button is shown beneath the text."
    "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"]
   "Short month labels used by `jetpacs-date-stamp'.")
 
+(defun jetpacs-month-abbrev (n)
+  "The three-letter English abbreviation for month N (1 = Jan .. 12 = Dec).
+Returns nil when N is not an integer in 1..12."
+  (and (integerp n) (>= n 1) (<= n 12)
+       (aref jetpacs--month-abbrevs (1- n))))
+
 (cl-defun jetpacs-date-stamp (&key date day month month-index year time padding)
   "A compact date/time chip-card.
 Pass DATE as \"YYYY-MM-DD\" to derive DAY, MONTH (abbrev), YEAR and
@@ -649,7 +655,7 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
           (d (string-to-number (match-string 3 date))))
       (setq year (or year y)
             month-index (or month-index m)
-            month (or month (aref jetpacs--month-abbrevs (1- m)))
+            month (or month (jetpacs-month-abbrev m))
             day (or day (number-to-string d)))))
   (jetpacs--node "date_stamp"
               'day (and day (format "%s" day))

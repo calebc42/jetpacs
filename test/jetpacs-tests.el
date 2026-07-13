@@ -1689,6 +1689,70 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (unless (or (fboundp s) (boundp s)) (push s missing)))
     (should (null missing))))
 
+;; ─── Promoted public seams (Stage-1 T1.4) ────────────────────────────────────
+
+(ert-deftest jetpacs-seam-month-abbrev ()
+  "`jetpacs-month-abbrev' is bounds-checked and 1-indexed."
+  (should (equal (jetpacs-month-abbrev 1) "Jan"))
+  (should (equal (jetpacs-month-abbrev 12) "Dec"))
+  (should-not (jetpacs-month-abbrev 0))
+  (should-not (jetpacs-month-abbrev 13))
+  (should-not (jetpacs-month-abbrev "x")))
+
+(ert-deftest jetpacs-seam-ui-state-list ()
+  "`jetpacs-ui-state-list' coerces every shape to a list of strings."
+  (let ((jetpacs--ui-state (make-hash-table :test 'equal)))
+    (jetpacs-ui-state-put "a" "one")
+    (should (equal (jetpacs-ui-state-list "a") '("one")))          ; plain string
+    (jetpacs-ui-state-put "b" ["x" "y"])
+    (should (equal (jetpacs-ui-state-list "b") '("x" "y")))        ; vector
+    (jetpacs-ui-state-put "c" (vector "x" 5 "z"))
+    (should (equal (jetpacs-ui-state-list "c") '("x" "z")))        ; non-string dropped
+    (jetpacs-ui-state-put "d" "[\"p\",\"q\"]")
+    (should (equal (jetpacs-ui-state-list "d") '("p" "q")))        ; JSON array decoded
+    (jetpacs-ui-state-put "e" "[not json")
+    (should-not (jetpacs-ui-state-list "e"))                       ; malformed discarded
+    (should-not (jetpacs-ui-state-list "missing"))))               ; absent -> nil
+
+(ert-deftest jetpacs-seam-in-action-p ()
+  "`jetpacs-in-action-p' reflects the dynamic action-handler flag."
+  (should-not (jetpacs-in-action-p))
+  (let ((jetpacs--in-action-handler t))
+    (should (jetpacs-in-action-p))))
+
+(ert-deftest jetpacs-seam-files-open ()
+  "`jetpacs-files-open' guards on readable/in-root, runs the hook, returns the path."
+  (let ((jetpacs-files--file nil) (fired nil)
+        (tmp (make-temp-file "jetpacs-open")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'jetpacs-shell-push) #'ignore)
+                  ((symbol-function 'jetpacs-files--within-root-p) (lambda (_f) t)))
+          (let ((jetpacs-files-open-hook (list (lambda (p) (setq fired p)))))
+            (should (equal (jetpacs-files-open tmp) (expand-file-name tmp)))
+            (should (equal fired (expand-file-name tmp)))
+            (should (equal (jetpacs-files-current-file) (expand-file-name tmp)))
+            ;; Out of root: refused, hook not run, returns nil.
+            (cl-letf (((symbol-function 'jetpacs-files--within-root-p) (lambda (_f) nil)))
+              (setq fired nil)
+              (should-not (jetpacs-files-open tmp))
+              (should-not fired))))
+      (delete-file tmp))))
+
+(ert-deftest jetpacs-seam-set-current-tab ()
+  "`jetpacs-shell-set-current-tab' routes a valid tab through push, rejects others."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (pushed 'unset))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+              ((symbol-function 'jetpacs-shell-push)
+               (lambda (&optional tab &rest _) (setq pushed tab))))
+      (jetpacs-shell-define-view "t.tab" :builder #'ignore :tab '(:label "T"))
+      (should (equal (jetpacs-shell-set-current-tab "t.tab") "t.tab"))
+      (should (equal pushed "t.tab"))
+      (setq pushed 'unset)
+      (should-not (jetpacs-shell-set-current-tab "t.nope"))
+      (should (eq pushed 'unset)))))
+
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."
   (let ((jetpacs--pending (make-hash-table :test 'equal))

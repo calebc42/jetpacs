@@ -25,10 +25,9 @@ After this the prompt is cancelled (as if the user dismissed the dialog)."
 
 ;; ─── Internal state ──────────────────────────────────────────────────────────
 
-(defvar jetpacs--in-action-handler nil
-  "Non-nil while an Jetpacs action handler is executing.
-Bound by `jetpacs--on-action' in jetpacs-surfaces.el.  The minibuffer advice
-checks this to decide whether to intercept.")
+;; Owned by jetpacs-surfaces.el (read it via `jetpacs-in-action-p'); declared
+;; here so a standalone byte-compile of this file stays warning-clean.
+(defvar jetpacs--in-action-handler)
 
 (defvar jetpacs--prompt-reply nil
   "Alist of prompt-id → reply value, filled by the `prompt.reply' action.")

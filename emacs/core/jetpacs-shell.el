@@ -124,6 +124,17 @@ view, not the push."
                               (jetpacs-shell--view-filtered-p (car e))))
                        jetpacs-shell-views))))
 
+(defun jetpacs-shell-set-current-tab (name)
+  "Switch to the registered bottom-bar tab NAME.
+A NAME that is not a registered tab is rejected (returns nil and warns).
+A valid switch routes through `jetpacs-shell-push' — running
+`jetpacs-shell-view-switched-hook' and repushing — and returns NAME; it
+never setqs the internal tab var directly."
+  (if (jetpacs-shell--tab-p name)
+      (progn (jetpacs-shell-push name) name)
+    (message "Jetpacs: cannot switch to %S — not a registered tab" name)
+    nil))
+
 (defun jetpacs-shell--active-view ()
   "The view a push should land on: a firing overlay, else the current tab."
   (or (car (cl-find-if (lambda (e)

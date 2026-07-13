@@ -6057,6 +6057,12 @@ ever reach the process of an already-open comint buffer."
 ;; point lands.  Whatever `occur'/`compile'/`xref' would have visited is
 ;; exactly where the phone is taken.
 ;;
+;; A visit arms a stepper: while you are looking at a visited locus, the
+;; drill-in top bar offers prev/next-match chrome (`results.step') that
+;; walks the same result set and re-navigates without a trip back to the
+;; list — the touch-native form of `next-error'/`previous-error'.  The
+;; host asks for that chrome through `jetpacs-results-buffer-view-actions'.
+;;
 ;; Host seam (this module depends on no UI layer): the source location is
 ;; shown through `jetpacs-results-visit-region-function', which the buffer
 ;; view host (jetpacs-emacs-ui) points at its region view — the same
@@ -6095,6 +6101,13 @@ its surroundings are visible without the buffer view's from-the-top cap."
 buffer slice with POINT's line as the scroll target.  Set by the buffer
 view host (jetpacs-emacs-ui); kept as a seam so this module never depends
 on the UI layer.")
+
+(defvar jetpacs-results--nav nil
+  "The active locus-stepper context, or nil.
+A plist (:buffer RESULTS-BUFFER-NAME :index I :count N :dest SRC-NAME) set
+by `results.visit'/`results.step'.  While it holds and the buffer view is
+showing SRC-NAME's locus, the drill-in top bar offers prev/next-match
+chrome (`jetpacs-results-buffer-view-actions').")
 
 ;; Modes this substrate skins.  compilation-mode covers grep-mode, rgrep,
 ;; and any `define-compilation-mode' derivative by derivation; occur and
@@ -6265,12 +6278,38 @@ The window runs `jetpacs-results-context-before' lines above POS and
                     (point))))
         (list beg end (format "%s:%d" (buffer-name buf) line) target)))))
 
+(defun jetpacs-results--index-of (loci pos)
+  "Index in LOCI of the locus at POS, or 0 if not found."
+  (or (cl-position pos loci :key #'car :test #'=) 0))
+
+(defun jetpacs-results--goto (results-buf loci index)
+  "Visit LOCI[INDEX] of RESULTS-BUF and record the stepper nav; non-nil on jump.
+Follows the locus (reusing the mode's own goto command, shimmed so nothing
+pops a desktop window), opens the source location in the buffer view —
+narrowed, scrolled to the line, its header carrying the i/N counter — and
+stores `jetpacs-results--nav' so the drill-in can step.  INDEX is clamped
+into the loci range."
+  (let* ((count (length loci))
+         (index (max 0 (min index (1- count))))
+         (pos (car (nth index loci)))
+         (dest (and pos (ignore-errors (jetpacs-results--follow results-buf pos)))))
+    (if (null dest)
+        (progn (message "Couldn't open that location") nil)
+      (pcase-let ((`(,beg ,end ,label ,point)
+                   (jetpacs-results--region-around (car dest) (cdr dest))))
+        (setq jetpacs-results--nav
+              (list :buffer (buffer-name results-buf) :index index :count count
+                    :dest (buffer-name (car dest))))
+        (funcall jetpacs-results-visit-region-function
+                 (buffer-name (car dest)) beg end
+                 (format "%s  ·  %d/%d" label (1+ index) count)
+                 point)
+        t))))
+
 (jetpacs-defaction "results.visit"
-  ;; Show a locus in context: follow it (reusing the mode's own goto
-  ;; command, shimmed so nothing pops a desktop window) and open the
-  ;; source location in the buffer view, narrowed and scrolled to the
-  ;; line.  The buffer must be one of `jetpacs-results-modes', so a name
-  ;; off the wire can only ever drive a real results buffer's own visit.
+  ;; Show a locus in context and arm the stepper.  The buffer must be one
+  ;; of `jetpacs-results-modes', so a name off the wire can only ever drive
+  ;; a real results buffer's own visit.
   (lambda (args _)
     (let ((buf (get-buffer (or (alist-get 'buffer args) "")))
           (pos (alist-get 'pos args)))
@@ -6280,13 +6319,61 @@ The window runs `jetpacs-results-context-before' lines above POS and
        ((not (numberp pos))
         (message "results.visit: bad position"))
        (t
-        (let ((dest (ignore-errors (jetpacs-results--follow buf pos))))
-          (if (null dest)
-              (message "Couldn't open that location")
-            (pcase-let ((`(,beg ,end ,label ,point)
-                         (jetpacs-results--region-around (car dest) (cdr dest))))
-              (funcall jetpacs-results-visit-region-function
-                       (buffer-name (car dest)) beg end label point)))))))))
+        (let ((loci (jetpacs-results--loci buf)))
+          (when loci
+            (jetpacs-results--goto buf loci
+                                (jetpacs-results--index-of loci pos)))))))))
+
+(jetpacs-defaction "results.step"
+  ;; Step to the prev/next locus of the armed result set without returning
+  ;; to the list.  DIR is +1 or -1; loci are recomputed each step so a
+  ;; reverted results buffer still steps sanely.
+  (lambda (args _)
+    (let* ((nav jetpacs-results--nav)
+           (dir (alist-get 'dir args))
+           (buf (and nav (get-buffer (plist-get nav :buffer)))))
+      (cond
+       ((not (and nav (numberp dir)))
+        (message "No results to step through"))
+       ((not (jetpacs-results--buffer-p buf))
+        (setq jetpacs-results--nav nil)
+        (message "Those results are gone"))
+       (t
+        (let ((loci (jetpacs-results--loci buf))
+              (target (+ (plist-get nav :index) dir)))
+          (cond
+           ((null loci) (message "No results"))
+           ((< target 0) (message "First match"))
+           ((>= target (length loci)) (message "Last match"))
+           (t (jetpacs-results--goto buf loci target)))))))))
+
+(defun jetpacs-results-buffer-view-actions (viewed-buffer-name)
+  "Prev/next-match top-bar actions for the buffer view, or nil.
+Returns icon-button nodes when `jetpacs-results--nav' is armed and
+VIEWED-BUFFER-NAME is the source buffer the last locus visit navigated to
+\(and the results buffer is still alive); only the in-range direction is
+offered at each end.  The buffer view host calls this to add stepper chrome
+to the drill-in top bar — see jetpacs-emacs-ui."
+  (let ((nav jetpacs-results--nav))
+    (when (and nav
+               (equal viewed-buffer-name (plist-get nav :dest))
+               (get-buffer (plist-get nav :buffer)))
+      (let ((i (plist-get nav :index)) (n (plist-get nav :count)))
+        (delq nil
+              (list
+               (when (> i 0)
+                 (jetpacs-icon-button
+                  "chevron_left"
+                  (jetpacs-action "results.step" :args '((dir . -1))
+                               :when-offline "drop")
+                  :content-description (format "Previous match (%d of %d)" i n)))
+               (when (< (1+ i) n)
+                 (jetpacs-icon-button
+                  "chevron_right"
+                  (jetpacs-action "results.step" :args '((dir . 1))
+                               :when-offline "drop")
+                  :content-description (format "Next match (%d of %d)"
+                                              (+ i 2) n)))))))))
 
 (provide 'jetpacs-results)
 ;;; jetpacs-results.el ends here
@@ -10398,12 +10485,20 @@ with a keyboard FAB that opens the buffer's keymap."
        ;; Content swap within the buffers view: stays an Emacs round-trip
        ;; (the list must be rebuilt).
        :nav-action (jetpacs-action "emacs.buffer.back")
-       :actions (list (jetpacs-icon-button
-                       "toc"
-                       (jetpacs-action "imenu.show"
-                                    :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))
-                                    :when-offline "drop")
-                       :content-description "Sections (imenu)"))
+       ;; When a section is showing a locus reached from occur/grep/xref,
+       ;; the results substrate contributes prev/next-match chrome; else
+       ;; nil.  Gated on an active section so it never shows on the whole
+       ;; buffer.  Then the imenu sections button.
+       :actions (append
+                 (when jetpacs-emacs-ui--section
+                   (jetpacs-results-buffer-view-actions
+                    jetpacs-emacs-ui--viewing-buffer))
+                 (list (jetpacs-icon-button
+                        "toc"
+                        (jetpacs-action "imenu.show"
+                                     :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))
+                                     :when-offline "drop")
+                        :content-description "Sections (imenu)")))
        :fab (jetpacs-fab "keyboard"
                       :on-tap (jetpacs-action "jetpacs.keymap.show"
                                :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))

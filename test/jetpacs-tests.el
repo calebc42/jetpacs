@@ -751,7 +751,9 @@ The temp source buffer and *Occur* are cleaned up afterwards."
         (should (stringp name))
         (should (and (integerp beg) (integerp end) (< beg end)))
         (should (integerp point))
-        (should (string-match-p ":[0-9]+\\'" label))))))
+        ;; label is "buffer:line  ·  i/N" — carries the file:line and counter
+        (should (string-match-p ":[0-9]+" label))
+        (should (string-match-p "[0-9]+/[0-9]+\\'" label))))))
 
 (ert-deftest jetpacs-results-visit-boundary ()
   "results.visit refuses a buffer that is not a results-mode buffer."
@@ -794,6 +796,70 @@ The temp source buffer and *Occur* are cleaned up afterwards."
                               (buffer-file-name (car dest))))))))
       (when (get-buffer cb) (kill-buffer cb))
       (ignore-errors (delete-directory dir t)))))
+
+(ert-deftest jetpacs-results-step-advances-and-clamps ()
+  "Stepping walks the result set and clamps at both ends."
+  (jetpacs-tests--with-occur ob
+      "a needle\nb\nc needle\nd\ne needle\n" "needle"   ; 3 matches
+    (let* ((jetpacs-results--nav nil)
+           (loci (jetpacs-results--loci ob))
+           captured
+           (jetpacs-results-visit-region-function
+            (lambda (_name _beg _end label &optional _point)
+              (setq captured label)))
+           (visit (gethash "results.visit" jetpacs-action-handlers))
+           (step (gethash "results.step" jetpacs-action-handlers)))
+      (should (= 3 (length loci)))
+      (funcall visit `((buffer . ,(buffer-name ob)) (pos . ,(car (nth 0 loci)))) nil)
+      (should (= 0 (plist-get jetpacs-results--nav :index)))
+      (should (string-match-p "1/3" captured))
+      (funcall step '((dir . 1)) nil)
+      (should (= 1 (plist-get jetpacs-results--nav :index)))
+      (should (string-match-p "2/3" captured))
+      (funcall step '((dir . 1)) nil)
+      (should (= 2 (plist-get jetpacs-results--nav :index)))
+      (should (string-match-p "3/3" captured))
+      ;; Clamp past the end: index unchanged, seam not re-invoked.
+      (let ((before captured))
+        (funcall step '((dir . 1)) nil)
+        (should (= 2 (plist-get jetpacs-results--nav :index)))
+        (should (equal before captured)))
+      ;; Back down, then clamp past the start.
+      (funcall step '((dir . -1)) nil)
+      (funcall step '((dir . -1)) nil)
+      (should (= 0 (plist-get jetpacs-results--nav :index)))
+      (let ((before captured))
+        (funcall step '((dir . -1)) nil)
+        (should (= 0 (plist-get jetpacs-results--nav :index)))
+        (should (equal before captured))))))
+
+(ert-deftest jetpacs-results-stepper-actions ()
+  "Stepper chrome shows only for the visited source buffer, one direction per end."
+  (jetpacs-tests--with-occur ob
+      "a needle\nb\nc needle\nd\ne needle\n" "needle"
+    (let* ((jetpacs-results--nav nil)
+           (loci (jetpacs-results--loci ob))
+           (jetpacs-results-visit-region-function (lambda (&rest _) nil))
+           (visit (gethash "results.visit" jetpacs-action-handlers))
+           (step (gethash "results.step" jetpacs-action-handlers)))
+      (funcall visit `((buffer . ,(buffer-name ob)) (pos . ,(car (nth 0 loci)))) nil)
+      (let ((dest (plist-get jetpacs-results--nav :dest)))
+        ;; A different buffer gets no stepper chrome.
+        (should-not (jetpacs-results-buffer-view-actions "no-such-buffer"))
+        ;; At the first locus only the forward button is offered (dir +1).
+        (let ((btns (jetpacs-results-buffer-view-actions dest)))
+          (should (= 1 (length btns)))
+          (should (= 1 (alist-get 'dir (alist-get 'args
+                                        (alist-get 'on_tap (car btns)))))))
+        ;; In the middle, both directions.
+        (funcall step '((dir . 1)) nil)
+        (should (= 2 (length (jetpacs-results-buffer-view-actions dest))))
+        ;; At the last locus only the back button remains (dir -1).
+        (funcall step '((dir . 1)) nil)
+        (let ((btns (jetpacs-results-buffer-view-actions dest)))
+          (should (= 1 (length btns)))
+          (should (= -1 (alist-get 'dir (alist-get 'args
+                                         (alist-get 'on_tap (car btns)))))))))))
 
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 

@@ -571,12 +571,20 @@ with a keyboard FAB that opens the buffer's keymap."
        ;; Content swap within the buffers view: stays an Emacs round-trip
        ;; (the list must be rebuilt).
        :nav-action (jetpacs-action "emacs.buffer.back")
-       :actions (list (jetpacs-icon-button
-                       "toc"
-                       (jetpacs-action "imenu.show"
-                                    :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))
-                                    :when-offline "drop")
-                       :content-description "Sections (imenu)"))
+       ;; When a section is showing a locus reached from occur/grep/xref,
+       ;; the results substrate contributes prev/next-match chrome; else
+       ;; nil.  Gated on an active section so it never shows on the whole
+       ;; buffer.  Then the imenu sections button.
+       :actions (append
+                 (when jetpacs-emacs-ui--section
+                   (jetpacs-results-buffer-view-actions
+                    jetpacs-emacs-ui--viewing-buffer))
+                 (list (jetpacs-icon-button
+                        "toc"
+                        (jetpacs-action "imenu.show"
+                                     :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))
+                                     :when-offline "drop")
+                        :content-description "Sections (imenu)")))
        :fab (jetpacs-fab "keyboard"
                       :on-tap (jetpacs-action "jetpacs.keymap.show"
                                :args `((buffer . ,jetpacs-emacs-ui--viewing-buffer))

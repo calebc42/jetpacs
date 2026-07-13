@@ -31,6 +31,7 @@
 (require 'jetpacs-lint)
 (require 'jetpacs-shell)
 (require 'jetpacs-keymap)
+(require 'jetpacs-results)
 (require 'jetpacs-files)
 (require 'jetpacs-minibuffer)
 (require 'jetpacs-emacs-ui)
@@ -667,6 +668,132 @@ TREE may be a node (alist), a list of nodes, or a vector of nodes."
 ;; ─── Demo org corpus ─────────────────────────────────────────────────────────
 
 ;; ─── App-managed config directory ────────────────────────────────────────────
+
+;; ─── Results / xref navigator substrate ──────────────────────────────────────
+;;
+;; occur / grep / compilation / xref all render as tappable loci cards, and a
+;; tap follows the locus into the source and shows it on the phone via the
+;; region seam.  The visit reuses each mode's own goto command under a
+;; display shim, so these tests exercise the real occur/compilation machinery
+;; rather than a parser of our own.
+
+(defmacro jetpacs-tests--with-occur (var text query &rest body)
+  "Run BODY with VAR bound to the *Occur* buffer for QUERY over TEXT.
+The temp source buffer and *Occur* are cleaned up afterwards."
+  (declare (indent 3))
+  (let ((src (make-symbol "src")))
+    `(let ((,src (generate-new-buffer "jetpacs-occur-src")))
+       (unwind-protect
+           (progn
+             (with-current-buffer ,src
+               (insert ,text)
+               (goto-char (point-min))
+               (occur ,query))
+             (let ((,var (get-buffer "*Occur*")))
+               ,@body))
+         (when (get-buffer "*Occur*") (kill-buffer "*Occur*"))
+         (when (buffer-live-p ,src) (kill-buffer ,src))))))
+
+(ert-deftest jetpacs-results-occur-loci ()
+  "occur match lines become loci; headings and blanks do not."
+  (jetpacs-tests--with-occur ob
+      "alpha needle one\nbeta\ngamma needle two\ndelta\nneedle three\n" "needle"
+    (let ((loci (jetpacs-results--loci ob)))
+      (should (= 3 (length loci)))
+      (should (cl-every (lambda (l) (and (integerp (car l)) (stringp (cdr l)))) loci))
+      ;; the trimmed row text carries the matched line
+      (should (cl-every (lambda (l) (string-match-p "needle" (cdr l))) loci)))))
+
+(ert-deftest jetpacs-results-render-shape ()
+  "The skin renders a count header plus one card per locus."
+  (jetpacs-tests--with-occur ob
+      "one needle\ntwo needle\nthree\n" "needle"
+    (let ((nodes (jetpacs-results-render ob)))
+      ;; header caption + 2 cards
+      (should (= 3 (length nodes)))
+      ;; a card carries a results.visit on_tap with a numeric position
+      (let ((card (jetpacs-tests--find-node
+                   nodes
+                   (lambda (n) (equal (alist-get 'action n) "results.visit")))))
+        (should card)
+        (should (numberp (alist-get 'pos (alist-get 'args card))))))))
+
+(ert-deftest jetpacs-results-occur-follow ()
+  "Following an occur locus lands in the source buffer on the matched line."
+  (jetpacs-tests--with-occur ob
+      "alpha needle one\nbeta\ngamma needle two\n" "needle"
+    (let* ((loci (jetpacs-results--loci ob))
+           (dest (jetpacs-results--follow ob (car (car loci)))))
+      (should dest)
+      (should (buffer-live-p (car dest)))
+      (with-current-buffer (car dest)
+        (goto-char (cdr dest))
+        (should (string-match-p
+                 "needle"
+                 (buffer-substring-no-properties
+                  (line-beginning-position) (line-end-position))))))))
+
+(ert-deftest jetpacs-results-visit-action-invokes-seam ()
+  "results.visit follows the locus and calls the region seam with buffer:line."
+  (jetpacs-tests--with-occur ob
+      "x needle\ny\nz needle\n" "needle"
+    (let* ((loci (jetpacs-results--loci ob))
+           (pos (car (car loci)))
+           captured
+           (jetpacs-results-visit-region-function
+            (lambda (name beg end label &optional point)
+              (setq captured (list name beg end label point))))
+           (fn (gethash "results.visit" jetpacs-action-handlers)))
+      (should fn)
+      (funcall fn `((buffer . ,(buffer-name ob)) (pos . ,pos)) nil)
+      (should captured)
+      (pcase-let ((`(,name ,beg ,end ,label ,point) captured))
+        (should (stringp name))
+        (should (and (integerp beg) (integerp end) (< beg end)))
+        (should (integerp point))
+        (should (string-match-p ":[0-9]+\\'" label))))))
+
+(ert-deftest jetpacs-results-visit-boundary ()
+  "results.visit refuses a buffer that is not a results-mode buffer."
+  (let ((plain (generate-new-buffer "jetpacs-not-results"))
+        called
+        (jetpacs-results-visit-region-function
+         (lambda (&rest _) (setq called t)))
+        (fn (gethash "results.visit" jetpacs-action-handlers)))
+    (unwind-protect
+        (with-current-buffer plain
+          (fundamental-mode)
+          (insert "just some text\n")
+          (funcall fn `((buffer . ,(buffer-name plain)) (pos . 1)) nil)
+          (should-not called))
+      (kill-buffer plain))))
+
+(ert-deftest jetpacs-results-compilation-follow ()
+  "A compilation locus over a real file follows into that file."
+  (let* ((dir (file-name-as-directory (make-temp-file "jetpacs-comp" t)))
+         (f (expand-file-name "real.txt" dir))
+         (cb (get-buffer-create "*jetpacs-compile-test*")))
+    (unwind-protect
+        (progn
+          (with-temp-file f
+            (insert "alpha needle one\nbeta\ngamma needle two\n"))
+          (with-current-buffer cb
+            (setq default-directory dir)
+            (insert "-*- mode: compilation -*-\n"
+                    (format "%s:1:alpha needle one\n" f)
+                    (format "%s:3:gamma needle two\n" f))
+            (compilation-mode)
+            (let ((inhibit-read-only t))
+              (compilation-parse-errors (point-min) (point-max))))
+          (let ((loci (jetpacs-results--loci cb)))
+            (should (= 2 (length loci)))
+            (let ((dest (jetpacs-results--follow cb (car (car loci)))))
+              (should dest)
+              (should (equal (expand-file-name f)
+                             (expand-file-name
+                              (buffer-file-name (car dest))))))))
+      (when (get-buffer cb) (kill-buffer cb))
+      (ignore-errors (delete-directory dir t)))))
 
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 

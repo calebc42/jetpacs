@@ -1,5 +1,10 @@
 # Handoff: execute platform-hardening Phase H (Tasks 22–24)
 
+**EXECUTED 2026-07-13 — Phase H is done** (one commit per task, order
+23 → 22 → 24, then the api-1.7.0 finalize commit; suite 141/141 + 54/54;
+on-device rows pending in the glasspane repo's TESTING-ON-DEVICE.md
+§18–§19). Kept as the record of the execution grounding.
+
 **Written 2026-07-13 for a fresh chat.** The task SPECS live in
 [PLAN-platform-hardening.md](PLAN-platform-hardening.md) § Phase H — read
 them first; they are complete and audit-grounded. This doc adds only what

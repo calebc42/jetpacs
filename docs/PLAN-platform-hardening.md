@@ -8,7 +8,8 @@ build on" thesis. It is ~90% *formalizing* patterns already shipped
 (Glasspane's config-dir verbs, the `elisp/` adopt logic, the `after-init`
 connect hook) plus one genuine latent-bug fix — the multi-app isolation
 seams are clobberable top-level `setq`s. See **Phase G** at the bottom.
-Phase G status: **in progress (2026-07-12)**.
+Phase G status: **done (2026-07-13)** — jetpacs Tasks 17–20 landed here,
+Glasspane Task 21 in its repo.
 
 **UPDATE (2026-07-12, second pass): Phase H appended — exploit the 30.1
 baseline.** An audit of what the Emacs 30.1 floor actually guarantees found
@@ -17,8 +18,14 @@ in the adopt flow), the APK's optional-build feature matrix
 (sqlite/treesit/native-comp/libxml) is never probed even though three queued
 decisions read it, and `package-vc-install` (29) was never considered as the
 pre-MELPA distribution path. See **Phase H** at the bottom.
-Phase H status: **not started**; the executable fresh-chat handoff is [PLAN-phase-h-handoff.md](PLAN-phase-h-handoff.md) (order: 23 -> 22 -> 24; Task 22 rides Phase G's
-Task 19 seam; Task 24 anytime).
+Phase H status: **done (2026-07-13)** — all of A–H is now done. Landed as
+one batch (api 1.7.0), one commit per task in the executed order 23 → 22
+→ 24: the build-feature probe (`jetpacs-build-features` + hello
+`features` field + Bridge doctor row), byte-compile-at-adopt with the
+`load-prefer-newer` backstop, and the package-vc install path (headers
+CI-pinned to `jetpacs-api-version`). On-device acceptance rows are
+pending in the glasspane repo's TESTING-ON-DEVICE.md §18–§19; the
+execution grounding is [PLAN-phase-h-handoff.md](PLAN-phase-h-handoff.md).
 
 **STATUS (2026-07-09): ALL PHASES DONE — this plan is complete.** Phase F
 (the repo split) executed 2026-07-09: this repo is the standalone

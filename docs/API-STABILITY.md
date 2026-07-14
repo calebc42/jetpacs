@@ -20,7 +20,10 @@ change signature incompatibly. Everything else is internal.
 > (the machine-readable wire contract in `contract.json`, and the promoted
 > shell/files/action seams below); `1.5.0` is the binding layer itself;
 > `1.6.0` is the org note-index batch (the `vulpea-note` accessor of the one
-> query grammar, plus the guarded vulpea source query).
+> query grammar, plus the guarded vulpea source query); `1.7.0` is the
+> platform-hardening Phase H batch (the build-feature probe pair and the
+> read-only `:render` settings row below — byte-compile-at-adopt and the
+> package-vc headers add behavior, not symbols).
 
 ## The two rules
 
@@ -86,6 +89,13 @@ Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
 `jetpacs-capability-invoke` — plus the customization vars `jetpacs-host`
 `jetpacs-port` `jetpacs-auth-token` `jetpacs-wants`.
 
+Build-feature probe (since 1.7.0): `jetpacs-build-features` (the flat
+symbol list of optional compile-time features this Emacs binary has —
+positive knowledge, since a version floor is not a build guarantee) and
+`jetpacs-feature-p`. A reporting surface only: nothing in the core gates
+on it, and consumers keep feature-local guards (e.g.
+`(sqlite-available-p)`) at the point of consumption.
+
 ### Actions & state (`jetpacs-surfaces.el`)
 
 `jetpacs-defaction` `jetpacs-on-state-change` `jetpacs-on-state-change-clear`
@@ -147,8 +157,10 @@ Settings (`jetpacs-settings.el`): `jetpacs-settings-register-section`
 `jetpacs-settings-add-link` `jetpacs-settings-add-native-link`
 `jetpacs-settings-sections` (since 1.1.0:
 the flat node list an app splices into its own body when it replaces
-the stock "settings" view), plus `jetpacs-native-settings-action`
-from `jetpacs-widgets.el`. Native links render first and must remain
+the stock "settings" view; since 1.7.0 a section entry may carry
+`:render`, a nullary node builder for a read-only informational row —
+excluded from the wire-set gate and state handlers), plus
+`jetpacs-native-settings-action` from `jetpacs-widgets.el`. Native links render first and must remain
 useful offline; regular links render under Emacs Settings. Registered
 sections and links render on the foundation's stock "settings" view
 without further wiring.

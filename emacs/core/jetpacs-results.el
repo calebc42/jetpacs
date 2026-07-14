@@ -242,8 +242,14 @@ command doesn't leave the results buffer (e.g. the target file is gone)."
                      (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
                     ((symbol-function 'switch-to-buffer-other-window)
                      (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
+            ;; Goto commands like `compile-goto-error' read the triggering
+            ;; event from `last-input-event' and jump to its position; a
+            ;; stale pending event (a tap elsewhere, a D-Bus reply) would
+            ;; hijack the jump.  This visit is driven by POS, not an event.
             (condition-case nil
-                (call-interactively cmd)
+                (let ((last-input-event nil)
+                      (last-nonmenu-event nil))
+                  (call-interactively cmd))
               (error nil))
             (setq dest-buf (current-buffer) dest-pos (point)))))
       ;; A visit that never left the results buffer is a failure, not a jump.

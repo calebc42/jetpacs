@@ -26,7 +26,8 @@ change signature incompatibly. Everything else is internal.
 > package-vc headers add behavior, not symbols); `1.8.0` is the hypertext
 > substrate (the document renderer under eww/help/Info, its shr rider seam,
 > and the promoted follow-shim below); `1.9.0` is the magit-section
-> substrate (section buffers as collapsible cards below).
+> substrate (section buffers as collapsible cards below); `1.10.0` is the
+> remote-hosts hub (the server pillar's front door below).
 
 ## The two rules
 
@@ -166,6 +167,14 @@ registration needed — the base mode covers derivatives, and the library
 is never required from the core. Row taps follow into the region view;
 long-press serves the section's own key bindings as a bridged menu.
 Public surface: the customization var `jetpacs-sections-max-lines`.
+
+Remote hosts (`jetpacs-hosts.el`, since 1.10.0): the "hosts" view — a card
+per TRAMP endpoint with Files (dired), Shell, Services (`daemons.el`,
+soft), and Disconnect; ssh password prompts bridge to the phone, and
+everything the host opens rides the existing substrates. Public surface:
+the customization vars `jetpacs-hosts` (explicit LABEL → TRAMP-DIR
+entries, the action allowlist) `jetpacs-hosts-from-ssh-config`
+`jetpacs-hosts-connect-timeout`.
 
 Tablist skins (`jetpacs-tablist.el`): the `jetpacs-tablist-header-functions`
 `jetpacs-tablist-row-functions` `jetpacs-tablist-filter-functions` alists.

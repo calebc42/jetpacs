@@ -182,6 +182,9 @@ and carries the full (untrimmed) text."
     (jetpacs-tools--entry "terminal" "Shell"
                        "M-x shell, rendered as a REPL"
                        (jetpacs-action "tools.shell" :when-offline "drop"))
+    (jetpacs-tools--entry "dns" "Remote hosts"
+                       "Files, shells, and services over TRAMP"
+                       (jetpacs-shell-switch-view "hosts"))
     (jetpacs-tools--entry "memory" "Processes"
                        "Subprocesses of this Emacs"
                        (jetpacs-action "tools.processes" :when-offline "drop"))

@@ -36,6 +36,7 @@
 (require 'jetpacs-results)
 (require 'jetpacs-hypertext)
 (require 'jetpacs-sections)
+(require 'jetpacs-hosts)
 (require 'jetpacs-files)
 (require 'jetpacs-minibuffer)
 (require 'jetpacs-emacs-ui)
@@ -1745,6 +1746,97 @@ Tolerant of batch Info quirks — skips if the node won't open."
               (dolist (n nodes) (should (null (jetpacs-lint-spec n)))))))
       (ignore-errors (kill-buffer "*info*"))
       (delete-directory dir t))))
+
+;; ─── The remote hosts hub ────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-hosts-ssh-config-parse ()
+  "The ssh-config parser: concrete Host names (multi-name lines too), in
+order, deduplicated; wildcard/negation patterns and non-Host lines skipped;
+missing file is nil."
+  (let ((file (make-temp-file "jetpacs-ssh-config")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "# comment\n"
+                    "Host build\n"
+                    "  HostName build.example.org\n"
+                    "Host web db web\n"
+                    "Host *\n"
+                    "  ServerAliveInterval 60\n"
+                    "Host *.internal !bastion staging\n"
+                    "Match host build\n"
+                    "  User deploy\n"))
+          (should (equal (jetpacs-hosts--ssh-config-hosts file)
+                         '("build" "web" "db" "staging"))))
+      (delete-file file))
+    (should (null (jetpacs-hosts--ssh-config-hosts "/no/such/file")))))
+
+(ert-deftest jetpacs-hosts-list-merge ()
+  "The live host list: explicit `jetpacs-hosts' entries first and shadowing
+same-labelled ssh-config discoveries; the rest appended as /ssh: cards."
+  (let ((jetpacs-hosts '(("build" . "/ssh:deploy@build:/srv/")
+                      ("pi" . "/ssh:pi:~/")))
+        (jetpacs-hosts-from-ssh-config t))
+    (cl-letf (((symbol-function 'jetpacs-hosts--ssh-config-hosts)
+               (lambda (_) '("build" "web"))))
+      (should (equal (jetpacs-hosts--all)
+                     '(("build" . "/ssh:deploy@build:/srv/")
+                       ("pi" . "/ssh:pi:~/")
+                       ("web" . "/ssh:web:~/")))))))
+
+(ert-deftest jetpacs-hosts-view-body ()
+  "Host cards carry the label — never the TRAMP path — in their action
+args, and the whole body is wire-valid; no hosts renders the empty state."
+  (let ((jetpacs-hosts '(("box" . "/ssh:box:~/")))
+        (jetpacs-hosts-from-ssh-config nil))
+    (let ((body (jetpacs-hosts--body)))
+      (should (null (jetpacs-lint-spec body)))
+      ;; every action in the tree carries only the label
+      (let (actions)
+        (cl-labels ((walk (n)
+                      (cond
+                       ;; an action alist proper: (action . "name") is a string
+                       ;; (a button node's `action' key holds a whole alist)
+                       ((and (consp n) (consp (car-safe n))
+                             (stringp (alist-get 'action n)))
+                        (push n actions))
+                       ;; cars and cdrs cover lists, alists, and dotted pairs
+                       ((consp n) (walk (car n)) (walk (cdr n)))
+                       ((vectorp n) (mapc #'walk (append n nil))))))
+          (walk body))
+        (should actions)
+        (dolist (a actions)
+          (let ((args (alist-get 'args a)))
+            (should (equal (alist-get 'host args) "box"))
+            (should-not (rassoc "/ssh:box:~/" args)))))))
+  (let ((jetpacs-hosts nil) (jetpacs-hosts-from-ssh-config nil))
+    (should (equal (alist-get 't (jetpacs-hosts--body)) "empty_state"))))
+
+(ert-deftest jetpacs-hosts-files-action ()
+  "hosts.files resolves the label through the allowlist and shows the
+dired buffer through the buffer-view seam; an unknown label touches
+nothing."
+  (let* ((jetpacs-hosts '(("box" . "/ssh:box:~/")))
+         (jetpacs-hosts-from-ssh-config nil)
+         (fn (gethash "hosts.files" jetpacs-action-handlers))
+         (dired-buf (generate-new-buffer " *jetpacs-hosts-dired*"))
+         opened viewed)
+    (unwind-protect
+        (cl-letf (((symbol-function 'dired-noselect)
+                   (lambda (dir &rest _) (setq opened dir) dired-buf))
+                  (jetpacs-tablist-view-buffer-function
+                   (lambda (name) (setq viewed name))))
+          (should fn)
+          ;; happy path: resolved dir opened, buffer handed to the view
+          (funcall fn '((host . "box")) nil)
+          (should (equal opened "/ssh:box:~/"))
+          (should (equal viewed (buffer-name dired-buf)))
+          ;; unknown label: allowlist refuses, nothing runs
+          (setq opened nil viewed nil)
+          (funcall fn '((host . "evil")) nil)
+          (should-not opened)
+          (should-not viewed))
+      (kill-buffer dired-buf))))
 
 ;; ─── The magit-section substrate ─────────────────────────────────────────────
 ;;

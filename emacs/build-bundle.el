@@ -57,6 +57,7 @@
                      "core/jetpacs-package-browser.el"
                      "core/jetpacs-customize.el"
                      "core/jetpacs-tools.el"
+                     "core/jetpacs-hosts.el"
                      "core/jetpacs-automations.el"))
        (emit (lambda (out features summary files)
                (with-temp-file out

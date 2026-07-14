@@ -1,6 +1,6 @@
 {
   "contract_format": 1,
-  "api_version": "1.9.0",
+  "api_version": "1.10.0",
   "protocol_version": 1,
   "node_types": [
     "text",

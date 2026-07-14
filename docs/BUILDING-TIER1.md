@@ -515,6 +515,11 @@ Chrome every app inherits — link to it, don't rebuild it:
   follow into the region view, long-press for the section's own key
   bindings as a menu. Nothing to register — the base mode covers every
   derivative.
+- **Remote hosts** — a card per TRAMP endpoint (your `jetpacs-hosts`
+  entries plus `~/.ssh/config` discoveries): browse its files, open a
+  shell on it, glance at its services (`daemons.el`), disconnect. The
+  ssh password prompt is a phone dialog; everything opened rides the
+  substrates above, so remote dired/magit/compile need nothing new.
 
 ## The rules that keep the wire safe
 

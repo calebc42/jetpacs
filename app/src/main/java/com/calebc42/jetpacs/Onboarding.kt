@@ -31,7 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Rocket
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilledTonalButton
@@ -381,7 +381,7 @@ private fun WelcomeStep(
 ) {
     StepScaffold(onBack = null) {
         Icon(
-            Icons.Default.Rocket,
+            painter = painterResource(id = R.drawable.jetpacs_logo),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(56.dp).padding(bottom = 8.dp),

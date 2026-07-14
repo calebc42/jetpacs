@@ -76,7 +76,7 @@ fun JetpacsTheme(
     // over both — the phone mirrors the desktop, including the theme's own
     // light/dark polarity. Syntax highlighting follows the same rule: pushed
     // Emacs token colors when synced, a fixed luminance-keyed set otherwise.
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val emacsTheme by JetpacsRuntime.emacsTheme.collectAsState()

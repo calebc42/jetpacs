@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.Color
  * these instead of the baseline's #6750A4, so a pre-Android-12 device (or
  * `dynamicColor = false`) reads as Emacs, not as the Compose template.
  */
-val EmacsPurple = Color(0xFF7E55B3)        // logo midtone — light primary
+val EmacsPurple = Color(0xFF7F5AB6)        // logo midtone — light primary
 val EmacsPurpleLight = Color(0xFFD3BCF6)   // toward the #8381C5 stop — dark primary
 val EmacsPurpleDeep = Color(0xFF5B2A85)    // logo shadow stop — dark primaryContainer
 val EmacsPurpleDim = Color(0xFF411F5D)     // logo darkest stop — dark onPrimary

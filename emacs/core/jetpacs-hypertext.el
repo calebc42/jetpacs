@@ -35,7 +35,21 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'jetpacs-widgets)
+(require 'jetpacs-surfaces)     ; jetpacs-defaction
 (require 'jetpacs-buffer)      ; jetpacs-render-buffer-register / call-shimmed
+
+;; Forward declarations for the optional document packages this substrate
+;; reads at render time.  None is required at load: the core stays app-free
+;; (test/core-load-test.el), and each render path checks these at runtime.
+(defvar eww-data)
+(defvar eww-history)
+(defvar eww-history-position)
+(defvar help-xref-stack)
+(defvar help-xref-forward-stack)
+(defvar help-xref-stack-item)
+(defvar Info-history)
+(defvar Info-history-forward)
+(defvar Info-current-node)
 
 ;; ─── The document model ───────────────────────────────────────────────────────
 ;;
@@ -288,12 +302,223 @@ precedent."
         (jetpacs-buffer-render buf)
       (let ((model (jetpacs-hypertext--scan-shr buf)))
         (if model
-            (jetpacs-hypertext--emit model (jetpacs-hypertext--eww-title buf))
+            (jetpacs-hypertext--render-document
+             buf model (jetpacs-hypertext--eww-title buf))
           (jetpacs-buffer-render buf))))))
 
-;; eww is a built-in this foundation may name directly; third-party shr
-;; consumers (elfeed-show, nov, devdocs) register softly in a later stage.
+;; ─── Document navigation (the nav toolbar + hypertext.nav action) ────────────
+;;
+;; A rendered document navigates by running the mode's OWN commands (eww/help
+;; history, Info node motion) — never a command named on the wire.  The wire
+;; carries only an op symbol; the op->command allowlist and the mode gate live
+;; here, exactly like `results.visit'.
+
+(defconst jetpacs-hypertext--nav-ops
+  '((eww-mode  (back . eww-back-url) (forward . eww-forward-url)
+               (reload . eww-reload))
+    (help-mode (back . help-go-back) (forward . help-go-forward))
+    (Info-mode (prev . Info-prev) (next . Info-next) (up . Info-up)
+               (toc . Info-toc)
+               (back . Info-history-back) (forward . Info-history-forward)))
+  "Per-mode document-nav op -> the mode's own command.
+The op symbol is all the wire carries; the command is resolved here, so no
+command name ever travels over the wire.")
+
+(defconst jetpacs-hypertext--nav-icons
+  '((back    . ("arrow_back"    . "Back"))
+    (forward . ("arrow_forward" . "Forward"))
+    (reload  . ("refresh"       . "Reload"))
+    (prev    . ("chevron_left"  . "Previous"))
+    (next    . ("chevron_right" . "Next"))
+    (up      . ("arrow_upward"  . "Up"))
+    (toc     . ("toc"           . "Contents")))
+  "Nav op -> (ICON . LABEL) for the toolbar.")
+
+(defun jetpacs-hypertext--nav-mode (&optional buffer)
+  "The `jetpacs-hypertext--nav-ops' mode key BUFFER derives from, or nil."
+  (with-current-buffer (or buffer (current-buffer))
+    (cl-some (lambda (cell) (and (derived-mode-p (car cell)) (car cell)))
+             jetpacs-hypertext--nav-ops)))
+
+(defun jetpacs-hypertext--nav-command (mode op)
+  "The command for nav OP (a symbol) in MODE, or nil if not allowlisted."
+  (cdr (assq op (cdr (assq mode jetpacs-hypertext--nav-ops)))))
+
+(defun jetpacs-hypertext--nav-live-ops (mode)
+  "The live nav ops for MODE in the current buffer, in display order.
+Liveness is exact where cheap (the history stacks); Info node motion
+\(prev/next/up/toc) is always offered — the command self-messages at a node
+boundary and the shim swallows it."
+  (pcase mode
+    ('eww-mode
+     (append
+      (and (bound-and-true-p eww-history)
+           (< eww-history-position (length eww-history)) '(back))
+      (and (boundp 'eww-history-position)
+           (> eww-history-position 1) '(forward))
+      '(reload)))
+    ('help-mode
+     (append (and (bound-and-true-p help-xref-stack) '(back))
+             (and (bound-and-true-p help-xref-forward-stack) '(forward))))
+    ('Info-mode
+     (append '(prev next up toc)
+             (and (bound-and-true-p Info-history) '(back))
+             (and (bound-and-true-p Info-history-forward) '(forward))))
+    (_ nil)))
+
+(defun jetpacs-hypertext--nav-toolbar (buffer-name mode)
+  "An icon-button row of the live nav ops for MODE in the current buffer,
+or nil when there are none."
+  (let ((ops (jetpacs-hypertext--nav-live-ops mode)))
+    (when ops
+      (apply #'jetpacs-row
+             (append
+              (mapcar
+               (lambda (op)
+                 (let ((ico (cdr (assq op jetpacs-hypertext--nav-icons))))
+                   (jetpacs-icon-button
+                    (car ico)
+                    (jetpacs-action "hypertext.nav"
+                                 :args `((buffer . ,buffer-name)
+                                         (op . ,(symbol-name op))))
+                    :content-description (cdr ico))))
+               ops)
+              (list :spacing 4))))))
+
+(jetpacs-defaction "hypertext.nav"
+  ;; Navigate a rendered document buffer by running its mode's OWN command.
+  ;; BUFFER must derive from a registered document mode and OP must be in
+  ;; that mode's allowlist, so a name off the wire can only ever drive a
+  ;; real document buffer's own navigation (the `results.visit' contract).
+  (lambda (args _)
+    (let* ((buffer (alist-get 'buffer args))
+           (op (alist-get 'op args))
+           (buf (and (stringp buffer) (get-buffer buffer))))
+      (when (and buf (stringp op))
+        (with-current-buffer buf
+          (let* ((mode (jetpacs-hypertext--nav-mode buf))
+                 (cmd (and mode (jetpacs-hypertext--nav-command
+                                 mode (intern-soft op)))))
+            (if (commandp cmd)
+                (jetpacs-buffer-call-shimmed cmd)
+              (message "hypertext.nav: %s not available here" op))))
+        (when (functionp jetpacs-buffer-refresh-function)
+          (funcall jetpacs-buffer-refresh-function))))))
+
+(defun jetpacs-hypertext--render-document (buf segments title)
+  "Assemble a rendered document for BUF: the nav toolbar (if any) atop the
+emitted SEGMENTS, led by TITLE.  Runs in BUF for buffer-local nav state."
+  (with-current-buffer buf
+    (let* ((mode (jetpacs-hypertext--nav-mode buf))
+           (toolbar (and mode (jetpacs-hypertext--nav-toolbar
+                               (buffer-name buf) mode))))
+      (append (and toolbar (list toolbar))
+              (jetpacs-hypertext--emit segments title)))))
+
+;; ─── Generic line scanner (for the non-shr text families) ────────────────────
+;;
+;; help and Info are not shr buffers; their structure is line-oriented and
+;; alignment-bearing (argument lists, menus), so — unlike the shr adapter's
+;; block reflow — each non-blank line becomes its own paragraph, preserving
+;; layout.  Links and buttons (help xrefs, Info menu entries and *note refs)
+;; ride the Tier 0 line-span builder into `jetpacs.buffer.act' taps for free.
+
+(defun jetpacs-hypertext--scan-lines (buf &optional classify)
+  "Scan BUF into a model, one segment per non-blank line (layout preserved).
+CLASSIFY, if non-nil, is called with (BEG END) at each non-blank line and
+returns a heading level (integer) to make that line a heading, the symbol
+`skip' to drop it (e.g. an Info underline rule), or nil for a paragraph."
+  (with-current-buffer buf
+    (let ((jetpacs-buffer-emit-colors nil)   ; document text is theme-coloured
+          (name (buffer-name buf))
+          segments)
+      (save-excursion
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let ((bol (line-beginning-position))
+                (eol (line-end-position)))
+            (unless (>= bol eol)              ; blank line
+              (let ((class (and classify (funcall classify bol eol))))
+                (cond
+                 ((eq class 'skip))
+                 ((integerp class)
+                  (push (list :kind 'heading :level class
+                              :text (jetpacs-hypertext--collapse-ws
+                                     (buffer-substring-no-properties bol eol)))
+                        segments))
+                 (t
+                  (let ((spans (jetpacs-buffer--line-spans bol eol name)))
+                    (when spans
+                      (push (list :kind 'para :spans spans) segments))))))))
+          (forward-line 1)))
+      (nreverse segments))))
+
+;; ─── Adapter: help-mode ──────────────────────────────────────────────────────
+
+(defun jetpacs-hypertext--help-title (buf)
+  "A title for help BUF from `help-xref-stack-item' (the current subject)."
+  (with-current-buffer buf
+    (and (boundp 'help-xref-stack-item)
+         (consp help-xref-stack-item)
+         (jetpacs-hypertext--nonempty
+          (format "%s" (cadr help-xref-stack-item))))))
+
+(defun jetpacs-hypertext-render-help (buf)
+  "Tier 0.5 renderer for help-mode: a nav toolbar and the help subject over
+the help text, whose xref buttons are tappable through the Tier 0 line-span
+builder."
+  (with-current-buffer buf
+    (if (< (buffer-size) 1)
+        (jetpacs-buffer-render buf)
+      (jetpacs-hypertext--render-document
+       buf (jetpacs-hypertext--scan-lines buf)
+       (jetpacs-hypertext--help-title buf)))))
+
+;; ─── Adapter: Info-mode ──────────────────────────────────────────────────────
+
+(defun jetpacs-hypertext--info-underlined-level (eol)
+  "Heading level if the line ending at EOL is underlined by a rule line just
+below it (Info section headings): * chapter = 1, = section = 2, - sub = 3."
+  (save-excursion
+    (goto-char eol)
+    (when (zerop (forward-line 1))
+      (let ((u (string-trim (buffer-substring-no-properties
+                             (line-beginning-position) (line-end-position)))))
+        (cond ((string-match-p "\\`\\*\\{2,\\}\\'" u) 1)
+              ((string-match-p "\\`=\\{2,\\}\\'" u) 2)
+              ((string-match-p "\\`-\\{2,\\}\\'" u) 3))))))
+
+(defun jetpacs-hypertext--info-line-class (beg end)
+  "Classify an Info line [BEG, END): a heading level, `skip', or nil."
+  (let ((text (string-trim (buffer-substring-no-properties beg end))))
+    (if (string-match-p "\\`\\(=\\{2,\\}\\|-\\{2,\\}\\|\\*\\{2,\\}\\)\\'" text)
+        'skip                               ; a bare underline rule — drop it
+      (jetpacs-hypertext--info-underlined-level end))))
+
+(defun jetpacs-hypertext--info-title (buf)
+  "A title for Info BUF: its current node name (breadcrumb)."
+  (with-current-buffer buf
+    (and (boundp 'Info-current-node)
+         (jetpacs-hypertext--nonempty (format "%s" Info-current-node)))))
+
+(defun jetpacs-hypertext-render-info (buf)
+  "Tier 0.5 renderer for Info-mode: a nav toolbar and the node name over the
+node body, with menu entries and cross-references tappable via the Tier 0
+line-span builder and === / --- underlined headings lifted to sections."
+  (with-current-buffer buf
+    (if (< (buffer-size) 1)
+        (jetpacs-buffer-render buf)
+      (jetpacs-hypertext--render-document
+       buf (jetpacs-hypertext--scan-lines
+            buf #'jetpacs-hypertext--info-line-class)
+       (jetpacs-hypertext--info-title buf)))))
+
+;; eww, help, and Info are built-ins this foundation may name directly;
+;; third-party shr consumers (elfeed-show, nov, devdocs) register softly in a
+;; later stage.
 (jetpacs-render-buffer-register 'eww-mode #'jetpacs-hypertext-render)
+(jetpacs-render-buffer-register 'help-mode #'jetpacs-hypertext-render-help)
+(jetpacs-render-buffer-register 'Info-mode #'jetpacs-hypertext-render-info)
 
 (provide 'jetpacs-hypertext)
 ;;; jetpacs-hypertext.el ends here

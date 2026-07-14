@@ -1467,6 +1467,111 @@ wire-valid.  Gated on libxml (absent in lean builds; present in CI Emacs)."
     (dolist (n (jetpacs-hypertext--emit model "Test Page"))
       (should (null (jetpacs-lint-spec n))))))
 
+(ert-deftest jetpacs-hypertext-nav-allowlist ()
+  "hypertext.nav resolves only a mode's own allowlisted ops; anything else —
+a foreign op, an op for the wrong mode, a non-document mode — resolves to
+no command, so the wire can never name a command to run."
+  (should (eq (jetpacs-hypertext--nav-command 'eww-mode 'back) 'eww-back-url))
+  (should (eq (jetpacs-hypertext--nav-command 'Info-mode 'next) 'Info-next))
+  (should (eq (jetpacs-hypertext--nav-command 'help-mode 'forward) 'help-go-forward))
+  (should (null (jetpacs-hypertext--nav-command 'eww-mode 'next)))     ; not for eww
+  (should (null (jetpacs-hypertext--nav-command 'help-mode 'reload)))  ; not for help
+  (should (null (jetpacs-hypertext--nav-command 'text-mode 'back)))    ; not a doc mode
+  (should (null (jetpacs-hypertext--nav-command 'eww-mode 'evil))))    ; unknown op
+
+(ert-deftest jetpacs-hypertext-nav-live-ops ()
+  "Info always offers node motion; back/forward gate on the live history."
+  (should (equal (jetpacs-hypertext--nav-live-ops 'text-mode) nil))
+  (let ((ops (jetpacs-hypertext--nav-live-ops 'Info-mode)))
+    (dolist (op '(prev next up toc)) (should (memq op ops)))))
+
+(ert-deftest jetpacs-hypertext-help-adapter ()
+  "help-mode renders as a document: the subject is the title, xref buttons
+become jetpacs.buffer.act taps, and the emitted document is wire-valid."
+  (require 'help-mode)
+  (save-window-excursion (describe-function 'car))
+  (let* ((buf (get-buffer "*Help*"))
+         (model (with-current-buffer buf (jetpacs-hypertext--scan-lines buf)))
+         (title (jetpacs-hypertext--help-title buf))
+         (nodes (jetpacs-hypertext-render-help buf))
+         (spans (apply #'append
+                       (mapcar (lambda (s) (plist-get s :spans))
+                               (seq-filter
+                                (lambda (s) (eq (plist-get s :kind) 'para)) model))))
+         (taps (seq-filter (lambda (sp) (alist-get 'on_tap sp)) spans)))
+    (should (equal title "car"))
+    (should (>= (length taps) 1))
+    (should (equal (alist-get 'action (alist-get 'on_tap (car taps)))
+                   "jetpacs.buffer.act"))
+    (dolist (n nodes) (should (null (jetpacs-lint-spec n))))))
+
+(ert-deftest jetpacs-hypertext-info-classify ()
+  "The Info line classifier lifts underlined lines to headings (with levels),
+drops the bare underline rule, and leaves prose as paragraphs."
+  (with-temp-buffer
+    (insert "Fixture Top\n***********\n\nIntro paragraph.\n\n"
+            "The Second Node\n===============\n\nBody.\n")
+    (let (classes)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((bol (line-beginning-position)) (eol (line-end-position)))
+          (push (if (>= bol eol) 'blank
+                  (jetpacs-hypertext--info-line-class bol eol))
+                classes))
+        (forward-line 1))
+      ;; Top(*=1) rule(skip) blank Intro(nil) blank Second(===2) rule(skip) blank Body(nil)
+      (should (equal (seq-take (nreverse classes) 9)
+                     '(1 skip blank nil blank 2 skip blank nil))))))
+
+(ert-deftest jetpacs-hypertext-info-adapter ()
+  "An Info node renders as a document: node-name title, its underlined
+heading lifted to a section (the rule line dropped), and a wire-valid tree.
+Tolerant of batch Info quirks — skips if the node won't open."
+  (require 'info)
+  (let* ((dir (make-temp-file "jetpacs-info" t))
+         (file (expand-file-name "fixture.info" dir))
+         opened)
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "This is fixture.info.\n\n"
+                    "\037\n"
+                    "File: fixture.info,  Node: Top,  Up: (dir)\n\n"
+                    "Fixture Top\n***********\n\n"
+                    "Intro paragraph of the top node.\n\n"
+                    "* Menu:\n\n"
+                    "* Second::    The second node.\n\n"
+                    "\037\n"
+                    "File: fixture.info,  Node: Second,  Prev: Top,  Up: Top\n\n"
+                    "The Second Node\n===============\n\n"
+                    "Body of the second node.\n"))
+          (setq opened
+                (ignore-errors
+                  (save-window-excursion (Info-find-node file "Top"))
+                  (get-buffer "*info*")))
+          (skip-unless opened)
+          (with-current-buffer opened
+            (let* ((model (jetpacs-hypertext--scan-lines
+                           opened #'jetpacs-hypertext--info-line-class))
+                   (headings (seq-filter
+                              (lambda (s) (eq (plist-get s :kind) 'heading)) model))
+                   (nodes (jetpacs-hypertext-render-info opened)))
+              (should (member "Fixture Top"
+                              (mapcar (lambda (h) (plist-get h :text)) headings)))
+              ;; the "***********" rule line is not emitted as a paragraph
+              (should-not
+               (seq-find
+                (lambda (s)
+                  (and (eq (plist-get s :kind) 'para)
+                       (string-match-p
+                        "\\`[*=-]+\\'"
+                        (string-trim (jetpacs-hypertext--spans-text
+                                      (plist-get s :spans))))))
+                model))
+              (dolist (n nodes) (should (null (jetpacs-lint-spec n)))))))
+      (ignore-errors (kill-buffer "*info*"))
+      (delete-directory dir t))))
+
 ;; ─── Triggers & device capabilities (SPEC §10–§11) ──────────────────────────
 
 (ert-deftest jetpacs-triggers-replace-set-push ()

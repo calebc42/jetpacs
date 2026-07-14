@@ -9,6 +9,13 @@
 ;;
 ;; This is the core engine for third-party Tier-1 apps (like Glasspane)
 ;; or declarative runtimes (like jetpacs-crud.el) to read and query org data.
+;;
+;; The query grammar is interpreted ONCE (`jetpacs-org--matches-p') over a
+;; pluggable data accessor: `jetpacs-org-entry-matches-p' reads the org
+;; entry at point, `jetpacs-org-note-matches-p' reads a `vulpea-note'
+;; struct off the vulpea index.  vulpea is an OPTIONAL engine: nothing
+;; here requires it at load, the note path is only entered when a caller
+;; hands us a note, and `jetpacs-org-vulpea-available-p' is the probe.
 
 ;;; Code:
 
@@ -16,6 +23,23 @@
 (require 'org-agenda)
 (require 'org-id)
 (require 'cl-lib)
+
+;; The vulpea note index is an optional engine (installed app-side or by
+;; the composer's dependency bootstrap); these are compile-time stubs only.
+(declare-function vulpea-note-id "vulpea-note")
+(declare-function vulpea-note-path "vulpea-note")
+(declare-function vulpea-note-title "vulpea-note")
+(declare-function vulpea-note-todo "vulpea-note")
+(declare-function vulpea-note-tags "vulpea-note")
+(declare-function vulpea-note-priority "vulpea-note")
+(declare-function vulpea-note-level "vulpea-note")
+(declare-function vulpea-note-properties "vulpea-note")
+(declare-function vulpea-note-scheduled "vulpea-note")
+(declare-function vulpea-note-deadline "vulpea-note")
+(declare-function vulpea-note-closed "vulpea-note")
+(declare-function vulpea-note-outline-path "vulpea-note")
+(declare-function vulpea-db-query "vulpea-db")
+(declare-function vulpea-db-query-by-directory "vulpea-db")
 
 ;; ─── Cache layer ───────────────────────────────────────────────────────────────
 
@@ -190,71 +214,169 @@ Signals `user-error' on a malformed sexp."
    ((stringp spec) (time-to-days (org-time-string-to-time spec)))
    (t (user-error "Unsupported query date %S" spec))))
 
+(defun jetpacs-org--planning-match-spec (stamp args)
+  "Match raw planning STAMP string against ARGS plist (:on / :from / :to).
+Empty ARGS means mere presence of the stamp."
+  (and (stringp stamp) (not (string-empty-p stamp))
+       (let ((day (time-to-days (org-time-string-to-time stamp)))
+             (on (plist-get args :on))
+             (from (plist-get args :from))
+             (to (plist-get args :to)))
+         (and (or (not on) (equal day (jetpacs-org--planning-day on)))
+              (or (not from) (>= day (jetpacs-org--planning-day from)))
+              (or (not to) (<= day (jetpacs-org--planning-day to)))))))
+
 (defun jetpacs-org--planning-match-p (which args)
   "Match the WHICH (\"SCHEDULED\"/\"DEADLINE\") stamp at point against ARGS."
-  (let ((ts (org-entry-get (point) which)))
-    (and ts
-         (let ((day (time-to-days (org-time-string-to-time ts)))
-               (on (plist-get args :on))
-               (from (plist-get args :from))
-               (to (plist-get args :to)))
-           (and (or (not on) (equal day (jetpacs-org--planning-day on)))
-                (or (not from) (>= day (jetpacs-org--planning-day from)))
-                (or (not to) (<= day (jetpacs-org--planning-day to))))))))
+  (jetpacs-org--planning-match-spec (org-entry-get (point) which) args))
 
 (defun jetpacs-org--entry-priority ()
   "The priority character of the heading at point, or nil."
   (save-excursion (org-back-to-heading t) (nth 3 (org-heading-components))))
 
-(defun jetpacs-org-entry-matches-p (tree)
-  "Non-nil when the org entry at point matches org-ql sexp TREE.
-This is the built-in fallback interpreter implementing the common subset
-of org-ql. Signals `user-error' on unsupported terms."
+(defun jetpacs-org--matches-p (tree get)
+  "Non-nil when the entry read through accessor GET matches org-ql sexp TREE.
+The ONE interpreter of the built-in query grammar.  GET is
+\(funcall GET WHAT &rest ARGS) with WHAT one of:
+  todo            -> the TODO keyword string, or nil
+  done            -> non-nil when the entry counts as done
+  tags            -> the entry's tag list
+  priority        -> the priority character, or nil
+  title           -> the headline/title string, or nil
+  level           -> the outline level integer, or nil
+  property NAME   -> the property's string value, or nil
+  planning WHICH  -> the raw SCHEDULED/DEADLINE stamp string, or nil
+  regexp-match RE -> non-nil when RE hits the entry's haystack
+Signals `user-error' on unsupported terms."
   (pcase tree
-    (`(and . ,cs) (cl-every #'jetpacs-org-entry-matches-p cs))
-    (`(or . ,cs) (and (cl-some #'jetpacs-org-entry-matches-p cs) t))
-    (`(not ,c) (not (jetpacs-org-entry-matches-p c)))
+    (`(and . ,cs) (cl-every (lambda (c) (jetpacs-org--matches-p c get)) cs))
+    (`(or . ,cs) (and (cl-some (lambda (c) (jetpacs-org--matches-p c get)) cs) t))
+    (`(not ,c) (not (jetpacs-org--matches-p c get)))
     (`(todo . ,kws)
-     (let ((st (org-get-todo-state)))
+     (let ((st (funcall get 'todo)))
        (and st (if kws (and (member st kws) t)
-                 (not (member st org-done-keywords))))))
-    (`(done)
-     (let ((st (org-get-todo-state)))
-       (and st (member st org-done-keywords) t)))
+                 (not (funcall get 'done))))))
+    (`(done) (and (funcall get 'done) t))
     (`(tags . ,tags)
-     (let ((have (org-get-tags nil t)))
+     (let ((have (funcall get 'tags)))
        (if tags (and (cl-some (lambda (tg) (member tg have)) tags) t)
          (and have t))))
     (`(priority ,(and op (pred symbolp)) ,val)
-     (let ((pr (jetpacs-org--entry-priority))
+     (let ((pr (funcall get 'priority))
            (want (if (stringp val) (string-to-char val) val)))
+       ;; org urgency runs A > B > C — the higher priority is the smaller
+       ;; character, so the comparator flips against the chars.
        (and pr (pcase op
                  ('< (> pr want)) ('<= (>= pr want))
                  ('> (< pr want)) ('>= (<= pr want))
                  ('= (= pr want))
                  (_ (user-error "Unsupported priority comparator %s" op))))))
     (`(priority . ,ps)
-     (let ((pr (jetpacs-org--entry-priority)))
+     (let ((pr (funcall get 'priority)))
        (if ps (and pr (member (char-to-string pr) ps) t)
          (and pr t))))
     (`(heading . ,texts)
-     (let ((hl (or (nth 4 (org-heading-components)) ""))
+     (let ((hl (or (funcall get 'title) ""))
            (case-fold-search t))
        (cl-every (lambda (s) (string-match-p (regexp-quote s) hl)) texts)))
     (`(regexp . ,res)
+     (cl-every (lambda (re) (funcall get 'regexp-match re)) res))
+    (`(property ,name . ,val)
+     (let ((v (funcall get 'property name)))
+       (if val (equal v (car val)) (and v t))))
+    (`(level ,n) (eql (funcall get 'level) n))
+    (`(level ,n ,m) (let ((l (funcall get 'level))) (and l (<= n l m))))
+    (`(scheduled . ,args)
+     (jetpacs-org--planning-match-spec (funcall get 'planning "SCHEDULED") args))
+    (`(deadline . ,args)
+     (jetpacs-org--planning-match-spec (funcall get 'planning "DEADLINE") args))
+    (_ (user-error "Query term %S needs the org-ql package installed" tree))))
+
+(defun jetpacs-org--point-get (what &rest args)
+  "The grammar accessor over the org entry AT POINT."
+  (pcase what
+    ('todo (org-get-todo-state))
+    ('done (let ((st (org-get-todo-state)))
+             (and st (member st org-done-keywords) t)))
+    ('tags (org-get-tags nil t))
+    ('priority (jetpacs-org--entry-priority))
+    ('title (nth 4 (org-heading-components)))
+    ('level (org-current-level))
+    ('property (org-entry-get (point) (car args)))
+    ('planning (org-entry-get (point) (car args)))
+    ('regexp-match
+     ;; The point haystack is the entry's body up to the next heading.
      (let ((end (save-excursion (outline-next-heading) (point)))
            (case-fold-search t))
-       (cl-every (lambda (re)
-                   (save-excursion (re-search-forward re end t)))
-                 res)))
-    (`(property ,name . ,val)
-     (let ((v (org-entry-get (point) name)))
-       (if val (equal v (car val)) (and v t))))
-    (`(level ,n) (eql (org-current-level) n))
-    (`(level ,n ,m) (let ((l (org-current-level))) (and l (<= n l m))))
-    (`(scheduled . ,args) (jetpacs-org--planning-match-p "SCHEDULED" args))
-    (`(deadline . ,args) (jetpacs-org--planning-match-p "DEADLINE" args))
-    (_ (user-error "Query term %S needs the org-ql package installed" tree))))
+       (save-excursion (re-search-forward (car args) end t))))))
+
+(defun jetpacs-org--note-get (note what &rest args)
+  "The grammar accessor over a `vulpea-note' NOTE (index only, no file visit)."
+  (pcase what
+    ('todo (vulpea-note-todo note))
+    ;; The index does not record a file's per-file DONE keyword set, so
+    ;; done-ness is approximated: a global done keyword (falling back to
+    ;; the near-universal \"DONE\" when `org-done-keywords' is unset, as
+    ;; it is in a headless scan) or a CLOSED stamp.  Exotic per-file done
+    ;; keywords need the org-ql arm.
+    ('done (let ((s (vulpea-note-todo note)))
+             (or (and s (member s (or org-done-keywords '("DONE"))) t)
+                 (and (vulpea-note-closed note) t))))
+    ('tags (vulpea-note-tags note))
+    ;; vulpea priority may be a char (org's native form) or a string.
+    ('priority (let ((p (vulpea-note-priority note)))
+                 (cond ((null p) nil)
+                       ((characterp p) p)
+                       ((and (stringp p) (> (length p) 0)) (aref p 0))
+                       (t (let ((s (format "%s" p)))
+                            (and (> (length s) 0) (aref s 0)))))))
+    ('title (vulpea-note-title note))
+    ('level (vulpea-note-level note))
+    ;; vulpea indexes drawer keys upper-cased; match case-insensitively.
+    ('property (cdr (assoc-string (car args) (vulpea-note-properties note) t)))
+    ('planning (let ((s (if (equal (car args) "DEADLINE")
+                            (vulpea-note-deadline note)
+                          (vulpea-note-scheduled note))))
+                 (and (stringp s) s)))
+    ('regexp-match
+     ;; The index haystack is title + properties — the body is not
+     ;; indexed.  SEMANTIC DIFFERENCE from the point accessor, by design.
+     (let ((hay (concat (or (vulpea-note-title note) "") " "
+                        (mapconcat #'cdr (vulpea-note-properties note) " ")))
+           (case-fold-search t))
+       (string-match-p (car args) hay)))))
+
+(defun jetpacs-org-entry-matches-p (tree)
+  "Non-nil when the org entry at point matches org-ql sexp TREE.
+This is the built-in fallback interpreter implementing the common subset
+of org-ql. Signals `user-error' on unsupported terms."
+  (jetpacs-org--matches-p tree #'jetpacs-org--point-get))
+
+(defun jetpacs-org-note-matches-p (tree note)
+  "Non-nil when `vulpea-note' NOTE matches org-ql sexp TREE.
+The same grammar as `jetpacs-org-entry-matches-p', evaluated entirely
+off the vulpea index (no file visit).  Note the `regexp' term searches
+title + properties here (the body is not indexed).  Signals `user-error'
+on terms outside `jetpacs-org-note-query-terms' — check
+`jetpacs-org-note-query-supported-p' first to route those to org-ql."
+  (jetpacs-org--matches-p
+   tree (lambda (what &rest args) (apply #'jetpacs-org--note-get note what args))))
+
+(defconst jetpacs-org-note-query-terms
+  '(and or not todo done tags priority heading regexp property level
+        scheduled deadline)
+  "org-ql head symbols the built-in grammar evaluates off the note index.")
+
+(defun jetpacs-org-note-query-supported-p (tree)
+  "Non-nil when org-ql sexp TREE uses only index-evaluable terms.
+Empty (nil) TREE — no filter — is trivially supported."
+  (pcase tree
+    ('nil t)
+    (`(and . ,cs) (cl-every #'jetpacs-org-note-query-supported-p cs))
+    (`(or . ,cs) (cl-every #'jetpacs-org-note-query-supported-p cs))
+    (`(not ,c) (jetpacs-org-note-query-supported-p c))
+    (`(,head . ,_) (and (memq head jetpacs-org-note-query-terms) t))
+    (_ nil)))
 
 ;; ─── High-Level Query ──────────────────────────────────────────────────────────
 
@@ -282,6 +404,48 @@ if available, otherwise falls back to the built-in interpreter."
             (user-error (signal (car err) (cdr err)))
             (error (user-error "Query failed: %s" (error-message-string err))))
         (jetpacs-org--search-fallback tree action)))))
+
+;; ─── Vulpea note index (optional engine) ──────────────────────────────────────
+
+(defun jetpacs-org-vulpea-available-p ()
+  "Non-nil when the vulpea note index is loadable on this Emacs.
+vulpea is never required by the core; apps or the composer's dependency
+bootstrap install it, and callers gate their index reads on this probe."
+  (and (require 'vulpea nil t) (fboundp 'vulpea-db-query) t))
+
+(defun jetpacs-org-vulpea-source-notes (source)
+  "The `vulpea-note' records backing SOURCE, a scope plist.
+SOURCE is one of:
+  (:dir D)               -> the file-level notes of vault directory D
+                            (one note file per record);
+  (:file F :heading H)   -> the id'd headings directly under H in F;
+  (:file F)              -> the id'd level-1 headings of F.
+Headings must already carry `:ID:' properties for the index to see them.
+Callers gate on `jetpacs-org-vulpea-available-p'."
+  (let ((dir (plist-get source :dir))
+        (file (plist-get source :file))
+        (heading (plist-get source :heading)))
+    (cond
+     (dir (vulpea-db-query-by-directory (directory-file-name dir) 0))
+     (file
+      (let ((want (expand-file-name file)))
+        (vulpea-db-query
+         (lambda (n)
+           (and (equal (expand-file-name (vulpea-note-path n)) want)
+                (if heading
+                    (equal (vulpea-note-outline-path n) (list heading))
+                  (= (vulpea-note-level n) 1)))))))
+     (t (user-error "Source needs :dir or :file: %S" source)))))
+
+(defun jetpacs-org-vulpea-query (source &optional tree)
+  "Notes of SOURCE matching org-ql sexp TREE, off the vulpea index.
+A nil TREE admits every note of the scope.  TREE must stay inside
+`jetpacs-org-note-query-terms' (see `jetpacs-org-note-query-supported-p');
+route anything else through org-ql over the source file instead."
+  (let ((notes (jetpacs-org-vulpea-source-notes source)))
+    (if tree
+        (cl-remove-if-not (lambda (n) (jetpacs-org-note-matches-p tree n)) notes)
+      notes)))
 
 ;; ─── Mutations ─────────────────────────────────────────────────────────────────
 

@@ -18,7 +18,9 @@ change signature incompatibly. Everything else is internal.
 > apart. Policy going forward: **one minor bump per independently landed API
 > batch** (not per individual addition). `1.4.0` opens the binding-layer track
 > (the machine-readable wire contract in `contract.json`, and the promoted
-> shell/files/action seams below).
+> shell/files/action seams below); `1.5.0` is the binding layer itself;
+> `1.6.0` is the org note-index batch (the `vulpea-note` accessor of the one
+> query grammar, plus the guarded vulpea source query).
 
 ## The two rules
 
@@ -177,6 +179,33 @@ Action metadata (`jetpacs-surfaces.el`): `jetpacs-action-catalog`, and the
 `&key args doc` on `jetpacs-defaction`.
 
 Capability fallback (`jetpacs.el`): `jetpacs-node-or`.
+
+### Org primitive layer (`jetpacs-org.el`; note path since 1.6.0)
+
+The one org query/mutation grammar every org-reading consumer (Glasspane,
+`jetpacs-crud.el`) stands on — never re-implement it app-side.
+
+Query: `jetpacs-org-parse-query` (string → org-ql sexp) and the two
+accessors of the single built-in interpreter — `jetpacs-org-entry-matches-p`
+(the org entry at point) and `jetpacs-org-note-matches-p` (a `vulpea-note`
+off the index; `regexp` searches title + properties there, not the body).
+`jetpacs-org-note-query-terms` / `jetpacs-org-note-query-supported-p` say
+which sexps the index path evaluates — route anything else to org-ql.
+`jetpacs-org-query` runs a parsed sexp over the agenda files (org-ql when
+installed, the built-in interpreter otherwise), cached.
+
+Vulpea engine (optional — the core never requires vulpea; apps or the
+composer's dependency bootstrap install it):
+`jetpacs-org-vulpea-available-p` (the probe),
+`jetpacs-org-vulpea-source-notes` (a `:dir`/`:file`/`:heading` scope →
+its indexed notes), `jetpacs-org-vulpea-query` (scope + sexp).
+
+Identity & mutation: `jetpacs-org-heading-ref` `jetpacs-org-resolve-ref`
+`jetpacs-org-with-mutation` `jetpacs-org-set-property`
+`jetpacs-org-toggle-todo` `jetpacs-org-set-planning`.
+
+Extraction & caching: `jetpacs-org-entry-typed-value`
+`jetpacs-org-with-cache` `jetpacs-org-cache-invalidate`.
 
 ## Anything not listed here
 

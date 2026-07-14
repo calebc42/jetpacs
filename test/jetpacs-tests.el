@@ -970,6 +970,164 @@ The planning add+remove path was previously non-functional."
       (should-not (org-entry-get (point-min) "SCHEDULED"))
       (should (org-entry-get (point-min) "DEADLINE")))))
 
+(ert-deftest jetpacs-org-entry-matches ()
+  "The point accessor of the query grammar, term by term."
+  (jetpacs-tests--with-org-file buf
+      (concat "* TODO Buy milk :errand:\n"
+              "SCHEDULED: <2026-07-15>\n"
+              ":PROPERTIES:\n:Owner: cc\n:END:\n"
+              "some body needle here\n"
+              "* DONE [#A] Ship release :work:\n"
+              "** Child\n")
+    (goto-char (point-min))
+    (should (jetpacs-org-entry-matches-p '(todo)))
+    (should (jetpacs-org-entry-matches-p '(todo "TODO")))
+    (should-not (jetpacs-org-entry-matches-p '(done)))
+    (should (jetpacs-org-entry-matches-p '(tags "errand")))
+    (should-not (jetpacs-org-entry-matches-p '(tags "work")))
+    (should (jetpacs-org-entry-matches-p '(heading "milk")))
+    (should (jetpacs-org-entry-matches-p '(regexp "needle")))
+    (should-not (jetpacs-org-entry-matches-p '(regexp "absent")))
+    (should (jetpacs-org-entry-matches-p '(property "Owner" "cc")))
+    (should (jetpacs-org-entry-matches-p '(property "Owner")))
+    (should (jetpacs-org-entry-matches-p '(level 1)))
+    (should (jetpacs-org-entry-matches-p '(scheduled :on "2026-07-15")))
+    (should-not (jetpacs-org-entry-matches-p '(deadline)))
+    (should (jetpacs-org-entry-matches-p
+             '(and (todo "TODO") (or (tags "errand") (tags "work")))))
+    (should (jetpacs-org-entry-matches-p '(not (done))))
+    ;; second heading: done + priority
+    (search-forward "* DONE")
+    (should (jetpacs-org-entry-matches-p '(done)))
+    (should-not (jetpacs-org-entry-matches-p '(todo)))
+    (should (jetpacs-org-entry-matches-p '(priority "A")))
+    (should (jetpacs-org-entry-matches-p '(priority >= "B")))
+    (should-not (jetpacs-org-entry-matches-p '(priority < "A")))
+    ;; unsupported term names org-ql
+    (should-error (jetpacs-org-entry-matches-p '(clocked)) :type 'user-error)))
+
+(defmacro jetpacs-tests--with-note-accessors (&rest body)
+  "Run BODY with the `vulpea-note-*' accessors reading plist notes.
+Covers exactly the slots `jetpacs-org--note-get' consumes, so the note
+path of the grammar is testable with no vulpea installed."
+  `(cl-letf (((symbol-function 'vulpea-note-todo)
+              (lambda (n) (plist-get n :todo)))
+             ((symbol-function 'vulpea-note-tags)
+              (lambda (n) (plist-get n :tags)))
+             ((symbol-function 'vulpea-note-priority)
+              (lambda (n) (plist-get n :priority)))
+             ((symbol-function 'vulpea-note-title)
+              (lambda (n) (plist-get n :title)))
+             ((symbol-function 'vulpea-note-level)
+              (lambda (n) (plist-get n :level)))
+             ((symbol-function 'vulpea-note-properties)
+              (lambda (n) (plist-get n :properties)))
+             ((symbol-function 'vulpea-note-scheduled)
+              (lambda (n) (plist-get n :scheduled)))
+             ((symbol-function 'vulpea-note-deadline)
+              (lambda (n) (plist-get n :deadline)))
+             ((symbol-function 'vulpea-note-closed)
+              (lambda (n) (plist-get n :closed)))
+             ((symbol-function 'vulpea-note-path)
+              (lambda (n) (plist-get n :path)))
+             ((symbol-function 'vulpea-note-outline-path)
+              (lambda (n) (plist-get n :outline-path))))
+     ,@body))
+
+(ert-deftest jetpacs-org-note-matches ()
+  "The note accessor agrees with the point accessor on equivalent data.
+One grammar, two accessors — this is the agreement contract that lets
+the composer delete its own matcher."
+  (jetpacs-tests--with-note-accessors
+   (let ((todo-note '(:todo "TODO" :tags ("errand") :priority nil
+                      :title "Buy milk" :level 1
+                      :properties (("OWNER" . "cc"))
+                      :scheduled "<2026-07-15>" :deadline nil :closed nil))
+         (done-note '(:todo "DONE" :tags ("work") :priority ?A
+                      :title "Ship release" :level 1
+                      :properties nil :scheduled nil :deadline nil
+                      :closed "[2026-07-10]")))
+     (dolist (case `(((todo)                    ,todo-note t)
+                     ((todo "TODO")             ,todo-note t)
+                     ((done)                    ,todo-note nil)
+                     ((done)                    ,done-note t)
+                     ((todo)                    ,done-note nil)
+                     ((tags "errand")           ,todo-note t)
+                     ((tags "work")             ,todo-note nil)
+                     ((heading "milk")          ,todo-note t)
+                     ((property "Owner" "cc")   ,todo-note t)
+                     ((property "Owner")        ,todo-note t)
+                     ((level 1)                 ,todo-note t)
+                     ((level 2 3)               ,todo-note nil)
+                     ((scheduled :on "2026-07-15") ,todo-note t)
+                     ((deadline)                ,todo-note nil)
+                     ((priority "A")            ,done-note t)
+                     ((priority >= "B")         ,done-note t)
+                     ((priority < "A")          ,done-note nil)
+                     ((and (todo "TODO") (or (tags "errand") (tags "work")))
+                      ,todo-note t)
+                     ((not (done))              ,todo-note t)))
+       (pcase-let ((`(,tree ,note ,want) case))
+         (should (eq (and (jetpacs-org-note-matches-p tree note) t) want))))
+     ;; Index-only semantics, distinct from point by design:
+     ;; regexp searches title + properties (no body in the index) …
+     (should (jetpacs-org-note-matches-p '(regexp "milk") todo-note))
+     (should (jetpacs-org-note-matches-p '(regexp "cc") todo-note))
+     (should-not (jetpacs-org-note-matches-p '(regexp "body") todo-note))
+     ;; … string priorities normalize to chars …
+     (should (jetpacs-org-note-matches-p
+              '(priority "B") '(:todo nil :priority "B" :title "x")))
+     ;; … done-ness falls back to "DONE"/CLOSED when org-done-keywords is
+     ;; unset (the headless-scan approximation) …
+     (let ((org-done-keywords nil))
+       (should (jetpacs-org-note-matches-p '(done) done-note))
+       (should (jetpacs-org-note-matches-p
+                '(done) '(:todo "WIP" :closed "[2026-07-01]" :title "x"))))
+     ;; … and unsupported terms error, so callers can route to org-ql.
+     (should-error (jetpacs-org-note-matches-p '(clocked) todo-note)
+                   :type 'user-error))))
+
+(ert-deftest jetpacs-org-note-query-support ()
+  "The supported-terms predicate routes sexps between index and org-ql."
+  (should (jetpacs-org-note-query-supported-p nil))
+  (should (jetpacs-org-note-query-supported-p '(todo "TODO")))
+  (should (jetpacs-org-note-query-supported-p
+           '(and (or (tags "a") (not (done))) (scheduled :on today))))
+  (should-not (jetpacs-org-note-query-supported-p '(clocked)))
+  (should-not (jetpacs-org-note-query-supported-p '(and (todo) (clocked))))
+  (should-not (jetpacs-org-note-query-supported-p "not a sexp")))
+
+(ert-deftest jetpacs-org-vulpea-source-dispatch ()
+  "The vulpea source query dispatches :dir / :file / :file+:heading scopes."
+  (jetpacs-tests--with-note-accessors
+   (let* ((n1 '(:path "/v/a.org" :level 1 :outline-path nil :todo "TODO" :title "one"))
+          (n2 '(:path "/v/a.org" :level 2 :outline-path ("Records") :todo "DONE" :title "two"))
+          (n3 '(:path "/v/b.org" :level 1 :outline-path nil :todo nil :title "three"))
+          (all (list n1 n2 n3))
+          (dir-arg nil))
+     (cl-letf (((symbol-function 'vulpea-db-query)
+                (lambda (pred) (cl-remove-if-not pred all)))
+               ((symbol-function 'vulpea-db-query-by-directory)
+                (lambda (dir level) (setq dir-arg (list dir level)) all)))
+       ;; :dir goes straight to the directory query, file-level only.
+       (should (equal all (jetpacs-org-vulpea-source-notes '(:dir "/v/"))))
+       (should (equal '("/v" 0) dir-arg))
+       ;; :file scopes to that file's level-1 notes.
+       (should (equal (list n1)
+                      (jetpacs-org-vulpea-source-notes '(:file "/v/a.org"))))
+       ;; :file + :heading scopes to the heading's direct children.
+       (should (equal (list n2)
+                      (jetpacs-org-vulpea-source-notes
+                       '(:file "/v/a.org" :heading "Records"))))
+       ;; the query variant filters through the note matcher.
+       (should (equal (list n2)
+                      (jetpacs-org-vulpea-query
+                       '(:file "/v/a.org" :heading "Records") '(done))))
+       (should-not (jetpacs-org-vulpea-query
+                    '(:file "/v/a.org" :heading "Records") '(todo "TODO")))
+       (should-error (jetpacs-org-vulpea-source-notes '(:heading "x"))
+                     :type 'user-error)))))
+
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst jetpacs-tests--golden-file

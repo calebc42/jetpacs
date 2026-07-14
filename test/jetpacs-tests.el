@@ -35,6 +35,7 @@
 (require 'jetpacs-keymap)
 (require 'jetpacs-results)
 (require 'jetpacs-hypertext)
+(require 'jetpacs-sections)
 (require 'jetpacs-files)
 (require 'jetpacs-minibuffer)
 (require 'jetpacs-emacs-ui)
@@ -1744,6 +1745,133 @@ Tolerant of batch Info quirks — skips if the node won't open."
               (dolist (n nodes) (should (null (jetpacs-lint-spec n)))))))
       (ignore-errors (kill-buffer "*info*"))
       (delete-directory dir t))))
+
+;; ─── The magit-section substrate ─────────────────────────────────────────────
+;;
+;; The library is third-party; these tests self-discover it (plus its deps)
+;; in the user's package directory and skip cleanly where it's absent —
+;; the libxml gating pattern, for a package instead of a build feature.
+
+(defvar jetpacs-tests--magit-section-state 'unknown)
+
+(defun jetpacs-tests--magit-section-p ()
+  "Load magit-section from the user's elpa if present; non-nil on success."
+  (when (eq jetpacs-tests--magit-section-state 'unknown)
+    (dolist (pat '("magit-section-*" "compat-*" "llama-*" "dash-*"
+                   "cond-let-*" "transient-*"))
+      (dolist (d (file-expand-wildcards
+                  (expand-file-name pat "~/.emacs.d/elpa")))
+        (when (file-directory-p d)
+          (add-to-list 'load-path d))))
+    (setq jetpacs-tests--magit-section-state
+          (require 'magit-section nil t)))
+  jetpacs-tests--magit-section-state)
+
+(defun jetpacs-tests--make-section-buffer ()
+  "A live magit-section buffer: two top sections, the first with a nested
+child, built exactly as the library builds them.  Caller kills it.
+Uses `eval' so the `magit-insert-section' macro expands only after the
+library is loaded (keeps this file byte-compile-safe)."
+  (let ((buf (generate-new-buffer " *jetpacs-sections-test*")))
+    (with-current-buffer buf
+      (eval '(progn
+               (magit-section-mode)
+               (setq-local inhibit-read-only t)
+               (magit-insert-section (magit-section 'demo-root)
+                 (magit-insert-section (magit-section 'one)
+                   (magit-insert-heading "Section One")
+                   (insert "body line 1\nbody line 2\n")
+                   (magit-insert-section (magit-section 'one-child)
+                     (magit-insert-heading "Nested child")
+                     (insert "nested body\n")))
+                 (magit-insert-section (magit-section 'two)
+                   (magit-insert-heading "Section Two")
+                   (insert "second body\n"))))
+            t))
+    buf))
+
+(defun jetpacs-tests--section-header-text (node)
+  "The concatenated header text of a collapsible NODE."
+  (mapconcat (lambda (sp) (or (alist-get 'text sp) ""))
+             (alist-get 'spans (alist-get 'header node)) ""))
+
+(ert-deftest jetpacs-sections-render-tree ()
+  "A magit-section buffer renders as collapsible cards through the
+dispatch: stable ids, headers with taps stripped, bodies and nested
+children inside, Emacs's fold state mirrored (hidden bodies still
+shipped), everything wire-valid."
+  (skip-unless (jetpacs-tests--magit-section-p))
+  (let ((buf (jetpacs-tests--make-section-buffer)))
+    (unwind-protect
+        (with-current-buffer buf
+          ;; Hide the second section in Emacs, then render.
+          (eval '(magit-section-hide
+                  (cadr (slot-value magit-root-section 'children)))
+                t)
+          (let* ((nodes (jetpacs-render-buffer buf))
+                 (tops (seq-filter
+                        (lambda (n) (equal (alist-get 't n) "collapsible"))
+                        nodes)))
+            (should (= (length tops) 2))
+            (let ((one (nth 0 tops)) (two (nth 1 tops)))
+              ;; headers: own text, no taps
+              (should (equal (jetpacs-tests--section-header-text one)
+                             "Section One"))
+              (should-not (seq-find (lambda (sp) (alist-get 'on_tap sp))
+                                    (alist-get 'spans (alist-get 'header one))))
+              ;; ids: stable non-empty strings, distinct
+              (should (stringp (alist-get 'id one)))
+              (should-not (equal (alist-get 'id one) (alist-get 'id two)))
+              ;; long-press wires the section menu
+              (should (equal (alist-get 'action (alist-get 'on_long_tap one))
+                             "sections.menu"))
+              ;; children: body lines + the nested collapsible
+              (let* ((kids (append (alist-get 'children one) nil))
+                     (texts (mapcar (lambda (n)
+                                      (if (equal (alist-get 't n) "rich_text")
+                                          (mapconcat
+                                           (lambda (sp) (or (alist-get 'text sp) ""))
+                                           (alist-get 'spans n) "")
+                                        (alist-get 't n)))
+                                    kids)))
+                (should (member "body line 1" texts))
+                (should (member "collapsible" texts)))
+              ;; Emacs-hidden section: collapsed mirrored, body still shipped
+              (should (eq (alist-get 'collapsed two) t))
+              (should (seq-find
+                       (lambda (n)
+                         (and (equal (alist-get 't n) "rich_text")
+                              (string-match-p
+                               "second body"
+                               (mapconcat (lambda (sp)
+                                            (or (alist-get 'text sp) ""))
+                                          (alist-get 'spans n) ""))))
+                       (append (alist-get 'children two) nil))))
+            (dolist (n nodes) (should (null (jetpacs-lint-spec n))))))
+      (kill-buffer buf))))
+
+(ert-deftest jetpacs-sections-menu-candidates ()
+  "The section context menu offers the region's own bindings (labelled,
+key-addressed — never a command name) plus the fold toggle."
+  (skip-unless (jetpacs-tests--magit-section-p))
+  (let ((buf (jetpacs-tests--make-section-buffer)))
+    (unwind-protect
+        (with-current-buffer buf
+          (let ((cands (jetpacs-sections--menu-candidates (point-min))))
+            (should (assoc "Toggle fold (TAB)" cands))
+            ;; every candidate value is a key description, not a symbol
+            (dolist (c cands) (should (stringp (cdr c))))))
+      (kill-buffer buf))))
+
+(ert-deftest jetpacs-sections-fallback-without-root ()
+  "A magit-section-mode buffer with no root section (still populating)
+falls through to the Tier 0 renderer instead of erroring."
+  (skip-unless (jetpacs-tests--magit-section-p))
+  (with-temp-buffer
+    (eval '(magit-section-mode) t)
+    (let ((inhibit-read-only t)) (insert "just text\n"))
+    (setq-local magit-root-section nil)
+    (should (jetpacs-render-buffer (current-buffer)))))
 
 ;; ─── Triggers & device capabilities (SPEC §10–§11) ──────────────────────────
 

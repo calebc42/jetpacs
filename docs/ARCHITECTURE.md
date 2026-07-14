@@ -14,7 +14,8 @@ and everything above it is one replaceable opinion.
   are data, not text: `tabulated-list-mode` (columns + rows), `comint`
   (transcript + prompt), the `next-error`/loci protocol (results lists),
   rendered hypertext documents (shr/eww, help, Info — headings, links,
-  images, tables), and `transient` (layouts of infixes/suffixes). One
+  images, tables), the `magit-section` tree (magit, forge, kubernetes.el,
+  taxy riders), and `transient` (layouts of infixes/suffixes). One
   renderer per framework covers every package built on it.
 - **Tier 1 — apps and skins.** Opinionated, curated experiences built on
   the core seams: the [Glasspane](https://github.com/calebc42/glasspane)
@@ -53,6 +54,7 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-comint.el` | **Tier 0.5**: generic `comint-mode` renderer — transcript tail + input row, `comint.send` scoped to the buffer's own live process |
 | `jetpacs-results.el` | **Tier 0.5**: generic results/loci navigator — occur/compilation/grep/xref as tappable cards, the mode's own goto under a display shim, prev/next stepper |
 | `jetpacs-hypertext.el` | **Tier 0.5**: generic document renderer — eww/help/Info (and any shr-rendered mode via `jetpacs-hypertext-register-shr-mode`) as cards: headings, tappable links, real images (write-once content cache), native tables, `hypertext.nav` toolbar |
+| `jetpacs-sections.el` | **Tier 0.5**: generic `magit-section` renderer — the section tree (magit, forge, kubernetes.el, taxy-magit-section) as client-side collapsible cards, Emacs fold state mirrored, long-press = the section's own key bindings as a bridged menu (`sections.menu`) |
 | `jetpacs-transient.el` | **Tier 0.5**: transient prefixes as touch dialogs (advice on `transient-setup`) |
 | `jetpacs-keymap.el` | command palette over any buffer's keymap; live-transient pie plumbing |
 | `jetpacs-sync.el` | editor shadow buffers: delta sync, flymake diagnostics, eldoc, fontify pushes |

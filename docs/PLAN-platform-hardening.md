@@ -17,7 +17,7 @@ in the adopt flow), the APK's optional-build feature matrix
 (sqlite/treesit/native-comp/libxml) is never probed even though three queued
 decisions read it, and `package-vc-install` (29) was never considered as the
 pre-MELPA distribution path. See **Phase H** at the bottom.
-Phase H status: **not started** (Task 23 anytime; Task 22 rides Phase G's
+Phase H status: **not started**; the executable fresh-chat handoff is [PLAN-phase-h-handoff.md](PLAN-phase-h-handoff.md) (order: 23 -> 22 -> 24; Task 22 rides Phase G's
 Task 19 seam; Task 24 anytime).
 
 **STATUS (2026-07-09): ALL PHASES DONE — this plan is complete.** Phase F

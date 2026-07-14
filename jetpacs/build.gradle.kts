@@ -58,4 +58,8 @@ dependencies {
     api("androidx.compose.material:material-icons-extended")
     api("io.coil-kt:coil-compose:2.6.0")
     testImplementation(libs.junit)
+    // The real org.json for plain-JVM unit tests: the SDK's mockable jar only
+    // stubs it, and the conformance suite (WireGoldenConformanceTest) parses
+    // the golden corpus and docs/contract.json with it.
+    testImplementation("org.json:json:20240303")
 }

@@ -3261,6 +3261,17 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (should (jetpacs-shell-define-view "v" :spec '(:source "s" :template ((t . "text")))))
       (should (plist-get (cdr (assoc "v" jetpacs-shell-views)) :spec)))))
 
+(ert-deftest jetpacs-raw-send-never-signals ()
+  "A send racing the async connect's failure sentinel degrades to a
+dropped frame, never an error out of the caller.  `process-live-p' can
+pass an instant before the process dies (TOCTOU), so the write itself
+must be guarded — the wire is fire-and-forget."
+  (let ((jetpacs--process 'fake))
+    (cl-letf (((symbol-function 'process-live-p) (lambda (p) (eq p 'fake)))
+              ((symbol-function 'process-send-string)
+               (lambda (&rest _) (error "Process jetpacs not running"))))
+      (jetpacs--raw-send "{}"))))          ; a signal here fails the test
+
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
   "capability.invoke correlates its reply and normalizes ok vs typed error."
   (let ((jetpacs--pending (make-hash-table :test 'equal))

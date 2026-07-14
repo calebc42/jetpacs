@@ -136,9 +136,16 @@ frame answers, or nil for a top-level message."
    :false-object :false))
 
 (defun jetpacs--raw-send (line)
-  "Write LINE plus a newline to the companion if connected."
+  "Write LINE plus a newline to the companion if connected.
+Never signals: the liveness check races the async connect and its
+failure sentinel (the process can die between the check and the write),
+and a send must degrade to a dropped frame — the wire is fire-and-forget,
+so no caller is prepared for an error out of a send."
   (if (and jetpacs--process (process-live-p jetpacs--process))
-      (process-send-string jetpacs--process (concat line "\n"))
+      (condition-case err
+          (process-send-string jetpacs--process (concat line "\n"))
+        (error (message "Jetpacs: send failed; dropping frame (%s)"
+                        (error-message-string err))))
     (message "Jetpacs: not connected; dropping frame")))
 
 (defun jetpacs-send (kind &optional payload reply-to)

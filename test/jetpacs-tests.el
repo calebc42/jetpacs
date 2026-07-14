@@ -1532,6 +1532,17 @@ records the last-fired time."
   (should (stringp jetpacs-api-version))
   (should (integerp jetpacs-protocol-version)))
 
+(ert-deftest jetpacs-version-header-pinned-to-api ()
+  "jetpacs.el's package Version: header equals `jetpacs-api-version'.
+A `package-vc-install' of this repo must report the same number the API
+constant promises (hardening Task 24) — they cannot drift."
+  (let ((f (expand-file-name "../emacs/core/jetpacs.el" jetpacs-tests--dir)))
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (should (re-search-forward "^;; Version: \\([0-9.]+\\)$" nil t))
+      (should (equal (match-string 1) jetpacs-api-version)))))
+
 ;; ─── Build-feature probe (Phase H / Task 23) ─────────────────────────────────
 
 (ert-deftest jetpacs-build-features-probe ()

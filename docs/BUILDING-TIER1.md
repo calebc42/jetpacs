@@ -527,7 +527,12 @@ defining actions. In short:
 
 A Tier 1 is an ordinary Emacs package that requires the core features it
 uses. Users load `jetpacs-core.el` (or the individual `emacs/core/` files)
-plus your package. If you want a single-file artifact, mimic
+plus your package. On desktop the core installs as a package straight
+from git — no MELPA wait:
+`(package-vc-install '(jetpacs :url "https://github.com/calebc42/jetpacs" :lisp-dir "emacs/core"))`
+(see the [README](../README.md#getting-started) for when that path
+applies; the phone path stays bundle adoption). If you want a
+single-file artifact, mimic
 `emacs/build-bundle.el` — concatenation in dependency order is the whole
 trick. Glasspane's own
 [`build-bundle.el`](https://github.com/calebc42/glasspane/blob/main/emacs/build-bundle.el)

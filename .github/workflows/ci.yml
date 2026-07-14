@@ -37,6 +37,19 @@ jobs:
           emacs --batch -l emacs/build-bundle.el
           git diff --exit-code jetpacs-core.el
 
+      # The pre-MELPA install path (hardening Task 24): the multi-file
+      # core must install as a package via the network-free
+      # package-vc-install-from-checkout, (require 'jetpacs) must work,
+      # and the Version: header must equal jetpacs-api-version.
+      - name: package-vc install path
+        run: |
+          tmp=$(mktemp -d)
+          cp -r emacs/core "$tmp/jetpacs"
+          git -C "$tmp/jetpacs" init -q
+          git -C "$tmp/jetpacs" -c user.email=ci@example.com -c user.name=ci add -A
+          git -C "$tmp/jetpacs" -c user.email=ci@example.com -c user.name=ci commit -qm checkout
+          emacs -Q --batch --eval "(progn (require 'package) (setq package-user-dir \"$tmp/elpa\") (require 'package-vc) (package-vc-install-from-checkout \"$tmp/jetpacs\" \"jetpacs\") (package-initialize) (require 'jetpacs) (let ((hdr (package-version-join (package-desc-version (cadr (assq 'jetpacs package-alist)))))) (unless (equal hdr jetpacs-api-version) (error \"Version: header %s != jetpacs-api-version %s\" hdr jetpacs-api-version))))"
+
   android:
     name: Android (:jetpacs + :app)
     runs-on: ubuntu-latest

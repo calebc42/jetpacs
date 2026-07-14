@@ -51,7 +51,10 @@ grammar and both consumers stand on it
 3. **MELPA packaging.** Explicitly deferred until after the repo split;
    the split is done. Package the elisp client properly (the
    `emacs/core/` sources are already package-shaped; the bundle stays
-   for the no-package-manager path).
+   for the no-package-manager path). Middle path available now:
+   `package-vc-install '(jetpacs :url … :lisp-dir "emacs/core")`
+   installs and tracks straight from git (hardening Task 24) — MELPA
+   remains only about discoverability.
 4. **Battery profiling.** The standing unmeasured gate: a normal day's
    cost of the FGS plus a real trigger set. Publish the numbers in the
    README — "unprofiled" is the word we most need to delete for

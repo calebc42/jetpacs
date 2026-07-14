@@ -203,6 +203,29 @@ directories on your `load-path`:
 (require 'jetpacs-core)   ; or just the core features you want
 ```
 
+**Option C — install as a package, straight from git.** No MELPA
+needed: `package-vc-install` (Emacs 29+; this repo's floor is 30.1)
+clones, byte-compiles, and generates autoloads at install time, and
+`M-x package-vc-upgrade` tracks upstream from then on:
+
+```elisp
+(package-vc-install
+ '(jetpacs :url "https://github.com/calebc42/jetpacs"
+           :lisp-dir "emacs/core"))
+```
+
+This is the **desktop / fork-maintainer** path. `:lisp-dir` scopes the
+install to the multi-file core — package.el never sees the generated
+root bundle, and the repo layout doesn't change. It installs the
+*individual features*, not the bundle's `jetpacs-core` umbrella: require
+what you use (`jetpacs-shell` pulls the transport + app scaffold; the
+optional surfaces — `jetpacs-tools`, `jetpacs-automations`,
+`jetpacs-org`, … — are each their own feature). The **phone path stays
+bundle adoption** (Option A, what the companion's wizard stages):
+on-device `package-vc` would need git and network inside Emacs —
+possible via the Termux signature share, but that's the advanced
+footnote, not the default.
+
 > The bundle is generated from the sources by `emacs/build-bundle.el`.
 > Regenerate it with `emacs --batch -l emacs/build-bundle.el` after
 > editing.

@@ -13,6 +13,21 @@
 
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
+;; Version: 1.6.0
+;; Package-Requires: ((emacs "30.1"))
+;; URL: https://github.com/calebc42/jetpacs
+
+;; The Version: header MUST equal `jetpacs-api-version' (a test pins it):
+;; a `package-vc-install' of this repo reports the same number the API
+;; constant promises.  Install straight from git, no MELPA needed:
+;;
+;;   (package-vc-install
+;;    '(jetpacs :url "https://github.com/calebc42/jetpacs"
+;;              :lisp-dir "emacs/core"))
+;;
+;; `:lisp-dir' scopes the install to the multi-file core, so package.el
+;; never sees the generated root bundle jetpacs-core.el.
+
 ;; Jetpacs transport, Emacs side. Under the protocol Emacs is the CLIENT and the
 ;; Android companion is the durable SERVER. This file owns the wire: connecting,
 ;; framing, the session handshake, and a generic send/request layer that the

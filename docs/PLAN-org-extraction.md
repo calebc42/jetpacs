@@ -1,19 +1,22 @@
 # Migration Plan: Adopting `jetpacs-org.el` Core Primitives
 
-**STATUS (2026-07-13): §2 (composer) executed; §1 (Glasspane) pending.** The composer deleted
-`jetpacs-crud--parse-query` / `--entry-matches-p` and now calls the canonical
-`jetpacs-org-parse-query` / `jetpacs-org-entry-matches-p`; its record *scan* path has since
-been superseded entirely by the vulpea index read
-(`jetpacs-composer/docs/PLAN-vulpea-rearchitecture.md`), so §2's scanner bullets describe a
-path that no longer exists. Glasspane still owns all of its duplicated org logic —
-`glasspane-org.el` calls zero `jetpacs-org-*` functions; the executable form of §1 is
-`Glasspane/docs/PLAN-glasspane-org-adoption.md` (decided, not run).
+**STATUS (2026-07-13): EXECUTED — both halves.** The composer deleted its parser/matcher and
+routes through the canonical functions (its record *scan* path was further superseded by the
+vulpea index read — `jetpacs-composer/docs/PLAN-vulpea-rearchitecture.md`). Glasspane's
+adoption ran the same day (`Glasspane/docs/PLAN-glasspane-org-adoption.md` has the full
+record): `glasspane-org.el` sheds its cache/refs/parser/matchers (~616 net lines) and stands
+on `jetpacs-org-*` under the `glasspane` namespace, including the canonical vulpea note
+matcher. One deliberate §1 deviation: Glasspane's mutation funnel (`glasspane-ui--at-ref`)
+was **kept** rather than rebased onto `jetpacs-org-set-property`/`-toggle-todo`/
+`-set-planning` — the audit of this plan's open question confirmed the core's idle-timer
+deferred save breaks Glasspane's synchronous-save/refresh-suppression policy and read-back
+flows; the funnel already consumes the canonical resolve + cache-invalidate, which was the
+actual duplication.
 
-**Surviving entry points (the reconcile required by `PLAN-binding-layer.md`):** after both
-halves land, the one query grammar lives in core — `jetpacs-org-parse-query`,
-`jetpacs-org-entry-matches-p` (point accessor), `jetpacs-org-note-matches-p` (vulpea-note
-accessor, guarded), and `jetpacs-org-query` — and `defsource` thunks bind to those, never to a
-promoted `glasspane-org-parse-query`.
+**Surviving entry points (the reconcile required by `PLAN-binding-layer.md`):** the one query
+grammar lives in core — `jetpacs-org-parse-query`, `jetpacs-org-entry-matches-p` (point
+accessor), `jetpacs-org-note-matches-p` (vulpea-note accessor, guarded), and
+`jetpacs-org-query` — and `defsource` thunks bind to those.
 
 With the robust core primitives established in the Jetpacs foundation, the next step is to eliminate the duplicated logic in both Glasspane (Tier 1) and jetpacs-composer (`jetpacs-crud.el` runtime) and standardize their architecture on the foundation.
 

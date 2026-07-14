@@ -29,14 +29,12 @@ tested platform (the completed
 [PLAN-platform-hardening.md](PLAN-platform-hardening.md)). Every item
 below is weighed against that.
 
+The org-logic consolidation is **done**: the core owns the one query
+grammar and both consumers stand on it
+([PLAN-org-extraction.md](PLAN-org-extraction.md) is the record).
+
 ## Near term
 
-0. **Finish the org-logic consolidation.** The core owns the one query
-   grammar ([PLAN-org-extraction.md](PLAN-org-extraction.md) has the
-   status); the remaining half is Glasspane's adoption
-   (`Glasspane/docs/PLAN-glasspane-org-adoption.md`) — rip the ~874-line
-   duplicate out of `glasspane-org.el` and stand the app on
-   `jetpacs-org-*`.
 1. **Generic onboarding + Tier-1 app delivery.** The `:app` shell is
    still Glasspane-branded, and the repo split left a hole flagged in
    `app/build.gradle.kts` (`TODO(repo-split)`): the onboarding wizard

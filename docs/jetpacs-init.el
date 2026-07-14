@@ -20,6 +20,11 @@
 (defconst jetpacs-init--staging '("/sdcard/Documents/" "/sdcard/Download/")
   "Staging dirs checked before core loads (core has its own copy after).")
 
+;; Bundles are byte-compiled at adopt time (core does it), so `require'
+;; finds a .elc beside every bundle's .el.  This is the backstop that a
+;; stale .elc can never shadow a freshly synced .el: the newer file wins.
+(setq load-prefer-newer t)
+
 (defun jetpacs-init--ensure-core ()
   "Make sure lib/jetpacs-core.el exists and is the newest available copy.
 Adopt from staging when a newer copy is there; otherwise fall back to the

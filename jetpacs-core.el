@@ -711,10 +711,39 @@ Emacs pulls the newest staged copy into `jetpacs-lib-dir'.")
 Set by the create-once ~/.emacs.d/jetpacs/apps.el, which the user edits to
 install an app.  The core bundle is always loaded and is never listed here.")
 
+(defun jetpacs-config--byte-compile (file)
+  "Byte-compile FILE when its .elc is missing or older than the source.
+The boot-speed half of adoption: bundles arrive in `jetpacs-lib-dir' as
+source, and compiling once here — the user is mid-adopt, not mid-edit —
+spares every later boot the full read of ~10k lines (Android kills the
+Emacs process freely, so boots are frequent).  Never fatal: on any
+failure the .elc is deleted so `require' keeps finding plain source, and
+a warning is left — a broken compile must not brick boot.
+`byte-compile-warnings' is bound down so compile noise cannot hit the
+bridged minibuffer mid-boot.  Native compilation is deliberately NOT
+attempted here: async JIT is battery-hostile, and any native rung is a
+separate, measured, default-off decision (see PLAN-platform-hardening
+Task 22 / the `jetpacs-build-features' probe)."
+  (let ((elc (concat file "c")))
+    (when (and (file-readable-p file)
+               (file-newer-than-file-p file elc))
+      (message "Jetpacs: byte-compiling %s..." (file-name-nondirectory file))
+      (unless (ignore-errors
+                (let ((byte-compile-warnings nil))
+                  (byte-compile-file file)))
+        (when (file-exists-p elc)
+          (ignore-errors (delete-file elc)))
+        (display-warning
+         'jetpacs
+         (format "byte-compile of %s failed; it will load from source"
+                 (abbreviate-file-name file)))))))
+
 (defun jetpacs-config-adopt (bundle)
   "Copy the newest staged BUNDLE into `jetpacs-lib-dir'; return its feature.
 Newest-wins across `jetpacs-staging-dirs' (browser downloads and companion/
-deploy staging both land there).  A `.el' name maps to its feature symbol."
+deploy staging both land there).  The installed copy is byte-compiled when
+its .elc is missing or stale, so the `require' that follows picks up
+bytecode.  A `.el' name maps to its feature symbol."
   (let ((installed (expand-file-name bundle jetpacs-lib-dir)))
     (make-directory jetpacs-lib-dir t)
     (dolist (dir jetpacs-staging-dirs)
@@ -724,6 +753,7 @@ deploy staging both land there).  A `.el' name maps to its feature symbol."
                        (file-newer-than-file-p s installed)))
           (copy-file s installed t)
           (message "jetpacs: adopted %s from %s" bundle dir))))
+    (jetpacs-config--byte-compile installed)
     (intern (file-name-base bundle))))
 
 (defun jetpacs-config-seed-file (path content)
@@ -834,6 +864,12 @@ apply the foundation defaults, then load `custom-file' and the user override.
 Invariants are re-asserted separately at connect (`jetpacs-before-connect-hook')."
   (add-to-list 'load-path jetpacs-lib-dir)
   (jetpacs-config-migrate-legacy)
+  ;; The core bundle was adopted by the entry file BEFORE core could run, so
+  ;; its compile step lives here instead (after the migration, which can
+  ;; rewrite lib/jetpacs-core.el): this boot loaded core from source, the
+  ;; next one requires the .elc.  `load-prefer-newer' (set by the entry
+  ;; file) keeps a stale .elc from ever shadowing a newer synced .el.
+  (jetpacs-config--byte-compile (expand-file-name "jetpacs-core.el" jetpacs-lib-dir))
   ;; Installed apps: a create-once, user-owned list.
   (let ((apps (expand-file-name "apps.el" jetpacs-root)))
     (jetpacs-config-seed-file apps jetpacs-config--apps-template)

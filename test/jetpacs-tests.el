@@ -3131,6 +3131,59 @@ second run is a no-op."
           (jetpacs-config-migrate-legacy))
       (delete-directory tmp t))))
 
+(ert-deftest jetpacs-config-adopt-byte-compiles ()
+  "Adopt compiles the bundle to lib/*.elc (Phase H / Task 22); an
+unchanged bundle is not recompiled; a newer re-synced .el is; a broken
+.el warns, drops the .elc, and never signals out of the adopt step —
+boot falls back to loading source."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-adopt" t)))
+         (jetpacs-root tmp)
+         (jetpacs-lib-dir (expand-file-name "lib/" tmp))
+         (staging (file-name-as-directory (expand-file-name "staging/" tmp)))
+         (jetpacs-staging-dirs (list staging))
+         (bundle "jetpacs-tests-adopt.el")
+         (staged (concat staging bundle))
+         (installed (expand-file-name bundle jetpacs-lib-dir))
+         (elc (concat installed "c"))
+         (jetpacs-tests--cfg-a nil)
+         (warnings nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-warning)
+                   (lambda (_type msg &rest _) (push msg warnings))))
+          (make-directory staging t)
+          (write-region "(setq jetpacs-tests--cfg-a 1)\n(provide 'jetpacs-tests-adopt)\n"
+                        nil staged nil 'silent)
+          ;; Adopt: copied into lib/ and compiled beside it.
+          (should (eq (jetpacs-config-adopt bundle) 'jetpacs-tests-adopt))
+          (should (file-exists-p installed))
+          (should (file-exists-p elc))
+          ;; The compiled artifact is loadable and current.
+          (load elc nil 'nomessage 'nosuffix)
+          (should (= jetpacs-tests--cfg-a 1))
+          ;; Nothing newer staged: a second adopt leaves the .elc alone.
+          (let ((mtime (file-attribute-modification-time (file-attributes elc))))
+            (jetpacs-config-adopt bundle)
+            (should (equal mtime (file-attribute-modification-time
+                                  (file-attributes elc)))))
+          ;; A newer re-synced source recompiles (backdate the installed
+          ;; pair so mtime granularity can't hide the freshness ordering).
+          (set-file-times elc (time-subtract nil 100))
+          (set-file-times installed (time-subtract nil 50))
+          (write-region "(setq jetpacs-tests--cfg-a 2)\n(provide 'jetpacs-tests-adopt)\n"
+                        nil staged nil 'silent)
+          (jetpacs-config-adopt bundle)
+          (load elc nil 'nomessage 'nosuffix)
+          (should (= jetpacs-tests--cfg-a 2))
+          ;; A deliberately-broken newer bundle: adopt still returns the
+          ;; feature, warns, and removes the .elc so source is what loads.
+          (set-file-times elc (time-subtract nil 100))
+          (set-file-times installed (time-subtract nil 50))
+          (write-region "(defvar jetpacs-tests--broken\n" nil staged nil 'silent)
+          (should (eq (jetpacs-config-adopt bundle) 'jetpacs-tests-adopt))
+          (should-not (file-exists-p elc))
+          (should warnings))
+      (delete-directory tmp t))))
+
 ;; ─── Owner-scoped reminders ──────────────────────────────────────────────────
 
 (ert-deftest jetpacs-reminders-owner-set-negotiation ()

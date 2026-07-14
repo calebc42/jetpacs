@@ -819,8 +819,8 @@ boot). Batch-testable: the migration shim is idempotent.
 
 **Files:** `app/src/main/java/com/calebc42/jetpacs/Onboarding.kt`.
 
-**Implementation:** stage `jetpacs-init.el` to `/sdcard/Documents` alongside
-the core bundle; fresh path pastes an `init.el` whose first form is the seam;
+**Implementation:** stage `jetpacs-init.el` to `/sdcard/Documents/jetpacs`
+alongside the core bundle; fresh path pastes an `init.el` whose first form is the seam;
 collapse `byoSnippet` to the first-run seam form + token; drop the emitted
 `custom-file` line (the entry file sets the default); "Get apps" card copy →
 "add it to `~/.emacs.d/jetpacs/apps.el`". Build `:app` before committing.

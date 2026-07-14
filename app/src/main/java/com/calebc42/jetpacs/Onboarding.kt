@@ -71,7 +71,7 @@ import java.io.File
  *     clipboard to paste (well under the Android clipboard ceiling);
  *   - the foundation files — jetpacs-init.el (the managed entry point the
  *     seam loads) and jetpacs-core.el (the bundle it adopts) — are written to
- *     /sdcard/Documents as a pair, the slots the seam and entry point read.
+ *     /sdcard/Documents/jetpacs as a pair, the slot the seam and entry point read.
  *
  * The companion onboards for the FOUNDATION only. Tier-1 apps (Glasspane,
  * orgzly-native, yours) distribute their own single-file bundles from their
@@ -86,6 +86,15 @@ private fun initPath(termux: Boolean): String =
     else "/data/data/org.emacs/files/.emacs.d/init.el"
 
 private const val EARLY_INIT_PATH = "/data/data/org.emacs/files/.emacs.d/early-init.el"
+
+/**
+ * Jetpacs's dedicated staging subfolder under shared Documents, and its on-disk
+ * path. This is the single slot the seam (jetpacs-init.el) and core
+ * (`jetpacs-staging-dirs`) read from: a subfolder so Jetpacs's files stay
+ * together instead of loose in the Documents root.
+ */
+private const val STAGING_SUBDIR = "jetpacs"
+private const val STAGING_DIR = "/sdcard/Documents/jetpacs"
 
 /** The Termux single-source-of-truth redirect, pasted into early-init.el. */
 private const val EARLY_INIT_SNIPPET = """;; 1. REDIRECT HOME TO TERMUX
@@ -111,11 +120,11 @@ private const val EARLY_INIT_SNIPPET = """;; 1. REDIRECT HOME TO TERMUX
 private fun byoSnippet(token: String): String = """;; Jetpacs companion bootstrap — add near the TOP of your own init.el.
 ;;
 ;; One line loads Jetpacs's managed entry point (like `(load custom-file)`).
-;; First run copies it in from /sdcard/Documents (staged by this app); after
-;; that it self-updates. Everything Jetpacs manages lives under
+;; First run copies it in from /sdcard/Documents/jetpacs (staged by this app);
+;; after that it self-updates. Everything Jetpacs manages lives under
 ;; ~/.emacs.d/jetpacs/; install apps by listing them in jetpacs/apps.el.
 (let ((entry (expand-file-name "jetpacs/jetpacs-init.el" user-emacs-directory))
-      (staged "/sdcard/Documents/jetpacs-init.el"))
+      (staged "/sdcard/Documents/jetpacs/jetpacs-init.el"))
   (when (and (file-readable-p staged)
              (or (not (file-exists-p entry))
                  (file-newer-than-file-p staged entry)))
@@ -148,9 +157,9 @@ private fun copyToClipboard(context: Context, label: String, text: String) {
 }
 
 /**
- * Write a bundled asset [name] into /sdcard/Documents so Emacs can adopt it on
- * next launch. API 29+ goes through MediaStore (no permission); older devices
- * write the public Documents dir directly (guarded by WRITE_EXTERNAL_STORAGE,
+ * Write a bundled asset [name] into /sdcard/Documents/jetpacs so Emacs can adopt
+ * it on next launch. API 29+ goes through MediaStore (no permission); older
+ * devices write that public dir directly (guarded by WRITE_EXTERNAL_STORAGE,
  * requested before this is called). Returns the on-disk path.
  */
 private fun installAssetToDocuments(context: Context, name: String): String {
@@ -167,7 +176,7 @@ private fun installAssetToDocuments(context: Context, name: String): String {
             arrayOf(MediaStore.MediaColumns._ID),
             "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
                 "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
-            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/%", "$name%"),
+            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/$STAGING_SUBDIR/%", "$name%"),
             null,
         )?.use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
@@ -181,7 +190,8 @@ private fun installAssetToDocuments(context: Context, name: String): String {
             // extension for; anything text-like gets .txt appended and Emacs
             // then can't find the file under its staged name.
             put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS)
+            // MediaStore creates the jetpacs/ subfolder under Documents as needed.
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOCUMENTS}/$STAGING_SUBDIR")
         }
         val uri = resolver.insert(collection, values)
             ?: throw java.io.IOException("MediaStore rejected the insert")
@@ -199,13 +209,16 @@ private fun installAssetToDocuments(context: Context, name: String): String {
             throw java.io.IOException(
                 "Android stored it as \"${storedName ?: "?"}\" instead of \"$name\" — " +
                     "probably a leftover copy from an older install is in the way. " +
-                    "Delete $name from Documents in the Files app and retry.",
+                    "Delete $name from Documents/jetpacs in the Files app and retry.",
             )
         }
-        return "/sdcard/Documents/$name"
+        return "$STAGING_DIR/$name"
     } else {
         @Suppress("DEPRECATION")
-        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+        val dir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+            STAGING_SUBDIR,
+        )
         dir.mkdirs()
         val file = File(dir, name)
         file.writeBytes(bytes)
@@ -215,8 +228,9 @@ private fun installAssetToDocuments(context: Context, name: String): String {
 
 /**
  * The on-disk path of a previously-installed asset [name] in the public
- * Documents dir, or null if none is there. Mirrors [installAssetToDocuments]'s
- * two storage paths so a re-run can show an already-installed state.
+ * Documents/jetpacs dir, or null if none is there. Mirrors
+ * [installAssetToDocuments]'s two storage paths so a re-run can show an
+ * already-installed state.
  */
 private fun findInstalledBundle(context: Context, name: String): String? {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -227,13 +241,14 @@ private fun findInstalledBundle(context: Context, name: String): String? {
             arrayOf(MediaStore.MediaColumns._ID),
             "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
                 "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
-            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/%", name),
+            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/$STAGING_SUBDIR/%", name),
             null,
-        )?.use { c -> if (c.moveToFirst()) return "/sdcard/Documents/$name" }
+        )?.use { c -> if (c.moveToFirst()) return "$STAGING_DIR/$name" }
         return null
     } else {
         @Suppress("DEPRECATION")
-        val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), name)
+        val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+        val file = File(File(docs, STAGING_SUBDIR), name)
         return if (file.exists()) file.absolutePath else null
     }
 }
@@ -474,10 +489,10 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                 output.use {
                     it.write(readAsset(context, "jetpacs-core.el"))
                 }
-                // The seam still loads the entry file from Documents; stage it.
+                // The seam still loads the entry file from Documents/jetpacs; stage it.
                 runCatching { installAssetToDocuments(context, "jetpacs-init.el") }
                 coreInstalled = true
-                "Saved. The core bundle is adopted from Documents/Download — if you chose " +
+                "Saved. The core bundle is adopted from Documents/jetpacs — if you chose " +
                     "another folder, move it there (or edit ~/.emacs.d/jetpacs/jetpacs-init.el)."
             } catch (e: Exception) {
                 "Save failed: ${e.message}"
@@ -655,9 +670,10 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                     Text("Get apps", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Apps for Jetpacs (like Glasspane) ship as single .el bundles from " +
-                            "their own projects. Download one in your browser — it lands in " +
-                            "Download — then add its file name to ~/.emacs.d/jetpacs/apps.el " +
-                            "and restart Emacs. Each app's own instructions cover the rest.",
+                            "their own projects. Download one in your browser, move it into the " +
+                            "Documents/jetpacs folder, then add its file name to " +
+                            "~/.emacs.d/jetpacs/apps.el and restart Emacs. Each app's own " +
+                            "instructions cover the rest.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp),
                     )
@@ -671,7 +687,7 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
                     Text(
                         "jetpacs-hello.el is a complete app in ~60 lines. Install it, then — " +
                             "once paired — evaluate this from the Eval tab to grow a Hello tab " +
-                            "live:\n\n(load \"/sdcard/Documents/jetpacs-hello.el\")",
+                            "live:\n\n(load \"/sdcard/Documents/jetpacs/jetpacs-hello.el\")",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                     )

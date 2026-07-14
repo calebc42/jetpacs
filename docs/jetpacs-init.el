@@ -17,8 +17,8 @@
   "The Jetpacs-owned directory tree (defined again, as a defconst, by core).")
 (defvar jetpacs-lib-dir (expand-file-name "lib/" jetpacs-root)
   "Where adopted single-file bundles live (defined again by core).")
-(defconst jetpacs-init--staging '("/sdcard/Documents/" "/sdcard/Download/")
-  "Staging dirs checked before core loads (core has its own copy after).")
+(defconst jetpacs-init--staging '("/sdcard/Documents/jetpacs/")
+  "Staging dir checked before core loads (core has its own copy after).")
 
 ;; Bundles are byte-compiled at adopt time (core does it), so `require'
 ;; finds a .elc beside every bundle's .el.  This is the backstop that a

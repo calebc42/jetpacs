@@ -4,9 +4,9 @@
      and their permissions merge in from the :jetpacs library manifest. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Onboarding writes jetpacs-core.el into /sdcard/Documents. On API 29+
-         that goes through MediaStore (no permission needed); this covers the
-         legacy direct-file path on API 24-28 only. -->
+    <!-- Onboarding writes jetpacs-core.el into /sdcard/Documents/jetpacs. On
+         API 29+ that goes through MediaStore (no permission needed); this covers
+         the legacy direct-file path on API 24-28 only. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />

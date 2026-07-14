@@ -11,14 +11,13 @@
 
 ;;; ── The bundles: jetpacs core + both apps ────────────────────────────
 ;; Single-file bundles live in ~/.emacs.d/elisp/.  A newer staged copy
-;; is adopted automatically at startup: onboarding writes to
-;; /sdcard/Documents, dev deploy scripts and browser downloads land in
-;; /sdcard/Download.  Both slots are checked; the most-recent copy wins.
+;; is adopted automatically at startup: onboarding, dev deploy scripts,
+;; and browser downloads all land in /sdcard/Documents/jetpacs; the
+;; most-recent copy wins.
 (add-to-list 'load-path (expand-file-name "elisp" user-emacs-directory))
 (dolist (bundle '("jetpacs-core.el" "orgzly.el" "glasspane.el"))
   (let ((staged (seq-filter #'file-readable-p
-                            (list (concat "/sdcard/Documents/" bundle)
-                                  (concat "/sdcard/Download/" bundle))))
+                            (list (concat "/sdcard/Documents/jetpacs/" bundle))))
         (installed (expand-file-name (concat "elisp/" bundle)
                                      user-emacs-directory)))
     (dolist (s staged)
@@ -659,6 +658,6 @@
 ;; file names — Scene 5 of the shooting script):
 ;;   (glasspane-demo-setup-org)
 ;; The hello app, if onboarding installed it:
-;;   (load "/sdcard/Documents/jetpacs-hello.el")
+;;   (load "/sdcard/Documents/jetpacs/jetpacs-hello.el")
 
 ;;; init.el ends here

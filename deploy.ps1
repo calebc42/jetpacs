@@ -5,11 +5,11 @@ the connected Android device.
 
 .DESCRIPTION
 Default: rebuild jetpacs-core.el from emacs/core/*.el via WSL Emacs, then
-adb-push it (plus every path in -Bundles) to /sdcard/Download/. Termux is
-not debuggable, so adb cannot write into /data/data/com.termux directly —
-the starter init (docs/starter-init.el) adopts newer staged bundles from
-/sdcard/Download (or /sdcard/Documents, the onboarding slot) at Emacs
-startup, newest copy wins.
+adb-push it (plus every path in -Bundles) to /sdcard/Documents/jetpacs/.
+Termux is not debuggable, so adb cannot write into /data/data/com.termux
+directly — the starter init (docs/starter-init.el) adopts newer staged
+bundles from /sdcard/Documents/jetpacs (the shared onboarding + deploy
+slot) at Emacs startup, newest copy wins.
 
 App bundles are not built here — each app repo builds its own. Pass the
 built file:
@@ -81,10 +81,11 @@ if ($Ssh) {
     }
     Write-Host '   Reload or restart Emacs to pick the bundles up.'
 } else {
-    Write-Host '-- Staging to /sdcard/Download (adopted by init.el on Emacs restart) ...'
+    Write-Host '-- Staging to /sdcard/Documents/jetpacs (adopted by init.el on Emacs restart) ...'
+    adb shell mkdir -p /sdcard/Documents/jetpacs
     foreach ($f in $files) {
         $name = Split-Path $f -Leaf
-        adb push $f "/sdcard/Download/$name"
+        adb push $f "/sdcard/Documents/jetpacs/$name"
         if ($LASTEXITCODE -ne 0) { throw "adb push failed: $name" }
     }
     Write-Host '   Staged. Restart Emacs on the device (or eval the adopt snippet) to pick them up.'

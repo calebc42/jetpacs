@@ -37,8 +37,8 @@ source of truth — watch me grow three apps into a running session."*
       downloading them in the phone browser from each repo's root on
       GitHub. **⚠ As of 2026-07-10 orgzly-native has no GitHub remote
       and jetpacs/glasspane have unpushed commits — push everything
-      first**, or `adb push` both files to `/sdcard/Download/` and
-      narrate "I've already downloaded these two."
+      first**, or `adb push` both files to `/sdcard/Documents/jetpacs/`
+      and narrate "I've already downloaded these two."
 - [ ] Confirm both bundles at repo roots are freshly regenerated
       (`emacs --batch -l emacs/build-bundle.el` in each repo).
 - [ ] **All three bundles must be the same generation (core ≥1.2.0,
@@ -153,7 +153,7 @@ prompt, any keymap, already rendered native."
 **DO:** open the **Eval** tab and evaluate:
 
 ```elisp
-(load "/sdcard/Documents/jetpacs-hello.el")
+(load "/sdcard/Documents/jetpacs/jetpacs-hello.el")
 ```
 
 **SHOW:** a **Hello** tab appears in the bottom bar. No restart, no
@@ -184,12 +184,13 @@ any state is just Emacs state.")*
 **DO:**
 
 1. (If showing the download live) open the phone browser, grab
-   `orgzly.el` from the orgzly-native repo root → lands in Download.
-   Otherwise narrate: "I've downloaded orgzly.el — one file."
+   `orgzly.el` from the orgzly-native repo root → lands in Download,
+   then move it into `Documents/jetpacs`. Otherwise narrate: "I've
+   downloaded orgzly.el — one file."
 2. Eval tab:
 
    ```elisp
-   (load "/sdcard/Download/orgzly.el")
+   (load "/sdcard/Documents/jetpacs/orgzly.el")
    ```
 
 3. **SHOW — beat #1:** the shell reorganizes into the **launcher
@@ -224,7 +225,7 @@ any state is just Emacs state.")*
 1. Eval tab (narrate over the load — it's the big bundle):
 
    ```elisp
-   (load "/sdcard/Download/glasspane.el")
+   (load "/sdcard/Documents/jetpacs/glasspane.el")
    ```
 
 2. **SHOW:** launcher home now has **three** cards. Open

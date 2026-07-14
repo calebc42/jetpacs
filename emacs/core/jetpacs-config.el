@@ -103,8 +103,8 @@ behind an allowlisted `config.sync' action)."
 ;; core, so it is testable and evolves with the bundle rather than with a file
 ;; the user has to re-paste.
 
-(defconst jetpacs-staging-dirs '("/sdcard/Documents/" "/sdcard/Download/")
-  "Shared-storage directories bundles are staged into before adoption.
+(defconst jetpacs-staging-dirs '("/sdcard/Documents/jetpacs/")
+  "Shared-storage directory bundles are staged into before adoption.
 The companion (a separate UID) can only write here, not the Emacs sandbox;
 Emacs pulls the newest staged copy into `jetpacs-lib-dir'.")
 
@@ -142,9 +142,9 @@ Task 22 / the `jetpacs-build-features' probe)."
 
 (defun jetpacs-config-adopt (bundle)
   "Copy the newest staged BUNDLE into `jetpacs-lib-dir'; return its feature.
-Newest-wins across `jetpacs-staging-dirs' (browser downloads and companion/
-deploy staging both land there).  The installed copy is byte-compiled when
-its .elc is missing or stale, so the `require' that follows picks up
+Newest-wins across `jetpacs-staging-dirs' (companion onboarding, dev deploy,
+and browser downloads all land there).  The installed copy is byte-compiled
+when its .elc is missing or stale, so the `require' that follows picks up
 bytecode.  A `.el' name maps to its feature symbol."
   (let ((installed (expand-file-name bundle jetpacs-lib-dir)))
     (make-directory jetpacs-lib-dir t)
@@ -178,8 +178,8 @@ edits to them survive every subsequent startup and sync."
 
 (defconst jetpacs-config--apps-template
   ";;; apps.el --- Jetpacs installed app bundles -*- lexical-binding: t; -*-
-;; CREATE-ONCE, yours to edit.  List the app bundle files you download into
-;; /sdcard/Download (or Documents); each is adopted into ~/.emacs.d/jetpacs/lib/
+;; CREATE-ONCE, yours to edit.  List the app bundle files you place in
+;; /sdcard/Documents/jetpacs; each is adopted into ~/.emacs.d/jetpacs/lib/
 ;; and required at startup.  The core bundle is always loaded and is NOT listed.
 
 (setq jetpacs-installed-bundles '())   ; e.g. '(\"glasspane.el\")

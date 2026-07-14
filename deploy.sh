@@ -5,10 +5,10 @@
 # Linux/macOS (or WSL) where emacs and adb are on PATH directly.
 #
 # Default: rebuild jetpacs-core.el from emacs/core/*.el, then adb-push it
-# (plus every extra path given) to /sdcard/Download/. Termux is not
+# (plus every extra path given) to /sdcard/Documents/jetpacs/. Termux is not
 # debuggable, so adb cannot write into /data/data/com.termux directly —
 # the starter init (docs/starter-init.el) adopts newer staged bundles
-# from /sdcard/Download (or /sdcard/Documents, the onboarding slot) at
+# from /sdcard/Documents/jetpacs (the shared onboarding + deploy slot) at
 # Emacs startup, newest copy wins.
 #
 # App bundles are not built here — each app repo builds its own. Pass
@@ -67,9 +67,10 @@ if [ "$use_ssh" -eq 1 ]; then
   done
   echo '   Reload or restart Emacs to pick the bundles up.'
 else
-  echo '-- Staging to /sdcard/Download (adopted by init.el on Emacs restart) ...'
+  echo '-- Staging to /sdcard/Documents/jetpacs (adopted by init.el on Emacs restart) ...'
+  adb shell mkdir -p /sdcard/Documents/jetpacs
   for f in "${files[@]}"; do
-    adb push "$f" "/sdcard/Download/$(basename "$f")"
+    adb push "$f" "/sdcard/Documents/jetpacs/$(basename "$f")"
   done
   echo '   Staged. Restart Emacs on the device (or eval the adopt snippet) to pick them up.'
 fi

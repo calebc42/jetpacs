@@ -11,9 +11,11 @@ and everything above it is one replaceable opinion.
   a searchable command palette; any minibuffer prompt becomes a native
   dialog; M-x works. No package-specific code anywhere on the path.
 - **Tier 0.5 — declarative-framework renderers.** Some Emacs UI frameworks
-  are data, not text: `tabulated-list-mode` (columns + rows) and
-  `transient` (layouts of infixes/suffixes). One renderer per framework
-  covers every package built on it.
+  are data, not text: `tabulated-list-mode` (columns + rows), `comint`
+  (transcript + prompt), the `next-error`/loci protocol (results lists),
+  rendered hypertext documents (shr/eww, help, Info — headings, links,
+  images, tables), and `transient` (layouts of infixes/suffixes). One
+  renderer per framework covers every package built on it.
 - **Tier 1 — apps and skins.** Opinionated, curated experiences built on
   the core seams: the [Glasspane](https://github.com/calebc42/glasspane)
   org app and the magit radial menu (in the glasspane repo; this repo
@@ -49,6 +51,8 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-apps.el` | app identity over the shell: `jetpacs-defapp` groups views, launcher home grid, per-app tab bars (inert until a second app registers) |
 | `jetpacs-tablist.el` | **Tier 0.5**: generic `tabulated-list-mode` renderer + skin hook alists |
 | `jetpacs-comint.el` | **Tier 0.5**: generic `comint-mode` renderer — transcript tail + input row, `comint.send` scoped to the buffer's own live process |
+| `jetpacs-results.el` | **Tier 0.5**: generic results/loci navigator — occur/compilation/grep/xref as tappable cards, the mode's own goto under a display shim, prev/next stepper |
+| `jetpacs-hypertext.el` | **Tier 0.5**: generic document renderer — eww/help/Info (and any shr-rendered mode via `jetpacs-hypertext-register-shr-mode`) as cards: headings, tappable links, real images (write-once content cache), native tables, `hypertext.nav` toolbar |
 | `jetpacs-transient.el` | **Tier 0.5**: transient prefixes as touch dialogs (advice on `transient-setup`) |
 | `jetpacs-keymap.el` | command palette over any buffer's keymap; live-transient pie plumbing |
 | `jetpacs-sync.el` | editor shadow buffers: delta sync, flymake diagnostics, eldoc, fontify pushes |
@@ -136,6 +140,7 @@ library names no host class):
 | `jetpacs-shell-define-view` / drawer / top-action / default-FAB | jetpacs-shell | app views, tabs, and global chrome |
 | `jetpacs-shell-view-switched/refresh/after-push-hook` | jetpacs-shell | app state resets, cache drops, piggyback pushes |
 | `jetpacs-tablist-{header,row,filter}-functions` | jetpacs-tablist | per-mode tablist skins |
+| `jetpacs-hypertext-register-shr-mode` | jetpacs-hypertext | one-line riders for shr-rendered modes (elfeed-show, nov, devdocs) |
 | `jetpacs-files-editor-{body,actions,toolbar}` + open/after-save hooks | jetpacs-files | per-file-type editor behaviour |
 | `jetpacs-settings-register-section` / `jetpacs-settings-after-set-hook` | jetpacs-settings | app settings exposure (the wire allowlist) |
 | `jetpacs-keymap` pie plumbing | jetpacs-keymap | curated Tier 1 pies (see jetpacs-magit.el) |

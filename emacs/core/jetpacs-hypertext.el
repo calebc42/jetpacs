@@ -811,12 +811,37 @@ line-span builder and === / --- underlined headings lifted to sections."
             buf #'jetpacs-hypertext--info-line-class)
        (jetpacs-hypertext--info-title buf)))))
 
-;; eww, help, and Info are built-ins this foundation may name directly;
-;; third-party shr consumers (elfeed-show, nov, devdocs) register softly in a
-;; later stage.
+;; ─── Registrations & third-party riders ─────────────────────────────────────
+
+(defun jetpacs-hypertext-register-shr-mode (mode)
+  "Register MODE (a major-mode symbol) to render as a hypertext document.
+The one-line rider seam for any package whose buffers are shr-rendered
+HTML — feed readers, EPUB readers, doc browsers:
+
+  (with-eval-after-load \\='elfeed-show
+    (jetpacs-hypertext-register-shr-mode \\='elfeed-show-mode))
+
+Register each concrete mode, never `special-mode' itself: dispatch is by
+`derived-mode-p', and half of Emacs derives from special-mode."
+  (when (memq mode '(special-mode fundamental-mode text-mode))
+    (error "Register the package's own mode, not %s (dispatch is derived-mode-p)"
+           mode))
+  (jetpacs-render-buffer-register mode #'jetpacs-hypertext-render))
+
+;; eww, help, and Info are built-ins this foundation may name directly.
 (jetpacs-render-buffer-register 'eww-mode #'jetpacs-hypertext-render)
 (jetpacs-render-buffer-register 'help-mode #'jetpacs-hypertext-render-help)
 (jetpacs-render-buffer-register 'Info-mode #'jetpacs-hypertext-render-info)
+
+;; The known third-party shr consumers ride as soon as they load; none is
+;; ever required from here (the core stays app-free — test/core-load-test.el
+;; proves it).
+(with-eval-after-load 'elfeed-show
+  (jetpacs-hypertext-register-shr-mode 'elfeed-show-mode))
+(with-eval-after-load 'nov
+  (jetpacs-hypertext-register-shr-mode 'nov-mode))
+(with-eval-after-load 'devdocs
+  (jetpacs-hypertext-register-shr-mode 'devdocs-mode))
 
 (provide 'jetpacs-hypertext)
 ;;; jetpacs-hypertext.el ends here

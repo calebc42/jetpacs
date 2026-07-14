@@ -1615,6 +1615,31 @@ the monospace fallback, never a wrong native table."
           (let ((n (jetpacs-hypertext--emit-segment tbl)))
             (should (equal (alist-get 't n) "surface"))))))))
 
+(ert-deftest jetpacs-hypertext-rider-registration ()
+  "A third-party shr mode rides through the public one-line seam: dispatch
+picks the document renderer for it, headings and all.  Registering a base
+mode (special-mode) is refused — dispatch is derived-mode-p wide."
+  (should-error (jetpacs-hypertext-register-shr-mode 'special-mode))
+  (define-derived-mode jetpacs-tests--rider-mode special-mode "TestRider")
+  (unwind-protect
+      (progn
+        (jetpacs-hypertext-register-shr-mode 'jetpacs-tests--rider-mode)
+        (with-temp-buffer
+          (jetpacs-tests--rider-mode)
+          (let ((inhibit-read-only t))
+            (insert (propertize "Riding High" 'face 'shr-h1)
+                    "\n\nPlain prose paragraph.\n"))
+          (let* ((nodes (jetpacs-render-buffer (current-buffer)))
+                 (header (seq-find (lambda (n)
+                                     (equal (alist-get 't n) "section_header"))
+                                   nodes)))
+            (should header)
+            (should (equal (alist-get 'title header) "Riding High"))
+            (dolist (n nodes) (should (null (jetpacs-lint-spec n)))))))
+    (setq jetpacs-render-buffer-functions
+          (assq-delete-all 'jetpacs-tests--rider-mode
+                           jetpacs-render-buffer-functions))))
+
 (ert-deftest jetpacs-hypertext-nav-allowlist ()
   "hypertext.nav resolves only a mode's own allowlisted ops; anything else —
 a foreign op, an op for the wrong mode, a non-document mode — resolves to

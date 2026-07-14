@@ -924,7 +924,9 @@ deliberately-broken bundle warns and still boots from source. On-device
 `treesit-available-p`, `native-comp-available-p`, `libxml-available-p` —
 becomes positive knowledge instead of folklore. Three queued decisions
 read it: the SQLite-backed org index / FTS grep direction, Task 22's
-native-comp rung, and shr/libxml for the hypertext-substrate idea. Same
+native-comp rung, and shr/libxml for the hypertext substrate (since
+built: `emacs/core/jetpacs-hypertext.el` gates its shr tests and eww
+table pass on the libxml probe). Same
 discipline as node-type negotiation: support is what the running build
 *says*, not what 30.1 implies. `docs/demo-init.el:316` already models the
 consumer side (`(use-package vulpea :if (... (sqlite-available-p)))`).

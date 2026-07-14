@@ -23,7 +23,9 @@ change signature incompatibly. Everything else is internal.
 > query grammar, plus the guarded vulpea source query); `1.7.0` is the
 > platform-hardening Phase H batch (the build-feature probe pair and the
 > read-only `:render` settings row below — byte-compile-at-adopt and the
-> package-vc headers add behavior, not symbols).
+> package-vc headers add behavior, not symbols); `1.8.0` is the hypertext
+> substrate (the document renderer under eww/help/Info, its shr rider seam,
+> and the promoted follow-shim below).
 
 ## The two rules
 
@@ -141,7 +143,20 @@ registrations, and the per-app default FAB that replaces setting
 `jetpacs-shell-default-fab-function` directly — the direct set still works
 but leaks the FAB onto every coexisting app's views).
 
-Buffer skins (`jetpacs-buffer.el`): `jetpacs-render-buffer-register`.
+Buffer skins (`jetpacs-buffer.el`): `jetpacs-render-buffer-register`
+(since 1.8.0: `jetpacs-buffer-call-shimmed` — run a buffer's own
+follow/visit command with the display functions and the triggering input
+event shimmed away, returning where point lands; the follow primitive
+under the results and hypertext substrates, for any skin that navigates
+by invoking the mode's own commands).
+
+Hypertext documents (`jetpacs-hypertext.el`, since 1.8.0): eww, help, and
+Info render as document cards out of the box; the rider seam
+`jetpacs-hypertext-register-shr-mode` puts any other shr-rendered mode
+(elfeed-show, nov, devdocs — the known three pre-wired via
+`with-eval-after-load`) on the same renderer in one line. Plus the
+command `jetpacs-hypertext-image-cache-clear` and the customization vars
+`jetpacs-hypertext-image-cache-max` `jetpacs-hypertext-table-max-rows`.
 
 Tablist skins (`jetpacs-tablist.el`): the `jetpacs-tablist-header-functions`
 `jetpacs-tablist-row-functions` `jetpacs-tablist-filter-functions` alists.

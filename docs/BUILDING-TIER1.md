@@ -71,6 +71,19 @@ that opens it) uses your rendering instead of the generic one:
 Fall through is automatic: modes you don't register keep the faithful
 Tier 0 rendering, so a skin is pure polish, never a prerequisite.
 
+Special case, zero code: if your package's buffers are **shr-rendered
+HTML** (a feed reader, an EPUB reader, a docs browser), don't write a skin
+at all — ride the hypertext substrate, which renders headings, tappable
+links, real images, and native tables:
+
+```elisp
+(with-eval-after-load 'my-reader
+  (jetpacs-hypertext-register-shr-mode 'my-reader-mode))
+```
+
+(elfeed-show, nov, and devdocs are already wired this way in the core;
+eww, help, and Info render as documents out of the box.)
+
 ### 2. A tablist skin — specialize the table renderer
 
 Anything derived from `tabulated-list-mode` already renders as sortable

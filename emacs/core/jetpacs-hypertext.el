@@ -459,6 +459,18 @@ non-empty lines are joined by a space so the paragraph reflows."
                     collect (if (zerop i) chunk
                               (cons (jetpacs-span " ") chunk))))))
 
+(defun jetpacs-hypertext--skip-inter-block (limit)
+  "Advance point over inter-block blank space up to LIMIT, stopping at an
+shr image run.  On an Emacs built without SVG support, `shr-tag-img'
+renders an image as a lone space rather than a placeholder glyph carrying
+its alt text; that space is meaningful markup, not inter-block whitespace,
+so the block scan must not skip it — otherwise the image is dropped below
+the Tier-0 fidelity floor instead of degrading to its URL/alt caption."
+  (while (and (< (point) limit)
+              (memq (char-after) '(?\s ?\t ?\n))
+              (not (jetpacs-hypertext--image-run-p (point))))
+    (forward-char 1)))
+
 (defun jetpacs-hypertext--scan-shr (buf)
   "Scan shr-rendered BUF into a document model (heading + paragraph segments)."
   (with-current-buffer buf
@@ -466,7 +478,7 @@ non-empty lines are joined by a space so the paragraph reflows."
       (goto-char (point-min))
       (let ((name (buffer-name buf)) (limit (point-max)) segments)
         (while (< (point) limit)
-          (skip-chars-forward " \t\n" limit)
+          (jetpacs-hypertext--skip-inter-block limit)
           (when (< (point) limit)
             (let* ((beg (line-beginning-position))
                    (end (jetpacs-hypertext--block-end limit))

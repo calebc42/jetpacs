@@ -1467,6 +1467,154 @@ wire-valid.  Gated on libxml (absent in lean builds; present in CI Emacs)."
     (dolist (n (jetpacs-hypertext--emit model "Test Page"))
       (should (null (jetpacs-lint-spec n))))))
 
+(ert-deftest jetpacs-hypertext-image-resolve ()
+  "The image emitter resolves in battery order: a readable file passes
+through as file://, an http(s) URL passes through untouched (never cached),
+Emacs-only bytes (:data, base64 data: URIs) go through the write-once
+content cache, and the unresolvable degrade to an alt caption."
+  (let* ((tmproot (make-temp-file "jetpacs-hyper-root" t))
+         (jetpacs-root tmproot))
+    (unwind-protect
+        (progn
+          ;; a readable :file → file:// passthrough
+          (let* ((f (make-temp-file "jetpacs-img" nil ".png" "PNG"))
+                 (n (jetpacs-hypertext--image
+                     (list :kind 'image :file f :alt "local"))))
+            (should (equal (alist-get 't n) "image"))
+            (should (equal (alist-get 'url n) (concat "file://" f)))
+            (should (equal (alist-get 'content_description n) "local"))
+            (delete-file f))
+          ;; http(s) → URL passthrough; the cache is never touched
+          (let ((n (jetpacs-hypertext--image
+                    '(:kind image :url "https://x.test/a.png" :alt "net"))))
+            (should (equal (alist-get 't n) "image"))
+            (should (equal (alist-get 'url n) "https://x.test/a.png"))
+            (should-not (file-directory-p
+                         (jetpacs-hypertext--image-cache-dir))))
+          ;; :data → the content cache, write-once (same path both times)
+          (let* ((seg '(:kind image :data "RAWBYTES" :content-type png :alt "d"))
+                 (n1 (jetpacs-hypertext--image seg))
+                 (url1 (alist-get 'url n1))
+                 (path (substring url1 (length "file://"))))
+            (should (string-prefix-p "file://" url1))
+            (should (string-suffix-p ".png" path))
+            (should (equal (with-temp-buffer
+                             (set-buffer-multibyte nil)
+                             (insert-file-contents-literally path)
+                             (buffer-string))
+                           "RAWBYTES"))
+            (should (equal (alist-get 'url (jetpacs-hypertext--image seg)) url1)))
+          ;; a base64 data: URI decodes into the cache
+          (let* ((uri (concat "data:image/png;base64,"
+                              (base64-encode-string "DATAURI")))
+                 (n (jetpacs-hypertext--image (list :kind 'image :url uri)))
+                 (path (substring (alist-get 'url n) (length "file://"))))
+            (should (equal (with-temp-buffer
+                             (set-buffer-multibyte nil)
+                             (insert-file-contents-literally path)
+                             (buffer-string))
+                           "DATAURI")))
+          ;; nothing resolvable → alt caption, never dropped
+          (let ((n (jetpacs-hypertext--image '(:kind image :alt "gone"))))
+            (should (equal (alist-get 't n) "text"))
+            (should (string-match-p "gone" (alist-get 'text n)))))
+      (delete-directory tmproot t))))
+
+(ert-deftest jetpacs-hypertext-image-cache-sweep ()
+  "A write past the byte cap sweeps oldest-mtime files first; the clear
+command empties the cache."
+  (let* ((tmproot (make-temp-file "jetpacs-hyper-root" t))
+         (jetpacs-root tmproot)
+         (jetpacs-hypertext-image-cache-max 8)) ; two 6-byte files can't both fit
+    (unwind-protect
+        (let ((p1 (jetpacs-hypertext--image-cache-put "DATA-A" 'png)))
+          (should (file-exists-p p1))
+          (set-file-times p1 (time-subtract (current-time) 120))
+          (let ((p2 (jetpacs-hypertext--image-cache-put "DATA-B" 'png)))
+            (should-not (file-exists-p p1))    ; oldest evicted
+            (should (file-exists-p p2))
+            (jetpacs-hypertext-image-cache-clear)
+            (should-not (file-exists-p p2))))
+      (delete-directory tmproot t))))
+
+(ert-deftest jetpacs-hypertext-shr-media ()
+  "Media blocks lift out of shr prose: an image-only block becomes an image
+segment (the real source URL kept, shr's placeholder rectangle discarded),
+and rendered table regions pair with the page DOM by shr-table-id into
+native tables — both tables of the fixture, proving id order.  The whole
+document stays wire-valid."
+  (skip-unless (jetpacs-feature-p 'libxml))
+  (require 'shr)
+  (let ((html (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name "fixtures/hypertext-media.html"
+                                   jetpacs-tests--dir))
+                (buffer-string)))
+        nodes)
+    (with-temp-buffer
+      (insert html)
+      (let* ((dom (libxml-parse-html-region (point-min) (point-max)))
+             (body (or (car (dom-by-tag dom 'body)) dom)))
+        (erase-buffer)
+        (shr-insert-document body))
+      (setq-local eww-data (list :source html :title "Media Page"))
+      (let* ((model (jetpacs-hypertext--scan-shr (current-buffer)))
+             (resolved (jetpacs-hypertext--eww-resolve-tables
+                        model (current-buffer))))
+        ;; the image segment: URL and alt survive, the placeholder does not
+        (let ((img (seq-find (lambda (s) (eq (plist-get s :kind) 'image))
+                             model)))
+          (should img)
+          (should (equal (plist-get img :url) "https://example.com/pic.png"))
+          (should (equal (plist-get img :alt) "A picture"))
+          (should-not (plist-get img :data)))
+        ;; both tables resolve to native rows, in document order
+        (let ((tables (seq-filter (lambda (s) (eq (plist-get s :kind) 'table))
+                                  resolved)))
+          (should (= (length tables) 2))
+          (let ((r1 (plist-get (nth 0 tables) :rows))
+                (r2 (plist-get (nth 1 tables) :rows)))
+            (should (equal (plist-get (car r1) :cells) '("Name" "Age")))
+            (should (plist-get (car r1) :header))
+            (should (equal (plist-get (nth 2 r1) :cells) '("Grace" "85")))
+            (should (equal (plist-get (car r2) :cells) '("solo")))
+            (should-not (plist-get (car r2) :header))))
+        (setq nodes (jetpacs-hypertext--emit resolved "Media Page"))))
+    (let ((types (mapcar (lambda (n) (alist-get 't n)) nodes)))
+      (should (member "image" types))
+      (should (= (seq-count (lambda (ty) (equal ty "table")) types) 2)))
+    (dolist (n nodes) (should (null (jetpacs-lint-spec n))))))
+
+(ert-deftest jetpacs-hypertext-nested-table-stays-mono ()
+  "A document containing nested tables is left alone by the DOM pass (shr's
+render order diverges from document order there): its table segments keep
+the monospace fallback, never a wrong native table."
+  (skip-unless (jetpacs-feature-p 'libxml))
+  (require 'shr)
+  (let ((html (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name "fixtures/hypertext-nested-table.html"
+                                   jetpacs-tests--dir))
+                (buffer-string))))
+    (with-temp-buffer
+      (insert html)
+      (let* ((dom (libxml-parse-html-region (point-min) (point-max)))
+             (body (or (car (dom-by-tag dom 'body)) dom)))
+        (erase-buffer)
+        (shr-insert-document body))
+      (setq-local eww-data (list :source html))
+      (let* ((model (jetpacs-hypertext--scan-shr (current-buffer)))
+             (resolved (jetpacs-hypertext--eww-resolve-tables
+                        model (current-buffer)))
+             (tables (seq-filter (lambda (s) (eq (plist-get s :kind) 'table))
+                                 resolved)))
+        (should tables)
+        (dolist (tbl tables)
+          (should-not (plist-get tbl :rows))
+          ;; and it emits as a monospace block, alignment preserved
+          (let ((n (jetpacs-hypertext--emit-segment tbl)))
+            (should (equal (alist-get 't n) "surface"))))))))
+
 (ert-deftest jetpacs-hypertext-nav-allowlist ()
   "hypertext.nav resolves only a mode's own allowlisted ops; anything else —
 a foreign op, an op for the wrong mode, a non-document mode — resolves to

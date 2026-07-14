@@ -26,10 +26,14 @@ kept as the record of what shipped.
 **Companion deliverables:**
 - **Stage 3** → `Glasspane/docs/PLAN-binding-adoption.md` — exists, executed (see its status
   header), re-scoped by `Glasspane/docs/DECISION-no-binding-template-dsl.md`.
-- **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` (planned; **not present** —
-  author at stage kickoff), cross-linked from `jetpacs-composer/docs/PLAN-nocobase-horizons.md`.
-  Note the composer's vulpea rearchitecture (its `PLAN-vulpea-rearchitecture.md`) already
-  shipped the dependency-injection half (`#+JETPACS_DEPENDS:` + Deployer bootstrap).
+- **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` — **authored 2026-07-13**
+  (executable fresh-chat handoff; cross-linked from
+  `jetpacs-composer/docs/PLAN-nocobase-horizons.md`). One renumbering against this doc's
+  Stage 4 text: the shipped writer already emits FORMAT 3 unconditionally, so
+  **pack-backed documents become FORMAT 4** (accept ≤4, emit 3 unless pack-backed, reject
+  >4) — same gating intent, current numbering. The composer's vulpea rearchitecture
+  already shipped the dependency-injection half (`#+JETPACS_DEPENDS:` + Deployer
+  bootstrap).
 - **Reconcile** `docs/PLAN-org-extraction.md` — done 2026-07-13 (its status header now names
   the surviving core `jetpacs-org-*` entry points).
 

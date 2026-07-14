@@ -25,7 +25,8 @@
                  (file-newer-than-file-p staged entry)))
     (make-directory (file-name-directory entry) t)
     (copy-file staged entry t))
-  (load entry t))
+  (unless (load entry t)
+    (message "Jetpacs: %s is missing and nothing is staged at %s — run the companion app's setup, and check that Emacs can read shared storage" entry staged)))
 
 ;;; ── Pairing ──────────────────────────────────────────────────────────────
 ;; Open the Jetpacs app: its pairing screen shows a one-line

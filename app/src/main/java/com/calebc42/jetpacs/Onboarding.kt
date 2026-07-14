@@ -121,7 +121,8 @@ private fun byoSnippet(token: String): String = """;; Jetpacs companion bootstra
                  (file-newer-than-file-p staged entry)))
     (make-directory (file-name-directory entry) t)
     (copy-file staged entry t))
-  (load entry t))
+  (unless (load entry t)
+    (message "Jetpacs: %s is missing and nothing is staged at %s — run the companion app's setup, and check that Emacs can read shared storage" entry staged)))
 (setq jetpacs-auth-token "$token")
 """
 
@@ -158,12 +159,15 @@ private fun installAssetToDocuments(context: Context, name: String): String {
         val resolver = context.contentResolver
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         // Drop any prior copy so init.el always sees a strictly newer file.
+        // Prefix match, not equality: older companions declared text/plain,
+        // which made MediaStore mangle the name ("name.txt", "name (2).txt");
+        // sweep those variants too so retries don't pile up junk.
         resolver.query(
             collection,
             arrayOf(MediaStore.MediaColumns._ID),
             "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
-            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/%", name),
+                "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
+            arrayOf("${Environment.DIRECTORY_DOCUMENTS}/%", "$name%"),
             null,
         )?.use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
@@ -173,13 +177,31 @@ private fun installAssetToDocuments(context: Context, name: String): String {
         }
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            // octet-stream is the one MIME type MediaStore never "fixes" the
+            // extension for; anything text-like gets .txt appended and Emacs
+            // then can't find the file under its staged name.
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
             put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS)
         }
         val uri = resolver.insert(collection, values)
             ?: throw java.io.IOException("MediaStore rejected the insert")
         resolver.openOutputStream(uri)?.use { it.write(bytes) }
             ?: throw java.io.IOException("Could not open the target for writing")
+        // MediaStore may still have renamed the file (e.g. a leftover copy
+        // owned by a previous install collides, so it uniquifies to
+        // "name (2)"). The staged name is the contract with init.el — a
+        // rename means Emacs will never see this file, so fail loudly.
+        val storedName = resolver.query(
+            uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null,
+        )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        if (storedName != name) {
+            resolver.delete(uri, null, null)
+            throw java.io.IOException(
+                "Android stored it as \"${storedName ?: "?"}\" instead of \"$name\" — " +
+                    "probably a leftover copy from an older install is in the way. " +
+                    "Delete $name from Documents in the Files app and retry.",
+            )
+        }
         return "/sdcard/Documents/$name"
     } else {
         @Suppress("DEPRECATION")
@@ -439,9 +461,11 @@ private fun DeliverStep(byo: Boolean, termux: Boolean, onNext: () -> Unit, onBac
     }
 
     // SAF fallback: let the user save the core bundle anywhere if Documents
-    // fails or they'd rather choose the folder themselves.
+    // fails or they'd rather choose the folder themselves. octet-stream, not
+    // text/plain: the Files app appends .txt for text MIME types and the .el
+    // name is the contract with init.el.
     val saf = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain"),
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
         if (uri != null) {
             installResult = try {

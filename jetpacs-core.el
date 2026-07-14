@@ -378,6 +378,42 @@ permissively and takes PRIMARY (see `jetpacs-node-supported-p')."
   (declare (indent 1))
   `(if (jetpacs-node-supported-p ,node-type) ,primary ,fallback))
 
+(defconst jetpacs--build-feature-probes
+  '((sqlite      . sqlite-available-p)
+    (treesit     . treesit-available-p)
+    (native-comp . native-comp-available-p)
+    (libxml      . libxml-available-p))
+  "The known optional-build features and the predicate probing each.
+The car set is the whole vocabulary of `jetpacs-build-features' — a flat
+list of symbols on purpose, so it never grows into a second negotiation
+vocabulary (no versions, no metadata).")
+
+(defconst jetpacs-build-features
+  (let (features)
+    (dolist (probe jetpacs--build-feature-probes)
+      (when (and (fboundp (cdr probe))
+                 (ignore-errors (funcall (cdr probe))))
+        (push (car probe) features)))
+    (nreverse features))
+  "Optional compile-time features the running Emacs build actually has.
+A version floor is not a build guarantee: sqlite, tree-sitter, native
+compilation and libxml are compile-time options of the particular
+binary, so anything that would use them needs positive knowledge — the
+same discipline as the welcome's `node_types'.  This is a REPORTING
+surface only: nothing in the core gates on it, and consumers keep their
+feature-local guards (e.g. `(sqlite-available-p)') at the point of
+consumption, exactly as before.  Echoed to the companion in the
+`session.hello' `features' field so build skew shows up in logs the
+way version skew already does.")
+
+(defun jetpacs-feature-p (feature)
+  "Non-nil when the running Emacs build has FEATURE (symbol or string).
+Membership in `jetpacs-build-features'; see there for what this is
+\(and is not) for."
+  (and (memq (if (stringp feature) (intern feature) feature)
+             jetpacs-build-features)
+       t))
+
 (defun jetpacs-device-caps ()
   "Capability names invocable via `jetpacs-capability-invoke', or nil.
 From the welcome's `device' report; empty until a session with the
@@ -484,6 +520,7 @@ reconnect (with backoff) is what makes the bridge feel always-on."
    "session.hello"
    `((protocol . ,jetpacs-protocol-version)
      (client   . ,(format "emacs/%s jetpacs.el/%s" emacs-version jetpacs-api-version))
+     (features . ,(vconcat (mapcar #'symbol-name jetpacs-build-features)))
      (wants    . ,(vconcat jetpacs-wants)))))
 
 (defun jetpacs--make-process ()
@@ -6296,6 +6333,20 @@ Never nest this node inside another scroll container."
   (jetpacs-shell-nav-view "Emacs Settings" (jetpacs-shell-settings-body)
                        :snackbar snackbar))
 
+(defun jetpacs-shell--build-features-row ()
+  "The Emacs build-feature matrix as a read-only settings row.
+The user-visible doctor line for `jetpacs-build-features': every known
+optional build feature, check when this Emacs binary has it, dash when
+it doesn't.  Informational only — nothing is settable here."
+  (jetpacs-column
+   (jetpacs-text "Emacs build features" 'label)
+   (jetpacs-text
+    (mapconcat (lambda (probe)
+                 (format "%s %s" (car probe)
+                         (if (jetpacs-feature-p (car probe)) "✓" "—")))
+               jetpacs--build-feature-probes "   ")
+    'caption)))
+
 (with-eval-after-load 'jetpacs-settings
   ;; The foundation's own knobs, so the stock screen is never empty and
   ;; the theme mirror / dialog style are discoverable without docs.
@@ -6305,7 +6356,8 @@ Never nest this node inside another scroll container."
    "Bridge"
    '((jetpacs-theme-sync :label "Mirror Emacs theme")
      (jetpacs-dialog-style :label "Dialog style")
-     (jetpacs-reconnect :label "Auto-reconnect")))
+     (jetpacs-reconnect :label "Auto-reconnect")
+     (jetpacs-build-features :render jetpacs-shell--build-features-row)))
   (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
   ;; Two explicit settings domains. Jetpacs Settings is companion-local and
   ;; always works offline; Emacs Settings resolves through the current Tier 1
@@ -9775,6 +9827,11 @@ PLIST supports :label (display name) and :after-set (function of the
 new value, for propagation the defcustom's `:set' doesn't cover).
 Only symbols listed here can be modified from the wire.
 
+An entry may instead carry :render (a nullary node builder): a
+READ-ONLY informational row rendered in place — it is excluded from
+the wire-set gate and gets no state handler, so its SYMBOL is just a
+self-documenting key, never settable.
+
 Empty by default: the machinery is app-agnostic, and each Tier 1 app
 exposes its own variables through `jetpacs-settings-register-section'.")
 
@@ -9795,9 +9852,14 @@ screen has ever rendered this session."
   (setq jetpacs-settings-registry (assoc-delete-all title jetpacs-settings-registry)))
 
 (defun jetpacs-settings--entry (sym)
-  "Registry entry for SYM, or nil if SYM is not exposed."
+  "Registry entry for SYM, or nil if SYM is not exposed.
+Read-only :render rows are not entries in this sense — they are never
+reachable from the wire's settings.set/settings.reset gate."
   (cl-loop for (_title . entries) in jetpacs-settings-registry
-           thereis (assq sym entries)))
+           thereis (let ((entry (assq sym entries)))
+                     (and entry
+                          (not (plist-get (cdr entry) :render))
+                          entry))))
 
 ;; ─── Persistence ─────────────────────────────────────────────────────────────
 
@@ -10074,8 +10136,11 @@ name under `name' — the settings screen uses the registry-gated
                     (unless (eq kind 'boolean) control)))))))
 
 (defun jetpacs-settings--item (entry)
-  "Widget column for registry ENTRY."
-  (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))
+  "Widget column for registry ENTRY (a :render row renders itself)."
+  (let ((render (plist-get (cdr entry) :render)))
+    (if render
+        (funcall render)
+      (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))))
 
 (defvar jetpacs-settings-links nil
   "Ordered list of (ORDER BUILDER . OWNER) Emacs navigation entries.
@@ -10204,10 +10269,11 @@ this session — so handlers are registered when the section is, not at
 render."
   (dolist (section sections)
     (dolist (entry (cdr section))
-      (jetpacs-settings-watch-toggle
-       (car entry)
-       (concat "setting/" (symbol-name (car entry)))
-       (plist-get (cdr entry) :after-set)))))
+      (unless (plist-get (cdr entry) :render)
+        (jetpacs-settings-watch-toggle
+         (car entry)
+         (concat "setting/" (symbol-name (car entry)))
+         (plist-get (cdr entry) :after-set))))))
 
 (provide 'jetpacs-settings)
 ;;; jetpacs-settings.el ends here

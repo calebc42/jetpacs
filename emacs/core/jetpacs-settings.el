@@ -51,6 +51,11 @@ PLIST supports :label (display name) and :after-set (function of the
 new value, for propagation the defcustom's `:set' doesn't cover).
 Only symbols listed here can be modified from the wire.
 
+An entry may instead carry :render (a nullary node builder): a
+READ-ONLY informational row rendered in place — it is excluded from
+the wire-set gate and gets no state handler, so its SYMBOL is just a
+self-documenting key, never settable.
+
 Empty by default: the machinery is app-agnostic, and each Tier 1 app
 exposes its own variables through `jetpacs-settings-register-section'.")
 
@@ -71,9 +76,14 @@ screen has ever rendered this session."
   (setq jetpacs-settings-registry (assoc-delete-all title jetpacs-settings-registry)))
 
 (defun jetpacs-settings--entry (sym)
-  "Registry entry for SYM, or nil if SYM is not exposed."
+  "Registry entry for SYM, or nil if SYM is not exposed.
+Read-only :render rows are not entries in this sense — they are never
+reachable from the wire's settings.set/settings.reset gate."
   (cl-loop for (_title . entries) in jetpacs-settings-registry
-           thereis (assq sym entries)))
+           thereis (let ((entry (assq sym entries)))
+                     (and entry
+                          (not (plist-get (cdr entry) :render))
+                          entry))))
 
 ;; ─── Persistence ─────────────────────────────────────────────────────────────
 
@@ -350,8 +360,11 @@ name under `name' — the settings screen uses the registry-gated
                     (unless (eq kind 'boolean) control)))))))
 
 (defun jetpacs-settings--item (entry)
-  "Widget column for registry ENTRY."
-  (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))
+  "Widget column for registry ENTRY (a :render row renders itself)."
+  (let ((render (plist-get (cdr entry) :render)))
+    (if render
+        (funcall render)
+      (jetpacs-settings-item (car entry) :label (plist-get (cdr entry) :label)))))
 
 (defvar jetpacs-settings-links nil
   "Ordered list of (ORDER BUILDER . OWNER) Emacs navigation entries.
@@ -480,10 +493,11 @@ this session — so handlers are registered when the section is, not at
 render."
   (dolist (section sections)
     (dolist (entry (cdr section))
-      (jetpacs-settings-watch-toggle
-       (car entry)
-       (concat "setting/" (symbol-name (car entry)))
-       (plist-get (cdr entry) :after-set)))))
+      (unless (plist-get (cdr entry) :render)
+        (jetpacs-settings-watch-toggle
+         (car entry)
+         (concat "setting/" (symbol-name (car entry)))
+         (plist-get (cdr entry) :after-set))))))
 
 (provide 'jetpacs-settings)
 ;;; jetpacs-settings.el ends here

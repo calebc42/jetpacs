@@ -54,7 +54,7 @@ Errors travel as `kind: "error"` with `{code, detail}`.
 ## 3. Handshake and pairing auth
 
 ```
-Emacs → companion   session.hello    {protocol, client, wants: [capability...]}
+Emacs → companion   session.hello    {protocol, client, features?, wants: [capability...]}
 companion → Emacs   auth.challenge   {nonce: SNONCE}
 Emacs → companion   auth.response    {nonce: CNONCE, mac}
 companion → Emacs   session.welcome  {server_proof, granted, node_types, device?, surfaces, queued_events}
@@ -85,6 +85,15 @@ companion → Emacs   session.welcome  {server_proof, granted, node_types, devic
   positive knowledge, never a denylist. This is the companion-side half of
   the §9 forward-compat rule: unknown nodes never crash, and `node_types`
   lets the client avoid emitting an invisible one in the first place.
+- **Build-feature report.** `features` is the flat list of optional
+  compile-time features the client's Emacs binary actually has
+  (`sqlite`, `treesit`, `native-comp`, `libxml`) — positive knowledge,
+  since a version floor is not a build guarantee. Additive and purely
+  informational: the companion never gates on it (like the `client`
+  string, it exists so build skew shows up in logs the way version skew
+  already does), and a companion that predates the field ignores it.
+  Like all wire vocabulary it is negotiated by presence, not
+  version-gated — mirror of the `node_types` rule.
 - **Revision snapshot.** `surfaces` maps each cached surface id to the
   revision the companion holds, so a client whose revision counter was
   lost (fresh machine, deleted state) can raise it above the cache floor

@@ -540,6 +540,20 @@ Never nest this node inside another scroll container."
   (jetpacs-shell-nav-view "Emacs Settings" (jetpacs-shell-settings-body)
                        :snackbar snackbar))
 
+(defun jetpacs-shell--build-features-row ()
+  "The Emacs build-feature matrix as a read-only settings row.
+The user-visible doctor line for `jetpacs-build-features': every known
+optional build feature, check when this Emacs binary has it, dash when
+it doesn't.  Informational only — nothing is settable here."
+  (jetpacs-column
+   (jetpacs-text "Emacs build features" 'label)
+   (jetpacs-text
+    (mapconcat (lambda (probe)
+                 (format "%s %s" (car probe)
+                         (if (jetpacs-feature-p (car probe)) "✓" "—")))
+               jetpacs--build-feature-probes "   ")
+    'caption)))
+
 (with-eval-after-load 'jetpacs-settings
   ;; The foundation's own knobs, so the stock screen is never empty and
   ;; the theme mirror / dialog style are discoverable without docs.
@@ -549,7 +563,8 @@ Never nest this node inside another scroll container."
    "Bridge"
    '((jetpacs-theme-sync :label "Mirror Emacs theme")
      (jetpacs-dialog-style :label "Dialog style")
-     (jetpacs-reconnect :label "Auto-reconnect")))
+     (jetpacs-reconnect :label "Auto-reconnect")
+     (jetpacs-build-features :render jetpacs-shell--build-features-row)))
   (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
   ;; Two explicit settings domains. Jetpacs Settings is companion-local and
   ;; always works offline; Emacs Settings resolves through the current Tier 1

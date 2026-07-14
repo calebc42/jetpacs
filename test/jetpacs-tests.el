@@ -1532,6 +1532,61 @@ records the last-fired time."
   (should (stringp jetpacs-api-version))
   (should (integerp jetpacs-protocol-version)))
 
+;; ─── Build-feature probe (Phase H / Task 23) ─────────────────────────────────
+
+(ert-deftest jetpacs-build-features-probe ()
+  "The probe reports a subset of the known vocabulary — flat symbols,
+nothing outside `jetpacs--build-feature-probes' — and `jetpacs-feature-p'
+mirrors membership, accepting strings too."
+  (should (listp jetpacs-build-features))
+  (dolist (f jetpacs-build-features)
+    (should (symbolp f))
+    (should (assq f jetpacs--build-feature-probes)))
+  (dolist (probe jetpacs--build-feature-probes)
+    (should (eq (and (memq (car probe) jetpacs-build-features) t)
+                (jetpacs-feature-p (car probe))))
+    (should (eq (jetpacs-feature-p (car probe))
+                (jetpacs-feature-p (symbol-name (car probe))))))
+  (should-not (jetpacs-feature-p 'flisbo)))
+
+(ert-deftest jetpacs-hello-carries-build-features ()
+  "session.hello reports the build matrix as the additive `features' field
+\(SPEC §3): a vector of feature-name strings beside client and wants."
+  (let (sent)
+    (cl-letf (((symbol-function 'jetpacs-send)
+               (lambda (kind &optional payload &rest _)
+                 (push (cons kind payload) sent))))
+      (jetpacs--send-hello))
+    (let* ((hello (assoc "session.hello" sent))
+           (features (alist-get 'features (cdr hello))))
+      (should hello)
+      (should (vectorp features))
+      (should (equal (append features nil)
+                     (mapcar #'symbol-name jetpacs-build-features)))
+      ;; The pre-existing payload fields are intact beside it.
+      (should (alist-get 'client (cdr hello)))
+      (should (alist-get 'wants (cdr hello))))))
+
+(ert-deftest jetpacs-settings-render-row-read-only ()
+  "A :render registry entry renders via its builder and stays read-only:
+excluded from the settings.set/reset gate and from switch state handlers."
+  (let* ((row '(jetpacs-build-features :render jetpacs-shell--build-features-row))
+         (jetpacs-settings-registry
+          (list (cons "Bridge" (list '(jetpacs-theme-sync :label "Theme") row)))))
+    ;; Renders the builder's node (and it lints clean).
+    (let ((node (jetpacs-settings--item row)))
+      (should (equal "column" (alist-get 't node)))
+      (should-not (jetpacs-lint-spec node)))
+    ;; The render row never resolves for the wire gate; its sibling does.
+    (should-not (jetpacs-settings--entry 'jetpacs-build-features))
+    (should (jetpacs-settings--entry 'jetpacs-theme-sync))
+    ;; No state handler is registered for the render row.
+    (let (watched)
+      (cl-letf (((symbol-function 'jetpacs-settings-watch-toggle)
+                 (lambda (sym _id &optional _after) (push sym watched))))
+        (jetpacs-settings--register-state-handlers jetpacs-settings-registry))
+      (should (equal watched '(jetpacs-theme-sync))))))
+
 ;; ─── Spec linter (Phase B / Task 4) ──────────────────────────────────────────
 
 (ert-deftest jetpacs-lint-passes-valid-specs ()

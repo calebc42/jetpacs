@@ -1,17 +1,23 @@
 # Plan: the core binding layer + engine-pack model (three-repo interoperability)
 
-**STATUS (2026-07-13): Stages 0–3 landed; Stage 4 not started.** Stages 0–2 are merged into
-jetpacs `main` (api **1.5.0**, merge `40d4972`) and pushed. Stage 3 landed on Glasspane `main`
-in **re-scoped form**: the engine sources (`glasspane.org`, vulpea-backed `glasspane.notes`),
-the annotated action catalog, `glasspane-pack.el` + dependency-aware `glasspane-pack.json`,
-and the internal-poke drops all shipped — but the planned `:spec` migrations of Glasspane's
-rich card surfaces were **rejected** by
-`Glasspane/docs/DECISION-no-binding-template-dsl.md` (rich rendering stays in elisp
-`:builder`s; `:spec` stays the minimal composer-facing grammar; no template DSL, no api 1.6.0).
-Stage 4 (composer pack targeting) has no companion doc yet. This doc remains the cross-repo
-master — a closed-vocabulary **declarative binding layer** in jetpacs core, and the
-**engine-pack model** that lets the no-code composer bind to it; Stage 0/1/2 details below are
-kept as the record of what shipped.
+**STATUS (2026-07-13): ALL STAGES (0–4) LANDED — the binding-layer program is complete.**
+Stages 0–2 are merged into jetpacs `main` (api **1.5.0**, merge `40d4972`) and pushed.
+Stage 3 landed on Glasspane `main` in **re-scoped form**: the engine sources
+(`glasspane.org`, vulpea-backed `glasspane.notes`), the annotated action catalog,
+`glasspane-pack.el` + dependency-aware `glasspane-pack.json`, and the internal-poke drops
+all shipped — but the planned `:spec` migrations of Glasspane's rich card surfaces were
+**rejected** by `Glasspane/docs/DECISION-no-binding-template-dsl.md` (rich rendering stays
+in elisp `:builder`s; `:spec` stays the minimal composer-facing grammar; no template DSL,
+no api 1.6.0). **Stage 4 (composer pack targeting) executed 2026-07-13** on the composer
+branch `claude/stage-4-pack-targeting` (S4.0–S4.6; see the companion's EXECUTED status
+header for commits and gates): unknown-source preservation on both parsers, the
+PackManifest store + manifest-driven pickers, **FORMAT 4** (see the renumbering note
+below), the fail-closed runtime binding + closed `crud.pack.action` dispatch, the
+manifest-driven Deployer, and the batch-side acceptance recreating the Glasspane
+saved-views/journal/backlinks against `glasspane-pack.json` (on-device rows pending in
+Glasspane `TESTING-ON-DEVICE.md` §20). Core added **no pack registry**, as locked. This
+doc remains the cross-repo master; stage details below are kept as the record of what
+shipped.
 
 **Locked design choices (audit):**
 - `:spec` describes a **complete tab or navigation view** (chrome + body) via a **raw
@@ -26,14 +32,14 @@ kept as the record of what shipped.
 **Companion deliverables:**
 - **Stage 3** → `Glasspane/docs/PLAN-binding-adoption.md` — exists, executed (see its status
   header), re-scoped by `Glasspane/docs/DECISION-no-binding-template-dsl.md`.
-- **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` — **authored 2026-07-13**
-  (executable fresh-chat handoff; cross-linked from
+- **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` — **executed 2026-07-13**
+  (see its EXECUTED status header for the commit list and batch gates; cross-linked from
   `jetpacs-composer/docs/PLAN-nocobase-horizons.md`). One renumbering against this doc's
-  Stage 4 text: the shipped writer already emits FORMAT 3 unconditionally, so
-  **pack-backed documents become FORMAT 4** (accept ≤4, emit 3 unless pack-backed, reject
-  >4) — same gating intent, current numbering. The composer's vulpea rearchitecture
-  already shipped the dependency-injection half (`#+JETPACS_DEPENDS:` + Deployer
-  bootstrap).
+  Stage 4 text: the shipped writer already emitted FORMAT 3 unconditionally, so
+  **pack-backed documents are FORMAT 4** (accept ≤4, emit 3 unless pack-backed, reject
+  >4) — same gating intent, current numbering; `jetpacs-composer/docs/FORMAT.md` is the
+  v4 contract. The follow-on targets are surveyed in
+  `jetpacs-composer/docs/AUDIT-engine-packs.md`.
 - **Reconcile** `docs/PLAN-org-extraction.md` — done 2026-07-13 (its status header now names
   the surviving core `jetpacs-org-*` entry points).
 
@@ -396,10 +402,12 @@ present). Summary + the load-bearing interface:
 
 ---
 
-## Stage 4 — Composer targeting (companion doc: `jetpacs-composer/docs/PLAN-pack-targeting.md`)
+## Stage 4 — Composer targeting (companion doc: `jetpacs-composer/docs/PLAN-pack-targeting.md`) — DONE 2026-07-13
 
-Full task detail belongs in the composer companion doc (a **required deliverable**, not yet
-present). Composer **owns pack lifecycle; core adds no pack registry.** Summary:
+Executed per the companion doc (its EXECUTED header carries the commit list); the summary
+below is the record of the bar it met, with the FORMAT renumbering (2→3 became 3→4) noted
+in the companion-deliverables section above. Composer **owns pack lifecycle; core added no
+pack registry.** Summary:
 
 - **Runtime refactor:** factor the `jetpacs-crud--kinds` scan → filter → bind → render pipeline onto
   the Stage-2 binding layer where the grammar covers it; **keep specialized composer view kinds on
@@ -442,8 +450,8 @@ with Stage 1, both prerequisites for Stage 3) → **Stage 2** (core binding laye
 | 2a | glasspane | Task 21 + Org adoption (reconcile PLAN-org-extraction) | core pin (org-adoption's staged bump) |
 | 2 | jetpacs | Stage 2 — source registry + `:spec` (api 1.5.0) | 1 |
 | 3 | glasspane | Stage 3 — standalone pack + migration matrix | 2, 2a |
-| 4 | composer | Stage 4 — runtime + lifecycle + FORMAT 3 | 2, 3 (pack), 1c |
-| 5 | on-device | recreate views + one mutation round-trip | 3, 4 |
+| 4 | composer | Stage 4 — runtime + lifecycle + FORMAT 4 — **done** | 2, 3 (pack), 1c |
+| 5 | on-device | recreate views + one mutation round-trip — batch half done; device rows = Glasspane TESTING-ON-DEVICE §20 | 3, 4 |
 
 ---
 

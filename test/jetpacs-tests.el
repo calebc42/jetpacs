@@ -1427,6 +1427,46 @@ Only run this after an INTENTIONAL change; review the diff."
                     (buffer-string))
                   "\n" t))))
 
+(ert-deftest jetpacs-hypertext-shr-scan ()
+  "An shr-rendered buffer scans into headings (with levels) and link-bearing
+paragraphs; link spans tap `jetpacs.buffer.act', and the emitted document is
+wire-valid.  Gated on libxml (absent in lean builds; present in CI Emacs)."
+  (skip-unless (jetpacs-feature-p 'libxml))
+  (require 'shr)
+  (let ((html (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name "fixtures/hypertext-basic.html"
+                                   jetpacs-tests--dir))
+                (buffer-string)))
+        model)
+    (with-temp-buffer
+      (insert html)
+      ;; Render the <body> only, as eww does — a raw full-document shr would
+      ;; also render <title> into the buffer, which eww strips.
+      (let* ((dom (libxml-parse-html-region (point-min) (point-max)))
+             (body (or (car (dom-by-tag dom 'body)) dom)))
+        (erase-buffer)
+        (shr-insert-document body))
+      (setq model (jetpacs-hypertext--scan-shr (current-buffer))))
+    ;; Headings, in order, with their levels.
+    (let ((headings (seq-filter (lambda (s) (eq (plist-get s :kind) 'heading))
+                                model)))
+      (should (= (length headings) 2))
+      (should (equal (mapcar (lambda (h) (plist-get h :level)) headings) '(1 2)))
+      (should (member "Main Heading"
+                      (mapcar (lambda (h) (plist-get h :text)) headings))))
+    ;; Paragraphs, at least one carrying a link span tapping jetpacs.buffer.act.
+    (let* ((paras (seq-filter (lambda (s) (eq (plist-get s :kind) 'para)) model))
+           (spans (apply #'append (mapcar (lambda (p) (plist-get p :spans)) paras)))
+           (taps (seq-filter (lambda (sp) (alist-get 'on_tap sp)) spans)))
+      (should (>= (length paras) 2))
+      (should (>= (length taps) 1))
+      (should (equal (alist-get 'action (alist-get 'on_tap (car taps)))
+                     "jetpacs.buffer.act")))
+    ;; The whole emitted document is wire-valid.
+    (dolist (n (jetpacs-hypertext--emit model "Test Page"))
+      (should (null (jetpacs-lint-spec n))))))
+
 ;; ─── Triggers & device capabilities (SPEC §10–§11) ──────────────────────────
 
 (ert-deftest jetpacs-triggers-replace-set-push ()

@@ -7980,6 +7980,144 @@ never touch nodes."
      (list (jetpacs-text title 'title)))
    (mapcar #'jetpacs-hypertext--emit-segment model)))
 
+;; ─── shr props contract (the drift firewall) ─────────────────────────────────
+;;
+;; Everything this file knows about shr's *rendered-buffer* markup lives in
+;; this section, so an shr change across Emacs versions is a one-spot edit.
+;; Links and inline emphasis are NOT read here — they ride the Tier 0
+;; line-span builder (`jetpacs-buffer--line-spans'), which already turns shr's
+;; mouse-face/keymap link runs into `jetpacs.buffer.act' taps and maps face
+;; emphasis to span styling.  Only block structure is shr-specific.
+
+(defconst jetpacs-hypertext--shr-heading-faces
+  '((shr-h1 . 1) (shr-h2 . 2) (shr-h3 . 3)
+    (shr-h4 . 4) (shr-h5 . 5) (shr-h6 . 6))
+  "shr heading faces mapped to their level (1-6).")
+
+(defun jetpacs-hypertext--face-list (pos)
+  "The `face'/`font-lock-face' value at POS as a list of refs (nil-safe)."
+  (let ((f (or (get-text-property pos 'face)
+               (get-text-property pos 'font-lock-face))))
+    (cond ((null f) nil)
+          ((and (consp f) (keywordp (car f))) (list f)) ; a single plist
+          ((listp f) f)
+          (t (list f)))))
+
+(defun jetpacs-hypertext--collapse-ws (s)
+  "Collapse whitespace runs in S (a heading rendered across wrapped lines)
+to single spaces, and trim — so a filled multi-line heading reads as one
+label."
+  (string-trim (replace-regexp-in-string "[ \t\n]+" " " s)))
+
+(defun jetpacs-hypertext--heading-level-at (pos)
+  "Heading level 1-6 if POS is faced as an shr heading, else nil."
+  (cl-some (lambda (f)
+             (and (symbolp f)
+                  (cdr (assq f jetpacs-hypertext--shr-heading-faces))))
+           (jetpacs-hypertext--face-list pos)))
+
+;; ─── Adapter: shr-rendered buffers (eww, and every shr consumer) ─────────────
+;;
+;; shr separates block elements with a blank line, so the model is recovered
+;; block by block: a block faced as an shr heading becomes a heading segment;
+;; everything else becomes a paragraph whose spans (links + emphasis) come
+;; from the Tier 0 line-span builder, reflowed across the block's lines.
+;; Images and native tables are resolved in Stage 4; until then an image's
+;; alt text and a table's cells degrade into paragraph prose (the fidelity
+;; floor — never below Tier 0).
+
+(defun jetpacs-hypertext--block-end (limit)
+  "End of the block whose first line starts at point: the last non-blank
+line's end before a blank line or LIMIT.  Point is at a non-blank line's
+beginning; the buffer is not moved."
+  (save-excursion
+    (let ((end (min (line-end-position) limit)))
+      (while (and (< (line-end-position) limit)
+                  (zerop (forward-line 1))
+                  (< (point) limit)
+                  (not (looking-at-p "[ \t]*$")))
+        (setq end (min (line-end-position) limit)))
+      end)))
+
+(defun jetpacs-hypertext--block-heading-level (beg end)
+  "Heading level if any run in [BEG, END) is faced as an shr heading."
+  (let ((pos beg) lvl)
+    (while (and (< pos end) (not lvl))
+      (setq lvl (jetpacs-hypertext--heading-level-at pos)
+            pos (next-single-property-change pos 'face nil end)))
+    lvl))
+
+(defun jetpacs-hypertext--block-spans (beg end buffer-name)
+  "Spans for paragraph block [BEG, END), reflowed across its lines.
+Reuses `jetpacs-buffer--line-spans' with monospace and color emission off
+\(eww prose is proportional and themed by the device), so shr links become
+`jetpacs.buffer.act' taps and face emphasis maps to span styling for free;
+non-empty lines are joined by a space so the paragraph reflows."
+  (let ((jetpacs-buffer-monospace nil)
+        (jetpacs-buffer-emit-colors nil)
+        chunks)
+    (save-excursion
+      (goto-char beg)
+      (while (< (point) end)
+        (let ((line (jetpacs-buffer--line-spans
+                     (line-beginning-position)
+                     (min (line-end-position) end)
+                     buffer-name)))
+          (when line (push line chunks)))
+        (forward-line 1)))
+    (setq chunks (nreverse chunks))
+    (apply #'append
+           (cl-loop for chunk in chunks
+                    for i from 0
+                    collect (if (zerop i) chunk
+                              (cons (jetpacs-span " ") chunk))))))
+
+(defun jetpacs-hypertext--scan-shr (buf)
+  "Scan shr-rendered BUF into a document model (heading + paragraph segments)."
+  (with-current-buffer buf
+    (save-excursion
+      (goto-char (point-min))
+      (let ((name (buffer-name buf)) (limit (point-max)) segments)
+        (while (< (point) limit)
+          (skip-chars-forward " \t\n" limit)
+          (when (< (point) limit)
+            (let* ((beg (line-beginning-position))
+                   (end (jetpacs-hypertext--block-end limit))
+                   (level (jetpacs-hypertext--block-heading-level beg end)))
+              (if level
+                  (push (list :kind 'heading :level level
+                              :text (jetpacs-hypertext--collapse-ws
+                                     (buffer-substring-no-properties beg end)))
+                        segments)
+                (let ((spans (jetpacs-hypertext--block-spans beg end name)))
+                  (when spans
+                    (push (list :kind 'para :spans spans) segments))))
+              (goto-char end))))
+        (nreverse segments)))))
+
+(defun jetpacs-hypertext--eww-title (buf)
+  "The document title for BUF from `eww-data', or nil."
+  (with-current-buffer buf
+    (and (boundp 'eww-data) eww-data
+         (jetpacs-hypertext--nonempty (plist-get eww-data :title)))))
+
+(defun jetpacs-hypertext-render (buf)
+  "Tier 0.5 renderer for shr-rendered document buffers (registered for eww).
+Falls back to the Tier 0 generic renderer for an empty or still-loading
+buffer, or one shr left no recoverable structure in — the results-substrate
+precedent."
+  (with-current-buffer buf
+    (if (< (buffer-size) 1)
+        (jetpacs-buffer-render buf)
+      (let ((model (jetpacs-hypertext--scan-shr buf)))
+        (if model
+            (jetpacs-hypertext--emit model (jetpacs-hypertext--eww-title buf))
+          (jetpacs-buffer-render buf))))))
+
+;; eww is a built-in this foundation may name directly; third-party shr
+;; consumers (elfeed-show, nov, devdocs) register softly in a later stage.
+(jetpacs-render-buffer-register 'eww-mode #'jetpacs-hypertext-render)
+
 (provide 'jetpacs-hypertext)
 ;;; jetpacs-hypertext.el ends here
 

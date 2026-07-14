@@ -1863,6 +1863,119 @@ key-addressed — never a command name) plus the fold toggle."
             (dolist (c cands) (should (stringp (cdr c))))))
       (kill-buffer buf))))
 
+(ert-deftest jetpacs-sections-visit-routing ()
+  "Body taps are visit-routed: the rendered spans carry `sections.visit',
+a row whose RET command leaves the buffer shows its destination through
+the region-view seam (no desktop window), and a row whose command acts in
+place falls back to a re-push."
+  (skip-unless (jetpacs-tests--magit-section-p))
+  (let ((buf (jetpacs-tests--make-section-buffer))
+        (target (generate-new-buffer " *jetpacs-sections-target*"))
+        shown refreshed)
+    (unwind-protect
+        (with-current-buffer buf
+          ;; A row whose RET jumps: bind it via a text-prop keymap first
+          ;; (bare magit-section body rows carry no keymap of their own —
+          ;; in real magit the section's keymap slot supplies one).
+          (with-current-buffer target (insert "line one\ntarget line\n"))
+          (let* ((jump (lambda ()
+                         (interactive)
+                         (pop-to-buffer target)
+                         (goto-char 10)))
+                 (km (make-sparse-keymap)))
+            (define-key km (kbd "RET") jump)
+            (save-excursion
+              (goto-char (point-min))
+              (search-forward "body line 1")
+              (let ((inhibit-read-only t))
+                (put-text-property (line-beginning-position)
+                                   (line-end-position)
+                                   'keymap km))
+              ;; 1. that row's rendered span is visit-routed
+              (let* ((nodes (jetpacs-render-buffer buf))
+                     (tops (seq-filter
+                            (lambda (n) (equal (alist-get 't n) "collapsible"))
+                            nodes))
+                     (taps (delq nil
+                                 (mapcar
+                                  (lambda (n)
+                                    (and (equal (alist-get 't n) "rich_text")
+                                         (seq-find
+                                          (lambda (sp) (alist-get 'on_tap sp))
+                                          (append (alist-get 'spans n) nil))))
+                                  (append (alist-get 'children (car tops)) nil)))))
+                (should taps)
+                (should (equal (alist-get 'action (alist-get 'on_tap (car taps)))
+                               "sections.visit")))
+              ;; 2. following it shows the destination through the seam
+              (let ((jetpacs-results-visit-region-function
+                     (lambda (name beg end label point)
+                       (setq shown (list name beg end label point))))
+                    (jetpacs-buffer-refresh-function
+                     (lambda () (setq refreshed t))))
+                (should (jetpacs-sections--visit buf (line-beginning-position)))
+                (should (equal (car shown) (buffer-name target)))
+                (should (numberp (nth 4 shown)))
+                ;; 3. in-place case: heading RET stays put, seam untouched
+                (setq shown nil)
+                (should-not (jetpacs-sections--visit buf (point-min)))
+                (should-not shown)
+                (ignore refreshed)))))
+      (kill-buffer buf)
+      (kill-buffer target))))
+
+(ert-deftest jetpacs-sections-washer-stub ()
+  "An unwashed lazy section (content == end, washer pending) renders as a
+card with a tap-to-load stub wired to the fold action; once Emacs shows
+\(washes) it, a re-render carries the real body."
+  (skip-unless (jetpacs-tests--magit-section-p))
+  (let ((buf (generate-new-buffer " *jetpacs-sections-lazy*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (eval '(progn
+                   (magit-section-mode)
+                   (setq-local inhibit-read-only t)
+                   (magit-insert-section (magit-section 'root)
+                     (magit-insert-section (magit-section 'lazy t)
+                       (magit-insert-heading "Lazy Section")
+                       (magit-insert-section-body
+                         (insert "washed content line\n")))))
+                t)
+          (let* ((nodes (jetpacs-render-buffer buf))
+                 (card (seq-find
+                        (lambda (n) (equal (alist-get 't n) "collapsible"))
+                        nodes)))
+            (should card)
+            (should (equal (jetpacs-tests--section-header-text card)
+                           "Lazy Section"))
+            ;; the stub taps the fold action (which washes in Emacs)
+            (let* ((stub (seq-find
+                          (lambda (n) (equal (alist-get 't n) "rich_text"))
+                          (append (alist-get 'children card) nil)))
+                   (tap (seq-find (lambda (sp) (alist-get 'on_tap sp))
+                                  (append (alist-get 'spans stub) nil))))
+              (should tap)
+              (should (equal (alist-get 'action (alist-get 'on_tap tap))
+                             "jetpacs.buffer.fold")))
+            (dolist (n nodes) (should (null (jetpacs-lint-spec n)))))
+          ;; wash it (what the fold tap does), re-render: real body present
+          (eval '(magit-section-show
+                  (car (slot-value magit-root-section 'children)))
+                t)
+          (let* ((nodes (jetpacs-render-buffer buf))
+                 (card (seq-find
+                        (lambda (n) (equal (alist-get 't n) "collapsible"))
+                        nodes))
+                 (texts (mapcar
+                         (lambda (n)
+                           (mapconcat (lambda (sp) (or (alist-get 'text sp) ""))
+                                      (alist-get 'spans n) ""))
+                         (seq-filter
+                          (lambda (n) (equal (alist-get 't n) "rich_text"))
+                          (append (alist-get 'children card) nil)))))
+            (should (member "washed content line" texts))))
+      (kill-buffer buf))))
+
 (ert-deftest jetpacs-sections-fallback-without-root ()
   "A magit-section-mode buffer with no root section (still populating)
 falls through to the Tier 0 renderer instead of erroring."

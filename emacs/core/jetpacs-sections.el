@@ -38,6 +38,7 @@
 (require 'jetpacs-widgets)
 (require 'jetpacs-surfaces)      ; jetpacs-defaction / jetpacs-action
 (require 'jetpacs-buffer)       ; line spans, dispatch registry, refresh seam
+(require 'jetpacs-results)      ; the region-view seam + RET resolution
 
 ;; The magit-section library, never required from core:
 (declare-function magit-section-ident "ext:magit-section" (section))
@@ -71,13 +72,17 @@ but bodies are elided with a note.  Same spirit as `jetpacs-buffer-max-lines'."
   (let ((m (slot-value sec slot)))
     (and (markerp m) (marker-position m))))
 
+(defun jetpacs-sections--slot (sec slot)
+  "SLOT of section SEC.
+The slot name crosses a function boundary deliberately: the magit-section
+class is never loaded at compile time, and some slot names (`hidden',
+`washer') are declared by no compile-time class — a constant name at the
+call site draws an unknown-slot warning."
+  (slot-value sec slot))
+
 (defun jetpacs-sections--hidden-p (sec)
-  "Whether SEC is folded in Emacs.
-The slot name goes through a variable deliberately: the magit-section
-class is never loaded at compile time, and `hidden' is the one slot name
-no compile-time class declares — a constant name draws an unknown-slot
-warning."
-  (let ((slot 'hidden)) (slot-value sec slot)))
+  "Whether SEC is folded in Emacs."
+  (jetpacs-sections--slot sec 'hidden))
 
 (defun jetpacs-sections--id (sec)
   "A stable collapsible id for SEC: its ident path, hashed.
@@ -107,9 +112,30 @@ where a tap must mean fold/unfold, not the span's own action)."
     (jetpacs-rich-text (or (jetpacs-sections--strip-taps spans)
                         (list (jetpacs-span " "))))))
 
+(defun jetpacs-sections--retarget-taps (spans)
+  "SPANS with their generic tap actions re-pointed at `sections.visit'.
+The Tier 0 line-span builder wires taps to `jetpacs.buffer.act', which
+runs the RET command in place — in a magit buffer that command visits a
+thing by popping a desktop window the phone never sees.  `sections.visit'
+runs the same command under the follow shim and shows the destination in
+the phone's region view instead.  Fold-affordance taps and spans without
+taps pass through untouched."
+  (mapcar
+   (lambda (sp)
+     (let ((tap (alist-get 'on_tap sp)))
+       (if (not (equal (alist-get 'action tap) "jetpacs.buffer.act"))
+           sp
+         (let ((copy (copy-alist sp)))
+           (setf (alist-get 'on_tap copy)
+                 (jetpacs-action "sections.visit"
+                              :args (alist-get 'args tap)))
+           copy))))
+   spans))
+
 (defun jetpacs-sections--body-lines (beg end name budget)
   "Body lines [BEG, END) as rich_text nodes, consuming BUDGET (a cons cell).
-Once the budget is spent, emits one elision note and stops."
+Taps are visit-routed (see `jetpacs-sections--retarget-taps').  Once the
+budget is spent, emits one elision note and stops."
   (let (nodes)
     (save-excursion
       (goto-char beg)
@@ -127,7 +153,10 @@ Once the budget is spent, emits one elision note and stops."
            (t
             (when (< bol eol)
               (let ((spans (jetpacs-buffer--line-spans bol eol name)))
-                (when spans (push (jetpacs-rich-text spans) nodes))))
+                (when spans
+                  (push (jetpacs-rich-text
+                         (jetpacs-sections--retarget-taps spans))
+                        nodes))))
             (cl-decf (car budget))
             (forward-line 1))))))
     (nreverse nodes)))
@@ -172,13 +201,35 @@ transparent — only its children show."
              :on-long-tap (jetpacs-action "sections.menu"
                                        :args `((buffer . ,name)
                                                (pos . ,start))))))
+     ;; Unwashed lazy section: content == end with a washer pending.  A
+     ;; card whose stub child runs the buffer's own fold toggle — showing
+     ;; the section washes it in Emacs, and the refresh re-push renders
+     ;; the real body.
+     ((and content (jetpacs-sections--slot sec 'washer))
+      (list (jetpacs-collapsible
+             (jetpacs-sections--id sec)
+             (jetpacs-sections--header-node sec name)
+             (list (jetpacs-rich-text
+                    (list (jetpacs-span
+                           "Tap to load…"
+                           :on-tap (jetpacs-action
+                                    "jetpacs.buffer.fold"
+                                    :args `((buffer . ,name)
+                                            (pos . ,start)))))))
+             :collapsed nil
+             :on-long-tap (jetpacs-action "sections.menu"
+                                       :args `((buffer . ,name)
+                                               (pos . ,start))))))
+     ;; Empty section (content == end, nothing pending) → its heading
+     ;; line, taps intact.
+     (content
+      (jetpacs-sections--body-lines start end name budget))
      ;; Heading-less container (the root's shape) → children only.
      ((and (null content) children)
       (jetpacs-sections--child-nodes sec name budget start))
      ;; A bare heading (one-line info section) → its line, taps intact.
-     ((null content)
-      (jetpacs-sections--body-lines start end name budget))
-     (t nil))))
+     (t
+      (jetpacs-sections--body-lines start end name budget)))))
 
 (defun jetpacs-sections-render (buf)
   "Tier 0.5 renderer for magit-section buffers: the section tree as
@@ -196,6 +247,51 @@ has no section root (still populating, or not really a section buffer)."
               (budget (cons jetpacs-sections-max-lines nil)))
           (or (jetpacs-sections--emit root (buffer-name buf) budget)
               (jetpacs-buffer-render buf)))))))
+
+;; ─── Visiting the thing at a row ─────────────────────────────────────────────
+;;
+;; RET in a section buffer visits the thing at point — a hunk line opens
+;; the file at that hunk, a commit opens its revision buffer — by popping
+;; a desktop window.  `sections.visit' is the phone's version: the same
+;; command under the follow shim, destination shown through the region
+;; view (the results substrate's jump primitive, one seam for every
+;; producer).  A command that stays in the buffer is an in-place act; the
+;; handler falls back to a re-push, so toggles and stages keep working.
+
+(defun jetpacs-sections--visit (buf pos)
+  "Follow the thing at POS in section buffer BUF.
+Runs the region's own RET command under `jetpacs-buffer-call-shimmed'; a
+command that leaves the buffer shows its destination in the region view
+and returns non-nil, one that acts in place returns nil."
+  (with-current-buffer buf
+    (goto-char (min (max (point-min) (truncate pos)) (point-max)))
+    (let ((cmd (jetpacs-results--visit-command (point))))
+      (when (commandp cmd)
+        (let* ((dest (jetpacs-buffer-call-shimmed cmd))
+               (dest-buf (car dest)))
+          (when (and dest-buf (not (eq dest-buf buf)))
+            (pcase-let ((`(,beg ,end ,label ,point)
+                         (jetpacs-results--region-around dest-buf (cdr dest))))
+              (funcall jetpacs-results-visit-region-function
+                       (buffer-name dest-buf) beg end label point))
+            t))))))
+
+(jetpacs-defaction "sections.visit"
+  ;; BUFFER must be a live magit-section buffer (the results.visit
+  ;; contract), POS the tapped row.  Follow if the row's command jumps;
+  ;; re-push if it acted in place (stage, toggle) or couldn't follow.
+  (lambda (args _)
+    (let* ((name (alist-get 'buffer args))
+           (pos (alist-get 'pos args))
+           (buf (and (stringp name) (get-buffer name))))
+      (if (not (and buf (numberp pos)
+                    (with-current-buffer buf
+                      (and (derived-mode-p 'magit-section-mode)
+                           (jetpacs-sections--root)))))
+          (message "sections.visit: not a section buffer")
+        (unless (ignore-errors (jetpacs-sections--visit buf pos))
+          (when (functionp jetpacs-buffer-refresh-function)
+            (funcall jetpacs-buffer-refresh-function)))))))
 
 ;; ─── The section context menu ───────────────────────────────────────────────
 ;;

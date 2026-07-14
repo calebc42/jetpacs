@@ -25,7 +25,8 @@ change signature incompatibly. Everything else is internal.
 > read-only `:render` settings row below — byte-compile-at-adopt and the
 > package-vc headers add behavior, not symbols); `1.8.0` is the hypertext
 > substrate (the document renderer under eww/help/Info, its shr rider seam,
-> and the promoted follow-shim below).
+> and the promoted follow-shim below); `1.9.0` is the magit-section
+> substrate (section buffers as collapsible cards below).
 
 ## The two rules
 
@@ -157,6 +158,14 @@ Info render as document cards out of the box; the rider seam
 `with-eval-after-load`) on the same renderer in one line. Plus the
 command `jetpacs-hypertext-image-cache-clear` and the customization vars
 `jetpacs-hypertext-image-cache-max` `jetpacs-hypertext-table-max-rows`.
+
+Section buffers (`jetpacs-sections.el`, since 1.9.0): every buffer built
+on the third-party `magit-section` library (magit, forge, kubernetes.el,
+`taxy-magit-section` consumers) renders as collapsible cards with no
+registration needed — the base mode covers derivatives, and the library
+is never required from the core. Row taps follow into the region view;
+long-press serves the section's own key bindings as a bridged menu.
+Public surface: the customization var `jetpacs-sections-max-lines`.
 
 Tablist skins (`jetpacs-tablist.el`): the `jetpacs-tablist-header-functions`
 `jetpacs-tablist-row-functions` `jetpacs-tablist-filter-functions` alists.

@@ -505,6 +505,16 @@ Chrome every app inherits — link to it, don't rebuild it:
   the customize browser (every `custom-variable-p` symbol rendered
   from its schema — `M-x customize` parity), and the Automations
   screen (§9).
+- **Documents** — eww, help, and Info render as document cards
+  (headings, tappable links, real images, native tables); any other
+  shr-rendered mode rides in one line (§1's
+  `jetpacs-hypertext-register-shr-mode`).
+- **Section buffers** — anything built on the `magit-section` library
+  (magit, forge, kubernetes.el, `taxy-magit-section` consumers) renders
+  as collapsible cards: instant client-side folding, row taps that
+  follow into the region view, long-press for the section's own key
+  bindings as a menu. Nothing to register — the base mode covers every
+  derivative.
 
 ## The rules that keep the wire safe
 

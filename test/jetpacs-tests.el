@@ -2333,6 +2333,31 @@ constant promises (hardening Task 24) — they cannot drift."
       (should (re-search-forward "^;; Version: \\([0-9.]+\\)$" nil t))
       (should (equal (match-string 1) jetpacs-api-version)))))
 
+(ert-deftest jetpacs-spec-header-version-coherent ()
+  "docs/SPEC.md's status block is machine-readably coherent (freeze S0):
+the header's wire-protocol version equals `jetpacs-protocol-version', the
+spec version's major is that same wire version, and the amendment log the
+header's policy names exists.  The full spec-version string is pinned here
+so a status flip (1.0-rc -> 1.0) is an intentional, reviewed change —
+same philosophy as the contract.json byte-pin."
+  (let ((f (expand-file-name "../docs/SPEC.md" jetpacs-tests--dir)))
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (should (re-search-forward
+               "^Spec: \\*\\*\\([0-9]+\\)\\.\\([0-9]+\\)\\(-rc\\)?\\*\\*" nil t))
+      (let ((major (string-to-number (match-string 1)))
+            (full (concat (match-string 1) "." (match-string 2)
+                          (or (match-string 3) ""))))
+        (should (equal full "1.0-rc"))
+        (should (= major jetpacs-protocol-version)))
+      (should (re-search-forward "Wire protocol: \\*\\*`v: \\([0-9]+\\)`\\*\\*" nil t))
+      (should (= (string-to-number (match-string 1)) jetpacs-protocol-version))
+      (goto-char (point-min))
+      (should (re-search-forward "\\[SPEC-CHANGES\\.md\\](SPEC-CHANGES\\.md)" nil t))
+      (should (file-exists-p
+               (expand-file-name "../docs/SPEC-CHANGES.md" jetpacs-tests--dir))))))
+
 ;; ─── Build-feature probe (Phase H / Task 23) ─────────────────────────────────
 
 (ert-deftest jetpacs-build-features-probe ()

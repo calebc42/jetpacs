@@ -1,7 +1,8 @@
 # Jetpacs — the Emacs–Android Bridge Protocol
 
-Version: **1 (draft)** · Status: matches the reference implementations in
-`emacs/core/` and `app/` · Framing: **NDJSON** (one JSON object per line)
+Spec: **1.0-rc** · Wire protocol: **`v: 1`** · Framing: **NDJSON** (one
+JSON object per line) · Status: release candidate — matches the
+reference implementations in `emacs/core/` and `app/`
 
 Jetpacs connects a live Emacs to a mobile *companion* that renders
 server-driven UI. The design premise: **Emacs is the source of truth; the
@@ -13,6 +14,21 @@ This document is the contract a third-party implementation writes against:
 a new companion (another platform, another toolkit) or a new client
 (something other than the reference Elisp). Anything not marked
 **(optional)** is required for a conforming implementation.
+
+**Freeze surface.** As of 1.0-rc the following are frozen — changing any
+of them is an amendment (policy below), and a breaking change bumps the
+envelope `v`: the envelope (§2), the handshake and pairing auth (§3),
+and the semantics of surfaces (§4), the semantic-action boundary (§5),
+and the offline queue (§6). Everything in §7–§11 is negotiated or
+optional and grows additively. The widget node vocabulary (§9) also
+grows additively, through `node_types` negotiation (§3): a new node
+type is *not* a version bump.
+
+**Amendment policy.** Every normative change to this document — anything
+that alters what a conforming implementation must do — lands in the same
+commit as one entry in [SPEC-CHANGES.md](SPEC-CHANGES.md) recording the
+date, section, change, fixtures regenerated, and reviewer. No entry, no
+amendment.
 
 ## 1. Roles and transport
 

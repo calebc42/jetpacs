@@ -1,5 +1,20 @@
 # Migration Plan: Adopting `jetpacs-org.el` Core Primitives
 
+**STATUS (2026-07-13): §2 (composer) executed; §1 (Glasspane) pending.** The composer deleted
+`jetpacs-crud--parse-query` / `--entry-matches-p` and now calls the canonical
+`jetpacs-org-parse-query` / `jetpacs-org-entry-matches-p`; its record *scan* path has since
+been superseded entirely by the vulpea index read
+(`jetpacs-composer/docs/PLAN-vulpea-rearchitecture.md`), so §2's scanner bullets describe a
+path that no longer exists. Glasspane still owns all of its duplicated org logic —
+`glasspane-org.el` calls zero `jetpacs-org-*` functions; the executable form of §1 is
+`Glasspane/docs/PLAN-glasspane-org-adoption.md` (decided, not run).
+
+**Surviving entry points (the reconcile required by `PLAN-binding-layer.md`):** after both
+halves land, the one query grammar lives in core — `jetpacs-org-parse-query`,
+`jetpacs-org-entry-matches-p` (point accessor), `jetpacs-org-note-matches-p` (vulpea-note
+accessor, guarded), and `jetpacs-org-query` — and `defsource` thunks bind to those, never to a
+promoted `glasspane-org-parse-query`.
+
 With the robust core primitives established in the Jetpacs foundation, the next step is to eliminate the duplicated logic in both Glasspane (Tier 1) and jetpacs-composer (`jetpacs-crud.el` runtime) and standardize their architecture on the foundation.
 
 ## 1. Glasspane Refactor

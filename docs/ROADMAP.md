@@ -1,6 +1,6 @@
 # Roadmap — the Jetpacs foundation
 
-**STATUS (2026-07-09): current.** This is the *foundation* roadmap: the
+**STATUS (2026-07-13): current.** This is the *foundation* roadmap: the
 wire, the core elisp client, the `:jetpacs` renderer library, and the
 reference companion shell. The **app-level roadmap** — the Glasspane org
 app, PKM conversion, the automation/launcher feature tracks, on-device
@@ -8,6 +8,15 @@ acceptance — lives with the
 [glasspane repo](https://github.com/calebc42/glasspane) and its
 `docs/PLAN-*.md`. The pre-split unified roadmap ordering both worlds is
 in this file's git history.
+
+The platform now includes the **declarative binding layer + engine-pack
+seam** (api 1.5.0: `jetpacs-defsource`, `:spec` views, the action
+catalog — [BINDING.md](BINDING.md)) and the **`jetpacs-org` primitive
+layer** (the one org query/mutation grammar, confined to its module).
+The standing thesis is *rich server, thin client*: expressiveness comes
+from Emacs and its package ecosystem (vulpea, org-ql — installed as pack
+dependencies by the composer), never from widening the wire grammar
+(see `Glasspane/docs/DECISION-no-binding-template-dsl.md`).
 
 ## The meta-goal
 
@@ -22,6 +31,12 @@ below is weighed against that.
 
 ## Near term
 
+0. **Finish the org-logic consolidation.** The core owns the one query
+   grammar ([PLAN-org-extraction.md](PLAN-org-extraction.md) has the
+   status); the remaining half is Glasspane's adoption
+   (`Glasspane/docs/PLAN-glasspane-org-adoption.md`) — rip the ~874-line
+   duplicate out of `glasspane-org.el` and stand the app on
+   `jetpacs-org-*`.
 1. **Generic onboarding + Tier-1 app delivery.** The `:app` shell is
    still Glasspane-branded, and the repo split left a hole flagged in
    `app/build.gradle.kts` (`TODO(repo-split)`): the onboarding wizard

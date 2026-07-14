@@ -1,10 +1,17 @@
 # Plan: the core binding layer + engine-pack model (three-repo interoperability)
 
-**STATUS (2026-07-12): designed + owner-approved, audit-revised, not started.** This is the
-cross-repo master for a new thesis — a closed-vocabulary **declarative binding layer** in jetpacs
-core, and the **engine-pack model** that lets the no-code composer bind to it. jetpacs is the
-source of truth, so this doc holds the cross-repo framing plus **Stage 0/1/2** (the foundation
-stages) in full; the app-scoped stages live in companion docs.
+**STATUS (2026-07-13): Stages 0–3 landed; Stage 4 not started.** Stages 0–2 are merged into
+jetpacs `main` (api **1.5.0**, merge `40d4972`) and pushed. Stage 3 landed on Glasspane `main`
+in **re-scoped form**: the engine sources (`glasspane.org`, vulpea-backed `glasspane.notes`),
+the annotated action catalog, `glasspane-pack.el` + dependency-aware `glasspane-pack.json`,
+and the internal-poke drops all shipped — but the planned `:spec` migrations of Glasspane's
+rich card surfaces were **rejected** by
+`Glasspane/docs/DECISION-no-binding-template-dsl.md` (rich rendering stays in elisp
+`:builder`s; `:spec` stays the minimal composer-facing grammar; no template DSL, no api 1.6.0).
+Stage 4 (composer pack targeting) has no companion doc yet. This doc remains the cross-repo
+master — a closed-vocabulary **declarative binding layer** in jetpacs core, and the
+**engine-pack model** that lets the no-code composer bind to it; Stage 0/1/2 details below are
+kept as the record of what shipped.
 
 **Locked design choices (audit):**
 - `:spec` describes a **complete tab or navigation view** (chrome + body) via a **raw
@@ -16,16 +23,15 @@ stages) in full; the app-scoped stages live in companion docs.
   dependency, and version handling in Stage 4.
 - Glasspane migrates **only the surfaces the v1 grammar can reproduce faithfully**.
 
-**Required companion deliverables (do not exist yet — author at stage kickoff):**
-- **Stage 3** → `Glasspane/docs/PLAN-binding-adoption.md` (planned; not present).
-- **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` (planned; not present),
-  cross-linked from `jetpacs-composer/docs/PLAN-nocobase-horizons.md`.
-- **Reconcile** `docs/PLAN-org-extraction.md`: its API-removal instructions (delete
-  `glasspane-org--parse-query` / `--query-match-p` / `--heading-ref` / `--resolve-ref` /
-  `--with-cache` / `glasspane-org-cache-invalidate`, and `jetpacs-crud--parse-query` /
-  `--entry-matches-p`) must be updated or superseded so they name the **surviving** post-extraction
-  query entry point this plan's `defsource` thunk binds to (the core `jetpacs-org-*` API), rather
-  than a promoted `glasspane-org-parse-query` that org-extraction retires.
+**Companion deliverables:**
+- **Stage 3** → `Glasspane/docs/PLAN-binding-adoption.md` — exists, executed (see its status
+  header), re-scoped by `Glasspane/docs/DECISION-no-binding-template-dsl.md`.
+- **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` (planned; **not present** —
+  author at stage kickoff), cross-linked from `jetpacs-composer/docs/PLAN-nocobase-horizons.md`.
+  Note the composer's vulpea rearchitecture (its `PLAN-vulpea-rearchitecture.md`) already
+  shipped the dependency-injection half (`#+JETPACS_DEPENDS:` + Deployer bootstrap).
+- **Reconcile** `docs/PLAN-org-extraction.md` — done 2026-07-13 (its status header now names
+  the surviving core `jetpacs-org-*` entry points).
 
 ## Context
 

@@ -224,36 +224,19 @@ compilation additionally carries a text-property keymap over each error."
 
 (defun jetpacs-results--follow (buf pos)
   "Follow the locus at POS in results BUF; return (DEST-BUFFER . DEST-POS) or nil.
-Runs the row's own goto command with the buffer-display functions shimmed
-so nothing pops a desktop window and the user's Emacs layout is untouched
-\(`save-window-excursion'); reads where point lands.  Returns nil when the
-command doesn't leave the results buffer (e.g. the target file is gone)."
+Runs the row's own goto command through `jetpacs-buffer-call-shimmed', so
+nothing pops a desktop window (the user's Emacs layout is untouched) and a
+stale input event cannot hijack the jump; reads where point lands.  Returns
+nil when the command doesn't leave the results buffer (e.g. the target file
+is gone)."
   (with-current-buffer buf
     (goto-char (min (max (point-min) pos) (point-max)))
-    (let ((cmd (jetpacs-results--visit-command (point)))
-          dest-buf dest-pos)
+    (let ((cmd (jetpacs-results--visit-command (point))))
       (when (commandp cmd)
-        (save-window-excursion
-          (cl-letf (((symbol-function 'pop-to-buffer)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
-                    ((symbol-function 'pop-to-buffer-same-window)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
-                    ((symbol-function 'switch-to-buffer)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
-                    ((symbol-function 'switch-to-buffer-other-window)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
-            ;; Goto commands like `compile-goto-error' read the triggering
-            ;; event from `last-input-event' and jump to its position; a
-            ;; stale pending event (a tap elsewhere, a D-Bus reply) would
-            ;; hijack the jump.  This visit is driven by POS, not an event.
-            (condition-case nil
-                (let ((last-input-event nil)
-                      (last-nonmenu-event nil))
-                  (call-interactively cmd))
-              (error nil))
-            (setq dest-buf (current-buffer) dest-pos (point)))))
-      ;; A visit that never left the results buffer is a failure, not a jump.
-      (and dest-buf (not (eq dest-buf buf)) (cons dest-buf dest-pos)))))
+        (let* ((dest (jetpacs-buffer-call-shimmed cmd))
+               (dest-buf (car dest)))
+          ;; A visit that never left the results buffer is a failure, not a jump.
+          (and dest-buf (not (eq dest-buf buf)) dest))))))
 
 (defun jetpacs-results--region-around (buf pos)
   "Return (BEG END LABEL POINT) framing POS in BUF for the region view.

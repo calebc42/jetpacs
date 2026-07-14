@@ -44,6 +44,7 @@
                      "core/jetpacs-tablist.el"
                      "core/jetpacs-comint.el"
                      "core/jetpacs-results.el"
+                     "core/jetpacs-hypertext.el"
                      "core/jetpacs-transient.el"
                      "core/jetpacs-keymap.el"
                      "core/jetpacs-sync.el"

@@ -5756,6 +5756,34 @@ would, so Customize notices the modification (state turns EDITED)."
          (widget-field-value-set w new))
        t))))
 
+(defun jetpacs-buffer-call-shimmed (cmd)
+  "Run command CMD with window-display and input-event shims; return (BUF . POS).
+The buffer-display functions are neutered so nothing pops a desktop window
+and the user's Emacs layout is untouched (`save-window-excursion'), and the
+triggering input event is cleared so event-driven goto commands
+\(`compile-goto-error', the eww/Info/help follow commands) navigate to
+point rather than to a stale pending event.  Returns the buffer made
+current and the point reached after CMD runs; errors are swallowed and
+report wherever point already is.  Call with the origin buffer current and
+point already placed on the target."
+  (let (dest-buf dest-pos)
+    (save-window-excursion
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
+                ((symbol-function 'pop-to-buffer-same-window)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
+                ((symbol-function 'switch-to-buffer)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
+                ((symbol-function 'switch-to-buffer-other-window)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
+        (condition-case nil
+            (let ((last-input-event nil)
+                  (last-nonmenu-event nil))
+              (call-interactively cmd))
+          (error nil))
+        (setq dest-buf (current-buffer) dest-pos (point))))
+    (cons dest-buf dest-pos)))
+
 (defun jetpacs-buffer-invoke-at (buffer-name pos)
   "Run the tap action at POS in BUFFER-NAME and return non-nil if one fired.
 Tries, in order: activate a widget.el widget, push a button, then the
@@ -5768,24 +5796,31 @@ bridged to the companion automatically."
     (when (and buf (numberp pos))
       (with-current-buffer buf
         (goto-char (min (max (point-min) (truncate pos)) (point-max)))
-        (cond
-         ;; widget.el first: widgets store the widget object in the `button'
-         ;; property, which fools button.el's `button-at' into returning a
-         ;; bogus marker whose `push-button' then has no :action.
-         ((jetpacs-buffer--widget-at (point))
-          (jetpacs-buffer--widget-invoke (jetpacs-buffer--widget-at (point))))
-         ((button-at (point)) (push-button) t)
-         (t
-          (let* ((km (or (get-char-property (point) 'keymap)
-                         (get-char-property (point) 'local-map)))
-                 (cmd (and (keymapp km)
-                           (or (lookup-key km (kbd "RET"))
-                               (lookup-key km [return])
-                               (lookup-key km [mouse-2])
-                               (lookup-key km [mouse-1])))))
-            (when (commandp cmd)
-              (call-interactively cmd)
-              t))))))))
+        ;; Clear the triggering input event before running the tap's command.
+        ;; Link/visit commands reached through the keymap branch (eww/Info/help
+        ;; RET, `compile-goto-error') read `last-input-event' and would jump to
+        ;; a stale pending event instead of point; this tap is driven by POS.
+        ;; Same guard as `jetpacs-buffer-call-shimmed'.
+        (let ((last-input-event nil)
+              (last-nonmenu-event nil))
+          (cond
+           ;; widget.el first: widgets store the widget object in the `button'
+           ;; property, which fools button.el's `button-at' into returning a
+           ;; bogus marker whose `push-button' then has no :action.
+           ((jetpacs-buffer--widget-at (point))
+            (jetpacs-buffer--widget-invoke (jetpacs-buffer--widget-at (point))))
+           ((button-at (point)) (push-button) t)
+           (t
+            (let* ((km (or (get-char-property (point) 'keymap)
+                           (get-char-property (point) 'local-map)))
+                   (cmd (and (keymapp km)
+                             (or (lookup-key km (kbd "RET"))
+                                 (lookup-key km [return])
+                                 (lookup-key km [mouse-2])
+                                 (lookup-key km [mouse-1])))))
+              (when (commandp cmd)
+                (call-interactively cmd)
+                t)))))))))
 
 (jetpacs-defaction "jetpacs.buffer.act"
   (lambda (args _)
@@ -7600,36 +7635,19 @@ compilation additionally carries a text-property keymap over each error."
 
 (defun jetpacs-results--follow (buf pos)
   "Follow the locus at POS in results BUF; return (DEST-BUFFER . DEST-POS) or nil.
-Runs the row's own goto command with the buffer-display functions shimmed
-so nothing pops a desktop window and the user's Emacs layout is untouched
-\(`save-window-excursion'); reads where point lands.  Returns nil when the
-command doesn't leave the results buffer (e.g. the target file is gone)."
+Runs the row's own goto command through `jetpacs-buffer-call-shimmed', so
+nothing pops a desktop window (the user's Emacs layout is untouched) and a
+stale input event cannot hijack the jump; reads where point lands.  Returns
+nil when the command doesn't leave the results buffer (e.g. the target file
+is gone)."
   (with-current-buffer buf
     (goto-char (min (max (point-min) pos) (point-max)))
-    (let ((cmd (jetpacs-results--visit-command (point)))
-          dest-buf dest-pos)
+    (let ((cmd (jetpacs-results--visit-command (point))))
       (when (commandp cmd)
-        (save-window-excursion
-          (cl-letf (((symbol-function 'pop-to-buffer)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
-                    ((symbol-function 'pop-to-buffer-same-window)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
-                    ((symbol-function 'switch-to-buffer)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
-                    ((symbol-function 'switch-to-buffer-other-window)
-                     (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
-            ;; Goto commands like `compile-goto-error' read the triggering
-            ;; event from `last-input-event' and jump to its position; a
-            ;; stale pending event (a tap elsewhere, a D-Bus reply) would
-            ;; hijack the jump.  This visit is driven by POS, not an event.
-            (condition-case nil
-                (let ((last-input-event nil)
-                      (last-nonmenu-event nil))
-                  (call-interactively cmd))
-              (error nil))
-            (setq dest-buf (current-buffer) dest-pos (point)))))
-      ;; A visit that never left the results buffer is a failure, not a jump.
-      (and dest-buf (not (eq dest-buf buf)) (cons dest-buf dest-pos)))))
+        (let* ((dest (jetpacs-buffer-call-shimmed cmd))
+               (dest-buf (car dest)))
+          ;; A visit that never left the results buffer is a failure, not a jump.
+          (and dest-buf (not (eq dest-buf buf)) dest))))))
 
 (defun jetpacs-results--region-around (buf pos)
   "Return (BEG END LABEL POINT) framing POS in BUF for the region view.
@@ -7798,6 +7816,172 @@ drill-in top bar — see jetpacs-emacs-ui."
 
 (provide 'jetpacs-results)
 ;;; jetpacs-results.el ends here
+
+;;; ==================================================================
+;;; BEGIN core/jetpacs-hypertext.el
+;;; ==================================================================
+
+;;; jetpacs-hypertext.el --- Generic hypertext/document substrate (Tier 0.5) -*- lexical-binding: t; -*-
+
+;; Tier 0.5: one document card grammar under every "rendered rich
+;; document" buffer — the shr consumers (eww, elfeed-show, nov.el,
+;; devdocs), plus help-mode and Info-mode.  The same bet jetpacs-tablist
+;; makes on tabulated-list-mode and jetpacs-results makes on the
+;; next-error protocol: ONE renderer, thin per-family adapters.
+;;
+;; Under the Tier 0 generic renderer these buffers already render as
+;; styled text, but images fall back to placeholder text, tables to flat
+;; monospace, and structure (headings, links) is linearized.  This
+;; substrate lifts them to real cards: headings as section navigation,
+;; paragraphs as rich_text, links as tappable spans, images as
+;; `jetpacs-image', tables as native `jetpacs-table'.
+;;
+;; The design is two-phase, and that is what keeps the adapters thin:
+;;
+;;   1. An ADAPTER scans a buffer into a neutral DOCUMENT MODEL — a flat
+;;      list of segment plists (heading / para / pre / quote / rule /
+;;      image / table).  Each family (shr props, help buttons, Info node
+;;      structure) has its own scanner; none of them touches the wire.
+;;   2. The EMITTER (`jetpacs-hypertext--emit') maps the model onto the
+;;      existing widget vocabulary.  It is the only place that knows the
+;;      SDUI nodes, so a new adapter never re-derives them.
+;;
+;; This file (the substrate core) defines the model and the emitter.
+;; The adapters and the mode registrations arrive in later stages; the
+;; model shape is final now, so those stages only add scanners.
+;;
+;; Fidelity floor: an unrecognised segment degrades to a plain paragraph,
+;; never dropped — worst case equals Tier 0, never worse.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'jetpacs-widgets)
+(require 'jetpacs-buffer)      ; jetpacs-render-buffer-register / call-shimmed
+
+;; ─── The document model ───────────────────────────────────────────────────────
+;;
+;; A model is a list of segment plists.  Every segment carries `:kind';
+;; the rest of its keys depend on the kind:
+;;
+;;   (:kind heading :level N :text STR [:spans SPANS])
+;;       A section label.  LEVEL (1-6) is preserved for the Stage-3 table
+;;       of contents; inline emission ignores it (the wire section_header
+;;       has one style).  TEXT is the plain label; SPANS is a fallback
+;;       flattened to text.
+;;   (:kind para  :spans SPANS)  | (:kind para  :text STR)
+;;       A paragraph.  SPANS is a list of `jetpacs-span'; TEXT is the
+;;       plain-text fallback when the adapter has no styled runs.
+;;   (:kind pre   :text STR [:syntax SYM])
+;;       A preformatted / code block, rendered monospace on a surface.
+;;   (:kind quote :spans SPANS) | (:kind quote :text STR)
+;;       A blockquote, rendered as a paragraph on a tinted surface.
+;;   (:kind rule)
+;;       A horizontal rule.
+;;   (:kind image :url STR :alt STR :file STR :data STR :content-type STR)
+;;       An image.  Stage 1 emits its ALT/URL as a caption placeholder;
+;;       Stage 4 resolves FILE/URL/DATA to a real `jetpacs-image'.
+;;   (:kind table :rows ROWS)
+;;       A table.  ROWS is a list of row plists (:header BOOL :cells
+;;       CELLS); each cell is a list of `jetpacs-span'.  Stage 1 emits
+;;       monospace rows; Stage 4 emits a native `jetpacs-table'.
+
+(defun jetpacs-hypertext--nonempty (s)
+  "Return S when it is a non-empty string, else nil."
+  (and (stringp s) (not (string-empty-p s)) s))
+
+(defun jetpacs-hypertext--spans-text (spans)
+  "Concatenate the plain text of SPANS (span alists from `jetpacs-span')."
+  (mapconcat (lambda (s) (or (alist-get 'text s) "")) spans ""))
+
+(defun jetpacs-hypertext--cell-text (cell)
+  "Plain text of a table CELL (a list of spans)."
+  (if (stringp cell) cell (jetpacs-hypertext--spans-text cell)))
+
+;; ─── The emitter ──────────────────────────────────────────────────────────────
+
+(defun jetpacs-hypertext--paragraph (seg)
+  "A paragraph body node from SEG's :spans (preferred) or :text."
+  (let ((spans (plist-get seg :spans))
+        (text (plist-get seg :text)))
+    (cond
+     ((and spans (> (length spans) 0)) (jetpacs-rich-text spans))
+     ((jetpacs-hypertext--nonempty text) (jetpacs-text text))
+     (t (jetpacs-text "")))))
+
+(defun jetpacs-hypertext--heading (seg)
+  "A section_header node from heading SEG (its plain text, level aside)."
+  (jetpacs-section-header
+   (or (jetpacs-hypertext--nonempty (plist-get seg :text))
+       (jetpacs-hypertext--nonempty
+        (jetpacs-hypertext--spans-text (plist-get seg :spans)))
+       "")))
+
+(defun jetpacs-hypertext--pre (seg)
+  "A preformatted/code block node from SEG on a tinted surface."
+  (jetpacs-surface
+   (list (jetpacs-markup (or (plist-get seg :text) "")
+                         :syntax (plist-get seg :syntax)))
+   :color "surface_container" :shape "rounded_small" :padding 3))
+
+(defun jetpacs-hypertext--quote (seg)
+  "A blockquote node from SEG: its paragraph body on a tinted surface."
+  (jetpacs-surface
+   (list (jetpacs-hypertext--paragraph seg))
+   :color "surface_container" :shape "rounded_small" :padding 3))
+
+(defun jetpacs-hypertext--image (seg)
+  "Stage 1 placeholder for image SEG: its alt text (or URL) as a caption.
+Stage 4 replaces this with a real `jetpacs-image' resolved from
+FILE/URL/DATA."
+  (jetpacs-text
+   (format "[image: %s]"
+           (or (jetpacs-hypertext--nonempty (plist-get seg :alt))
+               (jetpacs-hypertext--nonempty (plist-get seg :url))
+               "…"))
+   'caption))
+
+(defun jetpacs-hypertext--table (seg)
+  "Stage 1 placeholder for table SEG: monospace rows on a tinted surface.
+Stage 4 replaces this with a native `jetpacs-table'."
+  (jetpacs-surface
+   (mapcar
+    (lambda (row)
+      (jetpacs-rich-text
+       (list (jetpacs-span
+              (mapconcat #'jetpacs-hypertext--cell-text
+                         (plist-get row :cells) " | ")
+              :mono t
+              :bold (and (plist-get row :header) t)))))
+    (plist-get seg :rows))
+   :color "surface_container" :shape "rounded_small" :padding 3))
+
+(defun jetpacs-hypertext--emit-segment (seg)
+  "Map one document SEG (a segment plist) to an SDUI node.
+An unrecognised kind degrades to a plain paragraph — never dropped."
+  (pcase (plist-get seg :kind)
+    ('heading (jetpacs-hypertext--heading seg))
+    ('para    (jetpacs-hypertext--paragraph seg))
+    ('pre     (jetpacs-hypertext--pre seg))
+    ('quote   (jetpacs-hypertext--quote seg))
+    ('rule    (jetpacs-divider))
+    ('image   (jetpacs-hypertext--image seg))
+    ('table   (jetpacs-hypertext--table seg))
+    (_        (jetpacs-hypertext--paragraph seg))))
+
+(defun jetpacs-hypertext--emit (model &optional title)
+  "Emit document MODEL (a list of segment plists) as a list of SDUI nodes.
+TITLE, when a non-empty string, leads with a title text node.  This is
+the single place that knows the wire vocabulary; adapters build MODEL and
+never touch nodes."
+  (append
+   (when (jetpacs-hypertext--nonempty title)
+     (list (jetpacs-text title 'title)))
+   (mapcar #'jetpacs-hypertext--emit-segment model)))
+
+(provide 'jetpacs-hypertext)
+;;; jetpacs-hypertext.el ends here
 
 ;;; ==================================================================
 ;;; BEGIN core/jetpacs-transient.el

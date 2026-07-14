@@ -580,6 +580,34 @@ would, so Customize notices the modification (state turns EDITED)."
          (widget-field-value-set w new))
        t))))
 
+(defun jetpacs-buffer-call-shimmed (cmd)
+  "Run command CMD with window-display and input-event shims; return (BUF . POS).
+The buffer-display functions are neutered so nothing pops a desktop window
+and the user's Emacs layout is untouched (`save-window-excursion'), and the
+triggering input event is cleared so event-driven goto commands
+\(`compile-goto-error', the eww/Info/help follow commands) navigate to
+point rather than to a stale pending event.  Returns the buffer made
+current and the point reached after CMD runs; errors are swallowed and
+report wherever point already is.  Call with the origin buffer current and
+point already placed on the target."
+  (let (dest-buf dest-pos)
+    (save-window-excursion
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
+                ((symbol-function 'pop-to-buffer-same-window)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
+                ((symbol-function 'switch-to-buffer)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
+                ((symbol-function 'switch-to-buffer-other-window)
+                 (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
+        (condition-case nil
+            (let ((last-input-event nil)
+                  (last-nonmenu-event nil))
+              (call-interactively cmd))
+          (error nil))
+        (setq dest-buf (current-buffer) dest-pos (point))))
+    (cons dest-buf dest-pos)))
+
 (defun jetpacs-buffer-invoke-at (buffer-name pos)
   "Run the tap action at POS in BUFFER-NAME and return non-nil if one fired.
 Tries, in order: activate a widget.el widget, push a button, then the
@@ -592,24 +620,31 @@ bridged to the companion automatically."
     (when (and buf (numberp pos))
       (with-current-buffer buf
         (goto-char (min (max (point-min) (truncate pos)) (point-max)))
-        (cond
-         ;; widget.el first: widgets store the widget object in the `button'
-         ;; property, which fools button.el's `button-at' into returning a
-         ;; bogus marker whose `push-button' then has no :action.
-         ((jetpacs-buffer--widget-at (point))
-          (jetpacs-buffer--widget-invoke (jetpacs-buffer--widget-at (point))))
-         ((button-at (point)) (push-button) t)
-         (t
-          (let* ((km (or (get-char-property (point) 'keymap)
-                         (get-char-property (point) 'local-map)))
-                 (cmd (and (keymapp km)
-                           (or (lookup-key km (kbd "RET"))
-                               (lookup-key km [return])
-                               (lookup-key km [mouse-2])
-                               (lookup-key km [mouse-1])))))
-            (when (commandp cmd)
-              (call-interactively cmd)
-              t))))))))
+        ;; Clear the triggering input event before running the tap's command.
+        ;; Link/visit commands reached through the keymap branch (eww/Info/help
+        ;; RET, `compile-goto-error') read `last-input-event' and would jump to
+        ;; a stale pending event instead of point; this tap is driven by POS.
+        ;; Same guard as `jetpacs-buffer-call-shimmed'.
+        (let ((last-input-event nil)
+              (last-nonmenu-event nil))
+          (cond
+           ;; widget.el first: widgets store the widget object in the `button'
+           ;; property, which fools button.el's `button-at' into returning a
+           ;; bogus marker whose `push-button' then has no :action.
+           ((jetpacs-buffer--widget-at (point))
+            (jetpacs-buffer--widget-invoke (jetpacs-buffer--widget-at (point))))
+           ((button-at (point)) (push-button) t)
+           (t
+            (let* ((km (or (get-char-property (point) 'keymap)
+                           (get-char-property (point) 'local-map)))
+                   (cmd (and (keymapp km)
+                             (or (lookup-key km (kbd "RET"))
+                                 (lookup-key km [return])
+                                 (lookup-key km [mouse-2])
+                                 (lookup-key km [mouse-1])))))
+              (when (commandp cmd)
+                (call-interactively cmd)
+                t)))))))))
 
 (jetpacs-defaction "jetpacs.buffer.act"
   (lambda (args _)

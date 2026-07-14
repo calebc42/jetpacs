@@ -34,6 +34,7 @@
 (require 'jetpacs-spec)
 (require 'jetpacs-keymap)
 (require 'jetpacs-results)
+(require 'jetpacs-hypertext)
 (require 'jetpacs-files)
 (require 'jetpacs-minibuffer)
 (require 'jetpacs-emacs-ui)
@@ -1285,6 +1286,144 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
                  (split-string
                   (with-temp-buffer
                     (insert-file-contents jetpacs-tests--golden-file)
+                    (buffer-string))
+                  "\n" t))))
+
+;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
+
+(ert-deftest jetpacs-buffer-call-shimmed-clears-input-event ()
+  "`jetpacs-buffer-call-shimmed' clears `last-input-event' around the command,
+so an event-driven goto (compile-goto-error and kin) navigates by point,
+not by a stale pending event.  Regression for the hijack fix, previously
+pinned only implicitly through jetpacs-results--follow."
+  (let ((seen 'unset)
+        (last-input-event 'stale-pending-event)
+        (last-nonmenu-event 'stale-pending-event))
+    (with-temp-buffer
+      (insert "target-content")
+      (let ((cmd (lambda () (interactive) (setq seen last-input-event))))
+        (jetpacs-buffer-call-shimmed cmd)))
+    (should (eq seen nil))))
+
+(ert-deftest jetpacs-buffer-invoke-at-clears-input-event ()
+  "`jetpacs-buffer-invoke-at' clears the pending input event before running a
+region-keymap command — the seam every hypertext link tap rides — so a
+POS-driven eww/Info/help RET can't be hijacked by a stale event."
+  (let ((seen 'unset)
+        (last-input-event 'stale-pending-event))
+    (with-temp-buffer
+      (rename-buffer "jetpacs-invoke-at-test" t)
+      (insert "link")
+      (let ((km (make-sparse-keymap))
+            (cmd (lambda () (interactive) (setq seen last-input-event))))
+        (define-key km (kbd "RET") cmd)
+        (put-text-property (point-min) (point-max) 'keymap km)
+        (should (jetpacs-buffer-invoke-at (buffer-name) 1))))
+    (should (eq seen nil))))
+
+(ert-deftest jetpacs-hypertext-emit-structure ()
+  "The emitter maps kinds to the right node types and never drops a segment."
+  (let* ((model (list '(:kind heading :level 1 :text "H")
+                      '(:kind para :text "p")
+                      '(:kind rule)
+                      '(:kind image :alt "cat")
+                      '(:kind bogus :text "still shown")))
+         (nodes (jetpacs-hypertext--emit model "Title")))
+    (should (= (length nodes) 6))                       ; title + 5 segments
+    (should (equal (alist-get 't (nth 0 nodes)) "text"))          ; title
+    (should (equal (alist-get 't (nth 1 nodes)) "section_header"))
+    (should (equal (alist-get 't (nth 2 nodes)) "text"))          ; para (plain)
+    (should (equal (alist-get 't (nth 3 nodes)) "divider"))       ; rule
+    (should (equal (alist-get 't (nth 4 nodes)) "text"))          ; image placeholder
+    (should (equal (alist-get 't (nth 5 nodes)) "text"))))        ; unknown → para
+
+(ert-deftest jetpacs-hypertext-emit-spans-and-headings ()
+  "Heading with no :text flattens its spans to the section_header title;
+a paragraph with spans becomes a rich_text carrying those spans."
+  (let* ((spans (list (jetpacs-span "hello ")
+                      (jetpacs-span "link"
+                                 :on-tap (jetpacs-action "jetpacs.buffer.act"
+                                                      :args '((buffer . "b") (pos . 3))))))
+         (model (list (list :kind 'heading :level 2 :spans spans)
+                      (list :kind 'para :spans spans)))
+         (nodes (jetpacs-hypertext--emit model nil)))
+    (should (equal (alist-get 't (nth 0 nodes)) "section_header"))
+    (should (equal (alist-get 'title (nth 0 nodes)) "hello link"))
+    (should (equal (alist-get 't (nth 1 nodes)) "rich_text"))
+    (should (= (length (alist-get 'spans (nth 1 nodes))) 2))))
+
+(ert-deftest jetpacs-hypertext-emit-lint-clean ()
+  "Every emitted document node is wire-valid (passes the spec linter)."
+  (let* ((model (list '(:kind heading :level 1 :text "H")
+                      (list :kind 'para :spans (list (jetpacs-span "x" :bold t)))
+                      '(:kind pre :text "code" :syntax "elisp")
+                      (list :kind 'quote :text "q")
+                      '(:kind rule)
+                      '(:kind image :alt "a" :url "http://x")
+                      (list :kind 'table
+                            :rows (list (list :header t
+                                              :cells (list (list (jetpacs-span "H"))))
+                                        (list :cells (list (list (jetpacs-span "v"))))))))
+         (nodes (jetpacs-hypertext--emit model "Doc")))
+    (dolist (n nodes)
+      (should (null (jetpacs-lint-spec n))))))
+
+(defconst jetpacs-tests--hypertext-golden-file
+  (expand-file-name "hypertext.golden" jetpacs-tests--dir))
+
+(defun jetpacs-hypertext--emit-cases ()
+  "Document models exercising every segment kind; each yields a node list."
+  (let* ((act (jetpacs-action "jetpacs.buffer.act"
+                           :args '((buffer . "*eww*") (pos . 42))))
+         (link (jetpacs-span "docs" :on-tap act))
+         (spans (list (jetpacs-span "see the ") link (jetpacs-span " page."))))
+    (list
+     (jetpacs-hypertext--emit (list '(:kind heading :level 1 :text "Chapter One")))
+     (jetpacs-hypertext--emit (list (list :kind 'para :spans spans)))
+     (jetpacs-hypertext--emit (list '(:kind para :text "A plain paragraph.")))
+     (jetpacs-hypertext--emit (list '(:kind pre :text "(message \"hi\")" :syntax "elisp")))
+     (jetpacs-hypertext--emit (list '(:kind quote :text "To be or not to be.")))
+     (jetpacs-hypertext--emit (list '(:kind rule)))
+     (jetpacs-hypertext--emit (list '(:kind image :alt "A cat" :url "http://x/cat.png")))
+     (jetpacs-hypertext--emit (list '(:kind image :url "http://x/only.png")))
+     (jetpacs-hypertext--emit
+      (list (list :kind 'table
+                  :rows (list (list :header t
+                                    :cells (list (list (jetpacs-span "Item"))
+                                                 (list (jetpacs-span "Qty"))))
+                              (list :cells (list (list (jetpacs-span "apples"))
+                                                 (list (jetpacs-span "4"))))))))
+     (jetpacs-hypertext--emit
+      (list '(:kind heading :level 1 :text "Doc")
+            (list :kind 'para :spans spans)
+            '(:kind rule)
+            '(:kind bogus :text "degraded but shown"))
+      "Page Title"))))
+
+(defun jetpacs-hypertext--emit-lines ()
+  (let ((i -1))
+    (mapcar (lambda (nodes)
+              (setq i (1+ i))
+              (format "%02d %s" i
+                      (json-serialize
+                       (vconcat (mapcar #'jetpacs-tests--canon nodes))
+                       :null-object :null :false-object :false)))
+            (jetpacs-hypertext--emit-cases))))
+
+(defun jetpacs-tests-regen-hypertext-golden ()
+  "Rewrite the hypertext golden from the current emitter.
+Only run this after an INTENTIONAL change; review the diff."
+  (with-temp-file jetpacs-tests--hypertext-golden-file
+    (insert (string-join (jetpacs-hypertext--emit-lines) "\n") "\n"))
+  (message "Wrote %s" jetpacs-tests--hypertext-golden-file))
+
+(ert-deftest jetpacs-hypertext-emit-golden ()
+  "The emitter's wire output matches the committed hypertext.golden snapshot."
+  (should (file-readable-p jetpacs-tests--hypertext-golden-file))
+  (should (equal (jetpacs-hypertext--emit-lines)
+                 (split-string
+                  (with-temp-buffer
+                    (insert-file-contents jetpacs-tests--hypertext-golden-file)
                     (buffer-string))
                   "\n" t))))
 

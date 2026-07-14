@@ -73,8 +73,12 @@ Errors travel as `kind: "error"` with `{code, detail}`.
 Emacs → companion   session.hello    {protocol, client, features?, wants: [capability...]}
 companion → Emacs   auth.challenge   {nonce: SNONCE}
 Emacs → companion   auth.response    {nonce: CNONCE, mac}
-companion → Emacs   session.welcome  {server_proof, granted, node_types, device?, surfaces, queued_events}
+companion → Emacs   session.welcome  {server_proof, granted, node_types, device?, surfaces, queued_events, protocol?, server?}
 ```
+
+The welcome's optional `protocol` (the companion's wire version) and
+`server` (an implementation/version string, mirroring `hello`'s
+`client`) are informational — for logging skew, never gated on.
 
 - **Pairing token.** The companion generates a secret token shown once in
   its pairing UI; the user copies it into their Emacs init. The token
@@ -181,9 +185,17 @@ surface.remove   {surface}
 User interactions reach the client as:
 
 ```
-event.action    {action, args?, when_offline?, dedupe?, surface?, revision?}
+event.action    {action, args?, surface?, revision_seen?, fields?, queued_at?}
 state.changed   {id, value}
 ```
+
+`surface` and `revision_seen` are the context the interaction happened
+in (which surface, at which cached revision); `queued_at` (epoch ms) is
+stamped onto events delivered from the offline queue (§6) and absent on
+live ones; `fields` is reserved (currently `null`). The
+`when_offline`/`dedupe`/`ttl_s` fields an author writes on an action
+object (below) are queue policy: the companion consumes them when the
+event is queued and does not echo them in the delivered frame.
 
 **The allowlist principle (normative).** An `action` is a *name* the
 client explicitly registered a handler for; `args` are plain data the
@@ -307,18 +319,28 @@ for completion, diagnostics, eldoc, and fontification. All offsets are
 **Unicode code points** (= Emacs buffer positions; the companion converts
 from its UTF-16 indices, so the client never does encoding math).
 
+The companion → client legs are §5 *actions* riding `event.action`
+frames (they hit the same allowlist as every other interaction); the
+client → companion legs are frame kinds of their own. Offsets named
+`start`/`cursor` are code points; `seq` stamps which delta state a
+message was computed against.
+
 ```
-companion → client   edit.open      {file, session, text}                    seed / reseed (seq 0)
-companion → client   edit.delta     {file, session, seq, start, del, text, len}
-companion → client   edit.caret     {file, session, pos}
-companion → client   edit.close     {file, session}
-companion → client   edit.complete  {id, session, pos, request_id, ...}      pure query
+companion → client   event.action {action: "edit.open",     args: {file, session, text}}   seed / reseed (seq 0)
+companion → client   event.action {action: "edit.delta",    args: {file, session, seq, start, del, text, len}}
+companion → client   event.action {action: "edit.caret",    args: {file, session, seq, cursor}}
+companion → client   event.action {action: "edit.close",    args: {file, session}}
+companion → client   event.action {action: "edit.complete", args: {file, session, seq, request_id, cursor}}   pure query
 client → companion   completions.show {id, request_id, prefix, candidates: [{label, annotation?, insert?}]}
-client → companion   diagnostics.show {id, session, diags: [{start, end, type, text}]}
+client → companion   diagnostics.show {id, session, seq, diags: [{beg, end, type, text}]}
 client → companion   eldoc.show       {id, session, text}
-client → companion   fontify.show     {id, session, runs}
-client → companion   edit.resync      {file, session}
+client → companion   fontify.show     {id, session, seq, runs}
+client → companion   edit.resync      {id, session}
 ```
+
+In the client → companion frames `id` is the editor id (the synced
+file); `seq` on `diagnostics.show`/`fontify.show` lets the companion
+refuse to draw squiggles or highlights over text that has moved on.
 
 Deltas are `seq`-numbered and each carries the expected resulting length;
 on any mismatch (dropped frame, client restart) the client marks the
@@ -361,7 +383,14 @@ this section and the §5 allowlist like any other node tree.
 
 The normative, machine-checked reference for every node's wire shape is
 [`test/widgets.golden`](../test/widgets.golden) — one JSON line per
-constructor, kept honest by the ERT suite. Summary by family:
+constructor, kept honest by the ERT suite. Since 1.0-rc,
+[`docs/contract.json`](contract.json) (contract_format 2) additionally
+publishes the authored per-node key schema (`node_schema`: required and
+optional keys per type, plus the `"*"` row of keys legal on any node)
+and the frame-kind schema (`kind_schema`: sender direction and payload
+keys per kind) — the machine-readable form of this section and of the
+frame sketches in §§2–8, 10–11, consumed by both conformance suites.
+Summary by family:
 
 - **Content**: `text` (style/color/syntax/selectable), `rich_text` +
   styled `spans` (emphasis, `color`/`bg` hex overrides, `mono`, tap

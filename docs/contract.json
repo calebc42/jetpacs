@@ -1,7 +1,8 @@
 {
-  "contract_format": 1,
-  "api_version": "1.10.0",
+  "contract_format": 2,
+  "api_version": "1.11.0",
   "protocol_version": 1,
+  "spec_version": "1.0-rc",
   "node_types": [
     "text",
     "rich_text",
@@ -42,6 +43,686 @@
     "slider",
     "scaffold"
   ],
+  "node_schema": {
+    "*": {
+      "required": [],
+      "optional": [
+        "scroll_here",
+        "dialog_style"
+      ]
+    },
+    "text": {
+      "required": [
+        "text"
+      ],
+      "optional": [
+        "style",
+        "weight",
+        "color",
+        "selectable",
+        "max_lines",
+        "padding",
+        "syntax"
+      ]
+    },
+    "rich_text": {
+      "required": [
+        "spans"
+      ],
+      "optional": [
+        "style",
+        "padding"
+      ]
+    },
+    "row": {
+      "required": [
+        "children"
+      ],
+      "optional": [
+        "spacing",
+        "align",
+        "scroll"
+      ]
+    },
+    "flow_row": {
+      "required": [
+        "children"
+      ],
+      "optional": [
+        "spacing",
+        "run_spacing"
+      ]
+    },
+    "column": {
+      "required": [
+        "children"
+      ],
+      "optional": [
+        "spacing",
+        "align",
+        "scroll"
+      ]
+    },
+    "box": {
+      "required": [
+        "children"
+      ],
+      "optional": [
+        "alignment",
+        "padding",
+        "weight",
+        "on_tap",
+        "width",
+        "height",
+        "fill_fraction",
+        "border"
+      ]
+    },
+    "surface": {
+      "required": [
+        "children"
+      ],
+      "optional": [
+        "color",
+        "shape",
+        "elevation",
+        "padding",
+        "fill",
+        "width",
+        "height",
+        "fill_fraction",
+        "border"
+      ]
+    },
+    "lazy_column": {
+      "required": [
+        "children"
+      ],
+      "optional": []
+    },
+    "spacer": {
+      "required": [],
+      "optional": [
+        "height",
+        "width",
+        "weight"
+      ]
+    },
+    "divider": {
+      "required": [],
+      "optional": []
+    },
+    "card": {
+      "required": [
+        "children"
+      ],
+      "optional": [
+        "on_tap",
+        "on_swipe",
+        "swipe_start",
+        "swipe_end",
+        "padding",
+        "weight",
+        "width",
+        "height",
+        "fill_fraction",
+        "border"
+      ]
+    },
+    "collapsible": {
+      "required": [
+        "id",
+        "header",
+        "children"
+      ],
+      "optional": [
+        "collapsed",
+        "on_long_tap",
+        "on_swipe"
+      ]
+    },
+    "reorderable_list": {
+      "required": [
+        "items"
+      ],
+      "optional": [
+        "on_reorder"
+      ]
+    },
+    "table": {
+      "required": [
+        "rows"
+      ],
+      "optional": [
+        "aligns",
+        "on_add_row",
+        "on_add_col",
+        "padding"
+      ]
+    },
+    "tabs": {
+      "required": [
+        "items",
+        "children"
+      ],
+      "optional": [
+        "initial",
+        "scrollable",
+        "pager_only",
+        "on_change",
+        "id"
+      ]
+    },
+    "chart": {
+      "required": [
+        "series"
+      ],
+      "optional": [
+        "kind",
+        "height",
+        "y_range",
+        "summary",
+        "on_point_tap"
+      ]
+    },
+    "canvas": {
+      "required": [
+        "width",
+        "height",
+        "ops"
+      ],
+      "optional": []
+    },
+    "month_grid": {
+      "required": [
+        "month"
+      ],
+      "optional": [
+        "marks",
+        "selected",
+        "min_month",
+        "max_month",
+        "on_day_tap",
+        "on_month_change"
+      ]
+    },
+    "icon": {
+      "required": [
+        "name"
+      ],
+      "optional": [
+        "size",
+        "color",
+        "padding",
+        "badge"
+      ]
+    },
+    "image": {
+      "required": [
+        "url"
+      ],
+      "optional": [
+        "content_description",
+        "padding",
+        "width",
+        "height",
+        "aspect_ratio",
+        "content_scale"
+      ]
+    },
+    "date_stamp": {
+      "required": [],
+      "optional": [
+        "day",
+        "month",
+        "month_index",
+        "year",
+        "time",
+        "padding"
+      ]
+    },
+    "section_header": {
+      "required": [
+        "title"
+      ],
+      "optional": [
+        "trailing",
+        "padding"
+      ]
+    },
+    "empty_state": {
+      "required": [],
+      "optional": [
+        "icon",
+        "title",
+        "caption",
+        "on_tap",
+        "action_label",
+        "padding"
+      ]
+    },
+    "progress": {
+      "required": [],
+      "optional": [
+        "variant",
+        "value",
+        "padding"
+      ]
+    },
+    "menu": {
+      "required": [
+        "items"
+      ],
+      "optional": [
+        "icon",
+        "padding"
+      ]
+    },
+    "button": {
+      "required": [
+        "label",
+        "on_tap"
+      ],
+      "optional": [
+        "icon",
+        "variant",
+        "weight",
+        "padding"
+      ]
+    },
+    "icon_button": {
+      "required": [
+        "icon",
+        "on_tap"
+      ],
+      "optional": [
+        "content_description",
+        "padding",
+        "badge"
+      ]
+    },
+    "chip": {
+      "required": [
+        "label"
+      ],
+      "optional": [
+        "on_tap",
+        "selected",
+        "icon",
+        "padding"
+      ]
+    },
+    "assist_chip": {
+      "required": [
+        "label"
+      ],
+      "optional": [
+        "on_tap",
+        "icon",
+        "padding"
+      ]
+    },
+    "text_input": {
+      "required": [
+        "id"
+      ],
+      "optional": [
+        "value",
+        "hint",
+        "label",
+        "on_submit",
+        "single_line",
+        "min_lines",
+        "max_lines",
+        "monospace",
+        "syntax",
+        "password",
+        "keyboard",
+        "padding"
+      ]
+    },
+    "editor": {
+      "required": [
+        "id"
+      ],
+      "optional": [
+        "value",
+        "on_save",
+        "read_only",
+        "syntax",
+        "line_numbers",
+        "complete",
+        "chromeless",
+        "publish_state",
+        "toolbar"
+      ]
+    },
+    "checkbox": {
+      "required": [
+        "id"
+      ],
+      "optional": [
+        "checked",
+        "label",
+        "on_change",
+        "padding"
+      ]
+    },
+    "switch": {
+      "required": [
+        "id"
+      ],
+      "optional": [
+        "checked",
+        "label",
+        "on_change",
+        "padding"
+      ]
+    },
+    "enum_list": {
+      "required": [
+        "id",
+        "options"
+      ],
+      "optional": [
+        "value",
+        "multi_select",
+        "allow_add",
+        "on_change",
+        "padding"
+      ]
+    },
+    "date_button": {
+      "required": [
+        "label",
+        "on_pick"
+      ],
+      "optional": [
+        "value"
+      ]
+    },
+    "time_button": {
+      "required": [
+        "label",
+        "on_pick"
+      ],
+      "optional": [
+        "value"
+      ]
+    },
+    "slider": {
+      "required": [
+        "id",
+        "on_change"
+      ],
+      "optional": [
+        "value",
+        "min",
+        "max",
+        "steps"
+      ]
+    },
+    "scaffold": {
+      "required": [],
+      "optional": [
+        "top_bar",
+        "fab",
+        "body",
+        "bottom_bar",
+        "floating_toolbar",
+        "snackbar",
+        "snackbar_action",
+        "drawer",
+        "on_refresh"
+      ]
+    }
+  },
+  "kind_schema": {
+    "session.hello": {
+      "direction": "client",
+      "required": [
+        "protocol",
+        "client",
+        "wants"
+      ],
+      "optional": [
+        "features"
+      ]
+    },
+    "auth.challenge": {
+      "direction": "companion",
+      "required": [
+        "nonce"
+      ],
+      "optional": []
+    },
+    "auth.response": {
+      "direction": "client",
+      "required": [
+        "nonce",
+        "mac"
+      ],
+      "optional": []
+    },
+    "session.welcome": {
+      "direction": "companion",
+      "required": [
+        "server_proof",
+        "granted",
+        "node_types",
+        "surfaces",
+        "queued_events"
+      ],
+      "optional": [
+        "protocol",
+        "server",
+        "device"
+      ]
+    },
+    "ack": {
+      "direction": "both",
+      "required": [],
+      "optional": []
+    },
+    "error": {
+      "direction": "both",
+      "required": [
+        "code"
+      ],
+      "optional": [
+        "detail",
+        "perm",
+        "settings"
+      ]
+    },
+    "ping": {
+      "direction": "both",
+      "required": [],
+      "optional": []
+    },
+    "pong": {
+      "direction": "both",
+      "required": [],
+      "optional": []
+    },
+    "surface.update": {
+      "direction": "client",
+      "required": [
+        "surface",
+        "revision",
+        "spec"
+      ],
+      "optional": [
+        "ttl_s",
+        "stale_spec",
+        "current_view"
+      ]
+    },
+    "surface.remove": {
+      "direction": "client",
+      "required": [
+        "surface"
+      ],
+      "optional": []
+    },
+    "event.action": {
+      "direction": "companion",
+      "required": [
+        "action"
+      ],
+      "optional": [
+        "args",
+        "surface",
+        "revision_seen",
+        "fields",
+        "queued_at"
+      ]
+    },
+    "state.changed": {
+      "direction": "companion",
+      "required": [
+        "id",
+        "value"
+      ],
+      "optional": []
+    },
+    "queue.replay": {
+      "direction": "client",
+      "required": [],
+      "optional": []
+    },
+    "queue.drained": {
+      "direction": "companion",
+      "required": [
+        "delivered",
+        "expired"
+      ],
+      "optional": [
+        "duplicate_request"
+      ]
+    },
+    "dialog.show": {
+      "direction": "client",
+      "payload": "node"
+    },
+    "dialog.dismiss": {
+      "direction": "client",
+      "required": [],
+      "optional": []
+    },
+    "pie_menu.show": {
+      "direction": "client",
+      "required": [
+        "categories"
+      ],
+      "optional": [
+        "center_label",
+        "buffer"
+      ]
+    },
+    "pie_menu.dismiss": {
+      "direction": "client",
+      "required": [],
+      "optional": []
+    },
+    "toast.show": {
+      "direction": "client",
+      "required": [
+        "text"
+      ],
+      "optional": []
+    },
+    "reminders.set": {
+      "direction": "client",
+      "required": [
+        "reminders"
+      ],
+      "optional": [
+        "owner"
+      ]
+    },
+    "theme.set": {
+      "direction": "client",
+      "required": [],
+      "optional": [
+        "dark",
+        "colors",
+        "syntax"
+      ]
+    },
+    "completions.show": {
+      "direction": "client",
+      "required": [
+        "id",
+        "request_id",
+        "prefix",
+        "candidates"
+      ],
+      "optional": []
+    },
+    "diagnostics.show": {
+      "direction": "client",
+      "required": [
+        "id",
+        "session",
+        "seq",
+        "diags"
+      ],
+      "optional": []
+    },
+    "eldoc.show": {
+      "direction": "client",
+      "required": [
+        "id",
+        "session",
+        "text"
+      ],
+      "optional": []
+    },
+    "fontify.show": {
+      "direction": "client",
+      "required": [
+        "id",
+        "session",
+        "seq",
+        "runs"
+      ],
+      "optional": []
+    },
+    "edit.resync": {
+      "direction": "client",
+      "required": [
+        "id",
+        "session"
+      ],
+      "optional": []
+    },
+    "capability.invoke": {
+      "direction": "client",
+      "required": [
+        "cap"
+      ],
+      "optional": [
+        "args"
+      ]
+    },
+    "capability.result": {
+      "direction": "companion",
+      "required": [
+        "ok"
+      ],
+      "optional": [
+        "result"
+      ]
+    },
+    "triggers.set": {
+      "direction": "client",
+      "required": [
+        "triggers"
+      ],
+      "optional": []
+    }
+  },
   "action_hook_keys": [
     "on_tap",
     "on_change",

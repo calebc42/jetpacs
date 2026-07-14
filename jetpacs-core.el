@@ -13,7 +13,7 @@
 
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
-;; Version: 1.10.0
+;; Version: 1.11.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; URL: https://github.com/calebc42/jetpacs
 
@@ -66,7 +66,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.10.0"
+(defconst jetpacs-api-version "1.11.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -2646,6 +2646,8 @@ on-device) or the empty string for a bare attention dot; nil for none."
 ;; Tier 1 catch those before they reach the wire:
 ;;
 ;;   `jetpacs-lint-spec'       — return a list of problems for a spec (nil = clean).
+;;   `jetpacs-lint-payload'    — validate a frame kind + payload against the
+;;                            kind schema (the frame-level counterpart).
 ;;   `jetpacs-render-to-json'  — serialize + parse a spec headless (the wire
 ;;                            round-trip, so views are testable with no phone).
 ;;   `jetpacs-lint-on-push'    — when set, `jetpacs-surface-update' replaces each
@@ -2655,7 +2657,10 @@ on-device) or the empty string for a bare attention dot; nil for none."
 ;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
 ;; (SduiRenderer.kt) and `test/widgets.golden'; the drift test
 ;; `jetpacs-lint-types-cover-golden' fails if a constructor emits a `t' not
-;; listed here.
+;; listed here.  Since Spec 1.0-rc the tables below also carry the authored
+;; per-node key schema (`jetpacs-lint-node-schema') and the frame-kind
+;; schema (`jetpacs-lint-kind-schema'); `build-contract.el' publishes both
+;; in docs/contract.json (contract_format 2) for non-elisp implementations.
 
 ;;; Code:
 
@@ -2702,6 +2707,142 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
 Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
 must name one of these and carry every listed key.  `build-contract.el'
 derives the discriminated action schema in `contract.json' from this.")
+
+(defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style)
+  "Keys legal on any node, attached after construction.
+`scroll_here' marks a lazy_column child as its scroll target
+\(`jetpacs-scroll-here', SPEC §9); `dialog_style' rides a dialog spec's
+root node (`jetpacs-send-dialog', SPEC §7).")
+
+(defconst jetpacs-lint-node-schema
+  ;; (TYPE REQUIRED-KEYS OPTIONAL-KEYS) — one row per entry of
+  ;; `jetpacs-lint-node-types', same order.
+  '(("text"            (text)               (style weight color selectable
+                                             max_lines padding syntax))
+    ("rich_text"       (spans)              (style padding))
+    ("row"             (children)           (spacing align scroll))
+    ("flow_row"        (children)           (spacing run_spacing))
+    ("column"          (children)           (spacing align scroll))
+    ("box"             (children)           (alignment padding weight on_tap
+                                             width height fill_fraction border))
+    ("surface"         (children)           (color shape elevation padding fill
+                                             width height fill_fraction border))
+    ("lazy_column"     (children)           ())
+    ("spacer"          ()                   (height width weight))
+    ("divider"         ()                   ())
+    ("card"            (children)           (on_tap on_swipe swipe_start
+                                             swipe_end padding weight width
+                                             height fill_fraction border))
+    ("collapsible"     (id header children) (collapsed on_long_tap on_swipe))
+    ("reorderable_list" (items)             (on_reorder))
+    ("table"           (rows)               (aligns on_add_row on_add_col
+                                             padding))
+    ("tabs"            (items children)     (initial scrollable pager_only
+                                             on_change id))
+    ("chart"           (series)             (kind height y_range summary
+                                             on_point_tap))
+    ("canvas"          (width height ops)   ())
+    ("month_grid"      (month)              (marks selected min_month max_month
+                                             on_day_tap on_month_change))
+    ("icon"            (name)               (size color padding badge))
+    ("image"           (url)                (content_description padding width
+                                             height aspect_ratio content_scale))
+    ("date_stamp"      ()                   (day month month_index year time
+                                             padding))
+    ("section_header"  (title)              (trailing padding))
+    ("empty_state"     ()                   (icon title caption on_tap
+                                             action_label padding))
+    ("progress"        ()                   (variant value padding))
+    ("menu"            (items)              (icon padding))
+    ("button"          (label on_tap)       (icon variant weight padding))
+    ("icon_button"     (icon on_tap)        (content_description padding badge))
+    ("chip"            (label)              (on_tap selected icon padding))
+    ("assist_chip"     (label)              (on_tap icon padding))
+    ("text_input"      (id)                 (value hint label on_submit
+                                             single_line min_lines max_lines
+                                             monospace syntax password keyboard
+                                             padding))
+    ("editor"          (id)                 (value on_save read_only syntax
+                                             line_numbers complete chromeless
+                                             publish_state toolbar))
+    ("checkbox"        (id)                 (checked label on_change padding))
+    ("switch"          (id)                 (checked label on_change padding))
+    ("enum_list"       (id options)         (value multi_select allow_add
+                                             on_change padding))
+    ("date_button"     (label on_pick)      (value))
+    ("time_button"     (label on_pick)      (value))
+    ("slider"          (id on_change)       (value min max steps))
+    ("scaffold"        ()                   (top_bar fab body bottom_bar
+                                             floating_toolbar snackbar
+                                             snackbar_action drawer on_refresh)))
+  "Per-node key schema: (TYPE REQUIRED OPTIONAL), one row per node type.
+Authored from `test/widgets.golden' ∪ the `jetpacs-widgets.el' constructor
+signatures, hand-reviewed against WIDGETS.md and SPEC §9 (the review is
+SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing REQUIRED
+key as an error and a key outside the row (and outside
+`jetpacs-lint-node-common-keys') as a warning — a warning, not an error,
+because companions must ignore unknown keys (the §9 forward-compat rule),
+so an author may deliberately target a newer companion.  Value types are
+not re-declared here: the numeric/color/action key classes above apply by
+key name.  `build-contract.el' publishes this as `node_schema'.")
+
+(defconst jetpacs-lint-kind-schema
+  ;; (KIND DIRECTION REQUIRED OPTIONAL) | (KIND DIRECTION node)
+  ;; DIRECTION: who sends it — `client' (Emacs), `companion', or `both'.
+  ;; `node' marks a payload that is a §9 node tree rather than a fixed
+  ;; key set.
+  '(;; Handshake (SPEC §3)
+    ("session.hello"    client    (protocol client wants) (features))
+    ("auth.challenge"   companion (nonce)                 ())
+    ("auth.response"    client    (nonce mac)             ())
+    ("session.welcome"  companion (server_proof granted node_types surfaces
+                                   queued_events)
+                                                          (protocol server
+                                                           device))
+    ;; Envelope-level (SPEC §2)
+    ("ack"              both      ()                      ())
+    ("error"            both      (code)                  (detail perm settings))
+    ("ping"             both      ()                      ())
+    ("pong"             both      ()                      ())
+    ;; Surfaces, events, offline queue (SPEC §4–§6)
+    ("surface.update"   client    (surface revision spec) (ttl_s stale_spec
+                                                           current_view))
+    ("surface.remove"   client    (surface)               ())
+    ("event.action"     companion (action)                (args surface
+                                                           revision_seen fields
+                                                           queued_at))
+    ("state.changed"    companion (id value)              ())
+    ("queue.replay"     client    ()                      ())
+    ("queue.drained"    companion (delivered expired)     (duplicate_request))
+    ;; Dialogs, toasts, pies, reminders, theme (SPEC §7)
+    ("dialog.show"      client    node)
+    ("dialog.dismiss"   client    ()                      ())
+    ("pie_menu.show"    client    (categories)            (center_label buffer))
+    ("pie_menu.dismiss" client    ()                      ())
+    ("toast.show"       client    (text)                  ())
+    ("reminders.set"    client    (reminders)             (owner))
+    ("theme.set"        client    ()                      (dark colors syntax))
+    ;; Editor sync & completion (SPEC §8).  The companion→client legs
+    ;; (edit.open/delta/caret/close/complete) are §5 actions riding
+    ;; `event.action', not frame kinds — only the client→companion legs
+    ;; appear here.
+    ("completions.show" client    (id request_id prefix candidates) ())
+    ("diagnostics.show" client    (id session seq diags)  ())
+    ("eldoc.show"       client    (id session text)       ())
+    ("fontify.show"     client    (id session seq runs)   ())
+    ("edit.resync"      client    (id session)            ())
+    ;; Device capabilities & triggers (SPEC §10–§11)
+    ("capability.invoke" client   (cap)                   (args))
+    ("capability.result" companion (ok)                   (result))
+    ("triggers.set"      client   (triggers)              ()))
+  "Frame-kind schema: kind → sender direction + payload keys.
+Mirrors `Kind' in Envelope.kt and the frame vocabulary of SPEC §§2–8,
+10–11, authored from the reference implementations' actual send sites.
+`jetpacs-lint-payload' enforces it (missing required = error, unknown
+key = warning); `build-contract.el' publishes it as `kind_schema'.
+Action names (§5 registry entries, e.g. `trigger.fired', `edit.open')
+are deliberately NOT enumerated — they are negotiated vocabulary, not
+frame kinds.")
 
 (defconst jetpacs-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
@@ -2844,12 +2985,32 @@ scalar serializability are the generic walk's job, not repeated here."
         (jetpacs-lint--check-toolbar-item lp (cons 'long_press path)
                                           report t)))))
 
+(defun jetpacs-lint--check-schema (node type path report)
+  "Enforce TYPE's key schema on NODE at PATH via REPORT (SPEC §9).
+A missing required key is an error; a key outside the schema row (and
+outside `jetpacs-lint-node-common-keys') is a \"warning: \"-prefixed
+problem — companions ignore unknown keys, so an extra key may be a
+deliberate newer-companion target, but is more often a typo."
+  (when-let ((schema (assoc type jetpacs-lint-node-schema)))
+    (dolist (req (nth 1 schema))
+      (unless (assq req node)
+        (funcall report path (format "%s: missing required `%s'" type req))))
+    (dolist (pair node)
+      (let ((key (car pair)))
+        (unless (or (eq key 't)
+                    (memq key (nth 1 schema))
+                    (memq key (nth 2 schema))
+                    (memq key jetpacs-lint-node-common-keys))
+          (funcall report path
+                   (format "warning: unknown key `%s' on %s" key type)))))))
+
 (defun jetpacs-lint--walk (node path report)
   "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
   (when (assq 't node)
     (let ((type (alist-get 't node)))
-      (unless (and (stringp type) (member type jetpacs-lint-node-types))
-        (funcall report path (format "unknown or invalid node type: %S" type)))))
+      (if (not (and (stringp type) (member type jetpacs-lint-node-types)))
+          (funcall report path (format "unknown or invalid node type: %S" type))
+        (jetpacs-lint--check-schema node type path report))))
   (dolist (pair node)
     (let* ((key (car pair)) (val (cdr pair)) (kpath (cons key path)))
       (cond
@@ -2890,6 +3051,38 @@ own ERT tests to keep its views wire-valid without a companion attached."
       (jetpacs-lint--walk
        spec nil
        (lambda (path msg) (push (cons (reverse path) msg) problems))))
+    (nreverse problems)))
+
+;;;###autoload
+(defun jetpacs-lint-payload (kind payload)
+  "Return a list of (PATH . PROBLEM) for a frame's KIND and PAYLOAD alist.
+nil = clean.  The frame-kind half of the schema registry: KIND must be
+registered in `jetpacs-lint-kind-schema', PAYLOAD must carry the kind's
+required keys (errors), and a key outside the schema is a \"warning: \"-
+prefixed problem.  A kind whose payload is a §9 node tree
+\(`dialog.show') is validated with `jetpacs-lint-spec'.  PAYLOAD nil
+means an empty payload."
+  (let* ((entry (assoc kind jetpacs-lint-kind-schema))
+         problems
+         (report (lambda (path msg) (push (cons path msg) problems))))
+    (cond
+     ((not entry)
+      (funcall report nil (format "unknown frame kind: %S" kind)))
+     ((eq (nth 2 entry) 'node)
+      (setq problems (reverse (jetpacs-lint-spec payload))))
+     ((and payload (not (jetpacs-lint--alist-p payload)))
+      (funcall report nil (format "payload must be an object: %S" payload)))
+     (t
+      (dolist (req (nth 2 entry))
+        (unless (assq req payload)
+          (funcall report (list req)
+                   (format "%s: missing required `%s'" kind req))))
+      (dolist (pair payload)
+        (let ((key (car pair)))
+          (unless (or (memq key (nth 2 entry)) (memq key (nth 3 entry)))
+            (funcall report (list key)
+                     (format "warning: unknown payload key `%s' on %s"
+                             key kind)))))))
     (nreverse problems)))
 
 ;; ─── Headless render harness ─────────────────────────────────────────────────

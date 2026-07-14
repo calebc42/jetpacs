@@ -27,7 +27,9 @@ change signature incompatibly. Everything else is internal.
 > substrate (the document renderer under eww/help/Info, its shr rider seam,
 > and the promoted follow-shim below); `1.9.0` is the magit-section
 > substrate (section buffers as collapsible cards below); `1.10.0` is the
-> remote-hosts hub (the server pillar's front door below).
+> remote-hosts hub (the server pillar's front door below); `1.11.0` is the
+> Spec 1.0-rc schema registry (`jetpacs-lint-payload` and the authored
+> node/kind schema tables under Validation below).
 
 ## The two rules
 
@@ -205,6 +207,17 @@ without further wiring.
 plus the vocabulary defconsts `jetpacs-lint-spec-layouts`
 `jetpacs-lint-spec-transforms` `jetpacs-lint-spec-keys`
 `jetpacs-lint-spec-chrome-kinds`.
+
+Since 1.11.0 (the Spec 1.0-rc schema registry): `jetpacs-lint-payload`
+(validate a frame kind + payload alist) and the authored schema tables
+`jetpacs-lint-node-schema` `jetpacs-lint-kind-schema`
+`jetpacs-lint-node-common-keys`, published in `contract.json`
+(contract_format 2) as `node_schema` / `kind_schema` / `spec_version`.
+`jetpacs-lint-spec` additionally enforces the node schema: a missing
+required key is an error; a key outside a node's schema is a
+`warning: `-prefixed problem, not an error — companions must ignore
+unknown keys (SPEC §9 forward compat), so an author may deliberately
+target a newer companion.
 
 ### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
 

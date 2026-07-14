@@ -2445,27 +2445,170 @@ excluded from the settings.set/reset gate and from switch state handlers."
   ;; Known builtins missing their required payload key.
   (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "view.switch"))))))
   (should (jetpacs-lint-spec `((t . "button") (on_tap . ((builtin . "clipboard.copy"))))))
-  ;; Well-formed builtins pass.
+  ;; Well-formed builtins pass (label present: the node schema requires it).
   (should-not (jetpacs-lint-spec
-               `((t . "button") (on_tap . ((builtin . "view.switch") (view . "app:dashboard"))))))
+               `((t . "button") (label . "L")
+                 (on_tap . ((builtin . "view.switch") (view . "app:dashboard"))))))
   (should-not (jetpacs-lint-spec
-               `((t . "button") (on_tap . ((builtin . "clipboard.copy") (text . "hi"))))))
+               `((t . "button") (label . "L")
+                 (on_tap . ((builtin . "clipboard.copy") (text . "hi"))))))
   (should-not (jetpacs-lint-spec
-               `((t . "button") (on_tap . ((builtin . "jetpacs.settings.open")))))))
+               `((t . "button") (label . "L")
+                 (on_tap . ((builtin . "jetpacs.settings.open")))))))
 
 (ert-deftest jetpacs-lint-recognizes-chart-and-widget-action-keys ()
   "`on_point_tap' and `on_button' are validated as embedded actions."
   ;; A malformed action under each new key is caught.
   (should (jetpacs-lint-spec `((t . "chart") (on_point_tap . ((args . ((k . "v"))))))))
   (should (jetpacs-lint-spec `((t . "text") (on_button . ((action . "a.b") (when_offline . "nope"))))))
-  ;; A well-formed one passes.
-  (should-not (jetpacs-lint-spec `((t . "chart") (on_point_tap . ((action . "x.y")))))))
+  ;; A well-formed one passes (series present: the node schema requires it).
+  (should-not (jetpacs-lint-spec `((t . "chart") (series . [])
+                                  (on_point_tap . ((action . "x.y")))))))
 
 (ert-deftest jetpacs-lint-flags-nonserializable-and-typed-attrs ()
   "A symbol attr value and a non-numeric padding are caught before the wire."
   (should (jetpacs-lint-spec `((t . "text") (text . some-symbol))))
   (should (jetpacs-lint-spec `((t . "text") (text . "ok") (padding . "lots"))))
   (should (jetpacs-lint-spec `((t . "surface") (children . []) (color . "#GGG")))))
+
+;; ─── Schema registry (Spec 1.0-rc freeze, S1) ────────────────────────────────
+
+(ert-deftest jetpacs-lint-node-schema-covers-node-types ()
+  "The node-schema table has exactly one row per known node type."
+  (should (equal (sort (mapcar #'car jetpacs-lint-node-schema) #'string<)
+                 (sort (copy-sequence jetpacs-lint-node-types) #'string<)))
+  (should (= (length jetpacs-lint-node-schema)
+             (length jetpacs-lint-node-types))))
+
+(ert-deftest jetpacs-lint-schema-missing-required-errors ()
+  "A node missing a schema-required key is an error, never a warning."
+  (let ((problems (jetpacs-lint-spec '((t . "text")))))
+    (should problems)
+    (should (cl-some (lambda (p)
+                       (string-match-p "missing required `text'" (cdr p)))
+                     problems))
+    (should-not (cl-some (lambda (p) (string-prefix-p "warning: " (cdr p)))
+                         problems)))
+  ;; Required keys are per-type: a button needs label AND on_tap.
+  (let ((problems (jetpacs-lint-spec '((t . "button") (label . "L")))))
+    (should (cl-some (lambda (p)
+                       (string-match-p "missing required `on_tap'" (cdr p)))
+                     problems))))
+
+(ert-deftest jetpacs-lint-schema-unknown-key-warns ()
+  "A key outside a node's schema is a \"warning: \"-prefixed problem —
+forward compat lets an author target a newer companion — and the
+post-construction riders (scroll_here, dialog_style) are legal anywhere."
+  (let ((problems (jetpacs-lint-spec '((t . "text") (text . "hi") (flisbo . 1)))))
+    (should (= (length problems) 1))
+    (should (string-prefix-p "warning: " (cdr (car problems))))
+    (should (string-match-p "flisbo" (cdr (car problems)))))
+  (should-not (jetpacs-lint-spec (jetpacs-scroll-here (jetpacs-text "target"))))
+  (should-not (jetpacs-lint-spec
+               (cons '(dialog_style . "sheet")
+                     (jetpacs-column (jetpacs-text "d"))))))
+
+(defun jetpacs-tests--golden-json-lines (file)
+  "Parse FILE's \"NN {json}\" golden lines into elisp values."
+  (let (out)
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (while (re-search-forward "^[0-9]+ \\(.+\\)$" nil t)
+        (push (json-parse-string (match-string 1)
+                                 :object-type 'alist
+                                 :null-object :null :false-object :false)
+              out)))
+    (nreverse out)))
+
+(ert-deftest jetpacs-lint-widgets-golden-validates ()
+  "Every typed node in widgets.golden is schema-clean — no errors, no
+warnings — so the authored schema exactly covers the golden corpus."
+  (let ((checked 0))
+    (dolist (l (jetpacs-tests--golden-json-lines jetpacs-tests--golden-file))
+      (when (and (listp l) (assq 't l))
+        (setq checked (1+ checked))
+        (should-not (jetpacs-lint-spec l))))
+    (should (> checked 30))))            ; sanity: the corpus actually parsed
+
+(ert-deftest jetpacs-lint-hypertext-golden-validates ()
+  "Every node in hypertext.golden (lines are node arrays) is schema-clean."
+  (let ((checked 0))
+    (dolist (l (jetpacs-tests--golden-json-lines
+                jetpacs-tests--hypertext-golden-file))
+      (dolist (node (append l nil))
+        (setq checked (1+ checked))
+        (should-not (jetpacs-lint-spec node))))
+    (should (> checked 8))))
+
+(ert-deftest jetpacs-lint-frames-golden-validates ()
+  "Every frames.golden line's kind and payload validate against the kind
+schema — the elisp half of the conformance kit's frame leg."
+  (let ((lines (jetpacs-tests--golden-json-lines
+                jetpacs-tests--frames-golden-file)))
+    (should lines)
+    (dolist (l lines)
+      (let ((kind (alist-get 'kind l)))
+        (should (stringp kind))
+        (should-not (jetpacs-lint-payload kind (alist-get 'payload l)))))))
+
+(ert-deftest jetpacs-lint-payload-negative ()
+  "The kind schema bites: unknown kind, missing required key, unknown key,
+and a seeded corruption of a real golden line all report problems."
+  (should (jetpacs-lint-payload "flisbo.kind" nil))
+  ;; Missing required payload keys are errors.
+  (let ((problems (jetpacs-lint-payload "surface.update" '((surface . "app:x")))))
+    (should (cl-some (lambda (p)
+                       (string-match-p "missing required `revision'" (cdr p)))
+                     problems))
+    (should (cl-some (lambda (p)
+                       (string-match-p "missing required `spec'" (cdr p)))
+                     problems)))
+  ;; A key outside the kind's schema is a warning.
+  (let ((problems (jetpacs-lint-payload "toast.show"
+                                        '((text . "hi") (color . "#F00")))))
+    (should (= (length problems) 1))
+    (should (string-prefix-p "warning: " (cdr (car problems)))))
+  ;; Clean payloads pass; nil means an empty payload.
+  (should-not (jetpacs-lint-payload "queue.replay" nil))
+  (should-not (jetpacs-lint-payload "toast.show" '((text . "hi"))))
+  ;; dialog.show's payload is a §9 node tree — the node schema applies.
+  (should-not (jetpacs-lint-payload
+               "dialog.show" (cons '(dialog_style . "sheet")
+                                   (jetpacs-column (jetpacs-text "d")))))
+  (should (jetpacs-lint-payload "dialog.show" '((t . "flisbo"))))
+  ;; Seeded corruption of a real golden line fails.
+  (let* ((line (car (jetpacs-tests--golden-json-lines
+                     jetpacs-tests--frames-golden-file)))
+         (kind (alist-get 'kind line))
+         (payload (mapcar (lambda (kv)
+                            (if (eq (car kv) 'triggers)
+                                (cons 'triggerz (cdr kv))
+                              kv))
+                          (alist-get 'payload line))))
+    (should (jetpacs-lint-payload kind payload))))
+
+(defun jetpacs-tests--envelope-kinds ()
+  "The Kind strings declared in Envelope.kt (the Kotlin source)."
+  (let ((f (expand-file-name
+            "../jetpacs/src/main/java/com/calebc42/jetpacs/Envelope.kt"
+            jetpacs-tests--dir))
+        kinds)
+    (with-temp-buffer
+      (insert-file-contents f)
+      (goto-char (point-min))
+      (while (re-search-forward "const val [A-Z_]+ = \"\\([a-z_.]+\\)\"" nil t)
+        (cl-pushnew (match-string 1) kinds :test #'equal)))
+    (nreverse kinds)))
+
+(ert-deftest jetpacs-lint-kind-schema-covers-envelope ()
+  "Every Kotlin `Kind' constant is a registered kind — the cross-language
+leg for frames.  The schema may know more kinds than Envelope.kt names
+\(the companion handles several by literal string), never fewer."
+  (let ((kotlin (jetpacs-tests--envelope-kinds)))
+    (should kotlin)
+    (dolist (k kotlin)
+      (should (assoc k jetpacs-lint-kind-schema)))))
 
 (ert-deftest jetpacs-lint-sanitize-isolates-bad-subtree ()
   "Sanitizing replaces only the invalid node, keeping siblings intact."

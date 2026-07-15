@@ -142,21 +142,55 @@ Task 22 / the `jetpacs-build-features' probe)."
 
 (defun jetpacs-config-adopt (bundle)
   "Copy the newest staged BUNDLE into `jetpacs-lib-dir'; return its feature.
-Newest-wins across `jetpacs-staging-dirs' (companion onboarding, dev deploy,
-and browser downloads all land there).  The installed copy is byte-compiled
-when its .elc is missing or stale, so the `require' that follows picks up
-bytecode.  A `.el' name maps to its feature symbol."
+Newest-wins across `jetpacs-staging-dirs', searched RECURSIVELY — the
+Manage Apps screen (jetpacs-app-store.el) lists bundles anywhere under
+the staging tree, so adoption must find the same copies on every later
+boot.  The walk is bounded: the staging dirs are Jetpacs's own dedicated
+subtree, never a whole shared-storage root.  The installed copy is
+byte-compiled when its .elc is missing or stale, so the `require' that
+follows picks up bytecode.  A `.el' name maps to its feature symbol."
   (let ((installed (expand-file-name bundle jetpacs-lib-dir)))
     (make-directory jetpacs-lib-dir t)
     (dolist (dir jetpacs-staging-dirs)
-      (let ((s (concat dir bundle)))
-        (when (and (file-readable-p s)
-                   (or (not (file-exists-p installed))
-                       (file-newer-than-file-p s installed)))
-          (copy-file s installed t)
-          (message "jetpacs: adopted %s from %s" bundle dir))))
+      (when (file-directory-p dir)
+        (dolist (s (directory-files-recursively
+                    dir (concat "\\`" (regexp-quote bundle) "\\'")))
+          (when (and (file-readable-p s)
+                     (or (not (file-exists-p installed))
+                         (file-newer-than-file-p s installed)))
+            (copy-file s installed t)
+            (message "jetpacs: adopted %s from %s" bundle
+                     (abbreviate-file-name (file-name-directory s)))))))
     (jetpacs-config--byte-compile installed)
     (intern (file-name-base bundle))))
+
+(defvar jetpacs-config--bundle-owners nil
+  "Alist of (BUNDLE . OWNER-IDS) recorded as each bundle was required.
+Powers the Manage Apps screen's live uninstall: `jetpacs-app-unregister'
+needs the owner ids a bundle registered under, and nothing else maps a
+file name to them.  Session-scoped on purpose — after a restart an
+uninstalled bundle simply never loads, so nothing needs tearing down.")
+
+(defun jetpacs-config--owner-ids ()
+  "Every distinct owner id currently in the ownership registry."
+  (when (boundp 'jetpacs--registration-owners)
+    (let (ids)
+      (maphash (lambda (_key owner)
+                 (unless (member owner ids) (push owner ids)))
+               jetpacs--registration-owners)
+      ids)))
+
+(defun jetpacs-config-install-bundle (bundle)
+  "Adopt and require BUNDLE, recording the owner ids it registers.
+The ONE install seam: boot (`jetpacs-config-bootstrap') and the Manage
+Apps screen both come through here, so `jetpacs-config--bundle-owners'
+is uniform however a bundle arrived.  Signals when the bundle fails to
+load — callers own the messaging.  Returns BUNDLE."
+  (let ((before (jetpacs-config--owner-ids)))
+    (require (jetpacs-config-adopt bundle))
+    (setf (alist-get bundle jetpacs-config--bundle-owners nil nil #'equal)
+          (seq-difference (jetpacs-config--owner-ids) before #'equal))
+    bundle))
 
 (defun jetpacs-config-seed-file (path content)
   "Create PATH with CONTENT once, making parent dirs; never overwrite.
@@ -278,7 +312,7 @@ Invariants are re-asserted separately at connect (`jetpacs-before-connect-hook')
     (load apps t))
   (dolist (bundle jetpacs-installed-bundles)
     (condition-case err
-        (require (jetpacs-config-adopt bundle))
+        (jetpacs-config-install-bundle bundle)
       (error (display-warning
               'jetpacs
               (format "app bundle %s failed to load: %S" bundle err)

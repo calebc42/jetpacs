@@ -45,6 +45,7 @@
 (require 'jetpacs-settings)
 (require 'jetpacs-theme)
 (require 'jetpacs-automations)
+(require 'jetpacs-app-store)
 (require 'jetpacs-org)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
@@ -4163,6 +4164,117 @@ boot falls back to loading source."
           (should-not (file-exists-p elc))
           (should warnings))
       (delete-directory tmp t))))
+
+;; ─── App store (Manage Apps) ─────────────────────────────────────────────────
+
+(ert-deftest jetpacs-config-adopt-searches-staging-recursively ()
+  "A bundle staged in a subdirectory adopts by basename — the Manage
+Apps screen lists the whole staging tree, so boot must find the same
+copies on every later start."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-adopt-r" t)))
+         (jetpacs-lib-dir (expand-file-name "lib/" tmp))
+         (staging (file-name-as-directory (expand-file-name "staging/" tmp)))
+         (jetpacs-staging-dirs (list staging))
+         (bundle "jetpacs-tests-radopt.el"))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "apps/more" staging) t)
+          (write-region "(provide 'jetpacs-tests-radopt)\n" nil
+                        (expand-file-name (concat "apps/more/" bundle) staging)
+                        nil 'silent)
+          (should (eq (jetpacs-config-adopt bundle) 'jetpacs-tests-radopt))
+          (should (file-exists-p (expand-file-name bundle jetpacs-lib-dir))))
+      (delete-directory tmp t))))
+
+(ert-deftest jetpacs-app-store-scan-shape ()
+  "The scan: recursive, foundation files excluded, the newest duplicate
+wins, installed state keyed on `jetpacs-installed-bundles'."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-store" t)))
+         (jetpacs-staging-dirs (list tmp))
+         (jetpacs-installed-bundles '("beta.el")))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "sub" tmp) t)
+          (write-region ";;; alpha.el --- the alpha app -*- lexical-binding: t; -*-\n"
+                        nil (expand-file-name "alpha.el" tmp) nil 'silent)
+          (write-region "" nil (expand-file-name "beta.el" tmp) nil 'silent)
+          ;; A newer copy of alpha deeper in the tree wins the row.
+          (write-region ";;; alpha.el --- the newer alpha -*- lexical-binding: t; -*-\n"
+                        nil (expand-file-name "sub/alpha.el" tmp) nil 'silent)
+          (set-file-times (expand-file-name "alpha.el" tmp)
+                          (time-subtract nil 100))
+          ;; The foundation's own staged files are not apps.
+          (write-region "" nil (expand-file-name "jetpacs-core.el" tmp) nil 'silent)
+          (write-region "" nil (expand-file-name "jetpacs-init.el" tmp) nil 'silent)
+          (let* ((entries (jetpacs-app-store--scan))
+                 (alpha (car entries))
+                 (beta (cadr entries)))
+            (should (equal (mapcar (lambda (e) (plist-get e :name)) entries)
+                           '("alpha.el" "beta.el")))
+            (should (equal (plist-get alpha :summary) "the newer alpha"))
+            (should (string-match-p "/sub/" (plist-get alpha :path)))
+            (should-not (plist-get alpha :installed))
+            (should (plist-get beta :installed))))
+      (delete-directory tmp t))))
+
+(ert-deftest jetpacs-app-store-install-uninstall-round-trip ()
+  "Install rewrites apps.el and loads the bundle live, recording its
+owners; uninstall rewrites apps.el and tears the recorded owners down.
+An unknown bundle name changes nothing — the wire only ever names
+something actually staged."
+  (let* ((tmp (file-name-as-directory (make-temp-file "jetpacs-store-i" t)))
+         (jetpacs-root tmp)
+         (jetpacs-lib-dir (expand-file-name "lib/" tmp))
+         (staging (file-name-as-directory (expand-file-name "staging/" tmp)))
+         (jetpacs-staging-dirs (list staging))
+         (jetpacs-installed-bundles nil)
+         (jetpacs-config--bundle-owners nil)
+         (load-path (cons (expand-file-name "lib/" tmp) load-path))
+         (apps-el (expand-file-name "apps.el" tmp))
+         (notices nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (cl-function (lambda (&optional _tab &key _switch-to))))
+                  ((symbol-function 'jetpacs-shell-notify)
+                   (lambda (text) (push text notices)))
+                  ((symbol-function 'jetpacs-send) (lambda (&rest _) t))
+                  ((symbol-function 'jetpacs-dismiss-dialog) #'ignore))
+          (make-directory staging t)
+          (write-region
+           (concat "(with-jetpacs-owner \"tstore\""
+                   " (jetpacs-defaction \"tstore.ping\" #'ignore))\n"
+                   "(provide 'jetpacs-tests-store-app)\n")
+           nil (expand-file-name "jetpacs-tests-store-app.el" staging)
+           nil 'silent)
+          ;; Unknown name: rejected, nothing listed.
+          (funcall (gethash "app.install.confirm" jetpacs-action-handlers)
+                   '((bundle . "nope.el")) nil)
+          (should-not jetpacs-installed-bundles)
+          ;; The real install: listed, persisted, loaded, owners recorded.
+          (funcall (gethash "app.install.confirm" jetpacs-action-handlers)
+                   '((bundle . "jetpacs-tests-store-app.el")) nil)
+          (should (equal jetpacs-installed-bundles
+                         '("jetpacs-tests-store-app.el")))
+          (should (gethash "tstore.ping" jetpacs-action-handlers))
+          (should (equal (alist-get "jetpacs-tests-store-app.el"
+                                    jetpacs-config--bundle-owners
+                                    nil nil #'equal)
+                         '("tstore")))
+          (should (string-match-p
+                   "jetpacs-tests-store-app\\.el"
+                   (with-temp-buffer (insert-file-contents apps-el)
+                                     (buffer-string))))
+          ;; Uninstall: unlisted, persisted, the owner torn down live.
+          (funcall (gethash "app.uninstall.confirm" jetpacs-action-handlers)
+                   '((bundle . "jetpacs-tests-store-app.el")) nil)
+          (should-not jetpacs-installed-bundles)
+          (should-not (gethash "tstore.ping" jetpacs-action-handlers))
+          (should-not (string-match-p
+                       "store-app"
+                       (with-temp-buffer (insert-file-contents apps-el)
+                                         (buffer-string)))))
+      (delete-directory tmp t))))
+
 
 ;; ─── Owner-scoped reminders ──────────────────────────────────────────────────
 

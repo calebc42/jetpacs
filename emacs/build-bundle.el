@@ -58,7 +58,8 @@
                      "core/jetpacs-customize.el"
                      "core/jetpacs-tools.el"
                      "core/jetpacs-hosts.el"
-                     "core/jetpacs-automations.el"))
+                     "core/jetpacs-automations.el"
+                     "core/jetpacs-app-store.el"))
        (emit (lambda (out features summary files)
                (with-temp-file out
                  (insert (format ";;; %s --- %s -*- lexical-binding: t; -*-\n"

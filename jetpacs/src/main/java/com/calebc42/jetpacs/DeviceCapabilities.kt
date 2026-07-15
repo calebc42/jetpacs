@@ -667,6 +667,7 @@ object DeviceCapabilities {
         put("fine_location", granted(context, Manifest.permission.ACCESS_FINE_LOCATION))
         put("bluetooth_connect",
             granted(context, Manifest.permission.BLUETOOTH_CONNECT, Build.VERSION_CODES.S))
+        put("read_calendar", granted(context, Manifest.permission.READ_CALENDAR))
     }
 
     /** True when [permission] is granted (or the device predates [sinceSdk]). */

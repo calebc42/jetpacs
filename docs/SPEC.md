@@ -601,7 +601,7 @@ capability.result    {ok, result?}     companion → client (reply)
              "perms": {"post_notifications": true, "exact_alarms": true,
                        "write_settings": false, "notification_policy": false,
                        "notification_listener": false, "fine_location": false,
-                       "bluetooth_connect": false},
+                       "bluetooth_connect": false, "read_calendar": false},
              "trigger_types": ["airplane", "battery.level", "boot", "..."],
              "state_types": ["airplane", "battery.level", "headset", "..."]}
   ```
@@ -771,6 +771,7 @@ its push against that report and skips what this companion can't host.
 | `network` | `{event?, transport?}` — `available` \| `lost`; `wifi` \| `cellular` \| `ethernet` \| `vpn` \| `bluetooth` | `{event, transport?}` | the default-network callback (permission-free); fires once per network gain/loss |
 | `wifi.enabled` | `{enabled?}` | `{enabled}` | the Wi-Fi *adapter* state — enabled/disabled edges only, transitional states are not edges. Distinct from `network` (radio on ≠ connected) and from the reserved `wifi.ssid`. Install-time `ACCESS_WIFI_STATE`, no runtime grant |
 | `bluetooth.enabled` | `{enabled?}` | `{enabled}` | the Bluetooth *adapter* state, same edge discipline. Install-time legacy `BLUETOOTH` (≤ API 30) only; a device without Bluetooth simply never fires it. Distinct from the reserved `bluetooth.device` |
+| `calendar.event` | `{event?, calendar?, title_contains?}` — `started` \| `ended`; exact calendar display name; case-insensitive title substring | `{event, title?, begin_ms?, end_ms?}` | a synced calendar (e.g. an org agenda) made reactive, with **zero polling**: one ContentObserver on the instances table plus one alarm per registration parked at the *next boundary* (the ongoing instance's end, else the next matching start, else a lookahead re-scan). Editing an event re-arms via the observer; reboots re-arm from the persisted set; the last ongoing side persists so a boundary alarm in a cold process still fires the flip. Runtime `READ_CALENDAR`: ungranted registrations are skipped with a log — never garbage fires |
 
 `wifi.ssid` and `bluetooth.device` are the remaining connectivity
 batch; each will document its runtime-permission behavior here
@@ -804,12 +805,15 @@ match fields asserts the type's *natural state*, noted per row:
 | `headset` | `{state?}` | wired or USB audio output present (`plugged`, the default) or absent (`unplugged`) |
 | `wifi.enabled` | `{enabled?}` | the Wi-Fi adapter state equals `enabled` (default `true`) |
 | `bluetooth.enabled` | `{enabled?}` | the Bluetooth adapter state equals `enabled` (default `true`); no adapter → unevaluable, so never holds |
+| `calendar.event` | `{calendar?, title_contains?}` | a matching calendar instance is ongoing right now; ungranted `READ_CALENDAR` → unevaluable, so never holds |
 | `time.window` | `{after?, before?, days?}` | the local clock is inside the window. `after`/`before` are `"HH:MM"` strings, half-open `[after, before)`; the window wraps midnight when `after` > `before`; an absent bound is open. `days` is an array of `mon`…`sun` filtering on the calendar day of the moment tested; absent = every day. Predicate-only: it has no edge trigger, and `state.get` reports it under `unavailable` |
 
 Sampled state objects (`state.get`'s `states` values) are shaped like
 the type's trigger `data` column above, with the level-view
-substitutions: `screen` adds `locked` (boolean), and `network` reports
-`{connected, transport?}` instead of an event.
+substitutions: `screen` adds `locked` (boolean), `network` reports
+`{connected, transport?}` instead of an event, and `calendar.event`
+reports `{ongoing, title?, end_ms?, next_begin_ms?}` (ungranted, it
+lands in `unavailable` as `cap-permission`).
 
 ## 12. Conformance
 

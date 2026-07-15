@@ -61,6 +61,11 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- `calendar.event` triggers & predicates (SPEC §11): runtime
+         permission; ungranted rows are skipped with a log, and the
+         predicate never holds — fail closed. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
     <!-- Android 11 package visibility: without these, `apps.list` returns
          nothing and TTS finds no engine. -->
     <queries>
@@ -203,6 +208,12 @@
         <!-- Fires `time` triggers (SPEC §11); alarm PendingIntents only. -->
         <receiver
             android:name="com.calebc42.jetpacs.TriggerAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Fires `calendar.event` boundary alarms (SPEC §11); same
+             cold-read idiom as TriggerAlarmReceiver. -->
+        <receiver
+            android:name="com.calebc42.jetpacs.CalendarAlarmReceiver"
             android:exported="false" />
 
         <!-- Reboot persistence: rearm triggers + reminders, restart the

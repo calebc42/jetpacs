@@ -79,6 +79,7 @@ class TriggerHost(private val context: Context) {
     fun shutdown() {
         disarmReceivers()
         armNetworkCallback(false)
+        CalendarTriggers.disarm(context)
         rows = emptyList()
     }
 
@@ -133,6 +134,7 @@ class TriggerHost(private val context: Context) {
         armNetworkCallback("network" in types)
         // `boot` triggers arm nothing here — BootReceiver fires them.
         armTimeAlarms(context, newRows.filter { it.type == "time" })
+        armCalendar(context, newRows)
     }
 
     // ── Connectivity (callback API, permission-free) ─────────────────────────
@@ -365,8 +367,25 @@ class TriggerHost(private val context: Context) {
             // Post-batch-1 types negotiate via the welcome's trigger_types
             // report only; the client's static fallback list stays frozen
             // at batch 1 (see jetpacs-triggers-supported-types).
-            "wifi.enabled", "bluetooth.enabled",
+            "wifi.enabled", "bluetooth.enabled", "calendar.event",
         )
+
+        /** Delegate the `calendar.event` slice of [newRows] to
+         * [CalendarTriggers] — only under READ_CALENDAR (else skip with a
+         * log; the rows stay stored and arm on a re-set after granting). */
+        private fun armCalendar(context: Context, newRows: List<TriggerRow>) {
+            val calRows = newRows.filter { it.type == "calendar.event" }
+            when {
+                calRows.isEmpty() -> CalendarTriggers.disarm(context)
+                CalendarTriggers.granted(context) ->
+                    CalendarTriggers.arm(context, calRows)
+                else -> {
+                    Log.w(TAG, "calendar.event registered but READ_CALENDAR " +
+                        "ungranted — skipping ${calRows.size} row(s)")
+                    CalendarTriggers.disarm(context)
+                }
+            }
+        }
 
         /** Per-trigger last-fire clock for `throttle_s` (process-lifetime;
          * the FGS process IS the trigger host's lifetime). */
@@ -603,6 +622,7 @@ class TriggerHost(private val context: Context) {
                 fireRow(context, row, JSONObject())
             }
             armTimeAlarms(context, rows.filter { it.type == "time" })
+            armCalendar(context, rows)
             Log.i(TAG, "Boot: rearmed ${rows.size} trigger(s)")
         }
 

@@ -52,6 +52,7 @@ object StateSampler {
     val STATE_TYPES = setOf(
         "power", "battery.level", "screen", "airplane", "network",
         "headset", "time.window", "wifi.enabled", "bluetooth.enabled",
+        "calendar.event",
     )
 
     private val DAY_NAMES = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -132,6 +133,7 @@ object StateSampler {
                     "cap-failed", "no Bluetooth adapter on this device")
             JSONObject().put("enabled", adapter.isEnabled)
         }
+        "calendar.event" -> CalendarTriggers.sample(context)
         "time.window" -> throw CapabilityException(
             "cap-failed", "time.window is predicate-only — it has no sampled state")
         else -> throw CapabilityException(
@@ -192,6 +194,14 @@ object StateSampler {
                 warn("when: unknown state type '$type' — not holding")
                 false
             }
+            // The calendar predicate's match fields parameterize the QUERY
+            // (not a post-hoc comparison), so it evaluates itself — with
+            // the same ungranted-means-false discipline.
+            "calendar.event" ->
+                if (context == null) {
+                    warn("when: no context to sample '$type' — not holding")
+                    false
+                } else CalendarTriggers.predicateHolds(context, predicate)
             else ->
                 if (context == null) {
                     warn("when: no context to sample '$type' — not holding")

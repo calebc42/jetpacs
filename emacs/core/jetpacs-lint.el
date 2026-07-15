@@ -67,8 +67,8 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
 
 (defconst jetpacs-lint-state-predicate-types
-  '("airplane" "battery.level" "bluetooth.enabled" "headset" "network"
-    "power" "screen" "time.window" "wifi.enabled")
+  '("airplane" "battery.level" "bluetooth.enabled" "calendar.event"
+    "headset" "network" "power" "screen" "time.window" "wifi.enabled")
   "State-predicate types a trigger `when' gate may reference (SPEC §11).
 Mirrors StateSampler.kt's STATE_TYPES; extend both (and SPEC §11's
 predicate table) together.  Lint-time advisory only: the live
@@ -84,7 +84,8 @@ negotiation authority is the welcome's `device.state_types' report
     ("headset"           state)
     ("time.window"       after before days)
     ("wifi.enabled"      enabled)
-    ("bluetooth.enabled" enabled))
+    ("bluetooth.enabled" enabled)
+    ("calendar.event"    calendar title_contains))
   "Match fields each state-predicate type may carry (SPEC §11).")
 
 (defconst jetpacs-lint--time-window-re

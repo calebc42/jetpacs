@@ -14396,17 +14396,30 @@ registry and by derivatives); fall back to the stock naming, where every
   '(bg-main fg-main accent-0 accent-1 accent-2 accent-3 err info)
   "Palette roles shown in the current theme's swatch strip.")
 
-(defun jetpacs-modus--strip (theme)
-  "The current-theme swatch strip: one chip per `jetpacs-modus--strip-keys'."
+(defun jetpacs-modus--strip ()
+  "The CURRENT theme's swatch strip: one chip per `jetpacs-modus--strip-keys'.
+Reads the live palette (no theme arg), which resolves on every modus version."
   (delq nil (mapcar (lambda (key)
-                      (jetpacs-modus--swatch (jetpacs-modus--color key theme)))
+                      (jetpacs-modus--swatch (jetpacs-modus--color key)))
                     jetpacs-modus--strip-keys)))
 
 (defun jetpacs-modus--preview (theme)
-  "A compact background / foreground / accent preview for THEME's list row."
-  (delq nil (mapcar (lambda (key)
-                      (jetpacs-modus--swatch (jetpacs-modus--color key theme) 16))
-                    '(bg-main fg-main accent-0))))
+  "Per-theme swatches (background / foreground / accent) for THEME's list row.
+Only when the running modus can resolve a NON-current theme's palette, which
+needs `modus-themes-activate' (modus 5.0+).  On older modus we return nil, so
+the list shows uniformly clean names instead of swatches for the active theme
+alone."
+  (when (fboundp 'modus-themes-activate)
+    (delq nil (mapcar (lambda (key)
+                        (jetpacs-modus--swatch (jetpacs-modus--color key theme) 18))
+                      '(bg-main fg-main accent-0)))))
+
+(defun jetpacs-modus--display-name (theme)
+  "A human-friendly label for THEME: drop the `modus-' prefix, then title-case,
+so `modus-operandi-tinted' reads as \"Operandi Tinted\"."
+  (capitalize
+   (replace-regexp-in-string
+    "-" " " (string-remove-prefix "modus-" (symbol-name theme)))))
 
 ;; ─── View sections ───────────────────────────────────────────────────────────
 
@@ -14424,14 +14437,16 @@ registry and by derivatives); fall back to the stock naming, where every
   (jetpacs-card
    (list (apply #'jetpacs-column
                 (delq nil
-                      (list (jetpacs-text (if current (symbol-name current)
+                      (list (jetpacs-text (if current
+                                              (jetpacs-modus--display-name current)
                                             "No modus theme active")
                                           'title)
                             (when current
-                              (jetpacs-text (if (jetpacs-modus--dark-p current)
-                                                "Dark" "Light")
+                              (jetpacs-text (concat (if (jetpacs-modus--dark-p current)
+                                                        "Dark" "Light")
+                                                    " · " (symbol-name current))
                                             'caption))
-                            (when current (apply #'jetpacs-row (jetpacs-modus--strip current)))
+                            (when current (apply #'jetpacs-row (jetpacs-modus--strip)))
                             (when current (jetpacs-modus--mirror-note))))))))
 
 (defun jetpacs-modus--actions-row ()
@@ -14453,21 +14468,23 @@ registry and by derivatives); fall back to the stock naming, where every
     (when buttons (apply #'jetpacs-row buttons))))
 
 (defun jetpacs-modus--theme-card (theme current)
-  "A row for THEME: name, polarity, preview swatches; a tap loads it.
-CURRENT (the active theme) is marked and not re-loadable."
+  "A single-line row for THEME: name, preview swatches, and a marker; a tap
+loads it.  CURRENT (the active theme) is checked and not re-loadable.  The
+swatches are spread as direct row children (a nested `row' fills the width and
+would starve the weighted name); polarity is omitted — the cards are already
+grouped under Light/Dark headers."
   (let ((activep (eq theme current)))
     (jetpacs-card
-     (list (jetpacs-row
-            (jetpacs-box (list (jetpacs-column
-                                (jetpacs-text (symbol-name theme) 'label)
-                                (jetpacs-text (if (jetpacs-modus--dark-p theme)
-                                                  "Dark" "Light")
-                                              'caption)))
-                         :weight 1)
-            (apply #'jetpacs-row (jetpacs-modus--preview theme))
-            (if activep
-                (jetpacs-icon "check_circle" :color "primary")
-              (jetpacs-icon "chevron_right"))))
+     (list (apply #'jetpacs-row
+                  (append
+                   (list (jetpacs-box
+                          (list (jetpacs-text (jetpacs-modus--display-name theme)
+                                              'label))
+                          :weight 1))
+                   (jetpacs-modus--preview theme)
+                   (list (if activep
+                             (jetpacs-icon "check_circle" :color "primary")
+                           (jetpacs-icon "chevron_right"))))))
      :on-tap (unless activep
                (jetpacs-action "modus.load"
                                :args `((theme . ,(symbol-name theme)))

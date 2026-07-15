@@ -4217,6 +4217,25 @@ and Customize."
     (should (string-search "modus.show" body))
     (should (string-search "Modus Themes" body))))
 
+(ert-deftest jetpacs-modus-theme-card-layout ()
+  "A theme card keeps its name in a WEIGHTED box, with any swatches spread as
+sibling row children — never a nested row.  A nested row fills the width and
+collapses the name to one-character columns (the on-device vertical-text bug)."
+  (skip-unless (jetpacs-modus--available-p))
+  (should (equal "Operandi Tinted"
+                 (jetpacs-modus--display-name 'modus-operandi-tinted)))
+  (let* ((card (jetpacs-modus--theme-card 'modus-operandi 'modus-vivendi))
+         (row (car (append (alist-get 'children card) nil)))
+         (children (append (alist-get 'children row) nil))
+         (first (car children)))
+    ;; The row's first child is a weighted box holding the prettified name.
+    (should (equal "box" (alist-get t first)))
+    (should (alist-get 'weight first))
+    (should (string-search "Operandi" (prin1-to-string first)))
+    ;; No child of the card row is itself a row (which would fill the width).
+    (should-not (cl-find "row" children
+                         :key (lambda (c) (alist-get t c)) :test #'equal))))
+
 (ert-deftest jetpacs-shell-every-view-serializes ()
   "Every registered shell view must not just lint but `json-serialize' — the
 push assembles them all into one surface, so a single non-serializable node

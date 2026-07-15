@@ -809,35 +809,38 @@ so the handler receives the value already typed (a number stays a number)."
           (base (assq-delete-all 'args (copy-alist action))))
       (append base (list (cons 'args (append args (list (cons key value)))))))))
 
-(cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1))
+(cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1) format)
   "A −/+ stepper over the numeric VALUE.
 ID names the stepper (its −/+ buttons carry \"Decrease/Increase ID\"
 accessibility labels).  Tapping −/+ dispatches ON-CHANGE with the new,
 clamped number injected into its args as `value' — baked server-side, so
 the handler receives a real number, never a string.  MIN/MAX bound the
-value (MAX nil = unbounded) and STEP is the increment.  Composes an
-icon-button row (`remove' · value · `add') sized to its content, so it sits
-as a compact cluster and never triggers the row flex trap; not a new wire
-node, so no companion support is needed."
+value (MAX nil = unbounded) and STEP is the increment.  FORMAT, when given,
+is a function of the number returning the middle label (e.g. \"4 servings\");
+the default shows the bare number.  Composes an icon-button row (`remove' ·
+value · `add') sized to its content, so it sits as a compact cluster and
+never triggers the row flex trap; not a new wire node, so no companion
+support is needed."
   (let ((dec (max min (- value step)))
         (inc (if max (min max (+ value step)) (+ value step))))
     (jetpacs-row
      (jetpacs-icon-button "remove" (jetpacs--action-with-arg on-change 'value dec)
                        :content-description (format "Decrease %s" id))
-     (jetpacs-text (number-to-string value) 'title)
+     (jetpacs-text (if format (funcall format value) (number-to-string value)) 'title)
      (jetpacs-icon-button "add" (jetpacs--action-with-arg on-change 'value inc)
                        :content-description (format "Increase %s" id))
      :align "center" :spacing 8 :fill nil)))
 
-(cl-defun jetpacs-segmented (id options on-change &key selected scroll)
+(cl-defun jetpacs-segmented (id options on-change &key selected scroll spacing run-spacing)
   "A single-select chip group over OPTIONS (the id-labelled filter row).
 Each option renders a `jetpacs-chip'; tapping one dispatches ON-CHANGE
 with its value injected into args as `value'.  SELECTED (a string) marks
 the current option.  An OPTIONS entry is a string (value = label) or a
-plist (:value :label :icon).  Wraps by default (a `flow_row'); :scroll
-makes it a single-line horizontal rail (a `scroll_row') instead.  ID is
-carried for symmetry with the form field it usually drives.  Composes
-chips — not a new wire node, no companion support needed."
+plist (:value :label :icon).  Wraps by default (a `flow_row', with :spacing
+and :run-spacing between/along rows); :scroll makes it a single-line
+horizontal rail (a `scroll_row') instead.  ID is carried for symmetry with
+the form field it usually drives.  Composes chips — not a new wire node, no
+companion support needed."
   (ignore id)
   (let ((chips (mapcar
                 (lambda (opt)
@@ -851,14 +854,18 @@ chips — not a new wire node, no companion support needed."
                 options)))
     (if scroll
         (apply #'jetpacs-scroll-row chips)
-      (apply #'jetpacs-flow-row chips))))
+      (apply #'jetpacs-flow-row
+             (append chips (list :spacing spacing :run-spacing run-spacing))))))
 
-(cl-defun jetpacs-stat (value &key label icon color weight on-tap padding)
+(cl-defun jetpacs-stat (value &key label icon color weight on-tap padding
+                              fill-fraction width)
   "A metric tile: a large VALUE, an optional LABEL beneath and ICON above,
 with COLOR (a hex string or a Material theme token like \"primary\") tinting
-the value and icon.  WEIGHT lets several tiles share a row equally; ON-TAP
-makes the tile tappable.  Composes an elevated `card' over a centered
-`column' — the dashboard/overview staple; not a new wire node."
+the value and icon.  WEIGHT lets several tiles share a row equally, while
+FILL-FRACTION (0.0-1.0 of the parent width) or WIDTH (dp) sizes a tile inside
+a wrapping `flow_row' of tiles; ON-TAP makes the tile tappable.  Composes an
+elevated `card' over a centered `column' — the dashboard/overview staple; not
+a new wire node."
   (jetpacs-card
    (list (apply #'jetpacs-column
                 (append (delq nil
@@ -866,7 +873,8 @@ makes the tile tappable.  Composes an elevated `card' over a centered
                                     (jetpacs-text (format "%s" value) 'headline nil color)
                                     (and label (jetpacs-text label 'caption))))
                         (list :spacing 2 :align "center"))))
-   :weight weight :on-tap on-tap :padding (or padding 16)))
+   :weight weight :on-tap on-tap :padding (or padding 16)
+   :fill-fraction fill-fraction :width width))
 
 (cl-defun jetpacs-kv (label value &key spacing)
   "A property/definition row: LABEL on the left in the muted `label' style,

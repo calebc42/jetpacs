@@ -1280,12 +1280,13 @@ the composer delete its own matcher."
      (jetpacs-column leaf :fill nil)
      (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1)
      ;; Tier-2 composites (pure elisp; expand to the primitive nodes above).
-     (jetpacs-stepper "servings" 4 act :min 1 :max 10 :step 1)
+     (jetpacs-stepper "servings" 4 act :min 1 :max 10 :step 1
+                   :format (lambda (n) (format "%d servings" n)))
      (jetpacs-segmented "filter"
                      (list "All" '(:value "due" :label "Due soon" :icon "schedule"))
-                     act :selected "due")
+                     act :selected "due" :spacing 8 :run-spacing 8)
      (jetpacs-stat 42 :label "Items" :icon "inventory" :color "primary"
-                :weight 1 :on-tap act)
+                :weight 1 :on-tap act :fill-fraction 0.3)
      (jetpacs-kv "Location" "Fridge")
      (jetpacs-sectioned-list
       (list (list :header "Due" :items (list leaf))
@@ -1431,7 +1432,12 @@ clamped target number into their action args, and it lints clean."
                      (aref (alist-get 'children hi) 2)))))))
     ;; MAX nil = unbounded above.
     (should (= 6 (alist-get 'value (alist-get 'args (alist-get 'on_tap
-                  (aref (alist-get 'children (jetpacs-stepper "s" 5 act)) 2))))))))
+                  (aref (alist-get 'children (jetpacs-stepper "s" 5 act)) 2))))))
+    ;; :format controls the middle label (e.g. a unit); default is the bare number.
+    (should (equal "3 servings"
+                   (alist-get 'text (aref (alist-get 'children
+                     (jetpacs-stepper "s" 3 act :format
+                                   (lambda (n) (format "%d servings" n)))) 1))))))
 
 (ert-deftest jetpacs-segmented-single-select ()
   "The segmented control renders one chip per option (string or plist),
@@ -1452,6 +1458,10 @@ marks the selected one, and bakes each option's value into its on-tap."
     (should (equal "due" (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 1 chips))))))
     ;; :scroll makes it a single-line rail instead of a wrapping flow-row.
     (should (equal "row" (alist-get 't (jetpacs-segmented "f" '("a") act :scroll t))))
+    ;; :spacing / :run-spacing ride the flow-row.
+    (let ((s (jetpacs-segmented "f" '("a") act :spacing 8 :run-spacing 6)))
+      (should (= 8 (alist-get 'spacing s)))
+      (should (= 6 (alist-get 'run_spacing s))))
     (should (null (jetpacs-lint-spec seg)))))
 
 (ert-deftest jetpacs-stat-tile ()
@@ -1470,6 +1480,9 @@ by COLOR, an optional icon and label, and an optional weight/tap; lints clean."
     (should (equal "primary" (alist-get 'color (nth 1 kids))))
     (should (equal "Items" (alist-get 'text (nth 2 kids))))
     (should (null (jetpacs-lint-spec s)))
+    ;; :fill-fraction / :width size a tile inside a wrapping flow-row.
+    (should (= 0.3 (alist-get 'fill_fraction (jetpacs-stat 1 :fill-fraction 0.3))))
+    (should (= 120 (alist-get 'width (jetpacs-stat 1 :width 120))))
     ;; Minimal form: value only, no icon/label.
     (let ((m (jetpacs-stat "3")))
       (should (= 1 (length (alist-get 'children (aref (alist-get 'children m) 0)))))

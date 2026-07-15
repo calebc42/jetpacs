@@ -1519,6 +1519,48 @@ when every section is empty."
               (list (list :header (jetpacs-text "H" 'title) :items (list leaf))))))
       (should (equal "text" (alist-get 't (aref (alist-get 'children h) 0)))))))
 
+;; ─── Ergonomics: children-API + text keywords (#9, #10) ─────────────────────
+
+(ert-deftest jetpacs-children-api-accepts-both-forms ()
+  "card/box/surface accept children as a single list OR as &rest nodes — the
+two forms produce identical trees (issue #9) — and a lone nil means empty."
+  (let ((a (jetpacs-text "a")) (b (jetpacs-text "b")))
+    ;; &rest ≡ single-list, across all three list-taking containers.
+    (should (equal (jetpacs-card a b)    (jetpacs-card (list a b))))
+    (should (equal (jetpacs-box a b)     (jetpacs-box (list a b))))
+    (should (equal (jetpacs-surface a b) (jetpacs-surface (list a b))))
+    ;; With trailing options after either child form.
+    (should (equal (jetpacs-card a b :padding 4 :weight 1)
+                   (jetpacs-card (list a b) :padding 4 :weight 1)))
+    ;; A single node needs no list wrapper.
+    (should (equal (jetpacs-card a) (jetpacs-card (list a))))
+    ;; A lone nil (or empty list) is an empty container, not a null child.
+    (should (equal [] (alist-get 'children (jetpacs-card nil))))
+    (should (equal [] (alist-get 'children (jetpacs-surface))))
+    ;; nils among &rest children are dropped.
+    (should (equal (jetpacs-box a b) (jetpacs-box a nil b)))
+    (should (null (jetpacs-lint-spec (jetpacs-card a b :padding 4))))))
+
+(ert-deftest jetpacs-text-positional-and-keyword ()
+  "`jetpacs-text' takes its options positionally or as keywords (keywords win),
+so a color needs no positional nils (issue #10); the positional form is
+byte-for-byte what it was before."
+  ;; Keyword color ≡ the old positional-nils form.
+  (should (equal (jetpacs-text "x" nil nil "#fff")
+                 (jetpacs-text "x" :color "#fff")))
+  (should (equal (jetpacs-text "x" 'label nil "#fff")
+                 (jetpacs-text "x" 'label :color "#fff")))
+  ;; The full positional battery is unchanged.
+  (should (equal (jetpacs-text "hi" 'title 1 "#FF0000" t 2 4)
+                 (jetpacs-text "hi" :style 'title :weight 1 :color "#FF0000"
+                            :selectable t :max-lines 2 :padding 4)))
+  ;; A keyword overrides the same-named positional.
+  (should (equal "red" (alist-get 'color (jetpacs-text "x" 'body nil "blue" nil nil nil
+                                                    :color "red"))))
+  ;; Plain label still works and lints clean.
+  (should (equal "body" (alist-get 'style (jetpacs-text "x" 'body))))
+  (should (null (jetpacs-lint-spec (jetpacs-text "x" :color "#fff")))))
+
 ;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
 
 (ert-deftest jetpacs-buffer-call-shimmed-clears-input-event ()

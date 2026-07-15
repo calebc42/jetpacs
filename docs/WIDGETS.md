@@ -39,6 +39,14 @@ when it returns nil rather than relying on degradation.
 
 ## Conventions shared across constructors
 
+- **Children** — container constructors accept their children **either
+  as a single list or as `&rest` nodes**, interchangeably:
+  `(jetpacs-card a b)` ≡ `(jetpacs-card (list a b))`. This holds for
+  `row`/`column`/`lazy_column`/`flow_row` (long `&rest`) and for
+  `card`/`box`/`surface` (historically list-only, since 1.13.0 both).
+  A lone `nil` (or empty list) is an empty container, and `nil`s among
+  the children are dropped — so `(delq nil …)` around a conditional
+  child list is optional.
 - **`:padding`** — dp, on nearly every node.
 - **`:weight`** — flex share inside a `row`/`column`; a weighted child
   takes its share of the free space. **Load-bearing caveat:** a `row`/`column`
@@ -85,9 +93,12 @@ handler registered with `jetpacs-defaction`
 
 ## Text & content
 
-- **`(jetpacs-text TEXT &optional STYLE WEIGHT COLOR SELECTABLE
-  MAX-LINES PADDING)`** — a plain label. The one positional-options
-  constructor: `(jetpacs-text name 'body 1)` is body style, weight 1.
+- **`(jetpacs-text TEXT &rest [STYLE WEIGHT COLOR SELECTABLE MAX-LINES
+  PADDING] | :style :weight :color :selectable :max-lines :padding)`** —
+  a plain label. Options are positional *or* keyword (keywords win), so a
+  color needs no positional nils: `(jetpacs-text s :color "#fff")` rather
+  than `(jetpacs-text s nil nil "#fff")`. `(jetpacs-text name 'body 1)`
+  is body style, weight 1.
 - **`(jetpacs-markup TEXT &key syntax style padding)`** — read-only
   text with client-side highlighting (`:syntax "org"` / `"elisp"`).
   For displaying code or org source; plain labels use `jetpacs-text`.

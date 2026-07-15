@@ -69,7 +69,10 @@ Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 (`row`/`column`/`flow-row` take trailing `:spacing`/`:align`/`:scroll`
 keywords; `box`/`surface`/`card` take
 `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
-`:swipe-start`/`:swipe-end`.)
+`:swipe-start`/`:swipe-end`. Since 1.13.0, additively: `box`/`surface`/
+`card` accept their children as a single list *or* `&rest` nodes (like
+`row`/`column`), and `jetpacs-text`'s options are positional *or*
+keyword.)
 
 Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip` `jetpacs-badge`
 `jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`

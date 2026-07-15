@@ -1,6 +1,19 @@
 # Plan: conditions, dynamics, and the Easer catalog batch
 
-**STATUS (2026-07-14): PLANNED — nothing landed.** Produced from a survey
+**STATUS (2026-07-15): CODE COMPLETE (Phases 0–5) on branch
+`claude/conditions-dynamics-plan-e82758`; Phase 6 (on-device
+acceptance) pending a live phone.** api 1.13.0; suites green per phase
+(ERT 190/190; Kotlin adds OnFireInterpolationTest, StateSamplerWhenTest,
+TimeWindowPredicateTest, TriggerParseValidationTest, CalendarBoundaryTest,
+SmsCallMatchTest — all passing; `:jetpacs`/`:app` assemble). SPEC-CHANGES
+#3–#7 filed (reviewed-by cells await the owner). `docs/contract.json`
+regenerated its `api_version` only, as predicted (no kind_schema change).
+Phase 0 items 2–3 (the PLAN-device-and-surfaces telephony-reject
+amendment and the ROADMAP item-6 cross-reference) ride the owner's
+pending untracked docs revision and were not duplicated. Remaining:
+run the on-device checklist below, flip this STATUS, file follow-ups.
+
+Produced from a survey
 of [Easer](https://github.com/renyuneyun/Easer) (renyuneyun/Easer, the
 closest open-source Tasker-class app) the way
 [PLAN-device-and-surfaces.md](PLAN-device-and-surfaces.md) was produced

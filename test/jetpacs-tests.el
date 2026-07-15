@@ -44,6 +44,7 @@
 (require 'jetpacs-sync)
 (require 'jetpacs-settings)
 (require 'jetpacs-theme)
+(require 'jetpacs-modus)
 (require 'jetpacs-automations)
 (require 'jetpacs-app-store)
 (require 'jetpacs-org)
@@ -4130,6 +4131,86 @@ standard-themes, and third-party skins all ride this same path."
       (when (custom-theme-enabled-p 'jetpacs-testderiv)
         (disable-theme 'jetpacs-testderiv))
       (delete-directory dir t))))
+
+;; ─── Modus themes control screen ─────────────────────────────────────────────
+
+(ert-deftest jetpacs-modus-queries ()
+  "The theme queries read modus through its API: current theme, the theme
+list, and light/dark classification."
+  (skip-unless (jetpacs-modus--available-p))
+  (should (jetpacs-modus--ensure))
+  (unwind-protect
+      (progn
+        (load-theme 'modus-vivendi t)
+        (should (eq (jetpacs-modus--current) 'modus-vivendi))
+        (let ((themes (jetpacs-modus--themes)))
+          (should (memq 'modus-operandi themes))
+          (should (memq 'modus-vivendi themes)))
+        ;; vivendi is dark, operandi light.
+        (should (jetpacs-modus--dark-p 'modus-vivendi))
+        (should-not (jetpacs-modus--dark-p 'modus-operandi))
+        ;; A palette role resolves to a hex swatch color.
+        (should (string-prefix-p "#" (jetpacs-modus--color 'bg-main))))
+    (disable-theme 'modus-vivendi)))
+
+(ert-deftest jetpacs-modus-view-builds-and-lints ()
+  "The screen builds a lint-clean spec with the picker, swatches, the active
+marker, the style switches, and the customize cross-link."
+  (skip-unless (jetpacs-modus--available-p))
+  (unwind-protect
+      (progn
+        (load-theme 'modus-vivendi t)
+        (let* ((view (jetpacs-modus--view nil))
+               (s (prin1-to-string view)))
+          (should-not (jetpacs-lint-spec view))
+          (should (string-search "Modus Themes" s))
+          (should (string-search "modus-operandi" s))  ; other themes listed
+          (should (string-search "surface" s))          ; swatches
+          (should (string-search "check_circle" s))     ; active marker
+          (should (string-search "Bold keywords" s))    ; a style switch
+          (should (string-search "modus.load" s))       ; tap-to-load
+          (should (string-search "customize.show" s)))) ; deep-options link
+    (disable-theme 'modus-vivendi)))
+
+(ert-deftest jetpacs-modus-load-action-switches-theme ()
+  "The modus.load action loads the named theme; an unknown name is refused."
+  (skip-unless (jetpacs-modus--available-p))
+  (should (jetpacs-modus--ensure))
+  (let ((fn (gethash "modus.load" jetpacs-action-handlers))
+        notified)
+    (should fn)
+    (cl-letf (((symbol-function 'jetpacs-shell-push) (lambda (&rest _) nil))
+              ((symbol-function 'jetpacs-shell-notify)
+               (lambda (msg &rest _) (setq notified msg))))
+      (unwind-protect
+          (progn
+            (funcall fn '((theme . "modus-operandi")) nil)
+            (should (eq (jetpacs-modus--current) 'modus-operandi))
+            ;; A non-modus / unknown theme is rejected, not loaded.
+            (funcall fn '((theme . "no-such-theme")) nil)
+            (should notified)
+            (should (eq (jetpacs-modus--current) 'modus-operandi)))
+        (mapc #'disable-theme
+              (seq-filter (lambda (th) (string-prefix-p "modus-" (symbol-name th)))
+                          custom-enabled-themes))))))
+
+(ert-deftest jetpacs-modus-mirror-note-tracks-mode ()
+  "The header's mirror affordance is a live badge under `emacs' mode and a
+one-tap switch otherwise."
+  (let ((jetpacs-theme-mode 'emacs))
+    (should (string-search "Mirroring"
+                           (prin1-to-string (jetpacs-modus--mirror-note)))))
+  (let ((jetpacs-theme-mode 'default))
+    (should (string-search "modus.mirror"
+                           (prin1-to-string (jetpacs-modus--mirror-note))))))
+
+(ert-deftest jetpacs-modus-settings-link-registered ()
+  "The screen is reachable from the Emacs settings section, beside Packages
+and Customize."
+  (skip-unless (jetpacs-modus--available-p))
+  (let ((body (prin1-to-string (jetpacs-settings-sections))))
+    (should (string-search "modus.show" body))
+    (should (string-search "Modus Themes" body))))
 
 ;; ─── Stock settings screen ──────────────────────────────────────────────────
 

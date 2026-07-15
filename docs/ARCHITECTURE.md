@@ -64,6 +64,7 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-emacs-ui.el` | buffers / eval REPL / *Messages* views, M-x, imenu section drill-in, message→toast mirror |
 | `jetpacs-package-browser.el` | stock package browser (the tablist worked example): search/status chips, install/delete, archive refresh |
 | `jetpacs-customize.el` | customize browser over the defgroup tree; `customize.set`/`.reset` gated on `custom-variable-p` (SPEC §5) |
+| `jetpacs-modus.el` | control screen for the built-in modus themes (a stock satellite beside packages/customize): theme picker with palette swatches, style-option switches, Toggle/Rotate; dovetails with `jetpacs-theme-mode` (mirror-on-tap) |
 | `jetpacs-tools.el` | tools hub: bookmarks, kill ring, shell, processes, timers — entry points over the tablist/comint substrates |
 | `jetpacs-hosts.el` | remote hosts hub: TRAMP endpoints (explicit + ssh-config discovered) as cards — Files/Shell/Services/Disconnect over the existing substrates, connection state read (never probed), `tramp-connection-timeout` clamped |
 | `jetpacs-automations.el` | management view over the `jetpacs-triggers.el` registry: enable switch, wire summary, last-fired, "Fire now" |

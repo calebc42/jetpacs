@@ -20,7 +20,7 @@
                    jetpacs-apps jetpacs-tablist jetpacs-comint jetpacs-results jetpacs-hypertext jetpacs-sections jetpacs-transient
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
-                   jetpacs-package-browser jetpacs-customize
+                   jetpacs-package-browser jetpacs-customize jetpacs-modus
                    jetpacs-tools jetpacs-hosts jetpacs-automations))
   (require feature))
 

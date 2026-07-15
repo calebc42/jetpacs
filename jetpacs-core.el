@@ -14532,7 +14532,7 @@ CURRENT (the active theme) is marked and not re-loadable."
                   (list (jetpacs-modus--current-card current)
                         (jetpacs-modus--actions-row))
                   (jetpacs-modus--themes-section current)
-                  (list (jetpacs-modus--style-section))
+                  (jetpacs-modus--style-section)
                   (list (jetpacs-modus--more-link)))))))
 
 (defun jetpacs-modus--view (snackbar)

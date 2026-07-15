@@ -4163,6 +4163,11 @@ marker, the style switches, and the customize cross-link."
         (let* ((view (jetpacs-modus--view nil))
                (s (prin1-to-string view)))
           (should-not (jetpacs-lint-spec view))
+          ;; Serialize like the real push does: lint alone missed a raw-list
+          ;; child (a section node-list must be spread, not nested), which
+          ;; `json-serialize' rejects as a non-symbol object key.
+          (should (stringp (json-serialize view :null-object :null
+                                           :false-object :false)))
           (should (string-search "Modus Themes" s))
           (should (string-search "modus-operandi" s))  ; other themes listed
           (should (string-search "surface" s))          ; swatches
@@ -4211,6 +4216,23 @@ and Customize."
   (let ((body (prin1-to-string (jetpacs-settings-sections))))
     (should (string-search "modus.show" body))
     (should (string-search "Modus Themes" body))))
+
+(ert-deftest jetpacs-shell-every-view-serializes ()
+  "Every registered shell view must not just lint but `json-serialize' — the
+push assembles them all into one surface, so a single non-serializable node
+\(e.g. a raw list where a node is expected) fails the whole dashboard push and
+takes every other view down with it."
+  (when (jetpacs-modus--available-p) (load-theme 'modus-vivendi t))
+  (unwind-protect
+      (dolist (view jetpacs-shell-views)
+        (let ((name (car view)))
+          (should
+           (stringp
+            (condition-case err
+                (json-serialize (jetpacs-shell--build-view name (cdr view) nil)
+                                :null-object :null :false-object :false)
+              (error (ert-fail (format "view %S: %S" name err))))))))
+    (when (custom-theme-enabled-p 'modus-vivendi) (disable-theme 'modus-vivendi))))
 
 ;; ─── Stock settings screen ──────────────────────────────────────────────────
 

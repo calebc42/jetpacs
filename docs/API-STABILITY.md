@@ -154,7 +154,14 @@ stock Settings drawer entry targets `(jetpacs-shell-resolve-view
 `jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.  Tab access
 (since 1.4.0): `jetpacs-shell-current-tab` reads the active tab and
 `jetpacs-shell-set-current-tab` switches to a registered tab through
-`jetpacs-shell-push`.
+`jetpacs-shell-push`.  Route params (since 1.15.0):
+`jetpacs-shell-navigate` (carry an alist to a target view, pushing so the
+companion lands on it), `jetpacs-shell-route-params` /
+`jetpacs-route-param` (read the active or a named view's params — the
+former doubles as an :overlay predicate), and `jetpacs-shell-clear-route`
+(the explicit back).  A view builder that declares a *second* argument
+receives its route params, so a detail screen is a pure function of them
+rather than of a module state var.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
 `jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`

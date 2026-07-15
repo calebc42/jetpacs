@@ -3699,6 +3699,54 @@ ui-state via `jetpacs.form.set', and the parse reads it back."
       (should (jetpacs-shell-define-view "v" :spec '(:source "s" :template ((t . "text")))))
       (should (plist-get (cdr (assoc "v" jetpacs-shell-views)) :spec)))))
 
+(ert-deftest jetpacs-shell-route-params ()
+  "Route params: navigate carries an alist to the target view; a 2-arg
+builder receives it (a 1-arg one is untouched); the accessors read it; and
+landing on a tab clears every route."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs-shell--route-params (make-hash-table :test 'equal))
+        (jetpacs-shell--current-tab nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (pushed nil))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+              ((symbol-function 'jetpacs-shell-push)
+               (lambda (&rest args) (setq pushed args))))
+      (jetpacs-shell-define-view "app.detail"
+        :builder (lambda (_snack params)
+                   (jetpacs-text (format "detail:%s" (alist-get 'id params))))
+        :overlay (lambda () (jetpacs-shell-route-params "app.detail")))
+      (jetpacs-shell-define-view "app.home"
+        :builder (lambda (_snack) (jetpacs-text "home"))
+        :tab '(:icon "home" :label "Home"))
+      ;; Arity detection picks out the param-routed builder.
+      (should (jetpacs-shell--builder-wants-params
+               (plist-get (cdr (assoc "app.detail" jetpacs-shell-views)) :builder)))
+      (should-not (jetpacs-shell--builder-wants-params
+                   (plist-get (cdr (assoc "app.home" jetpacs-shell-views)) :builder)))
+      ;; navigate stores params and forces the companion onto the view.
+      (jetpacs-shell-navigate "app.detail" '((id . "p42")))
+      (should (equal '(nil :switch-to "app.detail") pushed))
+      (should (equal "p42" (jetpacs-route-param 'id "app.detail")))
+      ;; The 2-arg builder receives the params; the 1-arg builder is fine.
+      (should (equal "detail:p42"
+                     (alist-get 'text (jetpacs-shell--build-view
+                                       "app.detail"
+                                       (cdr (assoc "app.detail" jetpacs-shell-views)) nil))))
+      (should (equal "home"
+                     (alist-get 'text (jetpacs-shell--build-view
+                                       "app.home"
+                                       (cdr (assoc "app.home" jetpacs-shell-views)) nil))))
+      ;; The overlay fires while params are set, so the detail is active.
+      (should (equal "app.detail" (jetpacs-shell--active-view)))
+      ;; Landing on a tab drops all routes; the overlay stops firing.
+      (jetpacs-shell--clear-routes-on-tab "app.home")
+      (should-not (jetpacs-shell-route-params "app.detail"))
+      (should (equal "app.home" (jetpacs-shell--active-view)))
+      ;; Explicit clear-route also drops one view's params.
+      (jetpacs-shell-navigate "app.detail" '((id . "p9")))
+      (jetpacs-shell-clear-route "app.detail")
+      (should-not (jetpacs-shell-route-params "app.detail")))))
+
 (ert-deftest jetpacs-raw-send-never-signals ()
   "A send racing the async connect's failure sentinel degrades to a
 dropped frame, never an error out of the caller.  `process-live-p' can

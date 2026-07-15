@@ -47,6 +47,12 @@
   "Ordered list of (NAME . PLIST) registered shell views.
 Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 
+(defvar jetpacs-shell--route-params (make-hash-table :test 'equal)
+  "Map of view NAME -> its current route-param alist (see the Route params
+section).  Set by `jetpacs-shell-navigate'; a 2-arg view builder receives the
+alist as its second argument, and any builder can read it via
+`jetpacs-route-param'.")
+
 (declare-function jetpacs-spec--compile "jetpacs-spec")
 ;; Declarative :spec views are compiled by jetpacs-spec.el, which requires this
 ;; file; autoload avoids the load cycle (in the bundle the real function is
@@ -55,8 +61,12 @@ Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 
 (cl-defun jetpacs-shell-define-view (name &key builder spec tab when overlay (order 100))
   "Register (or replace) shell view NAME.
-BUILDER is a function of one argument (snackbar text or nil) returning
-the view's scaffold alist.  SPEC is a declarative data-view plist compiled
+BUILDER is a function of the snackbar text (or nil) returning the view's
+scaffold alist.  A BUILDER that declares a *second* argument is a
+param-routed detail: it receives this view's current route-param alist
+\(set by `jetpacs-shell-navigate'), so the screen is a pure function of its
+params rather than of a module state var.  SPEC is a declarative data-view
+plist compiled
 by jetpacs-spec.el (see docs/BINDING.md) — an alternative to BUILDER;
 exactly one of the two is required.  TAB, when non-nil, is a plist
 \(:icon :label :badge) placing the view in the bottom bar; landing on a
@@ -85,6 +95,7 @@ the current tab).  ORDER sorts views and bottom-bar items."
 (defun jetpacs-shell-remove-view (name)
   "Unregister shell view NAME."
   (setq jetpacs-shell-views (assoc-delete-all name jetpacs-shell-views))
+  (remhash name jetpacs-shell--route-params)
   (jetpacs-shell--schedule-repush))
 
 (defvar jetpacs-shell-view-filter-function nil
@@ -164,6 +175,53 @@ Note: the companion re-shows a snackbar only when the text *changes*,
 so two identical messages back-to-back display once."
   (setq jetpacs-shell--snackbar text))
 
+;; ─── Route params (parameterized navigation) ─────────────────────────────────
+;; A detail screen used to need a module state var plus a set-the-var-then-
+;; switch action (grocy--selected-product-id + a `grocy.open-product' handler
+;; that setq'd it and pushed :switch-to).  Route params replace that: navigate
+;; carries an alist to the target view, whose builder is then a pure function
+;; of its params — no per-app state var, no set-and-switch action.
+;; (`jetpacs-shell--route-params' is declared up by the view registry so
+;; `jetpacs-shell-remove-view' can clean it.)
+
+(defun jetpacs-shell-route-params (&optional name)
+  "The current route-param alist for view NAME (default: the active view).
+Handy as an :overlay predicate — a param-routed detail is active exactly
+while its params are set: :overlay (lambda () (jetpacs-shell-route-params \"v\"))."
+  (gethash (or name (jetpacs-shell--active-view)) jetpacs-shell--route-params))
+
+(defun jetpacs-route-param (key &optional name)
+  "The value of route param KEY for view NAME (default: the active view)."
+  (alist-get key (jetpacs-shell-route-params name)))
+
+(cl-defun jetpacs-shell-navigate (view &optional params)
+  "Navigate to VIEW carrying route PARAMS (an alist), pushing so the
+companion lands on it.  VIEW's builder receives PARAMS as its second
+argument when it declares one (else reads them via `jetpacs-route-param');
+this replaces the module-state-var + set-and-switch drill-in idiom.  Pair
+with an :overlay predicate that fires while the params are set, so a fresh
+push (reconnect) still lands on the detail; switching to a tab clears every
+route (`jetpacs-shell--clear-routes-on-tab'), dismissing the drill-in."
+  (puthash view params jetpacs-shell--route-params)
+  (jetpacs-shell-push nil :switch-to view))
+
+(defun jetpacs-shell-clear-route (view)
+  "Clear VIEW's route params and push — the explicit back for a param route."
+  (remhash view jetpacs-shell--route-params)
+  (jetpacs-shell-push))
+
+(defun jetpacs-shell--builder-wants-params (fn)
+  "Non-nil when builder FN accepts a second (route-params) argument."
+  (let ((max (cdr (func-arity fn))))
+    (or (eq max 'many) (and (integerp max) (>= max 2)))))
+
+(defun jetpacs-shell--clear-routes-on-tab (name)
+  "Drop all route params when the user lands on tab NAME.
+Registered on `jetpacs-shell-view-switched-hook', so leaving a param-routed
+detail for a bottom-bar tab dismisses it (its :overlay stops firing)."
+  (when (jetpacs-shell--tab-p name)
+    (clrhash jetpacs-shell--route-params)))
+
 ;; ─── Hooks (the app seams) ───────────────────────────────────────────────────
 
 (defvar jetpacs-shell-view-switched-hook nil
@@ -171,6 +229,9 @@ so two identical messages back-to-back display once."
 Runs before the shell's own tab bookkeeping, for both companion-local
 switches (`view.switched') and Emacs-driven tab pushes — but never for
 overlay views.  Modules reset their drill-in state here.")
+
+;; Landing on a tab dismisses any param-routed detail drill-in.
+(add-hook 'jetpacs-shell-view-switched-hook #'jetpacs-shell--clear-routes-on-tab)
 
 (defvar jetpacs-shell-refresh-hook nil
   "Hook run before a push that must bypass caches.
@@ -382,7 +443,12 @@ keeps updating and the broken view *shows* its error."
   (condition-case err
       (if (plist-get plist :spec)
           (jetpacs-spec--compile name (plist-get plist :spec) snackbar)
-        (funcall (plist-get plist :builder) snackbar))
+        (let ((builder (plist-get plist :builder)))
+          ;; A builder that declares a second argument is a param-routed
+          ;; detail — hand it this view's current route params.
+          (if (jetpacs-shell--builder-wants-params builder)
+              (funcall builder snackbar (gethash name jetpacs-shell--route-params))
+            (funcall builder snackbar))))
     (error
      (jetpacs-shell-nav-view
       (capitalize name)
@@ -390,6 +456,38 @@ keeps updating and the broken view *shows* its error."
        (jetpacs-text (format "Error building view \"%s\"" name) 'title)
        (jetpacs-text (error-message-string err) 'body))
       :snackbar snackbar))))
+
+(declare-function jetpacs-lint-spec "jetpacs-lint")
+
+;;;###autoload
+(defun jetpacs-lint-views (&optional errors-only)
+  "Lint every registered shell view by building and checking it.
+Builds each view (a builder crash is caught and reported, not degraded), lints
+the result, and returns an alist of (VIEW-NAME . PROBLEMS) for the views with
+problems — nil when all clean.  The one-line CI gate for an app:
+\(should-not (jetpacs-lint-views t)).  With ERRORS-ONLY non-nil, `warning:'-
+prefixed problems (the forward-compat heuristics) are dropped, leaving only
+structural errors."
+  (let (out)
+    (dolist (entry jetpacs-shell-views)
+      (let* ((name (car entry)) (plist (cdr entry))
+             (problems
+              (condition-case err
+                  (let ((spec (if (plist-get plist :spec)
+                                  (jetpacs-spec--compile name (plist-get plist :spec) nil)
+                                (let ((b (plist-get plist :builder)))
+                                  (if (jetpacs-shell--builder-wants-params b)
+                                      (funcall b nil (gethash name jetpacs-shell--route-params))
+                                    (funcall b nil))))))
+                    (jetpacs-lint-spec spec))
+                (error (list (cons nil (format "build error: %s"
+                                               (error-message-string err))))))))
+        (when errors-only
+          (setq problems (cl-remove-if
+                          (lambda (p) (string-prefix-p "warning: " (cdr p)))
+                          problems)))
+        (when problems (push (cons name problems) out))))
+    (nreverse out)))
 
 (defvar jetpacs-shell--repush-timer nil)
 
@@ -461,6 +559,11 @@ Safe on any hook: extra arguments are ignored."
 
 ;; A tap that mutates a buffer re-pushes the showing surface through here.
 (setq jetpacs-buffer-refresh-function #'jetpacs-shell-push)
+
+;; A failed form submit (inline errors) or a date-picker update re-renders
+;; the showing surface through here (jetpacs-surfaces' form layer).
+(defvar jetpacs-form-refresh-function)
+(setq jetpacs-form-refresh-function #'jetpacs-shell-push)
 
 ;; Settings feedback lands in the snackbar; setting changes re-render.
 (defvar jetpacs-settings-notify-function)

@@ -1278,7 +1278,20 @@ the composer delete its own matcher."
                      :padding 4)
      ;; Phase 2: fill opt-out (wrapContent) + the status-badge node.
      (jetpacs-column leaf :fill nil)
-     (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1))))
+     (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1)
+     ;; Tier-2 composites (pure elisp; expand to the primitive nodes above).
+     (jetpacs-stepper "servings" 4 act :min 1 :max 10 :step 1
+                   :format (lambda (n) (format "%d servings" n)))
+     (jetpacs-segmented "filter"
+                     (list "All" '(:value "due" :label "Due soon" :icon "schedule"))
+                     act :selected "due" :spacing 8 :run-spacing 8)
+     (jetpacs-stat 42 :label "Items" :icon "inventory" :color "primary"
+                :weight 1 :on-tap act :fill-fraction 0.3)
+     (jetpacs-kv "Location" "Fridge")
+     (jetpacs-sectioned-list
+      (list (list :header "Due" :items (list leaf))
+            (list :header "OK"  :items nil :empty (jetpacs-empty-state :title "none")))
+      :empty (jetpacs-empty-state :title "Empty")))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -1379,6 +1392,236 @@ colored fallback `text' child for older companions, and lints clean."
     (should (null (jetpacs-lint-spec b)))
     ;; A badge is safe as a trailing row element (intrinsic — not flagged).
     (should-not (jetpacs-lint-spec (jetpacs-row (jetpacs-text "t" nil 1) b)))))
+
+;; ─── Tier-2 composites (#4–#8) ──────────────────────────────────────────────
+
+(ert-deftest jetpacs-action-with-arg-bakes-typed-value ()
+  "`jetpacs--action-with-arg' sets a typed value in an action's `args' without
+disturbing existing args, and returns nil for a nil action."
+  (let ((act (jetpacs-action "x" :args '((id . "p1")))))
+    (let ((a (jetpacs--action-with-arg act 'value 3)))
+      (should (equal "p1" (alist-get 'id (alist-get 'args a))))
+      (should (= 3 (alist-get 'value (alist-get 'args a))))   ; a number, not "3"
+      (should (equal "x" (alist-get 'action a))))
+    ;; Overwrites a prior value rather than duplicating the key.
+    (let ((a (jetpacs--action-with-arg
+              (jetpacs--action-with-arg act 'value 1) 'value 9)))
+      (should (= 9 (alist-get 'value (alist-get 'args a))))
+      (should (= 1 (cl-count 'value (alist-get 'args a) :key #'car))))
+    (should (null (jetpacs--action-with-arg nil 'value 1)))))
+
+(ert-deftest jetpacs-stepper-clamps-and-bakes-targets ()
+  "The stepper is a wrap-content row [−, value, +]; the buttons bake the
+clamped target number into their action args, and it lints clean."
+  (let* ((act  (jetpacs-action "grocy.set" :args '((id . "p1"))))
+         (st   (jetpacs-stepper "servings" 4 act :min 1 :max 10 :step 2))
+         (kids (append (alist-get 'children st) nil)))
+    (should (equal "row" (alist-get 't st)))
+    (should (eq :false (alist-get 'fill st)))               ; sizes to content
+    (should (= 3 (length kids)))
+    (should (= 2 (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 0 kids))))))
+    (should (equal "4" (alist-get 'text (nth 1 kids))))
+    (should (= 6 (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 2 kids))))))
+    (should (null (jetpacs-lint-spec st)))
+    ;; Clamping: − at MIN stays at MIN, + at MAX stays at MAX.
+    (let ((lo (jetpacs-stepper "s" 1 act :min 1 :max 10))
+          (hi (jetpacs-stepper "s" 10 act :min 1 :max 10)))
+      (should (= 1 (alist-get 'value (alist-get 'args (alist-get 'on_tap
+                    (aref (alist-get 'children lo) 0))))))
+      (should (= 10 (alist-get 'value (alist-get 'args (alist-get 'on_tap
+                     (aref (alist-get 'children hi) 2)))))))
+    ;; MAX nil = unbounded above.
+    (should (= 6 (alist-get 'value (alist-get 'args (alist-get 'on_tap
+                  (aref (alist-get 'children (jetpacs-stepper "s" 5 act)) 2))))))
+    ;; :format controls the middle label (e.g. a unit); default is the bare number.
+    (should (equal "3 servings"
+                   (alist-get 'text (aref (alist-get 'children
+                     (jetpacs-stepper "s" 3 act :format
+                                   (lambda (n) (format "%d servings" n)))) 1))))))
+
+(ert-deftest jetpacs-segmented-single-select ()
+  "The segmented control renders one chip per option (string or plist),
+marks the selected one, and bakes each option's value into its on-tap."
+  (let* ((act (jetpacs-action "grocy.filter"))
+         (seg (jetpacs-segmented "filter"
+                              (list "All" '(:value "due" :label "Due soon" :icon "schedule"))
+                              act :selected "due"))
+         (chips (append (alist-get 'children seg) nil)))
+    (should (equal "flow_row" (alist-get 't seg)))
+    (should (= 2 (length chips)))
+    (should (equal "All" (alist-get 'label (nth 0 chips))))
+    (should (null (alist-get 'selected (nth 0 chips))))
+    (should (equal "All" (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 0 chips))))))
+    (should (equal "Due soon" (alist-get 'label (nth 1 chips))))
+    (should (eq t (alist-get 'selected (nth 1 chips))))
+    (should (equal "schedule" (alist-get 'icon (nth 1 chips))))
+    (should (equal "due" (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 1 chips))))))
+    ;; :scroll makes it a single-line rail instead of a wrapping flow-row.
+    (should (equal "row" (alist-get 't (jetpacs-segmented "f" '("a") act :scroll t))))
+    ;; :spacing / :run-spacing ride the flow-row.
+    (let ((s (jetpacs-segmented "f" '("a") act :spacing 8 :run-spacing 6)))
+      (should (= 8 (alist-get 'spacing s)))
+      (should (= 6 (alist-get 'run_spacing s))))
+    (should (null (jetpacs-lint-spec seg)))))
+
+(ert-deftest jetpacs-stat-tile ()
+  "The stat tile is an elevated card > centered column with the value tinted
+by COLOR, an optional icon and label, and an optional weight/tap; lints clean."
+  (let* ((act (jetpacs-action "open"))
+         (s   (jetpacs-stat 42 :label "Items" :icon "inventory" :color "primary"
+                         :weight 1 :on-tap act))
+         (col (aref (alist-get 'children s) 0))
+         (kids (append (alist-get 'children col) nil)))
+    (should (equal "card" (alist-get 't s)))
+    (should (= 1 (alist-get 'weight s)))
+    (should (alist-get 'on_tap s))
+    (should (equal "icon" (alist-get 't (nth 0 kids))))
+    (should (equal "42" (alist-get 'text (nth 1 kids))))
+    (should (equal "primary" (alist-get 'color (nth 1 kids))))
+    (should (equal "Items" (alist-get 'text (nth 2 kids))))
+    (should (null (jetpacs-lint-spec s)))
+    ;; :fill-fraction / :width size a tile inside a wrapping flow-row.
+    (should (= 0.3 (alist-get 'fill_fraction (jetpacs-stat 1 :fill-fraction 0.3))))
+    (should (= 120 (alist-get 'width (jetpacs-stat 1 :width 120))))
+    ;; Minimal form: value only, no icon/label.
+    (let ((m (jetpacs-stat "3")))
+      (should (= 1 (length (alist-get 'children (aref (alist-get 'children m) 0)))))
+      (should (null (jetpacs-lint-spec m))))))
+
+(ert-deftest jetpacs-kv-property-row ()
+  "The kv row is a muted label + weighted value; a node value is used as-is."
+  (let* ((row (jetpacs-kv "Location" "Fridge"))
+         (kids (append (alist-get 'children row) nil)))
+    (should (equal "row" (alist-get 't row)))
+    (should (equal "label" (alist-get 'style (nth 0 kids))))
+    (should (equal "Fridge" (alist-get 'text (nth 1 kids))))
+    (should (= 1 (alist-get 'weight (nth 1 kids))))          ; value fills, no off-screen
+    (should (null (jetpacs-lint-spec row)))
+    ;; A node value passes through unwrapped.
+    (let ((n (jetpacs-kv "Qty" (jetpacs-badge "low" :color "error"))))
+      (should (equal "badge" (alist-get 't (aref (alist-get 'children n) 1))))
+      (should (null (jetpacs-lint-spec n))))))
+
+(ert-deftest jetpacs-sectioned-list-headers-items-empty ()
+  "The sectioned list lays out header + items per section, substitutes a
+section's :empty when it has no items, and shows the top-level :empty alone
+when every section is empty."
+  (let* ((leaf (jetpacs-text "x"))
+         (full (jetpacs-sectioned-list
+                (list (list :header "Due" :items (list leaf leaf))
+                      (list :header "OK" :items nil
+                            :empty (jetpacs-empty-state :title "none")))
+                :empty (jetpacs-empty-state :title "All empty")))
+         (kids (append (alist-get 'children full) nil)))
+    (should (equal "lazy_column" (alist-get 't full)))
+    ;; Due: header + 2 items ; OK: header + its own empty  =  5 children.
+    (should (= 5 (length kids)))
+    (should (equal "section_header" (alist-get 't (nth 0 kids))))
+    (should (equal "Due" (alist-get 'title (nth 0 kids))))
+    (should (equal "empty_state" (alist-get 't (nth 4 kids))))
+    (should (null (jetpacs-lint-spec full)))
+    ;; Everything empty → the top-level empty node alone.
+    (let ((none (jetpacs-sectioned-list
+                 (list (list :header "Due" :items nil))
+                 :empty (jetpacs-empty-state :title "All clear"))))
+      (should (= 1 (length (alist-get 'children none))))
+      (should (equal "empty_state" (alist-get 't (aref (alist-get 'children none) 0))))
+      (should (null (jetpacs-lint-spec none))))
+    ;; A ready node header is used as-is (not wrapped in section_header).
+    (let ((h (jetpacs-sectioned-list
+              (list (list :header (jetpacs-text "H" 'title) :items (list leaf))))))
+      (should (equal "text" (alist-get 't (aref (alist-get 'children h) 0)))))))
+
+;; ─── Ergonomics: children-API + text keywords (#9, #10) ─────────────────────
+
+(ert-deftest jetpacs-children-api-accepts-both-forms ()
+  "card/box/surface accept children as a single list OR as &rest nodes — the
+two forms produce identical trees (issue #9) — and a lone nil means empty."
+  (let ((a (jetpacs-text "a")) (b (jetpacs-text "b")))
+    ;; &rest ≡ single-list, across all three list-taking containers.
+    (should (equal (jetpacs-card a b)    (jetpacs-card (list a b))))
+    (should (equal (jetpacs-box a b)     (jetpacs-box (list a b))))
+    (should (equal (jetpacs-surface a b) (jetpacs-surface (list a b))))
+    ;; With trailing options after either child form.
+    (should (equal (jetpacs-card a b :padding 4 :weight 1)
+                   (jetpacs-card (list a b) :padding 4 :weight 1)))
+    ;; A single node needs no list wrapper.
+    (should (equal (jetpacs-card a) (jetpacs-card (list a))))
+    ;; A lone nil (or empty list) is an empty container, not a null child.
+    (should (equal [] (alist-get 'children (jetpacs-card nil))))
+    (should (equal [] (alist-get 'children (jetpacs-surface))))
+    ;; nils among &rest children are dropped.
+    (should (equal (jetpacs-box a b) (jetpacs-box a nil b)))
+    (should (null (jetpacs-lint-spec (jetpacs-card a b :padding 4))))))
+
+(ert-deftest jetpacs-text-positional-and-keyword ()
+  "`jetpacs-text' takes its options positionally or as keywords (keywords win),
+so a color needs no positional nils (issue #10); the positional form is
+byte-for-byte what it was before."
+  ;; Keyword color ≡ the old positional-nils form.
+  (should (equal (jetpacs-text "x" nil nil "#fff")
+                 (jetpacs-text "x" :color "#fff")))
+  (should (equal (jetpacs-text "x" 'label nil "#fff")
+                 (jetpacs-text "x" 'label :color "#fff")))
+  ;; The full positional battery is unchanged.
+  (should (equal (jetpacs-text "hi" 'title 1 "#FF0000" t 2 4)
+                 (jetpacs-text "hi" :style 'title :weight 1 :color "#FF0000"
+                            :selectable t :max-lines 2 :padding 4)))
+  ;; A keyword overrides the same-named positional.
+  (should (equal "red" (alist-get 'color (jetpacs-text "x" 'body nil "blue" nil nil nil
+                                                    :color "red"))))
+  ;; Plain label still works and lints clean.
+  (should (equal "body" (alist-get 'style (jetpacs-text "x" 'body))))
+  (should (null (jetpacs-lint-spec (jetpacs-text "x" :color "#fff")))))
+
+;; ─── Tier-1 test helpers (#14, #15) ─────────────────────────────────────────
+
+(ert-deftest jetpacs-test-visible-text-harvests-strings ()
+  "`jetpacs-test-visible-text' returns the on-screen strings in tree order,
+harvesting text/label/title/caption/hint and ignoring icons/colors/actions."
+  (let* ((view (jetpacs-column
+                (jetpacs-section-header "Due soon")
+                (jetpacs-list-item :title "Milk" :subtitle "1 L"
+                                :trailing (jetpacs-icon "star"))
+                (jetpacs-button "Add" (jetpacs-action "grocy.add"))
+                (jetpacs-empty-state :title "Nothing" :caption "All stocked")))
+         (seen (jetpacs-test-visible-text view)))
+    (should (equal '("Due soon" "Milk" "1 L" "Add" "Nothing" "All stocked") seen))
+    (should (member "Milk" seen))
+    ;; Icon names, colors, and action names are not visible text.
+    (should-not (member "star" seen))
+    (should-not (member "grocy.add" seen))))
+
+(ert-deftest jetpacs-test-view-ok-passes-clean-signals-invalid ()
+  "`jetpacs-test-view-ok' returns t for a wire-valid view and signals with the
+lint errors for an invalid one; warnings do not fail it."
+  (should (eq t (jetpacs-test-view-ok
+                 (jetpacs-list-item :title "T" :trailing (jetpacs-icon "star")))))
+  ;; An unknown node type is a structural error -> signals.
+  (should-error (jetpacs-test-view-ok (list (cons 't "bogus_node"))))
+  ;; The row flex-trap is a warning, not an error -> still passes.
+  (should (eq t (jetpacs-test-view-ok
+                 (jetpacs-row (jetpacs-column (jetpacs-text "x"))
+                           (jetpacs-icon-button "delete" (jetpacs-action "a")))))))
+
+(ert-deftest jetpacs-lint-views-audits-registry ()
+  "`jetpacs-lint-views' builds and lints every registered view, flagging the
+ones with problems (a builder crash included) and passing the clean ones."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs-shell--route-params (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (jetpacs-shell-define-view "app.ok"  :builder (lambda (_s) (jetpacs-text "ok")))
+      (jetpacs-shell-define-view "app.bad" :builder (lambda (_s) (list (cons 't "nope_node"))))
+      (jetpacs-shell-define-view "app.crash" :builder (lambda (_s) (error "boom")))
+      (let ((flagged (mapcar #'car (jetpacs-lint-views t))))
+        (should (member "app.bad" flagged))       ; unknown node type
+        (should (member "app.crash" flagged))     ; builder crash
+        (should-not (member "app.ok" flagged)))
+      ;; A registry of only-clean views audits clean.
+      (jetpacs-shell-remove-view "app.bad")
+      (jetpacs-shell-remove-view "app.crash")
+      (should-not (jetpacs-lint-views t)))))
 
 ;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
 
@@ -3254,6 +3497,92 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (jetpacs-form-dispose f)
       (should-not (eq f (jetpacs-form "cap" "app1"))))))
 
+(ert-deftest jetpacs-form-spec-parses-typed-values ()
+  "A valid submit hands the handler a parsed, typed alist keyed by field id,
+resets the form, and never leaves errors."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal))
+        (jetpacs-form-refresh-function #'ignore))
+    (let* ((form (jetpacs-form "gp"))
+           (fields (list (jetpacs-field 'amount 'number :required t)
+                         (jetpacs-field 'price 'decimal)
+                         (jetpacs-field 'loc 'enum :options '("Fridge" "Pantry"))
+                         (jetpacs-field 'bb 'date)
+                         (jetpacs-field 'note 'text)
+                         (jetpacs-field 'opened 'bool)))
+           captured
+           (submit (jetpacs-form-submit
+                    form fields (lambda (v a) (setq captured (list v a))))))
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 0 fields)) " 5 ")   ; trimmed
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 1 fields)) "2.50")
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 2 fields)) ["Pantry"])
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 3 fields)) "2026-08-01")
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 4 fields)) "hello")
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 5 fields)) "true")
+      (funcall submit '((ctx . "p1")) nil)
+      (let ((v (car captured)))
+        (should (eql 5 (alist-get 'amount v)))               ; a number, not "5"
+        (should (eql 2.5 (alist-get 'price v)))
+        (should (equal "Pantry" (alist-get 'loc v)))         ; single enum unwrapped
+        (should (equal "2026-08-01" (alist-get 'bb v)))
+        (should (equal "hello" (alist-get 'note v)))
+        (should (eq t (alist-get 'opened v))))
+      (should (equal '((ctx . "p1")) (cadr captured)))       ; action args pass through
+      (should-not (jetpacs-form-errors form))
+      (should (= 1 (jetpacs-form-gen form))))))               ; reset rotated the gen
+
+(ert-deftest jetpacs-form-spec-blocks-and-marks-invalid ()
+  "An invalid submit stores inline field errors, refreshes, and does not
+dispatch to the handler; `jetpacs-form-render' then paints those errors."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal))
+        (refreshed 0))
+    (let* ((jetpacs-form-refresh-function (lambda () (cl-incf refreshed)))
+           (form (jetpacs-form "gp"))
+           (fields (list (jetpacs-field 'amount 'number :label "Amount" :required t
+                                     :validate (lambda (n) (when (<= n 0) "must be positive")))
+                         (jetpacs-field 'price 'decimal :label "Price")))
+           called
+           (submit (jetpacs-form-submit form fields (lambda (_v _a) (setq called t)))))
+      ;; amount blank (required), price garbage.
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 1 fields)) "abc")
+      (funcall submit nil nil)
+      (should-not called)
+      (should (= 1 refreshed))
+      (should (equal "Amount is required" (cdr (assoc "amount" (jetpacs-form-errors form)))))
+      (should (equal "Price must be a number" (cdr (assoc "price" (jetpacs-form-errors form)))))
+      (should (= 0 (jetpacs-form-gen form)))                  ; no reset on failure
+      ;; The rendered field shows its error as a caption, and lints clean.
+      (let ((node (car (jetpacs-form-render form fields))))
+        (should (equal "column" (alist-get 't node)))        ; input + error caption
+        (should (null (jetpacs-lint-spec node))))
+      ;; :validate runs on the parsed value: a negative amount is rejected.
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 0 fields)) "-3")
+      (funcall submit nil nil)
+      (should (equal "must be positive" (cdr (assoc "amount" (jetpacs-form-errors form)))))
+      (should-not called))))
+
+(ert-deftest jetpacs-form-spec-date-field-writes-through ()
+  "A date field renders a picker whose action writes the chosen date into
+ui-state via `jetpacs.form.set', and the parse reads it back."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal))
+        (jetpacs-form-refresh-function #'ignore))
+    (let* ((form (jetpacs-form "gp"))
+           (field (jetpacs-field 'bb 'date :label "Best before"))
+           (fid (jetpacs-form--fid form field)))
+      (funcall (gethash "jetpacs.form.set" jetpacs-action-handlers)
+               `((id . ,fid) (value . "2026-09-09")) nil)
+      (should (equal "2026-09-09" (jetpacs-ui-state fid)))
+      (should (equal '("2026-09-09" . nil) (jetpacs-form--parse-field form field)))
+      ;; A malformed date is rejected with a field error.
+      (jetpacs-ui-state-put fid "not-a-date")
+      (should (equal "Best before must be a date (YYYY-MM-DD)"
+                     (cdr (jetpacs-form--parse-field form field)))))))
+
 (ert-deftest jetpacs-form-teardown-by-owner ()
   "`jetpacs-app-unregister' disposes an app's owned forms."
   (let ((jetpacs--forms (make-hash-table :test 'equal))
@@ -3431,6 +3760,54 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (should-error (jetpacs-shell-define-view "v" :builder #'ignore :spec '(:source "s")))
       (should (jetpacs-shell-define-view "v" :spec '(:source "s" :template ((t . "text")))))
       (should (plist-get (cdr (assoc "v" jetpacs-shell-views)) :spec)))))
+
+(ert-deftest jetpacs-shell-route-params ()
+  "Route params: navigate carries an alist to the target view; a 2-arg
+builder receives it (a 1-arg one is untouched); the accessors read it; and
+landing on a tab clears every route."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs-shell--route-params (make-hash-table :test 'equal))
+        (jetpacs-shell--current-tab nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (pushed nil))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+              ((symbol-function 'jetpacs-shell-push)
+               (lambda (&rest args) (setq pushed args))))
+      (jetpacs-shell-define-view "app.detail"
+        :builder (lambda (_snack params)
+                   (jetpacs-text (format "detail:%s" (alist-get 'id params))))
+        :overlay (lambda () (jetpacs-shell-route-params "app.detail")))
+      (jetpacs-shell-define-view "app.home"
+        :builder (lambda (_snack) (jetpacs-text "home"))
+        :tab '(:icon "home" :label "Home"))
+      ;; Arity detection picks out the param-routed builder.
+      (should (jetpacs-shell--builder-wants-params
+               (plist-get (cdr (assoc "app.detail" jetpacs-shell-views)) :builder)))
+      (should-not (jetpacs-shell--builder-wants-params
+                   (plist-get (cdr (assoc "app.home" jetpacs-shell-views)) :builder)))
+      ;; navigate stores params and forces the companion onto the view.
+      (jetpacs-shell-navigate "app.detail" '((id . "p42")))
+      (should (equal '(nil :switch-to "app.detail") pushed))
+      (should (equal "p42" (jetpacs-route-param 'id "app.detail")))
+      ;; The 2-arg builder receives the params; the 1-arg builder is fine.
+      (should (equal "detail:p42"
+                     (alist-get 'text (jetpacs-shell--build-view
+                                       "app.detail"
+                                       (cdr (assoc "app.detail" jetpacs-shell-views)) nil))))
+      (should (equal "home"
+                     (alist-get 'text (jetpacs-shell--build-view
+                                       "app.home"
+                                       (cdr (assoc "app.home" jetpacs-shell-views)) nil))))
+      ;; The overlay fires while params are set, so the detail is active.
+      (should (equal "app.detail" (jetpacs-shell--active-view)))
+      ;; Landing on a tab drops all routes; the overlay stops firing.
+      (jetpacs-shell--clear-routes-on-tab "app.home")
+      (should-not (jetpacs-shell-route-params "app.detail"))
+      (should (equal "app.home" (jetpacs-shell--active-view)))
+      ;; Explicit clear-route also drops one view's params.
+      (jetpacs-shell-navigate "app.detail" '((id . "p9")))
+      (jetpacs-shell-clear-route "app.detail")
+      (should-not (jetpacs-shell-route-params "app.detail")))))
 
 (ert-deftest jetpacs-raw-send-never-signals ()
   "A send racing the async connect's failure sentinel degrades to a

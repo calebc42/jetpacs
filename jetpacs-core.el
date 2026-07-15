@@ -13,7 +13,7 @@
 
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
-;; Version: 1.12.0
+;; Version: 1.17.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; URL: https://github.com/calebc42/jetpacs
 
@@ -66,7 +66,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.12.0"
+(defconst jetpacs-api-version "1.17.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -1971,17 +1971,63 @@ by sub-specs like actions, drawer items, and top bars that carry no
 
 ;; ─── Core & Layout ───────────────────────────────────────────────────────────
 
-(defun jetpacs-text (text &optional style weight color selectable max-lines padding)
-  "A text node. STYLE is title/headline/body/caption/label.
-WEIGHT is the layout weight. COLOR is a hex string."
-  (jetpacs--node "text"
-              'text text
-              'style (and style (format "%s" style))
-              'weight weight
-              'color color
-              'selectable (and selectable t)
-              'max_lines max-lines
-              'padding padding))
+(defun jetpacs--children-and-opts (args)
+  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
+Child nodes are alists, never keywords, so the first keyword in ARGS
+marks the start of a trailing options plist.  Lets the `&rest'-children
+constructors take options without breaking `(jetpacs-row a b c)' callers."
+  (let ((i (cl-position-if #'keywordp args)))
+    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
+      (cons args nil))))
+
+(defun jetpacs--node-p (x)
+  "Non-nil when X looks like a widget node or sub-spec: a proper alist whose
+every element is a cons.  A real node's own pairs are dotted (`(t . \"row\")'),
+so a node is never itself a list *of* nodes — which is what lets
+`jetpacs--as-children' tell a single node from a list of children."
+  (and (consp x) (proper-list-p x) (cl-every #'consp x)))
+
+(defun jetpacs--as-children (args)
+  "Normalize container ARGS to a flat child list, dropping nils.
+Accepts the nodes as `&rest' — `(NODE NODE …)' — or the legacy single
+list-of-nodes argument — `((NODE NODE …))' (or a lone nil for none): a
+one-element ARGS whose sole element is itself a list of nodes (or nil) is
+unwrapped.  So `(jetpacs-card (list a b))' and `(jetpacs-card a b)' mean the
+same thing — the children-API consistency fix (issue #9)."
+  (let ((kids (if (and (consp args) (null (cdr args))
+                       (let ((only (car args)))
+                         (or (null only)
+                             (and (proper-list-p only)
+                                  (cl-every #'jetpacs--node-p only)))))
+                  (car args)
+                args)))
+    (remq nil kids)))
+
+(defun jetpacs-text (text &rest args)
+  "A text node whose options are positional or keyword (keywords win).
+ARGS is STYLE WEIGHT COLOR SELECTABLE MAX-LINES PADDING positionally, or the
+same names as trailing keywords :style :weight :color :selectable :max-lines
+:padding — so a color needs no positional nils: `(jetpacs-text s :color
+\"#fff\")' rather than `(jetpacs-text s nil nil \"#fff\")' (issue #10).
+STYLE is title/headline/body/caption/label; WEIGHT is the layout weight;
+COLOR is a hex string."
+  (let* ((split (jetpacs--children-and-opts args))
+         (pos  (car split))
+         (opts (cdr split))
+         (style      (or (plist-get opts :style)      (nth 0 pos)))
+         (weight     (or (plist-get opts :weight)     (nth 1 pos)))
+         (color      (or (plist-get opts :color)      (nth 2 pos)))
+         (selectable (or (plist-get opts :selectable) (nth 3 pos)))
+         (max-lines  (or (plist-get opts :max-lines)  (nth 4 pos)))
+         (padding    (or (plist-get opts :padding)    (nth 5 pos))))
+    (jetpacs--node "text"
+                'text text
+                'style (and style (format "%s" style))
+                'weight weight
+                'color color
+                'selectable (and selectable t)
+                'max_lines max-lines
+                'padding padding)))
 
 (cl-defun jetpacs-markup (text &key syntax style padding)
   "A read-only TEXT node with optional client-side highlighting.
@@ -2025,15 +2071,6 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
               'bg bg
               'on_tap on-tap
               'mono (and mono t)))
-
-(defun jetpacs--children-and-opts (args)
-  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
-Child nodes are alists, never keywords, so the first keyword in ARGS
-marks the start of a trailing options plist.  Lets the `&rest'-children
-constructors take options without breaking `(jetpacs-row a b c)' callers."
-  (let ((i (cl-position-if #'keywordp args)))
-    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
-      (cons args nil))))
 
 (defun jetpacs-row (&rest args)
   "A horizontal row of child nodes.
@@ -2109,42 +2146,50 @@ inside a row fills it and pushes the later siblings off-screen — give it
 Pass as the :border of `jetpacs-box' / `jetpacs-surface' / `jetpacs-card'."
   (jetpacs--node nil 'width width 'color color))
 
-(cl-defun jetpacs-box (children &key alignment padding weight on-tap
-                             width height fill-fraction border)
-  "A Box wrapping CHILDREN.
-WIDTH/HEIGHT fix the box size (dp); FILL-FRACTION (0.0-1.0) sets it to a
-fraction of the parent width; BORDER is an `jetpacs-border' spec."
-  (jetpacs--node "box"
-              'children (vconcat children)
-              'alignment alignment
-              'padding padding
-              'weight weight
-              'on_tap on-tap
-              'width width
-              'height height
-              'fill_fraction fill-fraction
-              'border border))
+(defun jetpacs-box (&rest args)
+  "A Box wrapping child nodes.
+CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
+accepted — issue #9), optionally followed by keywords: :alignment,
+:padding, :weight, :on-tap, :width, :height, :fill-fraction (0.0-1.0 of
+the parent width), and :border (an `jetpacs-border' spec).  WIDTH/HEIGHT fix
+the box size (dp)."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
+    (jetpacs--node "box"
+                'children (vconcat (jetpacs--as-children (car split)))
+                'alignment (plist-get opts :alignment)
+                'padding (plist-get opts :padding)
+                'weight (plist-get opts :weight)
+                'on_tap (plist-get opts :on-tap)
+                'width (plist-get opts :width)
+                'height (plist-get opts :height)
+                'fill_fraction (plist-get opts :fill-fraction)
+                'border (plist-get opts :border))))
 
-(cl-defun jetpacs-surface (children &key color shape elevation padding fill
-                                 width height fill-fraction border)
-  "A Surface wrapping CHILDREN.
-COLOR is a hex string or a theme token (\"primary\", \"surface_container\",
+(defun jetpacs-surface (&rest args)
+  "A Surface wrapping child nodes.
+CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
+accepted — issue #9), optionally followed by keywords.  :color is a hex
+string or a theme token (\"primary\", \"surface_container\",
 \"primary_container\", …) that adapts to the device's light/dark theme.
-SHAPE is \"rounded\", \"rounded_small\", or \"circle\".  FILL stretches the
-surface to full width (e.g. zebra rows in a list).  WIDTH/HEIGHT fix the
-size (dp), FILL-FRACTION (0.0-1.0) sets a fraction of parent width, and
-BORDER is an `jetpacs-border' spec stroked with SHAPE."
-  (jetpacs--node "surface"
-              'children (vconcat children)
-              'color color
-              'shape shape
-              'elevation elevation
-              'padding padding
-              'fill (and fill t)
-              'width width
-              'height height
-              'fill_fraction fill-fraction
-              'border border))
+:shape is \"rounded\", \"rounded_small\", or \"circle\".  :fill stretches the
+surface to full width (e.g. zebra rows in a list).  :width/:height fix the
+size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
+:border is an `jetpacs-border' spec stroked with :shape.  :elevation and
+:padding as named."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
+    (jetpacs--node "surface"
+                'children (vconcat (jetpacs--as-children (car split)))
+                'color (plist-get opts :color)
+                'shape (plist-get opts :shape)
+                'elevation (plist-get opts :elevation)
+                'padding (plist-get opts :padding)
+                'fill (and (plist-get opts :fill) t)
+                'width (plist-get opts :width)
+                'height (plist-get opts :height)
+                'fill_fraction (plist-get opts :fill-fraction)
+                'border (plist-get opts :border))))
 
 (defun jetpacs-lazy-column (&rest children)
   "A scrollable column of CHILDREN."
@@ -2167,29 +2212,31 @@ first flagged child wins."
   "A horizontal divider."
   (jetpacs--node "divider"))
 
-(cl-defun jetpacs-card (children &key on-tap padding weight on-swipe
-                              swipe-start swipe-end
-                              width height fill-fraction border)
-  "An elevated card wrapping CHILDREN.
-WIDTH/HEIGHT fix the size (dp), FILL-FRACTION (0.0-1.0) sets a fraction
-of parent width, and BORDER is an `jetpacs-border' spec.
-SWIPE-START / SWIPE-END are `jetpacs-swipe-action' specs revealed by
-dragging the card from that side; a full swipe fires the action and the
-card springs back (push the updated list in the handler).  They win
-over the legacy single-action ON-SWIPE.  Old companions render no
-gesture, so a swipe action must also be reachable by tap or menu."
-  (jetpacs--node "card"
-              'children (vconcat children)
-              'on_tap on-tap
-              'on_swipe on-swipe
-              'swipe_start swipe-start
-              'swipe_end swipe-end
-              'padding padding
-              'weight weight
-              'width width
-              'height height
-              'fill_fraction fill-fraction
-              'border border))
+(defun jetpacs-card (&rest args)
+  "An elevated card wrapping child nodes.
+CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
+accepted — issue #9), optionally followed by keywords.  :width/:height fix
+the size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
+:border is an `jetpacs-border' spec.  :swipe-start / :swipe-end are
+`jetpacs-swipe-action' specs revealed by dragging the card from that side; a
+full swipe fires the action and the card springs back (push the updated list
+in the handler).  They win over the legacy single-action :on-swipe.  Old
+companions render no gesture, so a swipe action must also be reachable by tap
+or menu.  :on-tap, :padding and :weight as named."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
+    (jetpacs--node "card"
+                'children (vconcat (jetpacs--as-children (car split)))
+                'on_tap (plist-get opts :on-tap)
+                'on_swipe (plist-get opts :on-swipe)
+                'swipe_start (plist-get opts :swipe-start)
+                'swipe_end (plist-get opts :swipe-end)
+                'padding (plist-get opts :padding)
+                'weight (plist-get opts :weight)
+                'width (plist-get opts :width)
+                'height (plist-get opts :height)
+                'fill_fraction (plist-get opts :fill-fraction)
+                'border (plist-get opts :border))))
 
 (cl-defun jetpacs-swipe-action (icon label action &key color)
   "A per-side card swipe action (`jetpacs-card' :swipe-start / :swipe-end).
@@ -2686,6 +2733,128 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
               'year (and year (format "%s" year))
               'time time
               'padding padding))
+
+;; ─── Composites (pure elisp; no new wire node) ───────────────────────────────
+;;
+;; High-frequency shapes a Tier 1 would otherwise hand-roll every screen —
+;; each composes the primitive nodes above (like `jetpacs-list-item') and adds
+;; no `t' to the vocabulary, so the reference companion renders them with no
+;; change.  Grocy hand-wrote every one of these; these erase that boilerplate.
+
+(defun jetpacs--action-with-arg (action key value)
+  "Return a copy of ACTION (an action alist) with (KEY . VALUE) set in its `args'.
+ACTION nil returns nil.  Used by the composites that bake a chosen value
+into the dispatched action server-side (the stepper's target number, the
+segmented control's option) rather than relying on companion value-injection,
+so the handler receives the value already typed (a number stays a number)."
+  (when action
+    (let ((args (assq-delete-all key (copy-alist (alist-get 'args action))))
+          (base (assq-delete-all 'args (copy-alist action))))
+      (append base (list (cons 'args (append args (list (cons key value)))))))))
+
+(cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1) format)
+  "A −/+ stepper over the numeric VALUE.
+ID names the stepper (its −/+ buttons carry \"Decrease/Increase ID\"
+accessibility labels).  Tapping −/+ dispatches ON-CHANGE with the new,
+clamped number injected into its args as `value' — baked server-side, so
+the handler receives a real number, never a string.  MIN/MAX bound the
+value (MAX nil = unbounded) and STEP is the increment.  FORMAT, when given,
+is a function of the number returning the middle label (e.g. \"4 servings\");
+the default shows the bare number.  Composes an icon-button row (`remove' ·
+value · `add') sized to its content, so it sits as a compact cluster and
+never triggers the row flex trap; not a new wire node, so no companion
+support is needed."
+  (let ((dec (max min (- value step)))
+        (inc (if max (min max (+ value step)) (+ value step))))
+    (jetpacs-row
+     (jetpacs-icon-button "remove" (jetpacs--action-with-arg on-change 'value dec)
+                       :content-description (format "Decrease %s" id))
+     (jetpacs-text (if format (funcall format value) (number-to-string value)) 'title)
+     (jetpacs-icon-button "add" (jetpacs--action-with-arg on-change 'value inc)
+                       :content-description (format "Increase %s" id))
+     :align "center" :spacing 8 :fill nil)))
+
+(cl-defun jetpacs-segmented (id options on-change &key selected scroll spacing run-spacing)
+  "A single-select chip group over OPTIONS (the id-labelled filter row).
+Each option renders a `jetpacs-chip'; tapping one dispatches ON-CHANGE
+with its value injected into args as `value'.  SELECTED (a string) marks
+the current option.  An OPTIONS entry is a string (value = label) or a
+plist (:value :label :icon).  Wraps by default (a `flow_row', with :spacing
+and :run-spacing between/along rows); :scroll makes it a single-line
+horizontal rail (a `scroll_row') instead.  ID is carried for symmetry with
+the form field it usually drives.  Composes chips — not a new wire node, no
+companion support needed."
+  (ignore id)
+  (let ((chips (mapcar
+                (lambda (opt)
+                  (let* ((val   (if (stringp opt) opt (plist-get opt :value)))
+                         (label (if (stringp opt) opt (or (plist-get opt :label) val)))
+                         (icon  (and (not (stringp opt)) (plist-get opt :icon))))
+                    (jetpacs-chip label
+                               :selected (equal val selected)
+                               :icon icon
+                               :on-tap (jetpacs--action-with-arg on-change 'value val))))
+                options)))
+    (if scroll
+        (apply #'jetpacs-scroll-row chips)
+      (apply #'jetpacs-flow-row
+             (append chips (list :spacing spacing :run-spacing run-spacing))))))
+
+(cl-defun jetpacs-stat (value &key label icon color weight on-tap padding
+                              fill-fraction width)
+  "A metric tile: a large VALUE, an optional LABEL beneath and ICON above,
+with COLOR (a hex string or a Material theme token like \"primary\") tinting
+the value and icon.  WEIGHT lets several tiles share a row equally, while
+FILL-FRACTION (0.0-1.0 of the parent width) or WIDTH (dp) sizes a tile inside
+a wrapping `flow_row' of tiles; ON-TAP makes the tile tappable.  Composes an
+elevated `card' over a centered `column' — the dashboard/overview staple; not
+a new wire node."
+  (jetpacs-card
+   (list (apply #'jetpacs-column
+                (append (delq nil
+                              (list (and icon (jetpacs-icon icon :color color))
+                                    (jetpacs-text (format "%s" value) 'headline nil color)
+                                    (and label (jetpacs-text label 'caption))))
+                        (list :spacing 2 :align "center"))))
+   :weight weight :on-tap on-tap :padding (or padding 16)
+   :fill-fraction fill-fraction :width width))
+
+(cl-defun jetpacs-kv (label value &key spacing)
+  "A property/definition row: LABEL on the left in the muted `label' style,
+VALUE filling the width to its right.  VALUE is a string (rendered as `body'
+text) or a ready node used as-is — a string value is weighted so it wraps
+without pushing anything off-screen.  The detail-screen staple (`grocy--kv');
+composes a `row', not a new wire node.  SPACING is the label→value gap (dp)."
+  (jetpacs-row
+   (jetpacs-text label 'label)
+   (if (stringp value) (jetpacs-text value 'body 1) value)
+   :spacing (or spacing 8) :align "top"))
+
+(cl-defun jetpacs-sectioned-list (sections &key empty)
+  "A `lazy_column' assembled from SECTIONS with built-in empty handling.
+Each SECTION is a plist:
+  :header  a string (→ `jetpacs-section-header'), a ready node, or nil.
+  :items   the section's list of child nodes.
+  :empty   a node shown in place of the items when :items is empty.
+When every section is empty and EMPTY is given, that node (an
+`jetpacs-empty-state', typically) is shown alone.  Erases the
+`append'/`apply' + per-list empty-check plumbing every list screen repeats,
+completing the `jetpacs-list-item' story; composes a `lazy_column', not a
+new wire node."
+  (let ((any (cl-some (lambda (s) (plist-get s :items)) sections)))
+    (if (and (not any) empty)
+        (jetpacs-lazy-column empty)
+      (apply #'jetpacs-lazy-column
+             (cl-loop for s in sections
+                      for header = (plist-get s :header)
+                      for items  = (plist-get s :items)
+                      for sempty = (plist-get s :empty)
+                      append (delq nil
+                                   (cons (cond ((null header) nil)
+                                               ((stringp header)
+                                                (jetpacs-section-header header))
+                                               (t header))
+                                         (or items (and sempty (list sempty))))))))))
 
 ;; ─── Home-screen widgets ─────────────────────────────────────────────────────
 ;;
@@ -3415,6 +3584,62 @@ is not serializable."
    :object-type (or object-type 'alist)
    :null-object :null :false-object :false))
 
+;; ─── Tier-1 test helpers ─────────────────────────────────────────────────────
+;; Every Tier 1 re-derived these two in a private test library (grocy had
+;; `grocy-test--collect-text' and `grocy-test--view-clean'); ship them so an
+;; app's ERT suite is a couple of lines, not a helper file.
+
+(defconst jetpacs-lint--visible-text-keys '(text label title caption hint)
+  "Node keys whose string value is user-visible on-screen text.
+The set `jetpacs-test-visible-text' harvests.")
+
+(defun jetpacs-lint--collect-visible (node collect)
+  "Call COLLECT on each user-visible string in NODE, depth-first."
+  (when (jetpacs-lint--alist-p node)
+    (dolist (pair node)
+      (let ((key (car pair)) (val (cdr pair)))
+        (cond
+         ((and (memq key jetpacs-lint--visible-text-keys) (stringp val))
+          (funcall collect val))
+         ((jetpacs-lint--node-seq-p val)
+          (dolist (child (append val nil))
+            (jetpacs-lint--collect-visible child collect)))
+         ((jetpacs-lint--alist-p val)
+          (jetpacs-lint--collect-visible val collect)))))))
+
+;;;###autoload
+(defun jetpacs-test-visible-text (spec)
+  "Return the user-visible text strings in SPEC, in depth-first tree order.
+Harvests the string value of every visible-text key (`text', `label',
+`title', `caption', `hint') across the node tree, so a Tier 1 can assert its
+view shows (or omits) a string without a companion — e.g.
+\(should (member \"Milk\" (jetpacs-test-visible-text view))).  An additive
+node's self-describing fallback (the `badge' label child) may repeat its
+label; membership tests are unaffected."
+  (let (out)
+    (jetpacs-lint--collect-visible spec (lambda (s) (push s out)))
+    (nreverse out)))
+
+;;;###autoload
+(defun jetpacs-test-view-ok (spec)
+  "Assert SPEC is a wire-valid view: lint-error-free AND serializable.
+Signals a descriptive `error' listing the lint errors, or re-signals the
+serialization error, on failure; returns t on success.  The one-call view
+check for a Tier 1's ERT suite — call it bare, and its failure fails the
+test: (jetpacs-test-view-ok (my-app-view nil)).  Warnings (the forward-compat
+`warning:'-prefixed problems, e.g. the row flex-trap heuristic) do not fail
+it — inspect the full list with `jetpacs-lint-spec' when you want those too."
+  (let ((errors (cl-remove-if
+                 (lambda (p) (string-prefix-p "warning: " (cdr p)))
+                 (jetpacs-lint-spec spec))))
+    (when errors
+      (error "jetpacs-test-view-ok: %d lint error(s): %s"
+             (length errors)
+             (mapconcat (lambda (p) (format "%s @ %S" (cdr p) (car p)))
+                        errors "; ")))
+    (jetpacs-render-to-json spec)       ; signals on an unserializable tree
+    t))
+
 ;; ─── On-push guard (opt-in) ──────────────────────────────────────────────────
 
 (defcustom jetpacs-lint-on-push nil
@@ -3910,7 +4135,7 @@ JSON-array string and non-string members are discarded."
 ;; owned, so `jetpacs-app-unregister' disposes them.
 
 (cl-defstruct (jetpacs-form (:constructor jetpacs--make-form) (:copier nil))
-  ns (gen 0) owner)
+  ns (gen 0) owner errors)   ; ERRORS: alist of field-key -> inline error string
 
 (defvar jetpacs--forms (make-hash-table :test 'equal)
   "Registry of \"OWNER\\0NS\" -> `jetpacs-form'.")
@@ -3943,11 +4168,12 @@ The GEN suffix rotates on `jetpacs-form-reset'."
     (unless (jetpacs-ui-state id) (jetpacs-ui-state-put id value))))
 
 (defun jetpacs-form-reset (form)
-  "Clear FORM's field state and subscriptions and rotate its generation.
+  "Clear FORM's field state, inline errors, and subscriptions and rotate gen.
 The rotation empties the on-device widgets."
   (let ((prefix (concat (jetpacs-form-ns form) "-")))
     (jetpacs-ui-state-clear prefix)
     (jetpacs-on-state-change-clear prefix))
+  (setf (jetpacs-form-errors form) nil)
   (cl-incf (jetpacs-form-gen form)))
 
 (defun jetpacs-form-dispose (form)
@@ -3963,6 +4189,176 @@ The rotation empties the on-device widgets."
                                  (push form forms)))
              jetpacs--forms)
     forms))
+
+;; ─── Declarative form specs (typed, validated) ───────────────────────────────
+;; Grocy's seven dialogs each repeated the same shape: per-field text-inputs, a
+;; submit handler that reads each field, parses (string->number), validates, and
+;; resets.  A field-spec collapses that: declare the fields once, and get back
+;; (a) rendered input nodes and (b) a submit that hands the handler a *parsed,
+;; typed, validated* alist — invalid input paints inline field errors and never
+;; dispatches.  Builds on the form registry above; no new wire node.
+
+(defvar jetpacs-form-refresh-function nil
+  "When non-nil, a nullary function the form layer calls to re-render the
+showing surface: after a failed submit stores inline field errors, and after a
+date field's picker updates its value.  The shell points this at
+`jetpacs-shell-push'; nil (no shell) just leaves the state for the next render.")
+
+(cl-defun jetpacs-field (id type &key label required validate options hint multi)
+  "A field spec for `jetpacs-form-render' / `jetpacs-form-submit'.
+ID names the field (a symbol or string); the parsed result keys on it as a
+symbol.  TYPE is one of the symbols `text', `number', `decimal', `date',
+`enum', or `bool'.  LABEL is the field label; REQUIRED demands a non-empty
+value; VALIDATE is a function of the *parsed* value returning an error string
+\(or nil for OK); OPTIONS are the `enum' choices (strings); HINT is the input
+placeholder; MULTI makes an `enum' multi-select (its value is a list).
+Returns a plain plist — a bare `(:id … :type …)' plist works too."
+  (list :id id :type type :label label :required required :validate validate
+        :options options :hint hint :multi multi))
+
+(defun jetpacs-form--key (field)
+  "The string field key of FIELD (its :id)."
+  (format "%s" (plist-get field :id)))
+
+(defun jetpacs-form--fid (form field)
+  "The current widget id for FIELD in FORM (gen-suffixed)."
+  (jetpacs-form-field-id form (jetpacs-form--key field)))
+
+(defun jetpacs-form--coerce (type str label)
+  "Coerce trimmed, non-empty STR to TYPE; return (VALUE . ERROR)."
+  (pcase type
+    ('number
+     (if (string-match-p "\\`[+-]?[0-9]+\\'" str)
+         (cons (string-to-number str) nil)
+       (cons nil (format "%s must be a whole number" label))))
+    ('decimal
+     (if (string-match-p "\\`[+-]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\'" str)
+         (cons (string-to-number str) nil)
+       (cons nil (format "%s must be a number" label))))
+    ('date
+     (if (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" str)
+         (cons str nil)
+       (cons nil (format "%s must be a date (YYYY-MM-DD)" label))))
+    (_ (cons str nil))))                ; text
+
+(defun jetpacs-form--parse-field (form field)
+  "Return (VALUE . ERROR) for FIELD read from FORM.
+Reads the field's raw ui-state, coerces by :type, then applies :required and
+:validate.  ERROR nil means the typed VALUE is good."
+  (let* ((type     (plist-get field :type))
+         (label    (or (plist-get field :label) (jetpacs-form--key field)))
+         (required (plist-get field :required))
+         (validate (plist-get field :validate))
+         (fid      (jetpacs-form--fid form field))
+         (res
+          (pcase type
+            ('enum
+             (let ((sel (jetpacs-ui-state-list fid)))
+               (if (null sel)
+                   (cons nil (and required (format "%s is required" label)))
+                 (cons (if (plist-get field :multi) sel (car sel)) nil))))
+            ('bool
+             (cons (equal "true" (jetpacs-ui-state fid)) nil))
+            (_                          ; text/number/decimal/date
+             (let* ((raw (jetpacs-ui-state fid))
+                    (str (and (stringp raw) (string-trim raw))))
+               (if (or (null str) (string-empty-p str))
+                   (cons nil (and required (format "%s is required" label)))
+                 (jetpacs-form--coerce type str label)))))))
+    (cond
+     ((cdr res) res)                                        ; already errored
+     ((and (null (car res)) (not (eq type 'bool)) (not required)) res) ; absent, optional
+     (validate
+      (let ((msg (condition-case e (funcall validate (car res))
+                   (error (error-message-string e)))))
+        (if (stringp msg) (cons (car res) msg) res)))
+     (t res))))
+
+(defun jetpacs-form--field-node (form field)
+  "Render one FIELD of FORM as an input node, seeded and showing its error."
+  (let* ((type  (plist-get field :type))
+         (label (plist-get field :label))
+         (hint  (plist-get field :hint))
+         (fid   (jetpacs-form--fid form field))
+         (val   (jetpacs-ui-state fid))
+         (err   (cdr (assoc (jetpacs-form--key field) (jetpacs-form-errors form))))
+         (input
+          (pcase type
+            ('number  (jetpacs-text-input fid :value val :label label :hint hint
+                                       :keyboard "number"))
+            ('decimal (jetpacs-text-input fid :value val :label label :hint hint
+                                       :keyboard "decimal"))
+            ('bool    (jetpacs-checkbox fid :checked (equal "true" val) :label label))
+            ('date
+             (apply #'jetpacs-column
+                    (delq nil
+                          (list (and label (jetpacs-text label 'label))
+                                (jetpacs-date-button
+                                 (if (and (stringp val) (not (string-empty-p val)))
+                                     val (or hint "Pick a date"))
+                                 (jetpacs-action "jetpacs.form.set"
+                                              :args `((id . ,fid)))
+                                 :value (and (stringp val) val))))))
+            ('enum
+             (apply #'jetpacs-column
+                    (delq nil
+                          (list (and label (jetpacs-text label 'label))
+                                (jetpacs-enum-list
+                                 fid (mapcar (lambda (o)
+                                               (if (stringp o) o
+                                                 (or (plist-get o :value)
+                                                     (format "%s" o))))
+                                             (plist-get field :options))
+                                 :value (jetpacs-ui-state-list fid)
+                                 :multi-select (plist-get field :multi))))))
+            (_        (jetpacs-text-input fid :value val :label label :hint hint)))))
+    (if err
+        (jetpacs-column input (jetpacs-text err 'caption nil "error") :spacing 2)
+      input)))
+
+(defun jetpacs-form-render (form fields)
+  "Render FIELDS (a list of `jetpacs-field' specs) for FORM.
+Returns a list of input nodes — seeded from current values and painting any
+inline errors a failed submit stored — to splice into your form column.  Pair
+it with a submit button dispatching an action built from `jetpacs-form-submit'."
+  (mapcar (lambda (field) (jetpacs-form--field-node form field)) fields))
+
+(defun jetpacs-form-submit (form fields handler)
+  "Return an `event.action' handler that submits FORM's FIELDS through HANDLER.
+The returned function parses and validates every field; on **success** it
+resets FORM (clearing the on-device widgets) and calls
+\(funcall HANDLER VALUES ARGS), where VALUES is the parsed, typed alist
+\((ID . VALUE) …) keyed by each field's :id as a symbol and ARGS is the submit
+action's own args (context the app baked in).  On **failure** it stores the
+inline field errors, re-renders via `jetpacs-form-refresh-function', and never
+calls HANDLER.  Register it: (jetpacs-defaction \"app.save\"
+  (jetpacs-form-submit form fields (lambda (values _args) …)))."
+  (lambda (args _payload)
+    (let (values errors)
+      (dolist (field fields)
+        (let ((parsed (jetpacs-form--parse-field form field)))
+          (if (cdr parsed)
+              (push (cons (jetpacs-form--key field) (cdr parsed)) errors)
+            (push (cons (intern (jetpacs-form--key field)) (car parsed)) values))))
+      (if errors
+          (progn
+            (setf (jetpacs-form-errors form) (nreverse errors))
+            (when (functionp jetpacs-form-refresh-function)
+              (funcall jetpacs-form-refresh-function)))
+        ;; Clean: reset first (so any push the handler makes shows a fresh
+        ;; form), then hand the handler the already-parsed values.
+        (jetpacs-form-reset form)
+        (funcall handler (nreverse values) args)))))
+
+;; Date fields can't ride `state.changed' (a `date_button' dispatches an
+;; action), so their picker writes the chosen date into ui-state through this
+;; core action, then refreshes so the button re-renders with the value.
+(jetpacs-defaction "jetpacs.form.set"
+  (lambda (args _)
+    (let ((id (alist-get 'id args)) (value (alist-get 'value args)))
+      (when (and id value) (jetpacs-ui-state-put id value)))
+    (when (functionp jetpacs-form-refresh-function)
+      (funcall jetpacs-form-refresh-function))))
 
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."
@@ -6463,6 +6859,12 @@ section.  Runs inside an action handler, so any prompt is bridged."
   "Ordered list of (NAME . PLIST) registered shell views.
 Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 
+(defvar jetpacs-shell--route-params (make-hash-table :test 'equal)
+  "Map of view NAME -> its current route-param alist (see the Route params
+section).  Set by `jetpacs-shell-navigate'; a 2-arg view builder receives the
+alist as its second argument, and any builder can read it via
+`jetpacs-route-param'.")
+
 (declare-function jetpacs-spec--compile "jetpacs-spec")
 ;; Declarative :spec views are compiled by jetpacs-spec.el, which requires this
 ;; file; autoload avoids the load cycle (in the bundle the real function is
@@ -6471,8 +6873,12 @@ Managed by `jetpacs-shell-define-view'; kept sorted by :order.")
 
 (cl-defun jetpacs-shell-define-view (name &key builder spec tab when overlay (order 100))
   "Register (or replace) shell view NAME.
-BUILDER is a function of one argument (snackbar text or nil) returning
-the view's scaffold alist.  SPEC is a declarative data-view plist compiled
+BUILDER is a function of the snackbar text (or nil) returning the view's
+scaffold alist.  A BUILDER that declares a *second* argument is a
+param-routed detail: it receives this view's current route-param alist
+\(set by `jetpacs-shell-navigate'), so the screen is a pure function of its
+params rather than of a module state var.  SPEC is a declarative data-view
+plist compiled
 by jetpacs-spec.el (see docs/BINDING.md) — an alternative to BUILDER;
 exactly one of the two is required.  TAB, when non-nil, is a plist
 \(:icon :label :badge) placing the view in the bottom bar; landing on a
@@ -6501,6 +6907,7 @@ the current tab).  ORDER sorts views and bottom-bar items."
 (defun jetpacs-shell-remove-view (name)
   "Unregister shell view NAME."
   (setq jetpacs-shell-views (assoc-delete-all name jetpacs-shell-views))
+  (remhash name jetpacs-shell--route-params)
   (jetpacs-shell--schedule-repush))
 
 (defvar jetpacs-shell-view-filter-function nil
@@ -6580,6 +6987,53 @@ Note: the companion re-shows a snackbar only when the text *changes*,
 so two identical messages back-to-back display once."
   (setq jetpacs-shell--snackbar text))
 
+;; ─── Route params (parameterized navigation) ─────────────────────────────────
+;; A detail screen used to need a module state var plus a set-the-var-then-
+;; switch action (grocy--selected-product-id + a `grocy.open-product' handler
+;; that setq'd it and pushed :switch-to).  Route params replace that: navigate
+;; carries an alist to the target view, whose builder is then a pure function
+;; of its params — no per-app state var, no set-and-switch action.
+;; (`jetpacs-shell--route-params' is declared up by the view registry so
+;; `jetpacs-shell-remove-view' can clean it.)
+
+(defun jetpacs-shell-route-params (&optional name)
+  "The current route-param alist for view NAME (default: the active view).
+Handy as an :overlay predicate — a param-routed detail is active exactly
+while its params are set: :overlay (lambda () (jetpacs-shell-route-params \"v\"))."
+  (gethash (or name (jetpacs-shell--active-view)) jetpacs-shell--route-params))
+
+(defun jetpacs-route-param (key &optional name)
+  "The value of route param KEY for view NAME (default: the active view)."
+  (alist-get key (jetpacs-shell-route-params name)))
+
+(cl-defun jetpacs-shell-navigate (view &optional params)
+  "Navigate to VIEW carrying route PARAMS (an alist), pushing so the
+companion lands on it.  VIEW's builder receives PARAMS as its second
+argument when it declares one (else reads them via `jetpacs-route-param');
+this replaces the module-state-var + set-and-switch drill-in idiom.  Pair
+with an :overlay predicate that fires while the params are set, so a fresh
+push (reconnect) still lands on the detail; switching to a tab clears every
+route (`jetpacs-shell--clear-routes-on-tab'), dismissing the drill-in."
+  (puthash view params jetpacs-shell--route-params)
+  (jetpacs-shell-push nil :switch-to view))
+
+(defun jetpacs-shell-clear-route (view)
+  "Clear VIEW's route params and push — the explicit back for a param route."
+  (remhash view jetpacs-shell--route-params)
+  (jetpacs-shell-push))
+
+(defun jetpacs-shell--builder-wants-params (fn)
+  "Non-nil when builder FN accepts a second (route-params) argument."
+  (let ((max (cdr (func-arity fn))))
+    (or (eq max 'many) (and (integerp max) (>= max 2)))))
+
+(defun jetpacs-shell--clear-routes-on-tab (name)
+  "Drop all route params when the user lands on tab NAME.
+Registered on `jetpacs-shell-view-switched-hook', so leaving a param-routed
+detail for a bottom-bar tab dismisses it (its :overlay stops firing)."
+  (when (jetpacs-shell--tab-p name)
+    (clrhash jetpacs-shell--route-params)))
+
 ;; ─── Hooks (the app seams) ───────────────────────────────────────────────────
 
 (defvar jetpacs-shell-view-switched-hook nil
@@ -6587,6 +7041,9 @@ so two identical messages back-to-back display once."
 Runs before the shell's own tab bookkeeping, for both companion-local
 switches (`view.switched') and Emacs-driven tab pushes — but never for
 overlay views.  Modules reset their drill-in state here.")
+
+;; Landing on a tab dismisses any param-routed detail drill-in.
+(add-hook 'jetpacs-shell-view-switched-hook #'jetpacs-shell--clear-routes-on-tab)
 
 (defvar jetpacs-shell-refresh-hook nil
   "Hook run before a push that must bypass caches.
@@ -6798,7 +7255,12 @@ keeps updating and the broken view *shows* its error."
   (condition-case err
       (if (plist-get plist :spec)
           (jetpacs-spec--compile name (plist-get plist :spec) snackbar)
-        (funcall (plist-get plist :builder) snackbar))
+        (let ((builder (plist-get plist :builder)))
+          ;; A builder that declares a second argument is a param-routed
+          ;; detail — hand it this view's current route params.
+          (if (jetpacs-shell--builder-wants-params builder)
+              (funcall builder snackbar (gethash name jetpacs-shell--route-params))
+            (funcall builder snackbar))))
     (error
      (jetpacs-shell-nav-view
       (capitalize name)
@@ -6806,6 +7268,38 @@ keeps updating and the broken view *shows* its error."
        (jetpacs-text (format "Error building view \"%s\"" name) 'title)
        (jetpacs-text (error-message-string err) 'body))
       :snackbar snackbar))))
+
+(declare-function jetpacs-lint-spec "jetpacs-lint")
+
+;;;###autoload
+(defun jetpacs-lint-views (&optional errors-only)
+  "Lint every registered shell view by building and checking it.
+Builds each view (a builder crash is caught and reported, not degraded), lints
+the result, and returns an alist of (VIEW-NAME . PROBLEMS) for the views with
+problems — nil when all clean.  The one-line CI gate for an app:
+\(should-not (jetpacs-lint-views t)).  With ERRORS-ONLY non-nil, `warning:'-
+prefixed problems (the forward-compat heuristics) are dropped, leaving only
+structural errors."
+  (let (out)
+    (dolist (entry jetpacs-shell-views)
+      (let* ((name (car entry)) (plist (cdr entry))
+             (problems
+              (condition-case err
+                  (let ((spec (if (plist-get plist :spec)
+                                  (jetpacs-spec--compile name (plist-get plist :spec) nil)
+                                (let ((b (plist-get plist :builder)))
+                                  (if (jetpacs-shell--builder-wants-params b)
+                                      (funcall b nil (gethash name jetpacs-shell--route-params))
+                                    (funcall b nil))))))
+                    (jetpacs-lint-spec spec))
+                (error (list (cons nil (format "build error: %s"
+                                               (error-message-string err))))))))
+        (when errors-only
+          (setq problems (cl-remove-if
+                          (lambda (p) (string-prefix-p "warning: " (cdr p)))
+                          problems)))
+        (when problems (push (cons name problems) out))))
+    (nreverse out)))
 
 (defvar jetpacs-shell--repush-timer nil)
 
@@ -6877,6 +7371,11 @@ Safe on any hook: extra arguments are ignored."
 
 ;; A tap that mutates a buffer re-pushes the showing surface through here.
 (setq jetpacs-buffer-refresh-function #'jetpacs-shell-push)
+
+;; A failed form submit (inline errors) or a date-picker update re-renders
+;; the showing surface through here (jetpacs-surfaces' form layer).
+(defvar jetpacs-form-refresh-function)
+(setq jetpacs-form-refresh-function #'jetpacs-shell-push)
 
 ;; Settings feedback lands in the snackbar; setting changes re-render.
 (defvar jetpacs-settings-notify-function)

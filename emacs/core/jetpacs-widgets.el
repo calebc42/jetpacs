@@ -28,17 +28,63 @@ by sub-specs like actions, drawer items, and top bars that carry no
 
 ;; ─── Core & Layout ───────────────────────────────────────────────────────────
 
-(defun jetpacs-text (text &optional style weight color selectable max-lines padding)
-  "A text node. STYLE is title/headline/body/caption/label.
-WEIGHT is the layout weight. COLOR is a hex string."
-  (jetpacs--node "text"
-              'text text
-              'style (and style (format "%s" style))
-              'weight weight
-              'color color
-              'selectable (and selectable t)
-              'max_lines max-lines
-              'padding padding))
+(defun jetpacs--children-and-opts (args)
+  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
+Child nodes are alists, never keywords, so the first keyword in ARGS
+marks the start of a trailing options plist.  Lets the `&rest'-children
+constructors take options without breaking `(jetpacs-row a b c)' callers."
+  (let ((i (cl-position-if #'keywordp args)))
+    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
+      (cons args nil))))
+
+(defun jetpacs--node-p (x)
+  "Non-nil when X looks like a widget node or sub-spec: a proper alist whose
+every element is a cons.  A real node's own pairs are dotted (`(t . \"row\")'),
+so a node is never itself a list *of* nodes — which is what lets
+`jetpacs--as-children' tell a single node from a list of children."
+  (and (consp x) (proper-list-p x) (cl-every #'consp x)))
+
+(defun jetpacs--as-children (args)
+  "Normalize container ARGS to a flat child list, dropping nils.
+Accepts the nodes as `&rest' — `(NODE NODE …)' — or the legacy single
+list-of-nodes argument — `((NODE NODE …))' (or a lone nil for none): a
+one-element ARGS whose sole element is itself a list of nodes (or nil) is
+unwrapped.  So `(jetpacs-card (list a b))' and `(jetpacs-card a b)' mean the
+same thing — the children-API consistency fix (issue #9)."
+  (let ((kids (if (and (consp args) (null (cdr args))
+                       (let ((only (car args)))
+                         (or (null only)
+                             (and (proper-list-p only)
+                                  (cl-every #'jetpacs--node-p only)))))
+                  (car args)
+                args)))
+    (remq nil kids)))
+
+(defun jetpacs-text (text &rest args)
+  "A text node whose options are positional or keyword (keywords win).
+ARGS is STYLE WEIGHT COLOR SELECTABLE MAX-LINES PADDING positionally, or the
+same names as trailing keywords :style :weight :color :selectable :max-lines
+:padding — so a color needs no positional nils: `(jetpacs-text s :color
+\"#fff\")' rather than `(jetpacs-text s nil nil \"#fff\")' (issue #10).
+STYLE is title/headline/body/caption/label; WEIGHT is the layout weight;
+COLOR is a hex string."
+  (let* ((split (jetpacs--children-and-opts args))
+         (pos  (car split))
+         (opts (cdr split))
+         (style      (or (plist-get opts :style)      (nth 0 pos)))
+         (weight     (or (plist-get opts :weight)     (nth 1 pos)))
+         (color      (or (plist-get opts :color)      (nth 2 pos)))
+         (selectable (or (plist-get opts :selectable) (nth 3 pos)))
+         (max-lines  (or (plist-get opts :max-lines)  (nth 4 pos)))
+         (padding    (or (plist-get opts :padding)    (nth 5 pos))))
+    (jetpacs--node "text"
+                'text text
+                'style (and style (format "%s" style))
+                'weight weight
+                'color color
+                'selectable (and selectable t)
+                'max_lines max-lines
+                'padding padding)))
 
 (cl-defun jetpacs-markup (text &key syntax style padding)
   "A read-only TEXT node with optional client-side highlighting.
@@ -82,15 +128,6 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
               'bg bg
               'on_tap on-tap
               'mono (and mono t)))
-
-(defun jetpacs--children-and-opts (args)
-  "Split ARGS into (CHILDREN . OPTS) at the first keyword in ARGS.
-Child nodes are alists, never keywords, so the first keyword in ARGS
-marks the start of a trailing options plist.  Lets the `&rest'-children
-constructors take options without breaking `(jetpacs-row a b c)' callers."
-  (let ((i (cl-position-if #'keywordp args)))
-    (if i (cons (cl-subseq args 0 i) (cl-subseq args i))
-      (cons args nil))))
 
 (defun jetpacs-row (&rest args)
   "A horizontal row of child nodes.
@@ -166,42 +203,50 @@ inside a row fills it and pushes the later siblings off-screen — give it
 Pass as the :border of `jetpacs-box' / `jetpacs-surface' / `jetpacs-card'."
   (jetpacs--node nil 'width width 'color color))
 
-(cl-defun jetpacs-box (children &key alignment padding weight on-tap
-                             width height fill-fraction border)
-  "A Box wrapping CHILDREN.
-WIDTH/HEIGHT fix the box size (dp); FILL-FRACTION (0.0-1.0) sets it to a
-fraction of the parent width; BORDER is an `jetpacs-border' spec."
-  (jetpacs--node "box"
-              'children (vconcat children)
-              'alignment alignment
-              'padding padding
-              'weight weight
-              'on_tap on-tap
-              'width width
-              'height height
-              'fill_fraction fill-fraction
-              'border border))
+(defun jetpacs-box (&rest args)
+  "A Box wrapping child nodes.
+CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
+accepted — issue #9), optionally followed by keywords: :alignment,
+:padding, :weight, :on-tap, :width, :height, :fill-fraction (0.0-1.0 of
+the parent width), and :border (an `jetpacs-border' spec).  WIDTH/HEIGHT fix
+the box size (dp)."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
+    (jetpacs--node "box"
+                'children (vconcat (jetpacs--as-children (car split)))
+                'alignment (plist-get opts :alignment)
+                'padding (plist-get opts :padding)
+                'weight (plist-get opts :weight)
+                'on_tap (plist-get opts :on-tap)
+                'width (plist-get opts :width)
+                'height (plist-get opts :height)
+                'fill_fraction (plist-get opts :fill-fraction)
+                'border (plist-get opts :border))))
 
-(cl-defun jetpacs-surface (children &key color shape elevation padding fill
-                                 width height fill-fraction border)
-  "A Surface wrapping CHILDREN.
-COLOR is a hex string or a theme token (\"primary\", \"surface_container\",
+(defun jetpacs-surface (&rest args)
+  "A Surface wrapping child nodes.
+CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
+accepted — issue #9), optionally followed by keywords.  :color is a hex
+string or a theme token (\"primary\", \"surface_container\",
 \"primary_container\", …) that adapts to the device's light/dark theme.
-SHAPE is \"rounded\", \"rounded_small\", or \"circle\".  FILL stretches the
-surface to full width (e.g. zebra rows in a list).  WIDTH/HEIGHT fix the
-size (dp), FILL-FRACTION (0.0-1.0) sets a fraction of parent width, and
-BORDER is an `jetpacs-border' spec stroked with SHAPE."
-  (jetpacs--node "surface"
-              'children (vconcat children)
-              'color color
-              'shape shape
-              'elevation elevation
-              'padding padding
-              'fill (and fill t)
-              'width width
-              'height height
-              'fill_fraction fill-fraction
-              'border border))
+:shape is \"rounded\", \"rounded_small\", or \"circle\".  :fill stretches the
+surface to full width (e.g. zebra rows in a list).  :width/:height fix the
+size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
+:border is an `jetpacs-border' spec stroked with :shape.  :elevation and
+:padding as named."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
+    (jetpacs--node "surface"
+                'children (vconcat (jetpacs--as-children (car split)))
+                'color (plist-get opts :color)
+                'shape (plist-get opts :shape)
+                'elevation (plist-get opts :elevation)
+                'padding (plist-get opts :padding)
+                'fill (and (plist-get opts :fill) t)
+                'width (plist-get opts :width)
+                'height (plist-get opts :height)
+                'fill_fraction (plist-get opts :fill-fraction)
+                'border (plist-get opts :border))))
 
 (defun jetpacs-lazy-column (&rest children)
   "A scrollable column of CHILDREN."
@@ -224,29 +269,31 @@ first flagged child wins."
   "A horizontal divider."
   (jetpacs--node "divider"))
 
-(cl-defun jetpacs-card (children &key on-tap padding weight on-swipe
-                              swipe-start swipe-end
-                              width height fill-fraction border)
-  "An elevated card wrapping CHILDREN.
-WIDTH/HEIGHT fix the size (dp), FILL-FRACTION (0.0-1.0) sets a fraction
-of parent width, and BORDER is an `jetpacs-border' spec.
-SWIPE-START / SWIPE-END are `jetpacs-swipe-action' specs revealed by
-dragging the card from that side; a full swipe fires the action and the
-card springs back (push the updated list in the handler).  They win
-over the legacy single-action ON-SWIPE.  Old companions render no
-gesture, so a swipe action must also be reachable by tap or menu."
-  (jetpacs--node "card"
-              'children (vconcat children)
-              'on_tap on-tap
-              'on_swipe on-swipe
-              'swipe_start swipe-start
-              'swipe_end swipe-end
-              'padding padding
-              'weight weight
-              'width width
-              'height height
-              'fill_fraction fill-fraction
-              'border border))
+(defun jetpacs-card (&rest args)
+  "An elevated card wrapping child nodes.
+CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
+accepted — issue #9), optionally followed by keywords.  :width/:height fix
+the size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
+:border is an `jetpacs-border' spec.  :swipe-start / :swipe-end are
+`jetpacs-swipe-action' specs revealed by dragging the card from that side; a
+full swipe fires the action and the card springs back (push the updated list
+in the handler).  They win over the legacy single-action :on-swipe.  Old
+companions render no gesture, so a swipe action must also be reachable by tap
+or menu.  :on-tap, :padding and :weight as named."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
+    (jetpacs--node "card"
+                'children (vconcat (jetpacs--as-children (car split)))
+                'on_tap (plist-get opts :on-tap)
+                'on_swipe (plist-get opts :on-swipe)
+                'swipe_start (plist-get opts :swipe-start)
+                'swipe_end (plist-get opts :swipe-end)
+                'padding (plist-get opts :padding)
+                'weight (plist-get opts :weight)
+                'width (plist-get opts :width)
+                'height (plist-get opts :height)
+                'fill_fraction (plist-get opts :fill-fraction)
+                'border (plist-get opts :border))))
 
 (cl-defun jetpacs-swipe-action (icon label action &key color)
   "A per-side card swipe action (`jetpacs-card' :swipe-start / :swipe-end).
@@ -743,6 +790,128 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
               'year (and year (format "%s" year))
               'time time
               'padding padding))
+
+;; ─── Composites (pure elisp; no new wire node) ───────────────────────────────
+;;
+;; High-frequency shapes a Tier 1 would otherwise hand-roll every screen —
+;; each composes the primitive nodes above (like `jetpacs-list-item') and adds
+;; no `t' to the vocabulary, so the reference companion renders them with no
+;; change.  Grocy hand-wrote every one of these; these erase that boilerplate.
+
+(defun jetpacs--action-with-arg (action key value)
+  "Return a copy of ACTION (an action alist) with (KEY . VALUE) set in its `args'.
+ACTION nil returns nil.  Used by the composites that bake a chosen value
+into the dispatched action server-side (the stepper's target number, the
+segmented control's option) rather than relying on companion value-injection,
+so the handler receives the value already typed (a number stays a number)."
+  (when action
+    (let ((args (assq-delete-all key (copy-alist (alist-get 'args action))))
+          (base (assq-delete-all 'args (copy-alist action))))
+      (append base (list (cons 'args (append args (list (cons key value)))))))))
+
+(cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1) format)
+  "A −/+ stepper over the numeric VALUE.
+ID names the stepper (its −/+ buttons carry \"Decrease/Increase ID\"
+accessibility labels).  Tapping −/+ dispatches ON-CHANGE with the new,
+clamped number injected into its args as `value' — baked server-side, so
+the handler receives a real number, never a string.  MIN/MAX bound the
+value (MAX nil = unbounded) and STEP is the increment.  FORMAT, when given,
+is a function of the number returning the middle label (e.g. \"4 servings\");
+the default shows the bare number.  Composes an icon-button row (`remove' ·
+value · `add') sized to its content, so it sits as a compact cluster and
+never triggers the row flex trap; not a new wire node, so no companion
+support is needed."
+  (let ((dec (max min (- value step)))
+        (inc (if max (min max (+ value step)) (+ value step))))
+    (jetpacs-row
+     (jetpacs-icon-button "remove" (jetpacs--action-with-arg on-change 'value dec)
+                       :content-description (format "Decrease %s" id))
+     (jetpacs-text (if format (funcall format value) (number-to-string value)) 'title)
+     (jetpacs-icon-button "add" (jetpacs--action-with-arg on-change 'value inc)
+                       :content-description (format "Increase %s" id))
+     :align "center" :spacing 8 :fill nil)))
+
+(cl-defun jetpacs-segmented (id options on-change &key selected scroll spacing run-spacing)
+  "A single-select chip group over OPTIONS (the id-labelled filter row).
+Each option renders a `jetpacs-chip'; tapping one dispatches ON-CHANGE
+with its value injected into args as `value'.  SELECTED (a string) marks
+the current option.  An OPTIONS entry is a string (value = label) or a
+plist (:value :label :icon).  Wraps by default (a `flow_row', with :spacing
+and :run-spacing between/along rows); :scroll makes it a single-line
+horizontal rail (a `scroll_row') instead.  ID is carried for symmetry with
+the form field it usually drives.  Composes chips — not a new wire node, no
+companion support needed."
+  (ignore id)
+  (let ((chips (mapcar
+                (lambda (opt)
+                  (let* ((val   (if (stringp opt) opt (plist-get opt :value)))
+                         (label (if (stringp opt) opt (or (plist-get opt :label) val)))
+                         (icon  (and (not (stringp opt)) (plist-get opt :icon))))
+                    (jetpacs-chip label
+                               :selected (equal val selected)
+                               :icon icon
+                               :on-tap (jetpacs--action-with-arg on-change 'value val))))
+                options)))
+    (if scroll
+        (apply #'jetpacs-scroll-row chips)
+      (apply #'jetpacs-flow-row
+             (append chips (list :spacing spacing :run-spacing run-spacing))))))
+
+(cl-defun jetpacs-stat (value &key label icon color weight on-tap padding
+                              fill-fraction width)
+  "A metric tile: a large VALUE, an optional LABEL beneath and ICON above,
+with COLOR (a hex string or a Material theme token like \"primary\") tinting
+the value and icon.  WEIGHT lets several tiles share a row equally, while
+FILL-FRACTION (0.0-1.0 of the parent width) or WIDTH (dp) sizes a tile inside
+a wrapping `flow_row' of tiles; ON-TAP makes the tile tappable.  Composes an
+elevated `card' over a centered `column' — the dashboard/overview staple; not
+a new wire node."
+  (jetpacs-card
+   (list (apply #'jetpacs-column
+                (append (delq nil
+                              (list (and icon (jetpacs-icon icon :color color))
+                                    (jetpacs-text (format "%s" value) 'headline nil color)
+                                    (and label (jetpacs-text label 'caption))))
+                        (list :spacing 2 :align "center"))))
+   :weight weight :on-tap on-tap :padding (or padding 16)
+   :fill-fraction fill-fraction :width width))
+
+(cl-defun jetpacs-kv (label value &key spacing)
+  "A property/definition row: LABEL on the left in the muted `label' style,
+VALUE filling the width to its right.  VALUE is a string (rendered as `body'
+text) or a ready node used as-is — a string value is weighted so it wraps
+without pushing anything off-screen.  The detail-screen staple (`grocy--kv');
+composes a `row', not a new wire node.  SPACING is the label→value gap (dp)."
+  (jetpacs-row
+   (jetpacs-text label 'label)
+   (if (stringp value) (jetpacs-text value 'body 1) value)
+   :spacing (or spacing 8) :align "top"))
+
+(cl-defun jetpacs-sectioned-list (sections &key empty)
+  "A `lazy_column' assembled from SECTIONS with built-in empty handling.
+Each SECTION is a plist:
+  :header  a string (→ `jetpacs-section-header'), a ready node, or nil.
+  :items   the section's list of child nodes.
+  :empty   a node shown in place of the items when :items is empty.
+When every section is empty and EMPTY is given, that node (an
+`jetpacs-empty-state', typically) is shown alone.  Erases the
+`append'/`apply' + per-list empty-check plumbing every list screen repeats,
+completing the `jetpacs-list-item' story; composes a `lazy_column', not a
+new wire node."
+  (let ((any (cl-some (lambda (s) (plist-get s :items)) sections)))
+    (if (and (not any) empty)
+        (jetpacs-lazy-column empty)
+      (apply #'jetpacs-lazy-column
+             (cl-loop for s in sections
+                      for header = (plist-get s :header)
+                      for items  = (plist-get s :items)
+                      for sempty = (plist-get s :empty)
+                      append (delq nil
+                                   (cons (cond ((null header) nil)
+                                               ((stringp header)
+                                                (jetpacs-section-header header))
+                                               (t header))
+                                         (or items (and sempty (list sempty))))))))))
 
 ;; ─── Home-screen widgets ─────────────────────────────────────────────────────
 ;;

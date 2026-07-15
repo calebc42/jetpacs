@@ -69,7 +69,10 @@ Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 (`row`/`column`/`flow-row` take trailing `:spacing`/`:align`/`:scroll`
 keywords; `box`/`surface`/`card` take
 `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
-`:swipe-start`/`:swipe-end`.)
+`:swipe-start`/`:swipe-end`. Since 1.13.0, additively: `box`/`surface`/
+`card` accept their children as a single list *or* `&rest` nodes (like
+`row`/`column`), and `jetpacs-text`'s options are positional *or*
+keyword.)
 
 Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip` `jetpacs-badge`
 `jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`
@@ -79,6 +82,10 @@ Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chi
 Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
 `jetpacs-draw-line` `jetpacs-draw-rect` `jetpacs-draw-circle` `jetpacs-draw-path`
 `jetpacs-draw-text` `jetpacs-month-grid`.
+
+Composites (since 1.13.0 — pure-elisp shapes over the primitives above,
+no new wire type): `jetpacs-stepper` `jetpacs-segmented` `jetpacs-stat`
+`jetpacs-kv` `jetpacs-sectioned-list`.
 
 Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-item`
 `jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab` `jetpacs-snackbar-action`.
@@ -147,7 +154,14 @@ stock Settings drawer entry targets `(jetpacs-shell-resolve-view
 `jetpacs-shell-refresh-hook` `jetpacs-shell-after-push-hook`.  Tab access
 (since 1.4.0): `jetpacs-shell-current-tab` reads the active tab and
 `jetpacs-shell-set-current-tab` switches to a registered tab through
-`jetpacs-shell-push`.
+`jetpacs-shell-push`.  Route params (since 1.15.0):
+`jetpacs-shell-navigate` (carry an alist to a target view, pushing so the
+companion lands on it), `jetpacs-shell-route-params` /
+`jetpacs-route-param` (read the active or a named view's params — the
+former doubles as an :overlay predicate), and `jetpacs-shell-clear-route`
+(the explicit back).  A view builder that declares a *second* argument
+receives its route params, so a detail screen is a pure function of them
+rather than of a module state var.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
 `jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`
@@ -228,6 +242,15 @@ required key is an error; a key outside a node's schema is a
 unknown keys (SPEC §9 forward compat), so an author may deliberately
 target a newer companion.
 
+Tier-1 test helpers (since 1.16.0): `jetpacs-test-visible-text` (the
+on-screen strings in a spec, tree-ordered — assert your view shows or
+omits text without a companion), `jetpacs-test-view-ok` (assert a view
+is lint-error-free *and* serializable, signalling with the problems on
+failure — one line in an ERT suite), and `jetpacs-lint-views` (from
+`jetpacs-shell.el`: build and lint every registered view, returning the
+ones with problems — the app-wide CI gate `(should-not (jetpacs-lint-views
+t))`). These ship what every Tier 1 used to re-derive privately.
+
 ### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
 
 Sources (`jetpacs-source.el`): `jetpacs-defsource` `jetpacs-source-query`
@@ -240,7 +263,12 @@ required); the compiler itself is internal.
 
 Forms (`jetpacs-surfaces.el`): `jetpacs-form` `jetpacs-form-field-id`
 `jetpacs-form-value` `jetpacs-form-seed` `jetpacs-form-reset`
-`jetpacs-form-dispose`.
+`jetpacs-form-dispose`. Declarative form specs (since 1.14.0):
+`jetpacs-field` (a typed field spec — `text`/`number`/`decimal`/`date`/
+`enum`/`bool`, `:required`, `:validate`, `:options`), `jetpacs-form-render`
+(the input nodes, seeded + inline errors), and `jetpacs-form-submit` (an
+`event.action` handler that parses/validates and, only on success, hands the
+handler a typed alist), plus the seam var `jetpacs-form-refresh-function`.
 
 Action metadata (`jetpacs-surfaces.el`): `jetpacs-action-catalog`, and the
 `&key args doc` on `jetpacs-defaction`.

@@ -368,7 +368,7 @@ JSON-array string and non-string members are discarded."
 ;; owned, so `jetpacs-app-unregister' disposes them.
 
 (cl-defstruct (jetpacs-form (:constructor jetpacs--make-form) (:copier nil))
-  ns (gen 0) owner)
+  ns (gen 0) owner errors)   ; ERRORS: alist of field-key -> inline error string
 
 (defvar jetpacs--forms (make-hash-table :test 'equal)
   "Registry of \"OWNER\\0NS\" -> `jetpacs-form'.")
@@ -401,11 +401,12 @@ The GEN suffix rotates on `jetpacs-form-reset'."
     (unless (jetpacs-ui-state id) (jetpacs-ui-state-put id value))))
 
 (defun jetpacs-form-reset (form)
-  "Clear FORM's field state and subscriptions and rotate its generation.
+  "Clear FORM's field state, inline errors, and subscriptions and rotate gen.
 The rotation empties the on-device widgets."
   (let ((prefix (concat (jetpacs-form-ns form) "-")))
     (jetpacs-ui-state-clear prefix)
     (jetpacs-on-state-change-clear prefix))
+  (setf (jetpacs-form-errors form) nil)
   (cl-incf (jetpacs-form-gen form)))
 
 (defun jetpacs-form-dispose (form)
@@ -421,6 +422,176 @@ The rotation empties the on-device widgets."
                                  (push form forms)))
              jetpacs--forms)
     forms))
+
+;; ─── Declarative form specs (typed, validated) ───────────────────────────────
+;; Grocy's seven dialogs each repeated the same shape: per-field text-inputs, a
+;; submit handler that reads each field, parses (string->number), validates, and
+;; resets.  A field-spec collapses that: declare the fields once, and get back
+;; (a) rendered input nodes and (b) a submit that hands the handler a *parsed,
+;; typed, validated* alist — invalid input paints inline field errors and never
+;; dispatches.  Builds on the form registry above; no new wire node.
+
+(defvar jetpacs-form-refresh-function nil
+  "When non-nil, a nullary function the form layer calls to re-render the
+showing surface: after a failed submit stores inline field errors, and after a
+date field's picker updates its value.  The shell points this at
+`jetpacs-shell-push'; nil (no shell) just leaves the state for the next render.")
+
+(cl-defun jetpacs-field (id type &key label required validate options hint multi)
+  "A field spec for `jetpacs-form-render' / `jetpacs-form-submit'.
+ID names the field (a symbol or string); the parsed result keys on it as a
+symbol.  TYPE is one of the symbols `text', `number', `decimal', `date',
+`enum', or `bool'.  LABEL is the field label; REQUIRED demands a non-empty
+value; VALIDATE is a function of the *parsed* value returning an error string
+\(or nil for OK); OPTIONS are the `enum' choices (strings); HINT is the input
+placeholder; MULTI makes an `enum' multi-select (its value is a list).
+Returns a plain plist — a bare `(:id … :type …)' plist works too."
+  (list :id id :type type :label label :required required :validate validate
+        :options options :hint hint :multi multi))
+
+(defun jetpacs-form--key (field)
+  "The string field key of FIELD (its :id)."
+  (format "%s" (plist-get field :id)))
+
+(defun jetpacs-form--fid (form field)
+  "The current widget id for FIELD in FORM (gen-suffixed)."
+  (jetpacs-form-field-id form (jetpacs-form--key field)))
+
+(defun jetpacs-form--coerce (type str label)
+  "Coerce trimmed, non-empty STR to TYPE; return (VALUE . ERROR)."
+  (pcase type
+    ('number
+     (if (string-match-p "\\`[+-]?[0-9]+\\'" str)
+         (cons (string-to-number str) nil)
+       (cons nil (format "%s must be a whole number" label))))
+    ('decimal
+     (if (string-match-p "\\`[+-]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\'" str)
+         (cons (string-to-number str) nil)
+       (cons nil (format "%s must be a number" label))))
+    ('date
+     (if (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" str)
+         (cons str nil)
+       (cons nil (format "%s must be a date (YYYY-MM-DD)" label))))
+    (_ (cons str nil))))                ; text
+
+(defun jetpacs-form--parse-field (form field)
+  "Return (VALUE . ERROR) for FIELD read from FORM.
+Reads the field's raw ui-state, coerces by :type, then applies :required and
+:validate.  ERROR nil means the typed VALUE is good."
+  (let* ((type     (plist-get field :type))
+         (label    (or (plist-get field :label) (jetpacs-form--key field)))
+         (required (plist-get field :required))
+         (validate (plist-get field :validate))
+         (fid      (jetpacs-form--fid form field))
+         (res
+          (pcase type
+            ('enum
+             (let ((sel (jetpacs-ui-state-list fid)))
+               (if (null sel)
+                   (cons nil (and required (format "%s is required" label)))
+                 (cons (if (plist-get field :multi) sel (car sel)) nil))))
+            ('bool
+             (cons (equal "true" (jetpacs-ui-state fid)) nil))
+            (_                          ; text/number/decimal/date
+             (let* ((raw (jetpacs-ui-state fid))
+                    (str (and (stringp raw) (string-trim raw))))
+               (if (or (null str) (string-empty-p str))
+                   (cons nil (and required (format "%s is required" label)))
+                 (jetpacs-form--coerce type str label)))))))
+    (cond
+     ((cdr res) res)                                        ; already errored
+     ((and (null (car res)) (not (eq type 'bool)) (not required)) res) ; absent, optional
+     (validate
+      (let ((msg (condition-case e (funcall validate (car res))
+                   (error (error-message-string e)))))
+        (if (stringp msg) (cons (car res) msg) res)))
+     (t res))))
+
+(defun jetpacs-form--field-node (form field)
+  "Render one FIELD of FORM as an input node, seeded and showing its error."
+  (let* ((type  (plist-get field :type))
+         (label (plist-get field :label))
+         (hint  (plist-get field :hint))
+         (fid   (jetpacs-form--fid form field))
+         (val   (jetpacs-ui-state fid))
+         (err   (cdr (assoc (jetpacs-form--key field) (jetpacs-form-errors form))))
+         (input
+          (pcase type
+            ('number  (jetpacs-text-input fid :value val :label label :hint hint
+                                       :keyboard "number"))
+            ('decimal (jetpacs-text-input fid :value val :label label :hint hint
+                                       :keyboard "decimal"))
+            ('bool    (jetpacs-checkbox fid :checked (equal "true" val) :label label))
+            ('date
+             (apply #'jetpacs-column
+                    (delq nil
+                          (list (and label (jetpacs-text label 'label))
+                                (jetpacs-date-button
+                                 (if (and (stringp val) (not (string-empty-p val)))
+                                     val (or hint "Pick a date"))
+                                 (jetpacs-action "jetpacs.form.set"
+                                              :args `((id . ,fid)))
+                                 :value (and (stringp val) val))))))
+            ('enum
+             (apply #'jetpacs-column
+                    (delq nil
+                          (list (and label (jetpacs-text label 'label))
+                                (jetpacs-enum-list
+                                 fid (mapcar (lambda (o)
+                                               (if (stringp o) o
+                                                 (or (plist-get o :value)
+                                                     (format "%s" o))))
+                                             (plist-get field :options))
+                                 :value (jetpacs-ui-state-list fid)
+                                 :multi-select (plist-get field :multi))))))
+            (_        (jetpacs-text-input fid :value val :label label :hint hint)))))
+    (if err
+        (jetpacs-column input (jetpacs-text err 'caption nil "error") :spacing 2)
+      input)))
+
+(defun jetpacs-form-render (form fields)
+  "Render FIELDS (a list of `jetpacs-field' specs) for FORM.
+Returns a list of input nodes — seeded from current values and painting any
+inline errors a failed submit stored — to splice into your form column.  Pair
+it with a submit button dispatching an action built from `jetpacs-form-submit'."
+  (mapcar (lambda (field) (jetpacs-form--field-node form field)) fields))
+
+(defun jetpacs-form-submit (form fields handler)
+  "Return an `event.action' handler that submits FORM's FIELDS through HANDLER.
+The returned function parses and validates every field; on **success** it
+resets FORM (clearing the on-device widgets) and calls
+\(funcall HANDLER VALUES ARGS), where VALUES is the parsed, typed alist
+\((ID . VALUE) …) keyed by each field's :id as a symbol and ARGS is the submit
+action's own args (context the app baked in).  On **failure** it stores the
+inline field errors, re-renders via `jetpacs-form-refresh-function', and never
+calls HANDLER.  Register it: (jetpacs-defaction \"app.save\"
+  (jetpacs-form-submit form fields (lambda (values _args) …)))."
+  (lambda (args _payload)
+    (let (values errors)
+      (dolist (field fields)
+        (let ((parsed (jetpacs-form--parse-field form field)))
+          (if (cdr parsed)
+              (push (cons (jetpacs-form--key field) (cdr parsed)) errors)
+            (push (cons (intern (jetpacs-form--key field)) (car parsed)) values))))
+      (if errors
+          (progn
+            (setf (jetpacs-form-errors form) (nreverse errors))
+            (when (functionp jetpacs-form-refresh-function)
+              (funcall jetpacs-form-refresh-function)))
+        ;; Clean: reset first (so any push the handler makes shows a fresh
+        ;; form), then hand the handler the already-parsed values.
+        (jetpacs-form-reset form)
+        (funcall handler (nreverse values) args)))))
+
+;; Date fields can't ride `state.changed' (a `date_button' dispatches an
+;; action), so their picker writes the chosen date into ui-state through this
+;; core action, then refreshes so the button re-renders with the value.
+(jetpacs-defaction "jetpacs.form.set"
+  (lambda (args _)
+    (let ((id (alist-get 'id args)) (value (alist-get 'value args)))
+      (when (and id value) (jetpacs-ui-state-put id value)))
+    (when (functionp jetpacs-form-refresh-function)
+      (funcall jetpacs-form-refresh-function))))
 
 (defun jetpacs--on-state-changed (payload _frame)
   "Dispatch inbound `state.changed' to its registered handler."

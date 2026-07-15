@@ -280,6 +280,45 @@ no change. Reach for these before writing a row/column by hand.
   **`(jetpacs-time-button LABEL ON-PICK &key value)`** — native
   pickers; `value` injected as `"YYYY-MM-DD"` / `"HH:MM"`.
 
+## Declarative forms (since 1.14.0)
+
+Rather than hand-wire a text-input per field plus a submit handler that
+reads, parses (`string→number`), validates, and resets each one, declare
+the fields once and let the form layer do the typing and validation.
+Built on the [form registry](#) (`jetpacs-form`); no new wire type.
+
+- **`(jetpacs-field ID TYPE &key label required validate options hint
+  multi)`** — one field spec. `TYPE` is `text` / `number` / `decimal` /
+  `date` / `enum` / `bool`. `:required` demands a value; `:validate` is a
+  function of the *parsed* value returning an error string (or nil);
+  `:options` are the `enum` choices; `:multi` makes an `enum`
+  multi-select. `ID` keys the parsed result (as a symbol).
+- **`(jetpacs-form-render FORM FIELDS)`** — the input nodes, seeded from
+  current values and painting any inline errors a failed submit left.
+  Returns a **list** — splice it into your form column above a submit
+  button.
+- **`(jetpacs-form-submit FORM FIELDS HANDLER)`** — returns an
+  `event.action` handler. Register it with `jetpacs-defaction`. On a
+  valid submit it resets the form and calls `(HANDLER VALUES ARGS)` with
+  `VALUES` the **parsed, typed** alist (`((amount . 5) (price . 2.5) …)`)
+  and `ARGS` the submit action's own args; on an invalid one it stores
+  inline field errors, re-renders, and **never calls `HANDLER`**.
+
+```elisp
+(let ((form (jetpacs-form "purchase"))
+      (fields (list (jetpacs-field 'amount 'number :label "Amount" :required t)
+                    (jetpacs-field 'price  'decimal :label "Unit price")
+                    (jetpacs-field 'loc    'enum :label "Location"
+                                :options '("Fridge" "Pantry")))))
+  (jetpacs-defaction "grocy.purchase.save"
+    (jetpacs-form-submit form fields
+      (lambda (values _args) (grocy--add-stock values))))
+  ;; in the view builder:
+  (apply #'jetpacs-column
+         (append (jetpacs-form-render form fields)
+                 (list (jetpacs-button "Save" (jetpacs-action "grocy.purchase.save"))))))
+```
+
 ## The editor
 
 - **`(jetpacs-editor ID VALUE &key on-save read-only syntax

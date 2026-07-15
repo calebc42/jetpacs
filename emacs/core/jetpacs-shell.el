@@ -462,6 +462,11 @@ Safe on any hook: extra arguments are ignored."
 ;; A tap that mutates a buffer re-pushes the showing surface through here.
 (setq jetpacs-buffer-refresh-function #'jetpacs-shell-push)
 
+;; A failed form submit (inline errors) or a date-picker update re-renders
+;; the showing surface through here (jetpacs-surfaces' form layer).
+(defvar jetpacs-form-refresh-function)
+(setq jetpacs-form-refresh-function #'jetpacs-shell-push)
+
 ;; Settings feedback lands in the snackbar; setting changes re-render.
 (defvar jetpacs-settings-notify-function)
 (defvar jetpacs-settings-refresh-function)

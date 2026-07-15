@@ -247,7 +247,12 @@ required); the compiler itself is internal.
 
 Forms (`jetpacs-surfaces.el`): `jetpacs-form` `jetpacs-form-field-id`
 `jetpacs-form-value` `jetpacs-form-seed` `jetpacs-form-reset`
-`jetpacs-form-dispose`.
+`jetpacs-form-dispose`. Declarative form specs (since 1.14.0):
+`jetpacs-field` (a typed field spec — `text`/`number`/`decimal`/`date`/
+`enum`/`bool`, `:required`, `:validate`, `:options`), `jetpacs-form-render`
+(the input nodes, seeded + inline errors), and `jetpacs-form-submit` (an
+`event.action` handler that parses/validates and, only on success, hands the
+handler a typed alist), plus the seam var `jetpacs-form-refresh-function`.
 
 Action metadata (`jetpacs-surfaces.el`): `jetpacs-action-catalog`, and the
 `&key args doc` on `jetpacs-defaction`.

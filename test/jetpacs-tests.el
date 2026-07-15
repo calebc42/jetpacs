@@ -3435,6 +3435,92 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
       (jetpacs-form-dispose f)
       (should-not (eq f (jetpacs-form "cap" "app1"))))))
 
+(ert-deftest jetpacs-form-spec-parses-typed-values ()
+  "A valid submit hands the handler a parsed, typed alist keyed by field id,
+resets the form, and never leaves errors."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal))
+        (jetpacs-form-refresh-function #'ignore))
+    (let* ((form (jetpacs-form "gp"))
+           (fields (list (jetpacs-field 'amount 'number :required t)
+                         (jetpacs-field 'price 'decimal)
+                         (jetpacs-field 'loc 'enum :options '("Fridge" "Pantry"))
+                         (jetpacs-field 'bb 'date)
+                         (jetpacs-field 'note 'text)
+                         (jetpacs-field 'opened 'bool)))
+           captured
+           (submit (jetpacs-form-submit
+                    form fields (lambda (v a) (setq captured (list v a))))))
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 0 fields)) " 5 ")   ; trimmed
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 1 fields)) "2.50")
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 2 fields)) ["Pantry"])
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 3 fields)) "2026-08-01")
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 4 fields)) "hello")
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 5 fields)) "true")
+      (funcall submit '((ctx . "p1")) nil)
+      (let ((v (car captured)))
+        (should (eql 5 (alist-get 'amount v)))               ; a number, not "5"
+        (should (eql 2.5 (alist-get 'price v)))
+        (should (equal "Pantry" (alist-get 'loc v)))         ; single enum unwrapped
+        (should (equal "2026-08-01" (alist-get 'bb v)))
+        (should (equal "hello" (alist-get 'note v)))
+        (should (eq t (alist-get 'opened v))))
+      (should (equal '((ctx . "p1")) (cadr captured)))       ; action args pass through
+      (should-not (jetpacs-form-errors form))
+      (should (= 1 (jetpacs-form-gen form))))))               ; reset rotated the gen
+
+(ert-deftest jetpacs-form-spec-blocks-and-marks-invalid ()
+  "An invalid submit stores inline field errors, refreshes, and does not
+dispatch to the handler; `jetpacs-form-render' then paints those errors."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal))
+        (refreshed 0))
+    (let* ((jetpacs-form-refresh-function (lambda () (cl-incf refreshed)))
+           (form (jetpacs-form "gp"))
+           (fields (list (jetpacs-field 'amount 'number :label "Amount" :required t
+                                     :validate (lambda (n) (when (<= n 0) "must be positive")))
+                         (jetpacs-field 'price 'decimal :label "Price")))
+           called
+           (submit (jetpacs-form-submit form fields (lambda (_v _a) (setq called t)))))
+      ;; amount blank (required), price garbage.
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 1 fields)) "abc")
+      (funcall submit nil nil)
+      (should-not called)
+      (should (= 1 refreshed))
+      (should (equal "Amount is required" (cdr (assoc "amount" (jetpacs-form-errors form)))))
+      (should (equal "Price must be a number" (cdr (assoc "price" (jetpacs-form-errors form)))))
+      (should (= 0 (jetpacs-form-gen form)))                  ; no reset on failure
+      ;; The rendered field shows its error as a caption, and lints clean.
+      (let ((node (car (jetpacs-form-render form fields))))
+        (should (equal "column" (alist-get 't node)))        ; input + error caption
+        (should (null (jetpacs-lint-spec node))))
+      ;; :validate runs on the parsed value: a negative amount is rejected.
+      (jetpacs-ui-state-put (jetpacs-form--fid form (nth 0 fields)) "-3")
+      (funcall submit nil nil)
+      (should (equal "must be positive" (cdr (assoc "amount" (jetpacs-form-errors form)))))
+      (should-not called))))
+
+(ert-deftest jetpacs-form-spec-date-field-writes-through ()
+  "A date field renders a picker whose action writes the chosen date into
+ui-state via `jetpacs.form.set', and the parse reads it back."
+  (let ((jetpacs--forms (make-hash-table :test 'equal))
+        (jetpacs--ui-state (make-hash-table :test 'equal))
+        (jetpacs--state-handlers (make-hash-table :test 'equal))
+        (jetpacs-form-refresh-function #'ignore))
+    (let* ((form (jetpacs-form "gp"))
+           (field (jetpacs-field 'bb 'date :label "Best before"))
+           (fid (jetpacs-form--fid form field)))
+      (funcall (gethash "jetpacs.form.set" jetpacs-action-handlers)
+               `((id . ,fid) (value . "2026-09-09")) nil)
+      (should (equal "2026-09-09" (jetpacs-ui-state fid)))
+      (should (equal '("2026-09-09" . nil) (jetpacs-form--parse-field form field)))
+      ;; A malformed date is rejected with a field error.
+      (jetpacs-ui-state-put fid "not-a-date")
+      (should (equal "Best before must be a date (YYYY-MM-DD)"
+                     (cdr (jetpacs-form--parse-field form field)))))))
+
 (ert-deftest jetpacs-form-teardown-by-owner ()
   "`jetpacs-app-unregister' disposes an app's owned forms."
   (let ((jetpacs--forms (make-hash-table :test 'equal))

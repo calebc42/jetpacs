@@ -261,7 +261,7 @@ mutated state the cached views no longer reflect).
 | `toast.show`                      | → comp.   | `{text}` transient toast                            | optional |
 | `pie_menu.show` / `.dismiss`      | → comp.   | radial menu spec (curated, ≤ ~10 items)             | optional |
 | `reminders.set`                   | → comp.   | `{owner?, reminders: [{id, title, body, at_ms}]}` — **replaces** only `owner`'s set (blank/absent = the unowned bucket), so cancelled items never fire stale and coexisting apps never cancel each other; the companion persists each owner's set across reboots | `reminders.owner` for scoping |
-| `theme.set`                       | → comp.   | `{dark, colors, syntax}` — mirror the client's theme onto the companion's UI | `theme` |
+| `theme.set`                       | → comp.   | `{dark, colors, syntax}` to mirror the client's theme, or `{base}` (no `colors`) to force one of the companion's own schemes | `theme` |
 
 A `dialog.show` spec's **root node** may carry `dialog_style`:
 `"sheet"` / `"sheet_full"` render the same tree as a modal bottom sheet
@@ -293,9 +293,20 @@ which overrides the device's day/night setting while mirroring. Every key
 is optional — the companion fills holes from its fallback scheme. Each
 push replaces the last and is persisted like a cached surface (the phone
 keeps the client's look while the client is away); `colors: null` clears
-the mirror and the persisted palette. The reference client extracts the
-palette from the running Emacs theme (`jetpacs-theme.el`, opt-in via
-`jetpacs-theme-sync`), leaning on the modus-themes palette API when a
+the mirror and the persisted palette. When a push carries no `colors`, an
+optional `base` string instead selects which of the companion's *own*
+schemes to force: `"material"` (Material You, where the device supports it)
+or `"default"` (the companion's built-in scheme). This lets the client
+drive a companion that isn't mirroring — the app's theme becomes a
+three-way client choice (default / material / mirror-the-client) rather
+than a device-only default. A companion that predates `base` sees a push
+with no `colors`, treats it as the clear, and falls back to its own scheme
+chain — so `base` degrades to "the companion decides."
+
+The reference client extracts the palette from the running Emacs theme
+(`jetpacs-theme.el`), and its `jetpacs-theme-mode` (`default` / `material`
+/ `emacs`) drives exactly the above: `emacs` mirrors, the others send the
+matching `base`. Mirroring leans on the modus-themes palette API when a
 modus-family theme is active and on resolved face attributes otherwise.
 "modus-family" is detected through `modus-themes-get-current-theme`, so it
 covers not just the `modus-*` originals but anything built on the modus 5.0

@@ -44,7 +44,8 @@
 
 ;; Mirror the active Emacs theme onto the phone (pushed after each
 ;; handshake) — with Nord loaded below, the companion picks up Nord.
-(setq jetpacs-theme-sync t)
+;; The other modes are `default' (built-in purple) and `material'.
+(setq jetpacs-theme-mode 'emacs)
 
 ;;; ===============================================================
 ;;; Package Management
@@ -576,8 +577,8 @@
     (set-face-attribute 'default nil :height 160)))
 (my/set-font-faces)
 
-;; With jetpacs-theme-sync t (set above), the companion app derives its
-;; palette from this theme.
+;; With jetpacs-theme-mode `emacs' (set above), the companion app derives
+;; its palette from this theme.
 (use-package nord-theme
   :config
   (load-theme 'nord t)

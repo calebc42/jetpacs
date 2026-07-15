@@ -66,20 +66,24 @@ private val LightColorScheme = lightColorScheme(
     outline = Color(0xFF7A757F),
 )
 
+// The scheme is chosen by the client, via `jetpacs-theme-mode` (SPEC §7):
+//   emacs    -> mirror the pushed Emacs palette (wins over everything below,
+//               including the theme's own light/dark polarity). Syntax colors
+//               follow the same rule (see rememberSyntaxColors).
+//   material -> Material You from the device wallpaper (Android 12+; older
+//               devices fall back to the Emacs-purple scheme below).
+//   default  -> the Emacs-purple scheme (Color.kt / the schemes above).
+// The choice arrives as `theme.set` (a mirror palette, or a bare `base`
+// directive) and is persisted, so the last selection survives restarts and
+// applies even while Emacs is away. With nothing ever pushed, `default` wins.
 @Composable
 fun JetpacsTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Material You by default; falls back to the Emacs-purple scheme above on
-    // pre-Android-12 devices (where dynamic color isn't available) or with
-    // `dynamicColor = false`. When the paired Emacs has pushed its own theme
-    // (`theme.set`, opt-in client-side via `jetpacs-theme-sync`), that wins
-    // over both — the phone mirrors the desktop, including the theme's own
-    // light/dark polarity. Syntax highlighting follows the same rule: pushed
-    // Emacs token colors when synced, a fixed luminance-keyed set otherwise.
-    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val emacsTheme by JetpacsRuntime.emacsTheme.collectAsState()
+    val themeBase by JetpacsRuntime.themeBase.collectAsState()
+    val dynamicAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val colorScheme = when {
         emacsTheme != null -> {
             val payload = emacsTheme!!
@@ -89,10 +93,11 @@ fun JetpacsTheme(
             val base = if (dark) DarkColorScheme else LightColorScheme
             remember(payload, dark) { buildEmacsColorScheme(payload, base) }
         }
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        themeBase == "material" && dynamicAvailable -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
+        // "default", "material" on a pre-Android-12 device, or nothing pushed.
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }

@@ -84,16 +84,32 @@ object JetpacsRuntime {
     private val _emacsTheme = MutableStateFlow<JSONObject?>(null)
     val emacsTheme: StateFlow<JSONObject?> = _emacsTheme.asStateFlow()
 
+    /**
+     * When the client isn't mirroring, which of the companion's OWN schemes
+     * to force: `"material"` (Material You) or `"default"` (the Emacs-purple
+     * scheme). Null means auto — a legacy bare clear, or nothing ever pushed.
+     * Set from the `base` field of a `theme.set` that carries no `colors`, and
+     * persisted alongside the mirror so the choice survives restarts.
+     */
+    private val _themeBase = MutableStateFlow<String?>(null)
+    val themeBase: StateFlow<String?> = _themeBase.asStateFlow()
+
     fun setEmacsTheme(context: Context, payload: JSONObject) {
-        // `colors: null` (or no colors at all) is the documented clear: the
-        // client stops mirroring and the companion falls back to its own
-        // scheme chain.
-        val cleared = payload.optJSONObject("colors") == null
-        _emacsTheme.value = if (cleared) null else payload
+        // A `theme.set` carrying `colors` mirrors the Emacs palette; without
+        // `colors` it is a scheme directive: its `base` names which of the
+        // companion's own schemes to force (or, with no `base`, the documented
+        // bare clear — mirror off, auto-pick). Mirror and base are mutually
+        // exclusive, so a mirror push clears any lingering base and vice versa.
+        val hasColors = payload.optJSONObject("colors") != null
+        val base = emacsThemeBase(payload)
+        _emacsTheme.value = if (hasColors) payload else null
+        _themeBase.value = base
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .apply {
-                if (cleared) remove(KEY_EMACS_THEME)
-                else putString(KEY_EMACS_THEME, payload.toString())
+                if (hasColors) putString(KEY_EMACS_THEME, payload.toString())
+                else remove(KEY_EMACS_THEME)
+                if (base != null) putString(KEY_THEME_BASE, base)
+                else remove(KEY_THEME_BASE)
             }
             .apply()
     }
@@ -114,11 +130,13 @@ object JetpacsRuntime {
             database = JetpacsDatabase.getDatabase(context)
         }
         if (JetpacsAuth.hasPaired(context)) _pairedEver.value = true
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (_emacsTheme.value == null) {
-            _emacsTheme.value = context
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(KEY_EMACS_THEME, null)
+            _emacsTheme.value = prefs.getString(KEY_EMACS_THEME, null)
                 ?.let { runCatching { JSONObject(it) }.getOrNull() }
+        }
+        if (_themeBase.value == null) {
+            _themeBase.value = prefs.getString(KEY_THEME_BASE, null)
         }
     }
 
@@ -126,4 +144,5 @@ object JetpacsRuntime {
     // durable companion state.
     private const val PREFS = "jetpacs"
     private const val KEY_EMACS_THEME = "emacs_theme"
+    private const val KEY_THEME_BASE = "theme_base"
 }

@@ -73,6 +73,16 @@ fun buildEmacsColorScheme(payload: JSONObject, base: ColorScheme): ColorScheme {
 fun emacsThemeDark(payload: JSONObject): Boolean? =
     if (payload.has("dark")) payload.optBoolean("dark") else null
 
+/**
+ * The companion scheme a non-mirroring `theme.set` forces: `"material"` or
+ * `"default"` (SPEC §7 `base`). Null when the payload mirrors a palette (its
+ * `colors` win instead) or when it is a bare clear carrying no `base`.
+ */
+fun emacsThemeBase(payload: JSONObject): String? =
+    if (payload.optJSONObject("colors") == null)
+        payload.optString("base").takeIf { it.isNotEmpty() }
+    else null
+
 private fun JSONArray.colorList(fallback: List<Color>): List<Color> {
     val parsed = (0 until length()).mapNotNull { i ->
         optString(i).takeIf { it.isNotEmpty() }

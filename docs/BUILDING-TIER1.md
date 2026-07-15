@@ -466,14 +466,17 @@ yet.
 
 ### 11. Look like the user's Emacs (theme mirroring)
 
-`(setq jetpacs-theme-sync t)` extracts a Material palette and editor
-syntax colors from the running Emacs theme (the modus-themes palette
-API when one is active, resolved face attributes otherwise) and
-mirrors them onto the companion — chrome, widgets, and highlighting
-alike, persisted while Emacs is away. `M-x jetpacs-theme-send` pushes
-once without opting in; `M-x jetpacs-theme-clear` hands the companion
-back to Material You. The ladder: synced Emacs theme, else Material
-You, else the built-in fallback.
+`jetpacs-theme-mode` picks the companion's color scheme three ways:
+`default` (the built-in Emacs-purple scheme), `material` (Material You,
+on Android 12+), or `emacs`. Under `emacs` the client extracts a
+Material palette and editor syntax colors from the running Emacs theme
+(the modus-themes palette API when one is active, resolved face
+attributes otherwise) and mirrors them onto the companion — chrome,
+widgets, and highlighting alike, persisted while Emacs is away. The
+other two send a one-shot `base` directive so the app forces that
+scheme. `M-x jetpacs-theme-send` pushes the mirror once regardless of
+the mode; set the mode from the companion's Emacs settings (Bridge →
+Companion theme) or with `setq`.
 
 ### 12. The editor bridge, end to end
 

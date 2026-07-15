@@ -44,7 +44,7 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
 | `jetpacs-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
 | `jetpacs-device.el` | device effectors: one thin defun per SPEC §10 capability (`jetpacs-device-intent`, `-flashlight`, `-tts`, …) through the `jetpacs-device--invoke` funnel |
-| `jetpacs-theme.el` | theme mirroring: palette + syntax colors extracted from the running theme (modus API or resolved faces) → `theme.set`, opt-in via `jetpacs-theme-sync` (SPEC §7) |
+| `jetpacs-theme.el` | companion theme: `jetpacs-theme-mode` (default / material / emacs) → `theme.set`; `emacs` mirrors the running theme's palette + syntax colors (modus API or resolved faces), the others force a `base` scheme (SPEC §7) |
 | `jetpacs-minibuffer.el` | prompt bridge: `y-or-n-p` / `completing-read` / … → dialogs, only inside action handlers |
 | `jetpacs-witheditor.el` | with-editor bridge: commit-message / rebase buffers → a phone editor dialog, `witheditor.finish` / `.cancel` (SPEC §7) |
 | `jetpacs-buffer.el` | **Tier 0 renderer**: any buffer → spans + tappable regions; the major-mode→skin registry |
@@ -151,7 +151,7 @@ library names no host class):
 | `jetpacs-device-*` / `jetpacs-capability-invoke` | jetpacs-device, jetpacs.el | device side-effects from handlers and triggers (SPEC §10) |
 | `jetpacs-deftrigger` / `jetpacs-trigger-register` | jetpacs-triggers | device events → elisp handlers, plus companion-local `on_fire` (SPEC §11) |
 | `jetpacs-surface-push` (`notification:*`, `widget:customN`, `tile:customN`) | jetpacs-surfaces | surfaces beyond the app: notifications, home-screen widgets, QS tiles |
-| `jetpacs-theme-sync` / `jetpacs-theme-send` | jetpacs-theme | mirror the client theme onto companion chrome and editor |
+| `jetpacs-theme-mode` / `jetpacs-theme-send` | jetpacs-theme | pick the companion scheme (default / material / mirror Emacs) onto chrome and editor |
 | `jetpacs-node-supported-p` / `jetpacs-granted-p` / `jetpacs-device-cap-p` | jetpacs.el | per-connection negotiation — gate additive nodes, capabilities, and effectors |
 | `jetpacs-buffer-refresh-function` / `jetpacs-tablist-view-buffer-function` | core | host navigation — already pointed at the shell |
 

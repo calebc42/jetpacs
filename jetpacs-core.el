@@ -1520,10 +1520,18 @@ TYPE is one of `text', `checkbox', `date', `enum', `number', `list'."
 ;; fallback scheme, so a spartan theme still yields a complete UI.  In a
 ;; frame that can't resolve colors (batch/tty), no frame is sent at all.
 ;;
-;; Opt-in: (setq jetpacs-theme-sync t) — or flip it in Customize — then the
-;; palette follows every `load-theme' (Emacs 29+) and every reconnect.
-;; `M-x jetpacs-theme-send' pushes once regardless; `M-x jetpacs-theme-clear'
-;; reverts the companion to its own scheme.
+;; The companion's scheme is chosen by `jetpacs-theme-mode', a three-way
+;; enum surfaced in the app's Emacs settings:
+;;
+;;   `default'  — the app's own Emacs-purple scheme.
+;;   `material' — Material You, from the device wallpaper (Android 12+).
+;;   `emacs'    — mirror the active Emacs theme, as described above.
+;;
+;; Under `emacs' the palette follows every `load-theme' (Emacs 29+) and every
+;; reconnect.  Under `default'/`material' the client sends a one-shot `base'
+;; directive (SPEC §7) naming which of the companion's own schemes to force —
+;; no palette, so the app falls back to that scheme.  `M-x jetpacs-theme-send'
+;; pushes the mirrored palette once regardless of the mode.
 
 ;;; Code:
 
@@ -1539,20 +1547,30 @@ TYPE is one of `text', `checkbox', `date', `enum', `number', `list'."
                   (color &optional with-overrides theme))
 (declare-function modus-themes-get-current-theme "modus-themes" ())
 
-(defcustom jetpacs-theme-sync nil
-  "When non-nil, mirror the active Emacs theme onto the companion app.
-The palette is pushed after every successful handshake and (on Emacs 29+)
-whenever a theme is enabled or disabled.  When nil the companion keeps its
-own scheme: Material You on Android 12+, an Emacs-purple fallback earlier.
-Setting this through Customize applies immediately on a live connection;
-after a plain `setq', push with \\[jetpacs-theme-send] or reconnect."
-  :type 'boolean
+(defcustom jetpacs-theme-mode 'default
+  "Which color scheme the companion app uses.
+
+`default'  — the app's own scheme, seeded from the Emacs-logo purple.
+`material' — Material You, derived from the device wallpaper on Android 12+
+             (older devices fall back to the `default' purple scheme).
+`emacs'    — mirror the active Emacs theme's palette and syntax colors onto
+             the app (SPEC §7 `theme.set'), following every `load-theme'.
+
+Under `emacs' the palette is pushed after every successful handshake and
+\(on Emacs 29+) whenever a theme is enabled or disabled.  Under `default'
+and `material' a single `base' directive is sent so the app forces that
+scheme.  Setting this through Customize applies immediately on a live
+connection; after a plain `setq', push with \\[jetpacs-theme-send] or
+reconnect."
+  :type '(choice (const :tag "Default" default)
+                 (const :tag "Material" material)
+                 (const :tag "Emacs" emacs))
   :set (lambda (sym val)
          (set-default sym val)
-         ;; Live toggle (guarded: :set also runs while this file loads,
+         ;; Live apply (guarded: :set also runs while this file loads,
          ;; before the functions below exist).
          (when (and (featurep 'jetpacs-theme) (jetpacs-connected-p))
-           (if val (jetpacs-theme--push-soon) (jetpacs-theme-clear))))
+           (jetpacs-theme--push-mode)))
   :group 'jetpacs)
 
 ;; ─── Color plumbing ──────────────────────────────────────────────────────────
@@ -1842,9 +1860,20 @@ push in that case, so a colorless session never wipes a good palette."
 
 ;; ─── Pushing ─────────────────────────────────────────────────────────────────
 
+(defun jetpacs-theme--frame-for-mode ()
+  "The `theme.set' frame for the current `jetpacs-theme-mode', or nil.
+`emacs' yields the mirrored palette — nil in a batch/tty frame that can't
+resolve colors, so callers must not push it.  `material' and `default' yield
+a `base' directive naming which of the companion's own schemes to force; the
+absent `colors' clears any mirror the companion had persisted."
+  (pcase jetpacs-theme-mode
+    ('emacs (jetpacs-theme-payload))
+    ('material '((base . "material")))
+    (_ '((base . "default")))))
+
 (defun jetpacs-theme-send ()
   "Push the active Emacs theme's palette to the companion, once.
-Works regardless of `jetpacs-theme-sync' — a manual one-shot mirror."
+Works regardless of `jetpacs-theme-mode' — a manual one-shot mirror."
   (interactive)
   (cond
    ((not (jetpacs-connected-p))
@@ -1859,9 +1888,10 @@ Works regardless of `jetpacs-theme-sync' — a manual one-shot mirror."
         (message "Jetpacs: theme pushed"))))))
 
 (defun jetpacs-theme-clear ()
-  "Revert the companion to its own scheme (Material You / Emacs purple).
-Sends the documented clear form — `colors: null' — which also wipes the
-palette the companion had persisted."
+  "Revert the companion to its own scheme chain (Material You / Emacs purple).
+Sends the bare clear form — `colors: null' — which wipes the mirrored palette
+the companion had persisted and lets it auto-pick.  For a specific scheme,
+set `jetpacs-theme-mode' to `default' or `material' instead."
   (interactive)
   (when (and (jetpacs-connected-p) (jetpacs-granted-p "theme"))
     (jetpacs-send "theme.set" '((colors . :null)))))
@@ -1869,12 +1899,11 @@ palette the companion had persisted."
 (defvar jetpacs-theme--timer nil
   "Debounce timer for automatic pushes, or nil.")
 
-(defun jetpacs-theme--push-soon (&rest _)
-  "Debounced auto-push, gated on `jetpacs-theme-sync' and the theme grant.
+(defun jetpacs-theme--push-mode (&rest _)
+  "Debounced push of the current mode's frame, gated on the theme grant.
 Debounced because `load-theme' fires disable+enable back to back, and
 re-gated inside the timer because the connection can die in between."
-  (when (and jetpacs-theme-sync
-             (jetpacs-connected-p)
+  (when (and (jetpacs-connected-p)
              (jetpacs-granted-p "theme"))
     (when (timerp jetpacs-theme--timer)
       (cancel-timer jetpacs-theme--timer))
@@ -1883,20 +1912,27 @@ re-gated inside the timer because the connection can die in between."
            0.2 nil
            (lambda ()
              (setq jetpacs-theme--timer nil)
-             (when (and jetpacs-theme-sync (jetpacs-connected-p))
-               (when-let ((payload (jetpacs-theme-payload)))
-                 (jetpacs-send "theme.set" payload))))))))
+             (when (jetpacs-connected-p)
+               (when-let ((frame (jetpacs-theme--frame-for-mode)))
+                 (jetpacs-send "theme.set" frame))))))))
+
+(defun jetpacs-theme--on-theme-change (&rest _)
+  "Re-mirror on a live `load-theme', but only while mirroring Emacs.
+The `default'/`material' bases don't depend on the Emacs theme, so they need
+no push here — their directive rides the connect hook and the mode's `:set'."
+  (when (eq jetpacs-theme-mode 'emacs)
+    (jetpacs-theme--push-mode)))
 
 (defun jetpacs-theme--on-connect (_welcome)
-  (jetpacs-theme--push-soon))
+  (jetpacs-theme--push-mode))
 
 (add-hook 'jetpacs-connected-hook #'jetpacs-theme--on-connect)
 
 ;; Emacs 29+: follow theme switches live. On 28 the palette still refreshes
 ;; on every (re)connect; push manually after a mid-session load-theme.
 (when (boundp 'enable-theme-functions)
-  (add-hook 'enable-theme-functions #'jetpacs-theme--push-soon)
-  (add-hook 'disable-theme-functions #'jetpacs-theme--push-soon))
+  (add-hook 'enable-theme-functions #'jetpacs-theme--on-theme-change)
+  (add-hook 'disable-theme-functions #'jetpacs-theme--on-theme-change))
 
 (provide 'jetpacs-theme)
 ;;; jetpacs-theme.el ends here
@@ -6829,7 +6865,7 @@ it doesn't.  Informational only — nothing is settable here."
   ;; "not loaded yet" for its knob instead of losing the section.
   (jetpacs-settings-register-section
    "Bridge"
-   '((jetpacs-theme-sync :label "Mirror Emacs theme")
+   '((jetpacs-theme-mode :label "Companion theme")
      (jetpacs-dialog-style :label "Dialog style")
      (jetpacs-reconnect :label "Auto-reconnect")
      (jetpacs-build-features :render jetpacs-shell--build-features-row)))

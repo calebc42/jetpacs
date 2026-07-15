@@ -561,7 +561,7 @@ it doesn't.  Informational only — nothing is settable here."
   ;; "not loaded yet" for its knob instead of losing the section.
   (jetpacs-settings-register-section
    "Bridge"
-   '((jetpacs-theme-sync :label "Mirror Emacs theme")
+   '((jetpacs-theme-mode :label "Companion theme")
      (jetpacs-dialog-style :label "Dialog style")
      (jetpacs-reconnect :label "Auto-reconnect")
      (jetpacs-build-features :render jetpacs-shell--build-features-row)))

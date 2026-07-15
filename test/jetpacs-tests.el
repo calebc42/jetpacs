@@ -2399,20 +2399,20 @@ mirrors membership, accepting strings too."
 excluded from the settings.set/reset gate and from switch state handlers."
   (let* ((row '(jetpacs-build-features :render jetpacs-shell--build-features-row))
          (jetpacs-settings-registry
-          (list (cons "Bridge" (list '(jetpacs-theme-sync :label "Theme") row)))))
+          (list (cons "Bridge" (list '(jetpacs-theme-mode :label "Theme") row)))))
     ;; Renders the builder's node (and it lints clean).
     (let ((node (jetpacs-settings--item row)))
       (should (equal "column" (alist-get 't node)))
       (should-not (jetpacs-lint-spec node)))
     ;; The render row never resolves for the wire gate; its sibling does.
     (should-not (jetpacs-settings--entry 'jetpacs-build-features))
-    (should (jetpacs-settings--entry 'jetpacs-theme-sync))
+    (should (jetpacs-settings--entry 'jetpacs-theme-mode))
     ;; No state handler is registered for the render row.
     (let (watched)
       (cl-letf (((symbol-function 'jetpacs-settings-watch-toggle)
                  (lambda (sym _id &optional _after) (push sym watched))))
         (jetpacs-settings--register-state-handlers jetpacs-settings-registry))
-      (should (equal watched '(jetpacs-theme-sync))))))
+      (should (equal watched '(jetpacs-theme-mode))))))
 
 ;; ─── Spec linter (Phase B / Task 4) ──────────────────────────────────────────
 
@@ -4152,7 +4152,7 @@ standard-themes, and third-party skins all ride this same path."
     (should (string-search "Jetpacs Settings" body))
     (should (string-search "jetpacs.settings.open" body))
     (should (string-search "Emacs Settings" body))
-    (should (string-search "setting/jetpacs-theme-sync" body))
+    (should (string-search "setting/jetpacs-theme-mode" body))
     (should (string-search "setting/jetpacs-dialog-style" body))
     (should (string-search "setting/jetpacs-reconnect" body))))
 
@@ -4175,11 +4175,41 @@ standard-themes, and third-party skins all ride this same path."
 (ert-deftest jetpacs-theme-push-gating ()
   "No auto-push while disconnected; the manual command degrades to a message."
   (setq jetpacs-theme--timer nil)
-  (let ((jetpacs-theme-sync t))
-    (jetpacs-theme--push-soon)
+  (let ((jetpacs-theme-mode 'emacs))
+    (jetpacs-theme--push-mode)
     (should-not jetpacs-theme--timer))
   ;; Disconnected `M-x jetpacs-theme-send' must message, not error or hang.
   (jetpacs-theme-send))
+
+(ert-deftest jetpacs-theme-frame-for-mode ()
+  "Each mode maps to its wire frame: `emacs' mirrors a palette; `material' and
+`default' send a `base' directive that carries no colors (so the companion
+drops any mirror and forces that scheme)."
+  ;; `default' / `material' are static directives, resolvable in batch.
+  (let ((jetpacs-theme-mode 'default))
+    (should (equal (jetpacs-theme--frame-for-mode) '((base . "default")))))
+  (let ((jetpacs-theme-mode 'material))
+    (should (equal (jetpacs-theme--frame-for-mode) '((base . "material")))))
+  ;; `emacs' yields the mirrored palette (with colors, no base).
+  (skip-unless (memq 'modus-vivendi (custom-available-themes)))
+  (unwind-protect
+      (let ((jetpacs-theme-mode 'emacs))
+        (load-theme 'modus-vivendi t)
+        (let ((frame (jetpacs-theme--frame-for-mode)))
+          (should (alist-get 'colors frame))
+          (should-not (alist-get 'base frame))))
+    (disable-theme 'modus-vivendi)))
+
+(ert-deftest jetpacs-theme-mode-renders-as-enum ()
+  "The setting surfaces as a three-way single-select enum (Default/Material/
+Emacs), the control the settings layer builds for a choice-of-consts type."
+  (let* ((col (jetpacs-settings-item 'jetpacs-theme-mode :label "Companion theme"))
+         (node (prin1-to-string col)))
+    (should-not (jetpacs-lint-spec col))
+    ;; An enum_list control, not a switch.
+    (should (string-search "enum_list" node))
+    (dolist (tag '("Default" "Material" "Emacs"))
+      (should (string-search tag node)))))
 
 ;; ─── Phase G: foundation-owned root + init seam ─────────────────────────────
 

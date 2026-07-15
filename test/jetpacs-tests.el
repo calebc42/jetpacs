@@ -3764,8 +3764,13 @@ Trigger and capability frames today; new wire frames add cases here."
     (jetpacs-trigger-register "power-sync" :type "power"
                            :params '((state . "connected"))
                            :policy "wake" :dedupe "power-sync" :throttle-s 60
+                           ;; The ${…} tokens are inert on the wire — the
+                           ;; companion interpolates them at fire time — so
+                           ;; the golden pins that they pass through unmangled.
                            :on-fire [((cap . "flashlight")
-                                      (args . ((on . t))))])
+                                      (args . ((on . t))))
+                                     ((notify . ((title . "Charging ${id}")
+                                                 (text . "plug ${data.plug}"))))])
     (jetpacs-trigger-register "screen-off" :type "screen"
                            :params '((state . "off")))
     (append

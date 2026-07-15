@@ -368,7 +368,7 @@ class TriggerHost(private val context: Context) {
             // The companion-local response runs first (instant, dumb) and
             // IN ADDITION to the event below — Emacs still learns of the
             // fire on (re)connect and stays the source of truth.
-            row.onFire?.let { executeOnFire(context, row.id, it) }
+            executeOnFire(context, row, data)
 
             val payload = JSONObject().apply {
                 put("action", "trigger.fired")
@@ -412,29 +412,87 @@ class TriggerHost(private val context: Context) {
          * needs logic Emacs-dead means "keep Emacs alive", not a rule
          * language in Kotlin. Unknown entries and capability failures are
          * logged and skipped, never fatal (additive rule).
+         *
+         * String values inside `notify` and inside a `cap` entry's `args`
+         * are interpolated against this fire's `data` first ([interpolate]);
+         * the `cap` name itself is never interpolated — capability selection
+         * is not data-driven.
          */
-        private fun executeOnFire(context: Context, id: String, onFireJson: String) {
-            val list = runCatching { JSONArray(onFireJson) }.getOrNull() ?: return
+        private fun executeOnFire(context: Context, row: TriggerRow, data: JSONObject) {
+            val list = runCatching { JSONArray(row.onFire ?: return) }.getOrNull() ?: return
+            val id = row.id
             for (i in 0 until list.length()) {
                 val entry = list.optJSONObject(i) ?: continue
                 when {
                     entry.has("cap") -> {
                         val cap = entry.optString("cap")
+                        val args = interpolateValue(
+                            entry.optJSONObject("args") ?: JSONObject(),
+                            id, row.type, data) as JSONObject
                         try {
-                            DeviceCapabilities.invoke(
-                                context, cap, entry.optJSONObject("args") ?: JSONObject())
+                            DeviceCapabilities.invoke(context, cap, args)
                             Log.d(TAG, "on_fire[$id]: $cap ok")
                         } catch (e: CapabilityException) {
                             Log.w(TAG, "on_fire[$id]: $cap failed: ${e.code} (${e.message})")
                         }
                     }
-                    entry.has("notify") ->
-                        postOnFireNotification(
-                            context, id, entry.optJSONObject("notify") ?: JSONObject())
+                    entry.has("notify") -> {
+                        val notify = interpolateValue(
+                            entry.optJSONObject("notify") ?: JSONObject(),
+                            id, row.type, data) as JSONObject
+                        postOnFireNotification(context, id, notify)
+                    }
                     else -> Log.d(TAG, "on_fire[$id]: ignoring unknown entry $i")
                 }
             }
         }
+
+        /**
+         * SPEC §11 on_fire placeholders / §9 snippet grammar: substitute
+         * `${id}`, `${type}`, and `${data.FIELD}` in [template] against this
+         * fire. A single pass — substituted text is never re-scanned — and
+         * unknown or unresolvable tokens are left literal (a `data.FIELD`
+         * that is absent or JSON null stays as the raw `${…}`). The result
+         * is always a string: a numeric or boolean field renders in its JSON
+         * form (`63`, `true`).
+         */
+        internal fun interpolate(
+            template: String, id: String, type: String, data: JSONObject
+        ): String =
+            PLACEHOLDER.replace(template) { m ->
+                when (val token = m.groupValues[1]) {
+                    "id" -> id
+                    "type" -> type
+                    else -> {
+                        val field = m.groupValues[2] // token == "data.$field"
+                        val v = if (data.has(field)) data.opt(field) else null
+                        if (v == null || v === JSONObject.NULL) m.value else v.toString()
+                    }
+                }
+            }
+
+        /**
+         * Recurse [interpolate] over any on_fire value: strings are
+         * interpolated, objects/arrays are rebuilt with interpolated
+         * members (so `intent.start` extras are covered), everything else
+         * passes through unchanged.
+         */
+        internal fun interpolateValue(
+            value: Any?, id: String, type: String, data: JSONObject
+        ): Any? = when (value) {
+            is String -> interpolate(value, id, type, data)
+            is JSONObject -> JSONObject().also { out ->
+                for (key in value.keys())
+                    out.put(key, interpolateValue(value.get(key), id, type, data))
+            }
+            is JSONArray -> JSONArray().also { out ->
+                for (i in 0 until value.length())
+                    out.put(interpolateValue(value.get(i), id, type, data))
+            }
+            else -> value
+        }
+
+        private val PLACEHOLDER = Regex("""\$\{(id|type|data\.([A-Za-z0-9_]+))}""")
 
         private const val NOTIFY_CHANNEL = "jetpacs_automations"
 

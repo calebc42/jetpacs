@@ -1,4 +1,4 @@
-00 {"kind":"triggers.set","payload":{"triggers":[{"dedupe":"power-sync","id":"power-sync","on_fire":[{"args":{"on":true},"cap":"flashlight"}],"params":{"state":"connected"},"policy":"wake","throttle_s":60,"type":"power"},{"id":"screen-off","params":{"state":"off"},"type":"screen"}]}}
+00 {"kind":"triggers.set","payload":{"triggers":[{"dedupe":"power-sync","id":"power-sync","on_fire":[{"args":{"on":true},"cap":"flashlight"},{"notify":{"text":"plug ${data.plug}","title":"Charging ${id}"}}],"params":{"state":"connected"},"policy":"wake","throttle_s":60,"type":"power"},{"id":"screen-off","params":{"state":"off"},"type":"screen"}]}}
 01 {"kind":"capability.invoke","payload":{"args":{"action":"android.intent.action.VIEW","data":"https://example.com","mode":"activity"},"cap":"intent.start"}}
 02 {"kind":"capability.invoke","payload":{"args":{"class_name":"com.termux.app.TermuxActivity","extras":{"com.example.COUNT":3,"com.example.FLAG":true},"mode":"activity","package":"com.termux"},"cap":"intent.start"}}
 03 {"kind":"capability.invoke","payload":{"args":{"package":"org.gnu.emacs"},"cap":"app.launch"}}

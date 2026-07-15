@@ -703,6 +703,21 @@ triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
   Unknown entries and failing capabilities are logged and skipped,
   never fatal.
 
+  **Placeholders.** String values inside `notify` and inside a `cap`
+  entry's `args` (recursively — nested objects and arrays, so
+  `intent.start` extras are covered) are interpolated at fire time
+  against this fire, using §9's snippet-placeholder grammar:
+  `${id}` and `${type}` are the registration's id and type, and
+  `${data.FIELD}` is a field of this fire's `data` (e.g.
+  `${data.level}`, `${data.ssid}`). The §9 rules apply verbatim —
+  substitution is a single pass (substituted text is never re-scanned),
+  unknown or unresolvable `${…}` tokens (including a `data.FIELD` that
+  is absent or JSON null) are left literal, and the result is always a
+  string (a numeric or boolean field renders in its JSON form, `63` /
+  `true`). The `cap` name itself never interpolates — capability
+  selection is not data-driven. There is no escape mechanism: a literal
+  `${id}` in authored text is unrepresentable, as in §9.
+
 ### Trigger-type catalog
 
 An empty or absent `params` field means "match every event of the

@@ -4733,15 +4733,17 @@ stays reachable so one can be picked."
         (should (string-search "project-switch" s))))))
 
 (ert-deftest jetpacs-project-entry-card-layout ()
-  "An entry card keeps its label in a WEIGHTED box, with siblings spread as
+  "An entry card keeps its label in a WEIGHTED column, with siblings spread as
 direct row children — never a nested row, which would fill the width and
-collapse the label to one-character columns (the on-device vertical-text bug)."
+collapse the label to one-character columns (the on-device vertical-text bug).
+The row is built on `jetpacs-list-item', whose flexible middle is a weighted
+`column' pinning the leading/trailing edges."
   (let* ((card (jetpacs-project--entry "search" "Find file" "cap"
                                        (jetpacs-action "x")))
          (row (car (append (alist-get 'children card) nil)))
          (children (append (alist-get 'children row) nil)))
     (should (equal "row" (alist-get t row)))
-    (should (cl-find-if (lambda (c) (and (equal "box" (alist-get t c))
+    (should (cl-find-if (lambda (c) (and (equal "column" (alist-get t c))
                                          (alist-get 'weight c)))
                         children))
     (should-not (cl-find "row" children

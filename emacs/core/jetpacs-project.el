@@ -112,14 +112,14 @@ When no project is selected, notify and return nil."
 ;; ─── Cards ───────────────────────────────────────────────────────────────────
 
 (defun jetpacs-project--entry (icon title caption action)
-  "A hub row: ICON, TITLE/CAPTION, chevron; the whole card runs ACTION."
-  (jetpacs-card
-   (list (jetpacs-row
-          (jetpacs-icon icon)
-          (jetpacs-box (list (jetpacs-column (jetpacs-text title 'label)
-                                             (jetpacs-text caption 'caption)))
-                       :weight 1)
-          (jetpacs-icon "chevron_right")))
+  "A hub row: leading ICON, TITLE/CAPTION, a chevron; tap dispatches ACTION.
+Built on `jetpacs-list-item', which pins the leading/trailing edges and gives
+the text column the flex weight (no hand-rolled weighted box, no flex trap)."
+  (jetpacs-list-item
+   :leading (jetpacs-icon icon)
+   :title title
+   :subtitle caption
+   :trailing (jetpacs-icon "chevron_right")
    :on-tap action))
 
 (defun jetpacs-project--header (root)

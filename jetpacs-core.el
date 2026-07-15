@@ -8066,14 +8066,17 @@ PLIST keys: :label :icon :views (list of shell view names) :order.")
 (defvar jetpacs-apps--current nil
   "Id of the app whose views are currently shown, or nil for the default.")
 
-(defvar jetpacs-apps-default-app "jetpacs"
+(defcustom jetpacs-apps-default-app "jetpacs"
   "App id to land on when none has been opened this session.
 The vanilla \"Jetpacs\" app holds the core chrome (Buffers, Files, Eval,
 Tools…), so it is the home base: installing another app must not silently
 hide those tabs or boot you into the just-installed app.  Falls back to the
 first registered app when this id is not registered — e.g. the vanilla app
 is off via `jetpacs-apps-show-vanilla-app'.  nil restores raw
-first-registered (AppSheet order) selection.")
+first-registered (AppSheet order) selection."
+  :type '(choice (const :tag "First registered (AppSheet order)" nil)
+                 (string :tag "App id"))
+  :group 'jetpacs)
 
 (defcustom jetpacs-apps-show-vanilla-app t
   "When non-nil, register Jetpacs itself as an app in the launcher.

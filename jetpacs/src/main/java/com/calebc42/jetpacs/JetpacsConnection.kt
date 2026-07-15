@@ -212,9 +212,9 @@ class JetpacsConnection(
 
     private fun handleHello(hello: Frame) {
         val proto = hello.payload.optInt("protocol", 0)
-        if (proto != Jetpacs_PROTOCOL_VERSION) {
+        if (proto != JETPACS_PROTOCOL_VERSION) {
             send(error(hello.id, "proto-version",
-                "companion speaks v$Jetpacs_PROTOCOL_VERSION, client offered v$proto"))
+                "companion speaks v$JETPACS_PROTOCOL_VERSION, client offered v$proto"))
             shutdown()
             return
         }
@@ -263,7 +263,7 @@ class JetpacsConnection(
             kind = Kind.SESSION_WELCOME,
             replyTo = pendingHelloId,
             payload = JSONObject().apply {
-                put("protocol", Jetpacs_PROTOCOL_VERSION)
+                put("protocol", JETPACS_PROTOCOL_VERSION)
                 put("server", "jetpacs-companion/0.2 android/${Build.VERSION.SDK_INT}")
                 // The mutual half: prove WE hold the token too, so Emacs can
                 // refuse a rogue app that squatted the port before we bound it.

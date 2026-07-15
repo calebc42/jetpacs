@@ -224,7 +224,8 @@ differ on whether the heading's newline or the body's first char carries the
         (and (< (point) limit) (jetpacs-buffer--invisible-at (point))))))
 
 (defun jetpacs-buffer--fold-span (pos buffer-name text)
-  "A tappable affordance span that expands/collapses the fold at heading position POS."
+  "A tappable affordance span that expands/collapses the fold at heading
+position POS."
   (jetpacs-span text
              :on-tap (jetpacs-action "jetpacs.buffer.fold"
                                   :args `((buffer . ,buffer-name) (pos . ,pos)))))
@@ -386,7 +387,7 @@ at the start of each actionable property run."
     (nreverse spans)))
 
 (defun jetpacs-buffer--fold-state (bol eol limit)
-  "Return 'folded, 'unfolded, or nil if not a foldable heading."
+  "Return \\='folded, \\='unfolded, or nil if not a foldable heading."
   (let ((magit-sec (get-char-property bol 'magit-section)))
     (cond
      (magit-sec

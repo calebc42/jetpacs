@@ -29,20 +29,10 @@
 (require 'jetpacs-shell)
 (require 'sql)
 
-;; ─── Showing a SQL buffer ────────────────────────────────────────────────────
-
-(defun jetpacs-sql--view-buffer-of (fn)
-  "Call FN (returning a buffer or buffer name) and view the result.
-Window excursion contains the pop-to-buffer these commands do; errors — a
-missing client binary, an unreachable server — land in the snackbar instead
-of dying silently.  (Copied from the tools wrapper.)"
-  (condition-case err
-      (let ((buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+;; ─── SQL session buffers ─────────────────────────────────────────────────────
+;; Command output — a `sql-list-all' dump, a fresh REPL — lands on its substrate
+;; through the shared `jetpacs-shell-view-buffer-of' wrapper, which turns a
+;; missing client binary or an unreachable server into a snackbar.
 
 (defun jetpacs-sql--sqli-buffer ()
   "The current live SQLi buffer object, or nil.
@@ -163,7 +153,7 @@ of dying silently.  (Copied from the tools wrapper.)"
            (sym (and (stringp name) (intern-soft name))))
       (if (not (and sym (assoc-string name sql-connection-alist t)))
           (jetpacs-shell-notify (format "Unknown connection: %s" (or name "?")))
-        (jetpacs-sql--view-buffer-of
+        (jetpacs-shell-view-buffer-of
          (lambda ()
            ;; `sql-connect' returns the SQLi buffer on a fresh session; fall
            ;; back to whatever buffer it left current.
@@ -176,7 +166,7 @@ of dying silently.  (Copied from the tools wrapper.)"
            (sym (and (stringp name) (intern-soft name))))
       (if (not (and sym (assq sym sql-product-alist)))
           (jetpacs-shell-notify (format "Unknown SQL product: %s" (or name "?")))
-        (jetpacs-sql--view-buffer-of
+        (jetpacs-shell-view-buffer-of
          (lambda ()
            (let ((buf (sql-product-interactive sym)))
              (if (bufferp buf) buf (current-buffer)))))))))
@@ -192,7 +182,7 @@ of dying silently.  (Copied from the tools wrapper.)"
   (lambda (_ __)
     (if (null (jetpacs-sql--sqli-buffer))
         (jetpacs-shell-notify "Connect to a database first")
-      (jetpacs-sql--view-buffer-of
+      (jetpacs-shell-view-buffer-of
        (lambda () (sql-list-all) "*List All*")))))
 
 ;; ─── Registration ────────────────────────────────────────────────────────────

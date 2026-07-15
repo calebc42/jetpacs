@@ -130,18 +130,12 @@ even loaded, nothing is connected."
 ;; ─── Opening things on a host ────────────────────────────────────────────────
 
 (defun jetpacs-hosts--view-buffer-of (fn)
-  "Call FN (returning a buffer or name) under the connect guardrails and
-view the result — the tools-hub pattern, plus the timeout clamp.  A
-password prompt raised mid-connect is bridged automatically (we are
-inside an action handler); a dead host costs a snackbar."
-  (condition-case err
-      (let* ((tramp-connection-timeout jetpacs-hosts-connect-timeout) ;dynamic
-             (buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+  "Land FN's buffer on its substrate under the host connect guardrails.
+Like `jetpacs-shell-view-buffer-of', but with `tramp-connection-timeout'
+clamped to `jetpacs-hosts-connect-timeout' so a dead host fails fast; a
+password prompt raised mid-connect is bridged (we are in an action handler)."
+  (let ((tramp-connection-timeout jetpacs-hosts-connect-timeout)) ;dynamic
+    (jetpacs-shell-view-buffer-of fn)))
 
 (defun jetpacs-hosts--with-host (args fn)
   "Resolve ARGS' host label against the allowlist and call FN with

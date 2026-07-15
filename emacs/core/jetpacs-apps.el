@@ -44,12 +44,25 @@
 PLIST keys: :label :icon :views (list of shell view names) :order.")
 
 (defvar jetpacs-apps--current nil
-  "Id of the app whose views are currently shown, or nil for the first.")
+  "Id of the app whose views are currently shown, or nil for the default.")
+
+(defcustom jetpacs-apps-default-app "jetpacs"
+  "App id to land on when none has been opened this session.
+The vanilla \"Jetpacs\" app holds the core chrome (Buffers, Files, Eval,
+Tools…), so it is the home base: installing another app must not silently
+hide those tabs or boot you into the just-installed app.  Falls back to the
+first registered app when this id is not registered — e.g. the vanilla app
+is off via `jetpacs-apps-show-vanilla-app'.  nil restores raw
+first-registered (AppSheet order) selection."
+  :type '(choice (const :tag "First registered (AppSheet order)" nil)
+                 (string :tag "App id"))
+  :group 'jetpacs)
 
 (defcustom jetpacs-apps-show-vanilla-app t
   "When non-nil, register Jetpacs itself as an app in the launcher.
-Disable this if you start adding more apps and want the core views (Buffers, Tools, etc.)
-to show up in those apps instead of being isolated in a 'Jetpacs' app."
+Disable this if you start adding more apps and want the core
+views (Buffers, Tools, etc.) to show up in those apps instead
+of being isolated in a `Jetpacs' app."
   :type 'boolean
   :group 'jetpacs
   :set (lambda (sym val)
@@ -86,6 +99,11 @@ app instead of showing everywhere."
   ;; `jetpacs-strict-namespaces') and `jetpacs-app-unregister' can find them
   ;; (see with-jetpacs-owner / jetpacs--claim in jetpacs-surfaces.el).
   (let ((jetpacs-current-owner id))
+    ;; A re-`jetpacs-defapp' with a shrunk :views set must release the views
+    ;; it dropped, or their ownership records outlive the claim and mislead
+    ;; `jetpacs-app-unregister' (which tears down by owned name).
+    (dolist (v (jetpacs--owned-names "view" id))
+      (unless (member v views) (jetpacs--unclaim "view" v)))
     (dolist (v views) (jetpacs--claim "view" v)))
   (setq jetpacs-apps--registry
         (sort (append (assoc-delete-all id jetpacs-apps--registry)
@@ -167,10 +185,17 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   (> (length jetpacs-apps--registry) 1))
 
 (defun jetpacs-apps-current ()
-  "The current app id, defaulting to the first registered app."
-  (if (assoc jetpacs-apps--current jetpacs-apps--registry)
-      jetpacs-apps--current
-    (caar jetpacs-apps--registry)))
+  "The current app id.
+When nothing has been opened this session it defaults to
+`jetpacs-apps-default-app' (the core \"Jetpacs\" home base), so installing an
+app never silently hides the core tabs; failing that, the first registered
+app."
+  (cond ((assoc jetpacs-apps--current jetpacs-apps--registry)
+         jetpacs-apps--current)
+        ((and jetpacs-apps-default-app
+              (assoc jetpacs-apps-default-app jetpacs-apps--registry))
+         jetpacs-apps-default-app)
+        (t (caar jetpacs-apps--registry))))
 
 (defun jetpacs-apps-current-p (id)
   "Non-nil while app ID is the one whose views are showing.
@@ -179,11 +204,6 @@ current.  For gating dynamic registrations an app makes outside its
 `with-jetpacs-owner' blocks."
   (or (not (jetpacs-apps--multi-p))
       (equal id (jetpacs-apps-current))))
-
-(defun jetpacs-apps--landing-tab (id)
-  "The view app ID lands on: its first :tab view, else its first view."
-  (let ((views (plist-get (cdr (assoc id jetpacs-apps--registry)) :views)))
-    (or (cl-find-if #'jetpacs-shell--tab-p views) (car views))))
 
 ;; ─── The shell filters (the whole gating mechanism) ──────────────────────────
 
@@ -310,10 +330,19 @@ on another app's views."
       (if (not (assoc app jetpacs-apps--registry))
           (message "Jetpacs apps: unknown app %s" app)
         (setq jetpacs-apps--current app)
-        (let ((tab (jetpacs-apps--landing-tab app)))
+        (let* ((views (plist-get (cdr (assoc app jetpacs-apps--registry)) :views))
+               (tab (cl-find-if #'jetpacs-shell--tab-p views)) ; a real tab, or nil
+               (landing (or tab (car views))))                 ; where to send the client
           (if tab
+              ;; A tab app: the push sets the current tab (its hook + guard).
               (jetpacs-shell-push tab :switch-to tab)
-            (jetpacs-shell-push)))))))
+            ;; A tab-less app: there is no tab to be on, so clear the current
+            ;; tab (never leave it reporting the app we just left, nor a
+            ;; non-tab view) and force the client onto the landing view.
+            (setq jetpacs-shell--current-tab nil)
+            (if landing
+                (jetpacs-shell-push nil :switch-to landing)
+              (jetpacs-shell-push))))))))
 
 (with-eval-after-load 'jetpacs-settings
   (jetpacs-settings-register-section

@@ -86,19 +86,9 @@ as tight as the current project."
           (cons (cons "Project" (file-name-as-directory root))
                 (assoc-delete-all "Project" jetpacs-files-roots)))))
 
-;; ─── Showing a project buffer ────────────────────────────────────────────────
-
-(defun jetpacs-project--view-buffer-of (fn)
-  "Call FN (returning a buffer or buffer name) and view the result.
-Window excursion contains the pop-to-buffer these commands do; errors land
-in the snackbar instead of dying silently.  (Copied from the tools wrapper.)"
-  (condition-case err
-      (let ((buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+;; ─── Running project commands ────────────────────────────────────────────────
+;; Command output lands on its substrate through the shared
+;; `jetpacs-shell-view-buffer-of' wrapper.
 
 (defun jetpacs-project--run (fn)
   "Call FN with `default-directory' bound to the selected project root.
@@ -299,14 +289,14 @@ the text column the flex weight (no hand-rolled weighted box, no flex trap)."
                        (quit ""))))
          (if (string-empty-p regexp)
              (jetpacs-shell-push)
-           (jetpacs-project--view-buffer-of
+           (jetpacs-shell-view-buffer-of
             (lambda () (project-find-regexp regexp) xref-buffer-name))))))))
 
 (jetpacs-defaction "project.compile"
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of
+       (jetpacs-shell-view-buffer-of
         (lambda ()
           ;; `project-compile' is interactive-only (it reads the compile
           ;; command); drive it through `call-interactively', with
@@ -319,20 +309,20 @@ the text column the flex weight (no hand-rolled weighted box, no flex trap)."
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of #'project-shell)))))
+       (jetpacs-shell-view-buffer-of #'project-shell)))))
 
 (jetpacs-defaction "project.buffers"
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of
+       (jetpacs-shell-view-buffer-of
         (lambda () (project-list-buffers) "*Buffer List*"))))))
 
 (jetpacs-defaction "project.magit"
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of
+       (jetpacs-shell-view-buffer-of
         (lambda ()
           (if (fboundp 'magit-status-setup-buffer)
               (magit-status-setup-buffer default-directory)

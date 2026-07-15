@@ -917,7 +917,7 @@ paging the buffer on Android."
 Called by jetpacs-init.el once `jetpacs-core' is required: migrate any legacy
 layout, load the create-once installed-app list and adopt+require each app,
 apply the foundation defaults, then load `custom-file' and the user override.
-Invariants are re-asserted separately at connect (`jetpacs-before-connect-hook')."
+Invariants are re-asserted at connect via `jetpacs-before-connect-hook'."
   (add-to-list 'load-path jetpacs-lib-dir)
   (jetpacs-config-migrate-legacy)
   ;; The core bundle was adopted by the entry file BEFORE core could run, so
@@ -5466,7 +5466,8 @@ After this the prompt is cancelled (as if the user dismissed the dialog)."
 (add-hook 'temp-buffer-show-hook #'jetpacs-minibuffer--temp-buffer-show-hook)
 
 (defun jetpacs-minibuffer--context-cards ()
-  "Return a list of `jetpacs-card` widgets containing the text of recently displayed context buffers."
+  "Return a list of `jetpacs-card' widgets holding the text of recently
+displayed context buffers."
   (delq nil
         (mapcar (lambda (bname)
                   (let ((buf (get-buffer bname)))
@@ -6556,7 +6557,8 @@ differ on whether the heading's newline or the body's first char carries the
         (and (< (point) limit) (jetpacs-buffer--invisible-at (point))))))
 
 (defun jetpacs-buffer--fold-span (pos buffer-name text)
-  "A tappable affordance span that expands/collapses the fold at heading position POS."
+  "A tappable affordance span that expands/collapses the fold at heading
+position POS."
   (jetpacs-span text
              :on-tap (jetpacs-action "jetpacs.buffer.fold"
                                   :args `((buffer . ,buffer-name) (pos . ,pos)))))
@@ -6718,7 +6720,7 @@ at the start of each actionable property run."
     (nreverse spans)))
 
 (defun jetpacs-buffer--fold-state (bol eol limit)
-  "Return 'folded, 'unfolded, or nil if not a foldable heading."
+  "Return \\='folded, \\='unfolded, or nil if not a foldable heading."
   (let ((magit-sec (get-char-property bol 'magit-section)))
     (cond
      (magit-sec
@@ -7210,6 +7212,24 @@ Note: the companion re-shows a snackbar only when the text *changes*,
 so two identical messages back-to-back display once."
   (setq jetpacs-shell--snackbar text))
 
+;; The buffer navigator lives in jetpacs-tablist.el; every satellite that lands
+;; command output here already requires it, so a forward declaration keeps this
+;; module free of a hard tablist dependency.
+(defvar jetpacs-tablist-view-buffer-function)
+
+(defun jetpacs-shell-view-buffer-of (fn)
+  "Call FN (returning a buffer or buffer name) and view the result.
+Window excursion contains the pop-to-buffer these commands do; errors land
+in the snackbar instead of dying silently.  The shared wrapper the stock
+satellites (tools, project, sql, hosts) land command output through."
+  (condition-case err
+      (let ((buf (save-window-excursion (funcall fn))))
+        (when (bufferp buf) (setq buf (buffer-name buf)))
+        (if (and (stringp buf) (get-buffer buf))
+            (funcall jetpacs-tablist-view-buffer-function buf)
+          (jetpacs-shell-notify "Nothing to show")))
+    (error (jetpacs-shell-notify (error-message-string err)))))
+
 ;; ─── Route params (parameterized navigation) ─────────────────────────────────
 ;; A detail screen used to need a module state var plus a set-the-var-then-
 ;; switch action (grocy--selected-product-id + a `grocy.open-product' handler
@@ -7550,7 +7570,10 @@ yank the user off whatever they're looking at."
   (when (timerp jetpacs-shell--repush-timer)
     (cancel-timer jetpacs-shell--repush-timer)
     (setq jetpacs-shell--repush-timer nil))
-  (when tab
+  ;; Only a registered tab may become the current tab — the invariant
+  ;; `jetpacs-shell-current-tab' relies on.  A non-tab TAB (a stale `nav.tab'
+  ;; payload, say) is ignored here rather than corrupting the state.
+  (when (and tab (jetpacs-shell--tab-p tab))
     (unless (equal tab jetpacs-shell--current-tab)
       (run-hook-with-args 'jetpacs-shell-view-switched-hook tab))
     (setq jetpacs-shell--current-tab tab))
@@ -8041,12 +8064,25 @@ degrades to that view's error card rather than dropping the push."
 PLIST keys: :label :icon :views (list of shell view names) :order.")
 
 (defvar jetpacs-apps--current nil
-  "Id of the app whose views are currently shown, or nil for the first.")
+  "Id of the app whose views are currently shown, or nil for the default.")
+
+(defcustom jetpacs-apps-default-app "jetpacs"
+  "App id to land on when none has been opened this session.
+The vanilla \"Jetpacs\" app holds the core chrome (Buffers, Files, Eval,
+Tools…), so it is the home base: installing another app must not silently
+hide those tabs or boot you into the just-installed app.  Falls back to the
+first registered app when this id is not registered — e.g. the vanilla app
+is off via `jetpacs-apps-show-vanilla-app'.  nil restores raw
+first-registered (AppSheet order) selection."
+  :type '(choice (const :tag "First registered (AppSheet order)" nil)
+                 (string :tag "App id"))
+  :group 'jetpacs)
 
 (defcustom jetpacs-apps-show-vanilla-app t
   "When non-nil, register Jetpacs itself as an app in the launcher.
-Disable this if you start adding more apps and want the core views (Buffers, Tools, etc.)
-to show up in those apps instead of being isolated in a 'Jetpacs' app."
+Disable this if you start adding more apps and want the core
+views (Buffers, Tools, etc.) to show up in those apps instead
+of being isolated in a `Jetpacs' app."
   :type 'boolean
   :group 'jetpacs
   :set (lambda (sym val)
@@ -8083,6 +8119,11 @@ app instead of showing everywhere."
   ;; `jetpacs-strict-namespaces') and `jetpacs-app-unregister' can find them
   ;; (see with-jetpacs-owner / jetpacs--claim in jetpacs-surfaces.el).
   (let ((jetpacs-current-owner id))
+    ;; A re-`jetpacs-defapp' with a shrunk :views set must release the views
+    ;; it dropped, or their ownership records outlive the claim and mislead
+    ;; `jetpacs-app-unregister' (which tears down by owned name).
+    (dolist (v (jetpacs--owned-names "view" id))
+      (unless (member v views) (jetpacs--unclaim "view" v)))
     (dolist (v views) (jetpacs--claim "view" v)))
   (setq jetpacs-apps--registry
         (sort (append (assoc-delete-all id jetpacs-apps--registry)
@@ -8164,10 +8205,17 @@ torn down (wrap them in `with-jetpacs-owner' to make them removable)."
   (> (length jetpacs-apps--registry) 1))
 
 (defun jetpacs-apps-current ()
-  "The current app id, defaulting to the first registered app."
-  (if (assoc jetpacs-apps--current jetpacs-apps--registry)
-      jetpacs-apps--current
-    (caar jetpacs-apps--registry)))
+  "The current app id.
+When nothing has been opened this session it defaults to
+`jetpacs-apps-default-app' (the core \"Jetpacs\" home base), so installing an
+app never silently hides the core tabs; failing that, the first registered
+app."
+  (cond ((assoc jetpacs-apps--current jetpacs-apps--registry)
+         jetpacs-apps--current)
+        ((and jetpacs-apps-default-app
+              (assoc jetpacs-apps-default-app jetpacs-apps--registry))
+         jetpacs-apps-default-app)
+        (t (caar jetpacs-apps--registry))))
 
 (defun jetpacs-apps-current-p (id)
   "Non-nil while app ID is the one whose views are showing.
@@ -8176,11 +8224,6 @@ current.  For gating dynamic registrations an app makes outside its
 `with-jetpacs-owner' blocks."
   (or (not (jetpacs-apps--multi-p))
       (equal id (jetpacs-apps-current))))
-
-(defun jetpacs-apps--landing-tab (id)
-  "The view app ID lands on: its first :tab view, else its first view."
-  (let ((views (plist-get (cdr (assoc id jetpacs-apps--registry)) :views)))
-    (or (cl-find-if #'jetpacs-shell--tab-p views) (car views))))
 
 ;; ─── The shell filters (the whole gating mechanism) ──────────────────────────
 
@@ -8307,10 +8350,19 @@ on another app's views."
       (if (not (assoc app jetpacs-apps--registry))
           (message "Jetpacs apps: unknown app %s" app)
         (setq jetpacs-apps--current app)
-        (let ((tab (jetpacs-apps--landing-tab app)))
+        (let* ((views (plist-get (cdr (assoc app jetpacs-apps--registry)) :views))
+               (tab (cl-find-if #'jetpacs-shell--tab-p views)) ; a real tab, or nil
+               (landing (or tab (car views))))                 ; where to send the client
           (if tab
+              ;; A tab app: the push sets the current tab (its hook + guard).
               (jetpacs-shell-push tab :switch-to tab)
-            (jetpacs-shell-push)))))))
+            ;; A tab-less app: there is no tab to be on, so clear the current
+            ;; tab (never leave it reporting the app we just left, nor a
+            ;; non-tab view) and force the client onto the landing view.
+            (setq jetpacs-shell--current-tab nil)
+            (if landing
+                (jetpacs-shell-push nil :switch-to landing)
+              (jetpacs-shell-push))))))))
 
 (with-eval-after-load 'jetpacs-settings
   (jetpacs-settings-register-section
@@ -12922,7 +12974,8 @@ files must not round-trip through the editor."
   :type 'integer :group 'jetpacs)
 
 (defvar jetpacs-files--dir nil
-  "Directory being browsed, or nil for the landing dir (`jetpacs-files-default-dir').")
+  "Directory being browsed, or nil for the landing dir
+`jetpacs-files-default-dir'.")
 
 (defvar jetpacs-files--file nil
   "Absolute path of the file open in the editor, or nil.")
@@ -15531,22 +15584,12 @@ when `jetpacs-theme-mode' is `emacs'."
 (declare-function bookmark-jump "bookmark")
 
 ;; ─── Showing a tool buffer ───────────────────────────────────────────────────
-
-(defun jetpacs-tools--view-buffer-of (fn)
-  "Call FN (returning a buffer or buffer name) and view the result.
-Window excursion contains the pop-to-buffer these commands do; errors
-land in the snackbar instead of dying silently."
-  (condition-case err
-      (let ((buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+;; Command output lands on its substrate through the shared
+;; `jetpacs-shell-view-buffer-of' wrapper.
 
 (jetpacs-defaction "tools.bookmarks"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda ()
        (require 'bookmark)
        (bookmark-maybe-load-default-file)
@@ -15555,12 +15598,12 @@ land in the snackbar instead of dying silently."
 
 (jetpacs-defaction "tools.processes"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda () (list-processes) "*Process List*"))))
 
 (jetpacs-defaction "tools.timers"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda ()
        (unless (fboundp 'list-timers) (require 'timer-list))
        ;; Called as a function, so its `disabled' novice flag (which
@@ -15570,7 +15613,7 @@ land in the snackbar instead of dying silently."
 
 (jetpacs-defaction "tools.shell"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda ()
        (require 'shell)
        (shell)))))
@@ -15800,19 +15843,9 @@ as tight as the current project."
           (cons (cons "Project" (file-name-as-directory root))
                 (assoc-delete-all "Project" jetpacs-files-roots)))))
 
-;; ─── Showing a project buffer ────────────────────────────────────────────────
-
-(defun jetpacs-project--view-buffer-of (fn)
-  "Call FN (returning a buffer or buffer name) and view the result.
-Window excursion contains the pop-to-buffer these commands do; errors land
-in the snackbar instead of dying silently.  (Copied from the tools wrapper.)"
-  (condition-case err
-      (let ((buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+;; ─── Running project commands ────────────────────────────────────────────────
+;; Command output lands on its substrate through the shared
+;; `jetpacs-shell-view-buffer-of' wrapper.
 
 (defun jetpacs-project--run (fn)
   "Call FN with `default-directory' bound to the selected project root.
@@ -16013,14 +16046,14 @@ the text column the flex weight (no hand-rolled weighted box, no flex trap)."
                        (quit ""))))
          (if (string-empty-p regexp)
              (jetpacs-shell-push)
-           (jetpacs-project--view-buffer-of
+           (jetpacs-shell-view-buffer-of
             (lambda () (project-find-regexp regexp) xref-buffer-name))))))))
 
 (jetpacs-defaction "project.compile"
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of
+       (jetpacs-shell-view-buffer-of
         (lambda ()
           ;; `project-compile' is interactive-only (it reads the compile
           ;; command); drive it through `call-interactively', with
@@ -16033,20 +16066,20 @@ the text column the flex weight (no hand-rolled weighted box, no flex trap)."
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of #'project-shell)))))
+       (jetpacs-shell-view-buffer-of #'project-shell)))))
 
 (jetpacs-defaction "project.buffers"
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of
+       (jetpacs-shell-view-buffer-of
         (lambda () (project-list-buffers) "*Buffer List*"))))))
 
 (jetpacs-defaction "project.magit"
   (lambda (_ __)
     (jetpacs-project--run
      (lambda ()
-       (jetpacs-project--view-buffer-of
+       (jetpacs-shell-view-buffer-of
         (lambda ()
           (if (fboundp 'magit-status-setup-buffer)
               (magit-status-setup-buffer default-directory)
@@ -16115,20 +16148,10 @@ the text column the flex weight (no hand-rolled weighted box, no flex trap)."
 (require 'jetpacs-shell)
 (require 'sql)
 
-;; ─── Showing a SQL buffer ────────────────────────────────────────────────────
-
-(defun jetpacs-sql--view-buffer-of (fn)
-  "Call FN (returning a buffer or buffer name) and view the result.
-Window excursion contains the pop-to-buffer these commands do; errors — a
-missing client binary, an unreachable server — land in the snackbar instead
-of dying silently.  (Copied from the tools wrapper.)"
-  (condition-case err
-      (let ((buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+;; ─── SQL session buffers ─────────────────────────────────────────────────────
+;; Command output — a `sql-list-all' dump, a fresh REPL — lands on its substrate
+;; through the shared `jetpacs-shell-view-buffer-of' wrapper, which turns a
+;; missing client binary or an unreachable server into a snackbar.
 
 (defun jetpacs-sql--sqli-buffer ()
   "The current live SQLi buffer object, or nil.
@@ -16249,7 +16272,7 @@ of dying silently.  (Copied from the tools wrapper.)"
            (sym (and (stringp name) (intern-soft name))))
       (if (not (and sym (assoc-string name sql-connection-alist t)))
           (jetpacs-shell-notify (format "Unknown connection: %s" (or name "?")))
-        (jetpacs-sql--view-buffer-of
+        (jetpacs-shell-view-buffer-of
          (lambda ()
            ;; `sql-connect' returns the SQLi buffer on a fresh session; fall
            ;; back to whatever buffer it left current.
@@ -16262,7 +16285,7 @@ of dying silently.  (Copied from the tools wrapper.)"
            (sym (and (stringp name) (intern-soft name))))
       (if (not (and sym (assq sym sql-product-alist)))
           (jetpacs-shell-notify (format "Unknown SQL product: %s" (or name "?")))
-        (jetpacs-sql--view-buffer-of
+        (jetpacs-shell-view-buffer-of
          (lambda ()
            (let ((buf (sql-product-interactive sym)))
              (if (bufferp buf) buf (current-buffer)))))))))
@@ -16278,7 +16301,7 @@ of dying silently.  (Copied from the tools wrapper.)"
   (lambda (_ __)
     (if (null (jetpacs-sql--sqli-buffer))
         (jetpacs-shell-notify "Connect to a database first")
-      (jetpacs-sql--view-buffer-of
+      (jetpacs-shell-view-buffer-of
        (lambda () (sql-list-all) "*List All*")))))
 
 ;; ─── Registration ────────────────────────────────────────────────────────────
@@ -16430,18 +16453,12 @@ even loaded, nothing is connected."
 ;; ─── Opening things on a host ────────────────────────────────────────────────
 
 (defun jetpacs-hosts--view-buffer-of (fn)
-  "Call FN (returning a buffer or name) under the connect guardrails and
-view the result — the tools-hub pattern, plus the timeout clamp.  A
-password prompt raised mid-connect is bridged automatically (we are
-inside an action handler); a dead host costs a snackbar."
-  (condition-case err
-      (let* ((tramp-connection-timeout jetpacs-hosts-connect-timeout) ;dynamic
-             (buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+  "Land FN's buffer on its substrate under the host connect guardrails.
+Like `jetpacs-shell-view-buffer-of', but with `tramp-connection-timeout'
+clamped to `jetpacs-hosts-connect-timeout' so a dead host fails fast; a
+password prompt raised mid-connect is bridged (we are in an action handler)."
+  (let ((tramp-connection-timeout jetpacs-hosts-connect-timeout)) ;dynamic
+    (jetpacs-shell-view-buffer-of fn)))
 
 (defun jetpacs-hosts--with-host (args fn)
   "Resolve ARGS' host label against the allowlist and call FN with

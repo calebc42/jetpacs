@@ -27,22 +27,12 @@
 (declare-function bookmark-jump "bookmark")
 
 ;; ─── Showing a tool buffer ───────────────────────────────────────────────────
-
-(defun jetpacs-tools--view-buffer-of (fn)
-  "Call FN (returning a buffer or buffer name) and view the result.
-Window excursion contains the pop-to-buffer these commands do; errors
-land in the snackbar instead of dying silently."
-  (condition-case err
-      (let ((buf (save-window-excursion (funcall fn))))
-        (when (bufferp buf) (setq buf (buffer-name buf)))
-        (if (and (stringp buf) (get-buffer buf))
-            (funcall jetpacs-tablist-view-buffer-function buf)
-          (jetpacs-shell-notify "Nothing to show")))
-    (error (jetpacs-shell-notify (error-message-string err)))))
+;; Command output lands on its substrate through the shared
+;; `jetpacs-shell-view-buffer-of' wrapper.
 
 (jetpacs-defaction "tools.bookmarks"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda ()
        (require 'bookmark)
        (bookmark-maybe-load-default-file)
@@ -51,12 +41,12 @@ land in the snackbar instead of dying silently."
 
 (jetpacs-defaction "tools.processes"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda () (list-processes) "*Process List*"))))
 
 (jetpacs-defaction "tools.timers"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda ()
        (unless (fboundp 'list-timers) (require 'timer-list))
        ;; Called as a function, so its `disabled' novice flag (which
@@ -66,7 +56,7 @@ land in the snackbar instead of dying silently."
 
 (jetpacs-defaction "tools.shell"
   (lambda (_ __)
-    (jetpacs-tools--view-buffer-of
+    (jetpacs-shell-view-buffer-of
      (lambda ()
        (require 'shell)
        (shell)))))

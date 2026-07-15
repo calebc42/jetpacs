@@ -57,7 +57,8 @@ After this the prompt is cancelled (as if the user dismissed the dialog)."
 (add-hook 'temp-buffer-show-hook #'jetpacs-minibuffer--temp-buffer-show-hook)
 
 (defun jetpacs-minibuffer--context-cards ()
-  "Return a list of `jetpacs-card` widgets containing the text of recently displayed context buffers."
+  "Return a list of `jetpacs-card' widgets holding the text of recently
+displayed context buffers."
   (delq nil
         (mapcar (lambda (bname)
                   (let ((buf (get-buffer bname)))

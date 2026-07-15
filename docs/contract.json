@@ -33,6 +33,7 @@
     "icon_button",
     "chip",
     "assist_chip",
+    "badge",
     "text_input",
     "editor",
     "checkbox",
@@ -81,7 +82,9 @@
       "optional": [
         "spacing",
         "align",
-        "scroll"
+        "scroll",
+        "weight",
+        "fill"
       ]
     },
     "flow_row": {
@@ -100,7 +103,9 @@
       "optional": [
         "spacing",
         "align",
-        "scroll"
+        "scroll",
+        "weight",
+        "fill"
       ]
     },
     "box": {
@@ -360,6 +365,17 @@
         "on_tap",
         "icon",
         "padding"
+      ]
+    },
+    "badge": {
+      "required": [
+        "label"
+      ],
+      "optional": [
+        "icon",
+        "color",
+        "padding",
+        "children"
       ]
     },
     "text_input": {

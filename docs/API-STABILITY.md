@@ -61,7 +61,8 @@ Content: `jetpacs-text` `jetpacs-markup` `jetpacs-rich-text` `jetpacs-span`
 `jetpacs-date-stamp`).
 
 Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
-`jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-border`
+`jetpacs-scroll-column` `jetpacs-box` `jetpacs-surface` `jetpacs-card` `jetpacs-list-item`
+`jetpacs-border`
 `jetpacs-lazy-column` `jetpacs-scroll-here` `jetpacs-spacer` `jetpacs-collapsible`
 `jetpacs-reorderable-list` `jetpacs-table` `jetpacs-table-row` `jetpacs-table-rule`
 `jetpacs-table-cell` `jetpacs-swipe-action` `jetpacs-tabs` `jetpacs-tab-item`.
@@ -70,7 +71,7 @@ keywords; `box`/`surface`/`card` take
 `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
 `:swipe-start`/`:swipe-end`.)
 
-Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip`
+Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip` `jetpacs-badge`
 `jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`
 `jetpacs-text-input` `jetpacs-enum-list` `jetpacs-date-button` `jetpacs-time-button`
 `jetpacs-editor` `jetpacs-toolbar-item`.

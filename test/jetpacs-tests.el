@@ -1264,7 +1264,21 @@ the composer delete its own matcher."
                                ("2026-07-14" . ((dots . 1) (color . "#E64980"))))
                       :selected "2026-07-10"
                       :min-month "2026-01" :max-month "2026-12"
-                      :on-day-tap act :on-month-change act))))
+                      :on-day-tap act :on-month-change act)
+     ;; :weight is a row/column's OWN flex share as a child; and the
+     ;; correct-by-construction list item (weighted middle, pinned edges).
+     ;; Appended (not inserted) so existing golden indices stay stable.
+     (jetpacs-row leaf leaf :weight 1)
+     (jetpacs-column leaf :weight 1)
+     (jetpacs-list-item :leading (jetpacs-icon "star")
+                     :overline "OVER" :title "Title" :subtitle "Sub"
+                     :trailing (list (jetpacs-icon-button "delete" act))
+                     :on-tap act
+                     :swipe-end (jetpacs-swipe-action "check" "Done" act)
+                     :padding 4)
+     ;; Phase 2: fill opt-out (wrapContent) + the status-badge node.
+     (jetpacs-column leaf :fill nil)
+     (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -1292,6 +1306,79 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
                     (insert-file-contents jetpacs-tests--golden-file)
                     (buffer-string))
                   "\n" t))))
+
+(ert-deftest jetpacs-list-item-weights-the-middle ()
+  "The list item is card > row > [leading, WEIGHTED middle column, trailing],
+so the trailing controls keep their width, and the tree lints clean."
+  (let* ((item (jetpacs-list-item
+                :leading (jetpacs-icon "star")
+                :title "T" :subtitle "S"
+                :trailing (list (jetpacs-icon-button "delete" (jetpacs-action "a")))))
+         (row (aref (alist-get 'children item) 0))
+         (kids (append (alist-get 'children row) nil)))
+    (should (equal "card" (alist-get 't item)))
+    (should (equal "row"  (alist-get 't row)))
+    (should (= 3 (length kids)))
+    (should (equal "icon"        (alist-get 't (nth 0 kids))))
+    (should (equal "column"      (alist-get 't (nth 1 kids))))
+    (should (= 1 (alist-get 'weight (nth 1 kids))))          ; the middle flexes
+    (should (equal "icon_button" (alist-get 't (nth 2 kids))))
+    (should (null (jetpacs-lint-spec item)))
+    ;; A single trailing node (not a list) is accepted too.
+    (should (jetpacs-list-item :title "T" :trailing (jetpacs-icon "star")))))
+
+(ert-deftest jetpacs-lint-flags-unweighted-flex-in-row ()
+  "A row with a non-terminal unweighted column/row is warned; the weighted
+forms, a trailing (last) column, a scrolling row, and `jetpacs-list-item' pass."
+  (let* ((leaf (jetpacs-text "x"))
+         (btn  (jetpacs-icon-button "delete" (jetpacs-action "a")))
+         (offscreen-p (lambda (spec)
+                        (seq-some (lambda (p) (string-match-p "off-screen" (cdr p)))
+                                  (jetpacs-lint-spec spec)))))
+    ;; Bad: unweighted column before a trailing button.
+    (should (funcall offscreen-p (jetpacs-row (jetpacs-column leaf) btn)))
+    ;; Bad even when a later spacer carries the weight — the column still fills.
+    (should (funcall offscreen-p
+                     (jetpacs-row (jetpacs-column leaf) (jetpacs-spacer :weight 1) btn)))
+    ;; Good: weighted column.
+    (should-not (funcall offscreen-p (jetpacs-row (jetpacs-column leaf :weight 1) btn)))
+    ;; Good: weighted box wrapping the column (the classic idiom).
+    (should-not (funcall offscreen-p
+                         (jetpacs-row (jetpacs-box (list (jetpacs-column leaf)) :weight 1) btn)))
+    ;; Good: a trailing (last) column has nothing after it to push.
+    (should-not (funcall offscreen-p (jetpacs-row btn (jetpacs-column leaf))))
+    ;; Good: a scrolling row keeps its children intrinsic.
+    (should-not (funcall offscreen-p (jetpacs-scroll-row (jetpacs-column leaf) btn)))
+    ;; Good: the list item is correct by construction.
+    (should-not (funcall offscreen-p
+                         (jetpacs-list-item :title "t" :trailing (list btn))))))
+
+(ert-deftest jetpacs-row-column-fill-opt-out ()
+  "`:fill nil' emits fill:false (opt out of fillMaxWidth); `:fill t' and the
+default omit the key, and the node still lints clean."
+  (let ((leaf (jetpacs-text "x")))
+    (should (eq :false (alist-get 'fill (jetpacs-column leaf :fill nil))))
+    (should (eq :false (alist-get 'fill (jetpacs-row leaf :fill nil))))
+    (should (null (alist-get 'fill (jetpacs-column leaf :fill t))))
+    (should (null (alist-get 'fill (jetpacs-column leaf))))
+    (should (null (jetpacs-lint-spec (jetpacs-column leaf :fill nil))))))
+
+(ert-deftest jetpacs-badge-is-intrinsic-with-fallback ()
+  "The badge carries label/icon/color, is a recognized node type, embeds a
+colored fallback `text' child for older companions, and lints clean."
+  (let ((b (jetpacs-badge "Overdue" :icon "warning" :color "error")))
+    (should (equal "badge" (alist-get 't b)))
+    (should (equal "Overdue" (alist-get 'label b)))
+    (should (equal "warning" (alist-get 'icon b)))
+    (should (equal "error" (alist-get 'color b)))
+    (should (member "badge" jetpacs-lint-node-types))
+    (let ((fallback (aref (alist-get 'children b) 0)))   ; self-describing degrade
+      (should (equal "text" (alist-get 't fallback)))
+      (should (equal "Overdue" (alist-get 'text fallback)))
+      (should (equal "error" (alist-get 'color fallback))))
+    (should (null (jetpacs-lint-spec b)))
+    ;; A badge is safe as a trailing row element (intrinsic — not flagged).
+    (should-not (jetpacs-lint-spec (jetpacs-row (jetpacs-text "t" nil 1) b)))))
 
 ;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
 

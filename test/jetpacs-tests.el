@@ -45,6 +45,8 @@
 (require 'jetpacs-settings)
 (require 'jetpacs-theme)
 (require 'jetpacs-modus)
+(require 'jetpacs-project)
+(require 'jetpacs-sql)
 (require 'jetpacs-automations)
 (require 'jetpacs-app-store)
 (require 'jetpacs-org)
@@ -4699,6 +4701,166 @@ collapses the name to one-character columns (the on-device vertical-text bug)."
     ;; No child of the card row is itself a row (which would fill the width).
     (should-not (cl-find "row" children
                          :key (lambda (c) (alist-get t c)) :test #'equal))))
+
+;; ─── Project dashboard ──────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-project-view-builds-and-serializes ()
+  "The dashboard builds a lint-clean, serializable spec carrying every entry
+action."
+  (let ((jetpacs-project--current default-directory))
+    (let* ((view (jetpacs-project--view nil))
+           (s (prin1-to-string view)))
+      (should-not (jetpacs-lint-spec view))
+      ;; Serialize like the real push does (lint alone misses a raw-list child).
+      (should (stringp (json-serialize view :null-object :null
+                                       :false-object :false)))
+      (should (string-search "Project" s))
+      (dolist (act '("project.find-file" "project.grep" "project.compile"
+                     "project.shell" "project.buffers" "project.magit"))
+        (should (string-search act s)))
+      ;; Switch project + Databases are companion-local view switches.
+      (should (string-search "project-switch" s))
+      (should (string-search "SQL connections" s)))))
+
+(ert-deftest jetpacs-project-empty-state-without-project ()
+  "With no project selected the header is an empty state, yet Switch project
+stays reachable so one can be picked."
+  (let ((jetpacs-project--current nil))
+    (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil)))
+      (let ((s (prin1-to-string (jetpacs-project--dashboard-body))))
+        (should (string-search "empty_state" s))
+        (should (string-search "No project here" s))
+        (should (string-search "project-switch" s))))))
+
+(ert-deftest jetpacs-project-entry-card-layout ()
+  "An entry card keeps its label in a WEIGHTED column, with siblings spread as
+direct row children — never a nested row, which would fill the width and
+collapse the label to one-character columns (the on-device vertical-text bug).
+The row is built on `jetpacs-list-item', whose flexible middle is a weighted
+`column' pinning the leading/trailing edges."
+  (let* ((card (jetpacs-project--entry "search" "Find file" "cap"
+                                       (jetpacs-action "x")))
+         (row (car (append (alist-get 'children card) nil)))
+         (children (append (alist-get 'children row) nil)))
+    (should (equal "row" (alist-get t row)))
+    (should (cl-find-if (lambda (c) (and (equal "column" (alist-get t c))
+                                         (alist-get 'weight c)))
+                        children))
+    (should-not (cl-find "row" children
+                         :key (lambda (c) (alist-get t c)) :test #'equal))))
+
+(ert-deftest jetpacs-project-switch-updates-root ()
+  "project.switch selects a known root and widens the files sandbox to it."
+  (let* ((dir (file-name-as-directory (make-temp-file "jp-switch" t)))
+         (jetpacs-project--current nil)
+         (jetpacs-files-roots (copy-sequence jetpacs-files-roots)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'jetpacs-shell-push) (lambda (&rest _) nil)))
+          (funcall (gethash "project.switch" jetpacs-action-handlers)
+                   `((root . ,dir)) nil)
+          (should (jetpacs-project--same-root-p jetpacs-project--current dir))
+          ;; The sandbox now admits the project root (so files.open can reach it).
+          (should (jetpacs-project--same-root-p
+                   (cdr (assoc "Project" jetpacs-files-roots)) dir)))
+      (delete-directory dir t))))
+
+(ert-deftest jetpacs-project-grep-invokes-seam ()
+  "project.grep reads a regexp (bridged) and drives the buffer seam with it."
+  (let ((jetpacs-project--current default-directory)
+        seam-called grep-regexp)
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "needle"))
+              ((symbol-function 'jetpacs-project--view-buffer-of)
+               (lambda (fn)
+                 (setq seam-called t)
+                 (cl-letf (((symbol-function 'project-find-regexp)
+                            (lambda (re) (setq grep-regexp re))))
+                   (funcall fn))))
+              ((symbol-function 'jetpacs-shell-push) (lambda (&rest _) nil)))
+      (funcall (gethash "project.grep" jetpacs-action-handlers) nil nil))
+    (should seam-called)
+    (should (equal "needle" grep-regexp))))
+
+(ert-deftest jetpacs-project-shell-invokes-seam ()
+  "project.shell hands `project-shell' to the buffer seam."
+  (let ((jetpacs-project--current default-directory) seam-arg)
+    (cl-letf (((symbol-function 'jetpacs-project--view-buffer-of)
+               (lambda (fn) (setq seam-arg fn))))
+      (funcall (gethash "project.shell" jetpacs-action-handlers) nil nil))
+    (should (eq seam-arg #'project-shell))))
+
+;; ─── SQL hub ────────────────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-sql-view-builds-and-serializes ()
+  "The hub builds a lint-clean, serializable spec with a card per connection."
+  (let ((sql-connection-alist
+         '((demo (sql-product 'postgres) (sql-database "demo"))
+           (scratch (sql-product 'sqlite)))))
+    (cl-letf (((symbol-function 'sql-find-sqli-buffer) (lambda (&rest _) nil)))
+      (let* ((view (jetpacs-sql--view nil))
+             (s (prin1-to-string view)))
+        (should-not (jetpacs-lint-spec view))
+        (should (stringp (json-serialize view :null-object :null
+                                         :false-object :false)))
+        (should (string-search "Databases" s))
+        (should (string-search "demo" s))
+        (should (string-search "scratch" s))
+        (should (string-search "sql.connect" s))
+        (should (string-search "sql-new" s))))))
+
+(ert-deftest jetpacs-sql-empty-state-no-connections ()
+  "With an empty `sql-connection-alist' the hub shows an empty state and still
+offers New connection."
+  (let ((sql-connection-alist nil))
+    (cl-letf (((symbol-function 'sql-find-sqli-buffer) (lambda (&rest _) nil)))
+      (let ((s (prin1-to-string (jetpacs-sql--body))))
+        (should (string-search "empty_state" s))
+        (should (string-search "No saved connections" s))
+        (should (string-search "sql-new" s))))))
+
+(ert-deftest jetpacs-sql-connect-navigates ()
+  "sql.connect drives the buffer seam for a known connection and notifies for
+an unknown one."
+  (let ((sql-connection-alist '((demo (sql-product 'postgres))))
+        outcome)
+    (cl-letf (((symbol-function 'jetpacs-sql--view-buffer-of)
+               (lambda (_fn) (setq outcome 'connected)))
+              ((symbol-function 'jetpacs-shell-notify)
+               (lambda (&rest _) (setq outcome 'notified))))
+      (funcall (gethash "sql.connect" jetpacs-action-handlers)
+               '((connection . "demo")) nil)
+      (should (eq outcome 'connected))
+      (setq outcome nil)
+      (funcall (gethash "sql.connect" jetpacs-action-handlers)
+               '((connection . "nope")) nil)
+      (should (eq outcome 'notified)))))
+
+(ert-deftest jetpacs-sql-new-picker-and-action ()
+  "The product picker lists a startable product and sql.new drives the seam."
+  (let ((s (prin1-to-string (jetpacs-sql--new-view nil))))
+    (should (string-search "New connection" s))
+    (should (string-search "sql.new" s))
+    (should (string-search "Postgres" s)))
+  (let (outcome)
+    (cl-letf (((symbol-function 'jetpacs-sql--view-buffer-of)
+               (lambda (_fn) (setq outcome 'started)))
+              ((symbol-function 'jetpacs-shell-notify)
+               (lambda (&rest _) (setq outcome 'notified))))
+      (funcall (gethash "sql.new" jetpacs-action-handlers)
+               '((product . "sqlite")) nil)
+      (should (eq outcome 'started))
+      (setq outcome nil)
+      (funcall (gethash "sql.new" jetpacs-action-handlers)
+               '((product . "nope")) nil)
+      (should (eq outcome 'notified)))))
+
+(ert-deftest jetpacs-sql-list-tables-requires-session ()
+  "sql.list-tables refuses to run without a live SQLi session."
+  (let (notified)
+    (cl-letf (((symbol-function 'sql-find-sqli-buffer) (lambda (&rest _) nil))
+              ((symbol-function 'jetpacs-shell-notify)
+               (lambda (m &rest _) (setq notified m))))
+      (funcall (gethash "sql.list-tables" jetpacs-action-handlers) nil nil)
+      (should (string-search "Connect" notified)))))
 
 (ert-deftest jetpacs-shell-every-view-serializes ()
   "Every registered shell view must not just lint but `json-serialize' — the

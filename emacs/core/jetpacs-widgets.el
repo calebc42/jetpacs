@@ -96,13 +96,21 @@ constructors take options without breaking `(jetpacs-row a b c)' callers."
   "A horizontal row of child nodes.
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"top\"/\"center\"/\"bottom\"),
-and :scroll (pan sideways on overflow)."
-  (let* ((split (jetpacs--children-and-opts args)))
+:scroll (pan sideways on overflow), and :weight (this row's own flex share
+when it is itself a child of a `row'/`column').
+
+Layout note: a `row'/`column' renders `fillMaxWidth', so an *unweighted* one
+placed inside a row fills it and pushes the later siblings off-screen.  Give
+the flexible child a :weight — or use `jetpacs-list-item' — so trailing
+children keep their width (see WIDGETS.md)."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
     (jetpacs--node "row"
                 'children (vconcat (car split))
-                'spacing (plist-get (cdr split) :spacing)
-                'align (plist-get (cdr split) :align)
-                'scroll (and (plist-get (cdr split) :scroll) t))))
+                'spacing (plist-get opts :spacing)
+                'align (plist-get opts :align)
+                'scroll (and (plist-get opts :scroll) t)
+                'weight (plist-get opts :weight))))
 
 (defun jetpacs-flow-row (&rest args)
   "A horizontal row of children that wraps onto new lines when full.
@@ -125,13 +133,20 @@ ignored — a scrolling row has no bounded width to distribute."
   "A vertical column of child nodes.
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
-and :scroll (make the column scroll vertically)."
-  (let* ((split (jetpacs--children-and-opts args)))
+:scroll (make the column scroll vertically), and :weight (this column's own
+flex share when it is a child of a `row'/`column').
+
+Layout note: a `column' renders `fillMaxWidth', so an *unweighted* one placed
+inside a row fills it and pushes the later siblings off-screen — give it
+:weight, or use `jetpacs-list-item' (see WIDGETS.md)."
+  (let* ((split (jetpacs--children-and-opts args))
+         (opts (cdr split)))
     (jetpacs--node "column"
                 'children (vconcat (car split))
-                'spacing (plist-get (cdr split) :spacing)
-                'align (plist-get (cdr split) :align)
-                'scroll (and (plist-get (cdr split) :scroll) t))))
+                'spacing (plist-get opts :spacing)
+                'align (plist-get opts :align)
+                'scroll (and (plist-get opts :scroll) t)
+                'weight (plist-get opts :weight))))
 
 (defun jetpacs-scroll-column (&rest children)
   "A vertically scrollable column of CHILDREN nodes."
@@ -234,6 +249,43 @@ revealed background (hex; defaults to a theme container color)."
               'label label
               'on_trigger action
               'color color))
+
+(cl-defun jetpacs-list-item (&key leading title subtitle overline trailing
+                                  on-tap swipe-start swipe-end padding
+                                  (spacing 12))
+  "An elevated list-item card with a flexible middle and pinned edges — the
+standard \"leading · title/subtitle · trailing\" list row, laid out so the
+trailing controls are never pushed off-screen.
+
+LEADING is an optional node at the start (an icon, checkbox, or avatar).
+OVERLINE / TITLE / SUBTITLE build the flexible text column (any subset): TITLE
+is `body', OVERLINE a `label' above it, SUBTITLE a `caption' below.
+TRAILING is a single node, or a list of nodes, pinned at the end (a status
+badge, icon buttons) — each keeps its intrinsic width.
+ON-TAP makes the whole card tappable; SWIPE-START / SWIPE-END attach swipe
+actions; PADDING pads the card; SPACING is the gap between the row's parts.
+
+The middle column carries the flex weight, so the trailing children keep their
+width — the layout trap a bare `(jetpacs-row (jetpacs-column …) …)' falls into,
+since a `column' renders `fillMaxWidth' (see WIDGETS.md).  Composes existing
+nodes (`card' > `row' > weighted `column'); it is not a new wire node type, so
+it needs no companion support.  For a trailing element, prefer an
+intrinsic-width leaf (a `jetpacs-text' badge, `jetpacs-icon-button') — a nested
+`jetpacs-row' would itself render `fillMaxWidth' and crowd the middle out."
+  (let* ((texts (delq nil
+                      (list (and overline (jetpacs-text overline 'label))
+                            (and title    (jetpacs-text title 'body))
+                            (and subtitle (jetpacs-text subtitle 'caption)))))
+         (middle (apply #'jetpacs-column (append texts (list :spacing 2 :weight 1))))
+         ;; TRAILING may be one node (an alist with a `t' type) or a list of them.
+         (trailing-nodes (cond ((null trailing) nil)
+                               ((assq 't trailing) (list trailing))
+                               (t (append trailing nil))))
+         (children (delq nil (append (list leading middle) trailing-nodes))))
+    (jetpacs-card
+     (list (apply #'jetpacs-row
+                  (append children (list :align "center" :spacing spacing))))
+     :on-tap on-tap :swipe-start swipe-start :swipe-end swipe-end :padding padding)))
 
 (cl-defun jetpacs-tab-item (label &key icon)
   "One tab in a `jetpacs-tabs' row: LABEL with an optional ICON above it."

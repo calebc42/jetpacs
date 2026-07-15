@@ -81,7 +81,8 @@
       "optional": [
         "spacing",
         "align",
-        "scroll"
+        "scroll",
+        "weight"
       ]
     },
     "flow_row": {
@@ -100,7 +101,8 @@
       "optional": [
         "spacing",
         "align",
-        "scroll"
+        "scroll",
+        "weight"
       ]
     },
     "box": {

@@ -41,7 +41,13 @@ when it returns nil rather than relying on degradation.
 
 - **`:padding`** — dp, on nearly every node.
 - **`:weight`** — flex share inside a `row`/`column`; a weighted child
-  takes its share of the free space.
+  takes its share of the free space. **Load-bearing caveat:** a `row`/`column`
+  renders `fillMaxWidth`, so an *unweighted* one placed inside a row fills the
+  whole row and pushes the later siblings off-screen. For a "content + trailing
+  control" row, give the flexible child a `:weight` (a `spacer` weight does not
+  help — the unweighted content is measured first and already fills the row), or
+  use **`jetpacs-list-item`**, which is correct by construction. `jetpacs-lint-spec`
+  warns on the unweighted-flex-before-trailing pattern.
 - **Sizing** — `:width`/`:height` in dp; `:fill-fraction` (0.0–1.0) of
   the parent's width; `:border` an `jetpacs-border` spec. Available on
   `box`/`surface`/`card` (and `image` for width/height).
@@ -111,12 +117,14 @@ handler registered with `jetpacs-defaction`
 
 ## Layout
 
-- **`(jetpacs-row &rest CHILDREN... :spacing :align :scroll)`** /
-  **`(jetpacs-column &rest CHILDREN... :spacing :align :scroll)`** —
+- **`(jetpacs-row &rest CHILDREN... :spacing :align :scroll :weight)`** /
+  **`(jetpacs-column &rest CHILDREN... :spacing :align :scroll :weight)`** —
   the workhorses. Children first, then optional trailing keywords:
   `:spacing` in dp, `:align` for the cross axis (row:
   `"top"`/`"center"`/`"bottom"`; column: `"start"`/`"center"`/`"end"`),
-  `:scroll` to pan/scroll on overflow.
+  `:scroll` to pan/scroll on overflow, and `:weight` — this container's own
+  flex share when it is itself a child of a row/column (see the weight caveat
+  above; this is how you make a nested column flex rather than swallow its row).
 - **`(jetpacs-scroll-row &rest CHILDREN)`** /
   **`(jetpacs-scroll-column &rest CHILDREN)`** — the pre-scrolled
   variants. A scrolling row ignores child weights.
@@ -143,6 +151,16 @@ handler registered with `jetpacs-defaction`
   dragging; a full swipe fires once and the card springs back. Rule:
   old companions render no gesture, so a swipe action must also be
   reachable by tap or menu.
+- **`(jetpacs-list-item &key leading title subtitle overline trailing on-tap
+  swipe-start swipe-end padding spacing)`** — the standard list row
+  ("leading · title/subtitle · trailing"), correct by construction: an
+  elevated card whose middle text column carries the flex `:weight`, so the
+  `TRAILING` controls (a status badge, icon buttons) are never pushed
+  off-screen — the trap a bare `(jetpacs-row (jetpacs-column …) …)` falls into.
+  `TRAILING` is one node or a list; prefer intrinsic-width leaves there (a
+  `jetpacs-text` badge, `jetpacs-icon-button`). Composes existing nodes
+  (`card` > `row` > weighted `column`) — no new wire type, so it needs no
+  companion support.
 - **`(jetpacs-border &key width color)`** — the spec `:border` takes.
 - **`(jetpacs-spacer &key height width weight)`** — fixed or flex gap.
 - **`(jetpacs-collapsible ID HEADER CHILDREN &key collapsed on-long-tap

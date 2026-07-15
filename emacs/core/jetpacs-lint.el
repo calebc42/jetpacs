@@ -87,9 +87,9 @@ root node (`jetpacs-send-dialog', SPEC §7).")
   '(("text"            (text)               (style weight color selectable
                                              max_lines padding syntax))
     ("rich_text"       (spans)              (style padding))
-    ("row"             (children)           (spacing align scroll))
+    ("row"             (children)           (spacing align scroll weight))
     ("flow_row"        (children)           (spacing run_spacing))
-    ("column"          (children)           (spacing align scroll))
+    ("column"          (children)           (spacing align scroll weight))
     ("box"             (children)           (alignment padding weight on_tap
                                              width height fill_fraction border))
     ("surface"         (children)           (color shape elevation padding fill
@@ -395,13 +395,45 @@ deliberate newer-companion target, but is more often a typo."
           (funcall report path
                    (format "warning: unknown key `%s' on %s" key type)))))))
 
+(defun jetpacs-lint--fills-row-p (child)
+  "Non-nil when CHILD, as a non-terminal `row' child, swallows the row.
+A `row'/`column' renders `fillMaxWidth'; without a `weight' to bound it (and
+when not itself a horizontally scrolling row), it fills the row and pushes
+later siblings off-screen."
+  (and (jetpacs-lint--alist-p child)
+       (member (alist-get 't child) '("row" "column"))
+       (not (alist-get 'weight child))
+       (not (alist-get 'scroll child))))
+
+(defun jetpacs-lint--check-row-layout (node path report)
+  "Warn when NODE (a `row') has a non-terminal unweighted `row'/`column' child.
+That child fills the row and pushes the trailing children off-screen — the
+fix is a :weight on the flexible child, a weighted `jetpacs-box', or
+`jetpacs-list-item'.  A scrolling row keeps its children intrinsic, so it is
+exempt."
+  (unless (alist-get 'scroll node)
+    (let* ((children (append (alist-get 'children node) nil))
+           (last-i (1- (length children)))
+           (i 0))
+      (dolist (child children)
+        (when (and (< i last-i) (jetpacs-lint--fills-row-p child))
+          (funcall report (cons i (cons 'children path))
+                   (format (concat "warning: unweighted %s before trailing children "
+                                   "fills the row and pushes them off-screen — give "
+                                   "the flexible child :weight, wrap it in a weighted "
+                                   "`jetpacs-box', or use `jetpacs-list-item'")
+                           (alist-get 't child))))
+        (setq i (1+ i))))))
+
 (defun jetpacs-lint--walk (node path report)
   "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
   (when (assq 't node)
     (let ((type (alist-get 't node)))
       (if (not (and (stringp type) (member type jetpacs-lint-node-types)))
           (funcall report path (format "unknown or invalid node type: %S" type))
-        (jetpacs-lint--check-schema node type path report))))
+        (jetpacs-lint--check-schema node type path report)
+        (when (equal type "row")
+          (jetpacs-lint--check-row-layout node path report)))))
   (dolist (pair node)
     (let* ((key (car pair)) (val (cdr pair)) (kpath (cons key path)))
       (cond

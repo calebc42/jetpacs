@@ -1,10 +1,12 @@
 package com.calebc42.jetpacs
 
+import android.Manifest
 import android.app.KeyguardManager
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.ConnectivityManager
@@ -13,7 +15,9 @@ import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.PowerManager
 import android.provider.Settings
+import android.telephony.TelephonyManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -52,7 +56,9 @@ object StateSampler {
     val STATE_TYPES = setOf(
         "power", "battery.level", "screen", "airplane", "network",
         "headset", "time.window", "wifi.enabled", "bluetooth.enabled",
-        "calendar.event",
+        "calendar.event", "call.state",
+        // `sms.received` is edge-only (a message arrival is not a level)
+        // and so is deliberately absent here.
     )
 
     private val DAY_NAMES = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -134,6 +140,24 @@ object StateSampler {
             JSONObject().put("enabled", adapter.isEnabled)
         }
         "calendar.event" -> CalendarTriggers.sample(context)
+        "call.state" -> {
+            if (ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.READ_PHONE_STATE) !=
+                PackageManager.PERMISSION_GRANTED
+            ) throw CapabilityException("cap-permission",
+                "call.state needs the phone permission",
+                perm = "read_phone_state", settings = "app")
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE)
+                as? TelephonyManager
+                ?: throw CapabilityException("cap-failed", "no telephony service")
+            @Suppress("DEPRECATION")
+            val state = when (tm.callState) {
+                TelephonyManager.CALL_STATE_RINGING -> "ringing"
+                TelephonyManager.CALL_STATE_OFFHOOK -> "offhook"
+                else -> "idle"
+            }
+            JSONObject().put("state", state)
+        }
         "time.window" -> throw CapabilityException(
             "cap-failed", "time.window is predicate-only — it has no sampled state")
         else -> throw CapabilityException(
@@ -240,6 +264,7 @@ object StateSampler {
             "headset" -> state.optString("state") == p.optString("state", "plugged")
             "wifi.enabled", "bluetooth.enabled" ->
                 state.optBoolean("enabled") == p.optBoolean("enabled", true)
+            "call.state" -> state.optString("state") == p.optString("state", "offhook")
             else -> false
         }
 

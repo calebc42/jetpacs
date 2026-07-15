@@ -1,5 +1,6 @@
 package com.calebc42.jetpacs
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,8 +10,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.wifi.WifiManager
+import android.provider.Telephony
+import android.telephony.TelephonyManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -126,6 +130,24 @@ class TriggerHost(private val context: Context) {
         if ("bluetooth.enabled" in types)
             register(bluetoothStateReceiver,
                 IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        // The telephony pair is runtime-permission-gated: ungranted rows
+        // are skipped with a log (they stay stored and arm on the next
+        // replace-set / service restart after granting). Both receivers
+        // are context-registered, so they are live only while the FGS
+        // runs — deliberate: a dead bridge is a deaf app, not a manifest
+        // receiver silently accumulating other people's messages.
+        if ("sms.received" in types) {
+            if (runtimeGranted(Manifest.permission.RECEIVE_SMS))
+                register(smsReceiver,
+                    IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION))
+            else Log.w(TAG, "sms.received registered but RECEIVE_SMS ungranted — skipping")
+        }
+        if ("call.state" in types) {
+            if (runtimeGranted(Manifest.permission.READ_PHONE_STATE))
+                register(callStateReceiver,
+                    IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED))
+            else Log.w(TAG, "call.state registered but READ_PHONE_STATE ungranted — skipping")
+        }
         if ("package" in types) register(packageReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -344,6 +366,72 @@ class TriggerHost(private val context: Context) {
         }
     }
 
+    private fun runtimeGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * `sms.received` (SPEC §11, opt-in payload, fail-closed): multipart
+     * segments are concatenated before matching; `contains` reads the
+     * body but only `include_body: true` emits it; nothing here is ever
+     * logged (the clipboard.read discipline — content crosses the wire
+     * as trigger data or not at all).
+     */
+    private val smsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            val msgs = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
+            if (msgs.isEmpty()) return
+            val from = msgs[0]?.displayOriginatingAddress
+            val body = msgs.joinToString("") { it?.messageBody ?: "" }
+            for (row in rowsOf("sms.received")) {
+                val p = row.param()
+                if (smsRowMatches(p, from, body))
+                    fireRow(c, row, buildSmsData(p, from, body))
+            }
+        }
+    }
+
+    private val callDedupe = CallStateDedupe()
+
+    /**
+     * `call.state` (SPEC §11): the phone-state broadcast arrives once
+     * per phone account and — under READ_CALL_LOG — again carrying the
+     * number, so [CallStateDedupe] reduces the stream to one fire per
+     * transition per row class. Rows that want the number (a `number`
+     * filter or `include_number`) ride the number-carrying duplicate
+     * when READ_CALL_LOG is granted; a `number`-filtered row without an
+     * available number never fires (fail closed), and `include_number`
+     * without one simply omits the field.
+     */
+    private val callStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            val state = when (intent.getStringExtra(TelephonyManager.EXTRA_STATE)) {
+                TelephonyManager.EXTRA_STATE_RINGING -> "ringing"
+                TelephonyManager.EXTRA_STATE_OFFHOOK -> "offhook"
+                TelephonyManager.EXTRA_STATE_IDLE -> "idle"
+                else -> return
+            }
+            @Suppress("DEPRECATION")
+            val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+            val (firePlain, fireNumbered) = callDedupe.classify(state, number != null)
+            val hasCallLog = runtimeGranted(Manifest.permission.READ_CALL_LOG)
+            for (row in rowsOf("call.state")) {
+                val p = row.param()
+                val want = p.optString("state")
+                if (want.isNotEmpty() && want != state) continue
+                val filter = p.optString("number")
+                val wantsNumber = filter.isNotEmpty() || p.optBoolean("include_number")
+                if (!(if (wantsNumber && hasCallLog) fireNumbered else firePlain)) continue
+                if (filter.isNotEmpty() &&
+                    (number == null || !number.contains(filter))) continue
+                val data = JSONObject().put("state", state)
+                if (p.optBoolean("include_number") && number != null)
+                    data.put("number", number)
+                fireRow(c, row, data)
+            }
+        }
+    }
+
     private fun plugType(c: Context): String? {
         val sticky = c.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         return when (sticky?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)) {
@@ -368,7 +456,31 @@ class TriggerHost(private val context: Context) {
             // report only; the client's static fallback list stays frozen
             // at batch 1 (see jetpacs-triggers-supported-types).
             "wifi.enabled", "bluetooth.enabled", "calendar.event",
+            "sms.received", "call.state",
         )
+
+        /** Pure `sms.received` matcher (SPEC §11): `from` is a substring
+         * of the originating address, `contains` a substring of the
+         * concatenated body. Reading the body to match `contains` does
+         * not imply emitting it (see [buildSmsData]). */
+        internal fun smsRowMatches(params: JSONObject, from: String?, body: String): Boolean {
+            val wantFrom = params.optString("from")
+            if (wantFrom.isNotEmpty() && (from == null || !from.contains(wantFrom)))
+                return false
+            val wantContains = params.optString("contains")
+            if (wantContains.isNotEmpty() && !body.contains(wantContains))
+                return false
+            return true
+        }
+
+        /** The `sms.received` fire data: `{from, body?}`. `body` rides
+         * only under `include_body: true` — opt-in, fail-closed, so a
+         * `contains`-matched message never leaks its body by default. */
+        internal fun buildSmsData(params: JSONObject, from: String?, body: String): JSONObject =
+            JSONObject().apply {
+                from?.let { put("from", it) }
+                if (params.optBoolean("include_body")) put("body", body)
+            }
 
         /** Delegate the `calendar.event` slice of [newRows] to
          * [CalendarTriggers] — only under READ_CALENDAR (else skip with a
@@ -684,6 +796,35 @@ class TriggerHost(private val context: Context) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
+    }
+}
+
+/**
+ * Reduces the duplicated `call.state` broadcast stream to one fire per
+ * transition per row class (SPEC §11). ACTION_PHONE_STATE_CHANGED
+ * arrives once per phone account, and again carrying the incoming
+ * number when READ_CALL_LOG is granted. [classify] returns, for one
+ * broadcast, whether to fire the number-indifferent rows and whether to
+ * fire the number-wanting rows: the former fire on the first broadcast
+ * of a new state, the latter on the (possibly same) broadcast that
+ * first carries the number.
+ */
+internal class CallStateDedupe {
+    private var lastState: String? = null
+    private var numberedFired = false
+
+    @Synchronized
+    fun classify(state: String, hasNumber: Boolean): Pair<Boolean, Boolean> {
+        if (state != lastState) {
+            lastState = state
+            numberedFired = hasNumber
+            return true to hasNumber   // new transition: plain fires now
+        }
+        // A duplicate of the current state: plain already fired; let the
+        // number-wanting rows fire once, when the number first appears.
+        val fireNumbered = hasNumber && !numberedFired
+        if (fireNumbered) numberedFired = true
+        return false to fireNumbered
     }
 }
 

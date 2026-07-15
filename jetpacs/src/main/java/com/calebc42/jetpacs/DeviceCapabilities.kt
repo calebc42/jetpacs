@@ -668,6 +668,9 @@ object DeviceCapabilities {
         put("bluetooth_connect",
             granted(context, Manifest.permission.BLUETOOTH_CONNECT, Build.VERSION_CODES.S))
         put("read_calendar", granted(context, Manifest.permission.READ_CALENDAR))
+        put("receive_sms", granted(context, Manifest.permission.RECEIVE_SMS))
+        put("read_phone_state", granted(context, Manifest.permission.READ_PHONE_STATE))
+        put("read_call_log", granted(context, Manifest.permission.READ_CALL_LOG))
     }
 
     /** True when [permission] is granted (or the device predates [sinceSdk]). */

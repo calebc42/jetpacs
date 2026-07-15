@@ -68,7 +68,8 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
 
 (defconst jetpacs-lint-state-predicate-types
   '("airplane" "battery.level" "bluetooth.enabled" "calendar.event"
-    "headset" "network" "power" "screen" "time.window" "wifi.enabled")
+    "call.state" "headset" "network" "power" "screen" "time.window"
+    "wifi.enabled")
   "State-predicate types a trigger `when' gate may reference (SPEC §11).
 Mirrors StateSampler.kt's STATE_TYPES; extend both (and SPEC §11's
 predicate table) together.  Lint-time advisory only: the live
@@ -85,7 +86,8 @@ negotiation authority is the welcome's `device.state_types' report
     ("time.window"       after before days)
     ("wifi.enabled"      enabled)
     ("bluetooth.enabled" enabled)
-    ("calendar.event"    calendar title_contains))
+    ("calendar.event"    calendar title_contains)
+    ("call.state"        state))
   "Match fields each state-predicate type may carry (SPEC §11).")
 
 (defconst jetpacs-lint--time-window-re

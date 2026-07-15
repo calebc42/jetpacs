@@ -2747,7 +2747,8 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
 
 (defconst jetpacs-lint-state-predicate-types
   '("airplane" "battery.level" "bluetooth.enabled" "calendar.event"
-    "headset" "network" "power" "screen" "time.window" "wifi.enabled")
+    "call.state" "headset" "network" "power" "screen" "time.window"
+    "wifi.enabled")
   "State-predicate types a trigger `when' gate may reference (SPEC §11).
 Mirrors StateSampler.kt's STATE_TYPES; extend both (and SPEC §11's
 predicate table) together.  Lint-time advisory only: the live
@@ -2764,7 +2765,8 @@ negotiation authority is the welcome's `device.state_types' report
     ("time.window"       after before days)
     ("wifi.enabled"      enabled)
     ("bluetooth.enabled" enabled)
-    ("calendar.event"    calendar title_contains))
+    ("calendar.event"    calendar title_contains)
+    ("call.state"        state))
   "Match fields each state-predicate type may carry (SPEC §11).")
 
 (defconst jetpacs-lint--time-window-re
@@ -4696,7 +4698,10 @@ Needs Do Not Disturb access — see the Device permissions screen."
     (notification_listener "Notification access (feature not shipped yet)" nil)
     (fine_location "Location (Wi-Fi SSID triggers)" "app")
     (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app")
-    (read_calendar "Calendar (calendar.event triggers)" "app"))
+    (read_calendar "Calendar (calendar.event triggers)" "app")
+    (receive_sms "SMS (sms.received triggers)" "app")
+    (read_phone_state "Phone (call.state triggers)" "app")
+    (read_call_log "Call log (the number on call.state)" "app"))
   "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
 PANEL feeds `settings.open': a grant screen action, or \"app\" for
 Glasspane's own app-info page (runtime permissions live there).")

@@ -317,7 +317,10 @@ Needs Do Not Disturb access — see the Device permissions screen."
     (notification_listener "Notification access (feature not shipped yet)" nil)
     (fine_location "Location (Wi-Fi SSID triggers)" "app")
     (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app")
-    (read_calendar "Calendar (calendar.event triggers)" "app"))
+    (read_calendar "Calendar (calendar.event triggers)" "app")
+    (receive_sms "SMS (sms.received triggers)" "app")
+    (read_phone_state "Phone (call.state triggers)" "app")
+    (read_call_log "Call log (the number on call.state)" "app"))
   "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
 PANEL feeds `settings.open': a grant screen action, or \"app\" for
 Glasspane's own app-info page (runtime permissions live there).")

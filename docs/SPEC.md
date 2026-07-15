@@ -601,7 +601,9 @@ capability.result    {ok, result?}     companion → client (reply)
              "perms": {"post_notifications": true, "exact_alarms": true,
                        "write_settings": false, "notification_policy": false,
                        "notification_listener": false, "fine_location": false,
-                       "bluetooth_connect": false, "read_calendar": false},
+                       "bluetooth_connect": false, "read_calendar": false,
+                       "receive_sms": false, "read_phone_state": false,
+                       "read_call_log": false},
              "trigger_types": ["airplane", "battery.level", "boot", "..."],
              "state_types": ["airplane", "battery.level", "headset", "..."]}
   ```
@@ -772,6 +774,8 @@ its push against that report and skips what this companion can't host.
 | `wifi.enabled` | `{enabled?}` | `{enabled}` | the Wi-Fi *adapter* state — enabled/disabled edges only, transitional states are not edges. Distinct from `network` (radio on ≠ connected) and from the reserved `wifi.ssid`. Install-time `ACCESS_WIFI_STATE`, no runtime grant |
 | `bluetooth.enabled` | `{enabled?}` | `{enabled}` | the Bluetooth *adapter* state, same edge discipline. Install-time legacy `BLUETOOTH` (≤ API 30) only; a device without Bluetooth simply never fires it. Distinct from the reserved `bluetooth.device` |
 | `calendar.event` | `{event?, calendar?, title_contains?}` — `started` \| `ended`; exact calendar display name; case-insensitive title substring | `{event, title?, begin_ms?, end_ms?}` | a synced calendar (e.g. an org agenda) made reactive, with **zero polling**: one ContentObserver on the instances table plus one alarm per registration parked at the *next boundary* (the ongoing instance's end, else the next matching start, else a lookahead re-scan). Editing an event re-arms via the observer; reboots re-arm from the persisted set; the last ongoing side persists so a boundary alarm in a cold process still fires the flip. Runtime `READ_CALENDAR`: ungranted registrations are skipped with a log — never garbage fires |
+| `sms.received` | `{from?, contains?, include_body?}` — `from`/`contains` are substrings; `include_body` defaults false | `{from, body?}` | opt-in, fail-closed privacy: `contains` reads the body to match but `body` rides only under `include_body: true`. Runtime `RECEIVE_SMS`; multipart segments are concatenated. Content is never logged; under `policy: "queue"` the `data` sits in the app-private queue DB, so `policy: "drop"` is recommended for body-carrying rules. Edge-only (no predicate) |
+| `call.state` | `{state?, number?, include_number?}` — `ringing` \| `offhook` \| `idle`; `number` a substring; `include_number` defaults false | `{state, number?}` | runtime `READ_PHONE_STATE` for the state edges. **The number needs `READ_CALL_LOG` in addition** (Android 9+): without it a `number`-filtered rule never fires and `include_number` yields no field. Duplicate broadcasts (per phone account, and again with the number) are deduped to one fire. Same never-logged discipline as `sms.received` |
 
 `wifi.ssid` and `bluetooth.device` are the remaining connectivity
 batch; each will document its runtime-permission behavior here
@@ -806,14 +810,15 @@ match fields asserts the type's *natural state*, noted per row:
 | `wifi.enabled` | `{enabled?}` | the Wi-Fi adapter state equals `enabled` (default `true`) |
 | `bluetooth.enabled` | `{enabled?}` | the Bluetooth adapter state equals `enabled` (default `true`); no adapter → unevaluable, so never holds |
 | `calendar.event` | `{calendar?, title_contains?}` | a matching calendar instance is ongoing right now; ungranted `READ_CALENDAR` → unevaluable, so never holds |
+| `call.state` | `{state?}` | the telephony call state equals `state` (default `offhook`, i.e. on a call); ungranted `READ_PHONE_STATE` → unevaluable, so never holds. `sms.received` has no predicate — a message arrival is an edge, not a level |
 | `time.window` | `{after?, before?, days?}` | the local clock is inside the window. `after`/`before` are `"HH:MM"` strings, half-open `[after, before)`; the window wraps midnight when `after` > `before`; an absent bound is open. `days` is an array of `mon`…`sun` filtering on the calendar day of the moment tested; absent = every day. Predicate-only: it has no edge trigger, and `state.get` reports it under `unavailable` |
 
 Sampled state objects (`state.get`'s `states` values) are shaped like
 the type's trigger `data` column above, with the level-view
 substitutions: `screen` adds `locked` (boolean), `network` reports
-`{connected, transport?}` instead of an event, and `calendar.event`
-reports `{ongoing, title?, end_ms?, next_begin_ms?}` (ungranted, it
-lands in `unavailable` as `cap-permission`).
+`{connected, transport?}` instead of an event, `calendar.event`
+reports `{ongoing, title?, end_ms?, next_begin_ms?}`, and `call.state`
+reports `{state}` (each ungranted → `unavailable` as `cap-permission`).
 
 ## 12. Conformance
 

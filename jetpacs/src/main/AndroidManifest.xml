@@ -66,6 +66,17 @@
          predicate never holds — fail closed. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
 
+    <!-- The telephony pair (SPEC §11 `sms.received` / `call.state`):
+         runtime permissions, opt-in payloads, fail-closed. RECEIVE_SMS
+         delivers message bodies; READ_PHONE_STATE the call-state edges;
+         READ_CALL_LOG is the ADDITIONAL grant (Android 9+) that lets the
+         incoming number reach a call.state rule — without it a
+         number-filtered rule never fires. Play-hostile by nature; this
+         is an F-Droid-class personal companion (ROADMAP item 10). -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+
     <!-- Android 11 package visibility: without these, `apps.list` returns
          nothing and TTS finds no engine. -->
     <queries>

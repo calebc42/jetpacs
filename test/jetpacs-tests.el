@@ -1561,6 +1561,55 @@ byte-for-byte what it was before."
   (should (equal "body" (alist-get 'style (jetpacs-text "x" 'body))))
   (should (null (jetpacs-lint-spec (jetpacs-text "x" :color "#fff")))))
 
+;; ─── Tier-1 test helpers (#14, #15) ─────────────────────────────────────────
+
+(ert-deftest jetpacs-test-visible-text-harvests-strings ()
+  "`jetpacs-test-visible-text' returns the on-screen strings in tree order,
+harvesting text/label/title/caption/hint and ignoring icons/colors/actions."
+  (let* ((view (jetpacs-column
+                (jetpacs-section-header "Due soon")
+                (jetpacs-list-item :title "Milk" :subtitle "1 L"
+                                :trailing (jetpacs-icon "star"))
+                (jetpacs-button "Add" (jetpacs-action "grocy.add"))
+                (jetpacs-empty-state :title "Nothing" :caption "All stocked")))
+         (seen (jetpacs-test-visible-text view)))
+    (should (equal '("Due soon" "Milk" "1 L" "Add" "Nothing" "All stocked") seen))
+    (should (member "Milk" seen))
+    ;; Icon names, colors, and action names are not visible text.
+    (should-not (member "star" seen))
+    (should-not (member "grocy.add" seen))))
+
+(ert-deftest jetpacs-test-view-ok-passes-clean-signals-invalid ()
+  "`jetpacs-test-view-ok' returns t for a wire-valid view and signals with the
+lint errors for an invalid one; warnings do not fail it."
+  (should (eq t (jetpacs-test-view-ok
+                 (jetpacs-list-item :title "T" :trailing (jetpacs-icon "star")))))
+  ;; An unknown node type is a structural error -> signals.
+  (should-error (jetpacs-test-view-ok (list (cons 't "bogus_node"))))
+  ;; The row flex-trap is a warning, not an error -> still passes.
+  (should (eq t (jetpacs-test-view-ok
+                 (jetpacs-row (jetpacs-column (jetpacs-text "x"))
+                           (jetpacs-icon-button "delete" (jetpacs-action "a")))))))
+
+(ert-deftest jetpacs-lint-views-audits-registry ()
+  "`jetpacs-lint-views' builds and lints every registered view, flagging the
+ones with problems (a builder crash included) and passing the clean ones."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs-shell--route-params (make-hash-table :test 'equal))
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore))
+      (jetpacs-shell-define-view "app.ok"  :builder (lambda (_s) (jetpacs-text "ok")))
+      (jetpacs-shell-define-view "app.bad" :builder (lambda (_s) (list (cons 't "nope_node"))))
+      (jetpacs-shell-define-view "app.crash" :builder (lambda (_s) (error "boom")))
+      (let ((flagged (mapcar #'car (jetpacs-lint-views t))))
+        (should (member "app.bad" flagged))       ; unknown node type
+        (should (member "app.crash" flagged))     ; builder crash
+        (should-not (member "app.ok" flagged)))
+      ;; A registry of only-clean views audits clean.
+      (jetpacs-shell-remove-view "app.bad")
+      (jetpacs-shell-remove-view "app.crash")
+      (should-not (jetpacs-lint-views t)))))
+
 ;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
 
 (ert-deftest jetpacs-buffer-call-shimmed-clears-input-event ()

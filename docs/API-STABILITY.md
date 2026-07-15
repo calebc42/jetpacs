@@ -242,6 +242,15 @@ required key is an error; a key outside a node's schema is a
 unknown keys (SPEC §9 forward compat), so an author may deliberately
 target a newer companion.
 
+Tier-1 test helpers (since 1.16.0): `jetpacs-test-visible-text` (the
+on-screen strings in a spec, tree-ordered — assert your view shows or
+omits text without a companion), `jetpacs-test-view-ok` (assert a view
+is lint-error-free *and* serializable, signalling with the problems on
+failure — one line in an ERT suite), and `jetpacs-lint-views` (from
+`jetpacs-shell.el`: build and lint every registered view, returning the
+ones with problems — the app-wide CI gate `(should-not (jetpacs-lint-views
+t))`). These ship what every Tier 1 used to re-derive privately.
+
 ### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
 
 Sources (`jetpacs-source.el`): `jetpacs-defsource` `jetpacs-source-query`

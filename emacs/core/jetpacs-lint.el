@@ -534,6 +534,62 @@ is not serializable."
    :object-type (or object-type 'alist)
    :null-object :null :false-object :false))
 
+;; ─── Tier-1 test helpers ─────────────────────────────────────────────────────
+;; Every Tier 1 re-derived these two in a private test library (grocy had
+;; `grocy-test--collect-text' and `grocy-test--view-clean'); ship them so an
+;; app's ERT suite is a couple of lines, not a helper file.
+
+(defconst jetpacs-lint--visible-text-keys '(text label title caption hint)
+  "Node keys whose string value is user-visible on-screen text.
+The set `jetpacs-test-visible-text' harvests.")
+
+(defun jetpacs-lint--collect-visible (node collect)
+  "Call COLLECT on each user-visible string in NODE, depth-first."
+  (when (jetpacs-lint--alist-p node)
+    (dolist (pair node)
+      (let ((key (car pair)) (val (cdr pair)))
+        (cond
+         ((and (memq key jetpacs-lint--visible-text-keys) (stringp val))
+          (funcall collect val))
+         ((jetpacs-lint--node-seq-p val)
+          (dolist (child (append val nil))
+            (jetpacs-lint--collect-visible child collect)))
+         ((jetpacs-lint--alist-p val)
+          (jetpacs-lint--collect-visible val collect)))))))
+
+;;;###autoload
+(defun jetpacs-test-visible-text (spec)
+  "Return the user-visible text strings in SPEC, in depth-first tree order.
+Harvests the string value of every visible-text key (`text', `label',
+`title', `caption', `hint') across the node tree, so a Tier 1 can assert its
+view shows (or omits) a string without a companion — e.g.
+\(should (member \"Milk\" (jetpacs-test-visible-text view))).  An additive
+node's self-describing fallback (the `badge' label child) may repeat its
+label; membership tests are unaffected."
+  (let (out)
+    (jetpacs-lint--collect-visible spec (lambda (s) (push s out)))
+    (nreverse out)))
+
+;;;###autoload
+(defun jetpacs-test-view-ok (spec)
+  "Assert SPEC is a wire-valid view: lint-error-free AND serializable.
+Signals a descriptive `error' listing the lint errors, or re-signals the
+serialization error, on failure; returns t on success.  The one-call view
+check for a Tier 1's ERT suite — call it bare, and its failure fails the
+test: (jetpacs-test-view-ok (my-app-view nil)).  Warnings (the forward-compat
+`warning:'-prefixed problems, e.g. the row flex-trap heuristic) do not fail
+it — inspect the full list with `jetpacs-lint-spec' when you want those too."
+  (let ((errors (cl-remove-if
+                 (lambda (p) (string-prefix-p "warning: " (cdr p)))
+                 (jetpacs-lint-spec spec))))
+    (when errors
+      (error "jetpacs-test-view-ok: %d lint error(s): %s"
+             (length errors)
+             (mapconcat (lambda (p) (format "%s @ %S" (cdr p) (car p)))
+                        errors "; ")))
+    (jetpacs-render-to-json spec)       ; signals on an unserializable tree
+    t))
+
 ;; ─── On-push guard (opt-in) ──────────────────────────────────────────────────
 
 (defcustom jetpacs-lint-on-push nil

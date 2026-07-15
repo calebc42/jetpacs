@@ -421,5 +421,15 @@ for wiring them up.
   serializes through the real wire path and parses back exactly what a
   companion receives; signals the same error a live push would. Assert
   on your views in batch — no phone needed.
+- **`(jetpacs-test-view-ok SPEC)`** (since 1.16.0) — one-call view
+  check: signals with the lint errors unless `SPEC` is error-free *and*
+  serializable, else returns t. `(jetpacs-test-view-ok (my-view nil))`
+  in an ERT test. Warnings (e.g. the flex-trap) don't fail it.
+- **`(jetpacs-test-visible-text SPEC)`** — the on-screen strings in
+  tree order, so you can assert your view shows (or hides) text:
+  `(should (member "Milk" (jetpacs-test-visible-text view)))`.
+- **`(jetpacs-lint-views &optional errors-only)`** — build and lint
+  every registered shell view; returns the ones with problems. The
+  app-wide CI gate: `(should-not (jetpacs-lint-views t))`.
 - [`test/widgets.golden`](../test/widgets.golden) — the pinned wire
   shape of every constructor, if you need to see the exact JSON.

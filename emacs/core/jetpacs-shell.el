@@ -457,6 +457,38 @@ keeps updating and the broken view *shows* its error."
        (jetpacs-text (error-message-string err) 'body))
       :snackbar snackbar))))
 
+(declare-function jetpacs-lint-spec "jetpacs-lint")
+
+;;;###autoload
+(defun jetpacs-lint-views (&optional errors-only)
+  "Lint every registered shell view by building and checking it.
+Builds each view (a builder crash is caught and reported, not degraded), lints
+the result, and returns an alist of (VIEW-NAME . PROBLEMS) for the views with
+problems — nil when all clean.  The one-line CI gate for an app:
+\(should-not (jetpacs-lint-views t)).  With ERRORS-ONLY non-nil, `warning:'-
+prefixed problems (the forward-compat heuristics) are dropped, leaving only
+structural errors."
+  (let (out)
+    (dolist (entry jetpacs-shell-views)
+      (let* ((name (car entry)) (plist (cdr entry))
+             (problems
+              (condition-case err
+                  (let ((spec (if (plist-get plist :spec)
+                                  (jetpacs-spec--compile name (plist-get plist :spec) nil)
+                                (let ((b (plist-get plist :builder)))
+                                  (if (jetpacs-shell--builder-wants-params b)
+                                      (funcall b nil (gethash name jetpacs-shell--route-params))
+                                    (funcall b nil))))))
+                    (jetpacs-lint-spec spec))
+                (error (list (cons nil (format "build error: %s"
+                                               (error-message-string err))))))))
+        (when errors-only
+          (setq problems (cl-remove-if
+                          (lambda (p) (string-prefix-p "warning: " (cdr p)))
+                          problems)))
+        (when problems (push (cons name problems) out))))
+    (nreverse out)))
+
 (defvar jetpacs-shell--repush-timer nil)
 
 (defun jetpacs-shell--schedule-repush ()

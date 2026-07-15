@@ -40,7 +40,7 @@
     "reorderable_list" "table" "tabs" "chart" "canvas" "month_grid"
     "icon" "image"
     "date_stamp" "section_header" "empty_state" "progress" "menu" "button"
-    "icon_button" "chip" "assist_chip" "text_input" "editor" "checkbox"
+    "icon_button" "chip" "assist_chip" "badge" "text_input" "editor" "checkbox"
     "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
   "Node `t' discriminators the reference companion renders.
 Mirror of `SDUI_NODE_TYPES' in SduiRenderer.kt.  A `t' outside this set
@@ -87,9 +87,9 @@ root node (`jetpacs-send-dialog', SPEC §7).")
   '(("text"            (text)               (style weight color selectable
                                              max_lines padding syntax))
     ("rich_text"       (spans)              (style padding))
-    ("row"             (children)           (spacing align scroll weight))
+    ("row"             (children)           (spacing align scroll weight fill))
     ("flow_row"        (children)           (spacing run_spacing))
-    ("column"          (children)           (spacing align scroll weight))
+    ("column"          (children)           (spacing align scroll weight fill))
     ("box"             (children)           (alignment padding weight on_tap
                                              width height fill_fraction border))
     ("surface"         (children)           (color shape elevation padding fill
@@ -125,6 +125,7 @@ root node (`jetpacs-send-dialog', SPEC §7).")
     ("icon_button"     (icon on_tap)        (content_description padding badge))
     ("chip"            (label)              (on_tap selected icon padding))
     ("assist_chip"     (label)              (on_tap icon padding))
+    ("badge"           (label)              (icon color padding children))
     ("text_input"      (id)                 (value hint label on_submit
                                              single_line min_lines max_lines
                                              monospace syntax password keyboard

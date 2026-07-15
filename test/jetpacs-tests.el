@@ -1275,7 +1275,10 @@ the composer delete its own matcher."
                      :trailing (list (jetpacs-icon-button "delete" act))
                      :on-tap act
                      :swipe-end (jetpacs-swipe-action "check" "Done" act)
-                     :padding 4))))
+                     :padding 4)
+     ;; Phase 2: fill opt-out (wrapContent) + the status-badge node.
+     (jetpacs-column leaf :fill nil)
+     (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -1349,6 +1352,33 @@ forms, a trailing (last) column, a scrolling row, and `jetpacs-list-item' pass."
     ;; Good: the list item is correct by construction.
     (should-not (funcall offscreen-p
                          (jetpacs-list-item :title "t" :trailing (list btn))))))
+
+(ert-deftest jetpacs-row-column-fill-opt-out ()
+  "`:fill nil' emits fill:false (opt out of fillMaxWidth); `:fill t' and the
+default omit the key, and the node still lints clean."
+  (let ((leaf (jetpacs-text "x")))
+    (should (eq :false (alist-get 'fill (jetpacs-column leaf :fill nil))))
+    (should (eq :false (alist-get 'fill (jetpacs-row leaf :fill nil))))
+    (should (null (alist-get 'fill (jetpacs-column leaf :fill t))))
+    (should (null (alist-get 'fill (jetpacs-column leaf))))
+    (should (null (jetpacs-lint-spec (jetpacs-column leaf :fill nil))))))
+
+(ert-deftest jetpacs-badge-is-intrinsic-with-fallback ()
+  "The badge carries label/icon/color, is a recognized node type, embeds a
+colored fallback `text' child for older companions, and lints clean."
+  (let ((b (jetpacs-badge "Overdue" :icon "warning" :color "error")))
+    (should (equal "badge" (alist-get 't b)))
+    (should (equal "Overdue" (alist-get 'label b)))
+    (should (equal "warning" (alist-get 'icon b)))
+    (should (equal "error" (alist-get 'color b)))
+    (should (member "badge" jetpacs-lint-node-types))
+    (let ((fallback (aref (alist-get 'children b) 0)))   ; self-describing degrade
+      (should (equal "text" (alist-get 't fallback)))
+      (should (equal "Overdue" (alist-get 'text fallback)))
+      (should (equal "error" (alist-get 'color fallback))))
+    (should (null (jetpacs-lint-spec b)))
+    ;; A badge is safe as a trailing row element (intrinsic — not flagged).
+    (should-not (jetpacs-lint-spec (jetpacs-row (jetpacs-text "t" nil 1) b)))))
 
 ;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
 

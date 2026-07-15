@@ -111,7 +111,7 @@ val SDUI_NODE_TYPES: Set<String> = setOf(
     // Input
     "text_input", "editor", "checkbox", "switch", "enum_list",
     "date_button", "time_button", "slider", "button", "icon_button",
-    "chip", "assist_chip",
+    "chip", "assist_chip", "badge",
 )
 
 /**
@@ -146,7 +146,12 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         // ── Layout containers ────────────────────────────────────────────
         "column" -> {
             val scrollable = node.optBoolean("scroll", false)
-            val mod = baseModifier.fillMaxWidth().let {
+            // Columns/rows fill the parent width by default so alignment has a
+            // width to work in; `fill:false` opts out (wrapContent) for a
+            // content-sized column nested in a row — the alternative to giving
+            // it a `weight`.
+            val fill = node.optBoolean("fill", true)
+            val mod = (if (fill) baseModifier.fillMaxWidth() else baseModifier).let {
                 if (scrollable) it.verticalScroll(rememberScrollState()) else it
             }
             Column(
@@ -168,10 +173,12 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             // overflow (a chip rail). Weights are meaningless with unbounded
             // width, so a scrolling row renders its children unweighted.
             val scroll = node.optBoolean("scroll")
+            val fill = node.optBoolean("fill", true)   // `fill:false` -> wrapContent
             Row(
                 modifier = if (scroll)
                     baseModifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                else baseModifier.fillMaxWidth(),
+                else if (fill) baseModifier.fillMaxWidth()
+                else baseModifier,
                 horizontalArrangement = Arrangement.spacedBy(node.optInt("spacing", 8).dp),
                 verticalAlignment = when (node.optString("align")) {
                     "top" -> Alignment.Top
@@ -502,6 +509,39 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 } else null,
                 modifier = baseModifier
             )
+        }
+        "badge" -> {
+            // A compact, non-interactive status pill: a tonal COLOR-tinted
+            // container with a colored optional leading icon + label. Intrinsic
+            // width (the Surface wraps its content), so it sits safely as a
+            // trailing row child — unlike a nested icon+label row, which would
+            // render fillMaxWidth. Additive node: an older companion falls
+            // through to `else` and renders the fallback `text` child (the
+            // colored label), so callers need not gate on node_types.
+            val label = node.optString("label")
+            val iconName = node.optString("icon", "")
+            val color = resolveColor(node.optString("color"))
+                .takeIf { it != Color.Unspecified }
+                ?: MaterialTheme.colorScheme.onSurfaceVariant
+            Surface(
+                modifier = baseModifier,
+                shape = RoundedCornerShape(percent = 50),
+                color = color.copy(alpha = 0.12f),
+                contentColor = color
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (iconName.isNotEmpty()) {
+                        Icon(IconMap.get(iconName), null, Modifier.size(14.dp))
+                    }
+                    if (label.isNotEmpty()) {
+                        Text(label, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
         }
         "progress" -> {
             val variant = node.optString("variant", "circular")

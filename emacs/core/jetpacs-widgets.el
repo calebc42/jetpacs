@@ -96,13 +96,15 @@ constructors take options without breaking `(jetpacs-row a b c)' callers."
   "A horizontal row of child nodes.
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"top\"/\"center\"/\"bottom\"),
-:scroll (pan sideways on overflow), and :weight (this row's own flex share
-when it is itself a child of a `row'/`column').
+:scroll (pan sideways on overflow), :weight (this row's own flex share
+when it is itself a child of a `row'/`column'), and :fill (nil to wrap
+content instead of filling the parent width).
 
 Layout note: a `row'/`column' renders `fillMaxWidth', so an *unweighted* one
 placed inside a row fills it and pushes the later siblings off-screen.  Give
 the flexible child a :weight — or use `jetpacs-list-item' — so trailing
-children keep their width (see WIDGETS.md)."
+children keep their width; or pass `:fill nil' to a nested container that
+should size to its content (see WIDGETS.md)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "row"
@@ -110,7 +112,10 @@ children keep their width (see WIDGETS.md)."
                 'spacing (plist-get opts :spacing)
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
-                'weight (plist-get opts :weight))))
+                'weight (plist-get opts :weight)
+                ;; Default is fill (renderer default); emit only the opt-out.
+                'fill (and (plist-member opts :fill)
+                           (not (plist-get opts :fill)) :false))))
 
 (defun jetpacs-flow-row (&rest args)
   "A horizontal row of children that wraps onto new lines when full.
@@ -133,12 +138,14 @@ ignored — a scrolling row has no bounded width to distribute."
   "A vertical column of child nodes.
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
-:scroll (make the column scroll vertically), and :weight (this column's own
-flex share when it is a child of a `row'/`column').
+:scroll (make the column scroll vertically), :weight (this column's own
+flex share when it is a child of a `row'/`column'), and :fill (nil to wrap
+content instead of filling the parent width).
 
 Layout note: a `column' renders `fillMaxWidth', so an *unweighted* one placed
 inside a row fills it and pushes the later siblings off-screen — give it
-:weight, or use `jetpacs-list-item' (see WIDGETS.md)."
+:weight, pass `:fill nil' to size it to its content, or use
+`jetpacs-list-item' (see WIDGETS.md)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "column"
@@ -146,7 +153,9 @@ inside a row fills it and pushes the later siblings off-screen — give it
                 'spacing (plist-get opts :spacing)
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
-                'weight (plist-get opts :weight))))
+                'weight (plist-get opts :weight)
+                'fill (and (plist-member opts :fill)
+                           (not (plist-get opts :fill)) :false))))
 
 (defun jetpacs-scroll-column (&rest children)
   "A vertically scrollable column of CHILDREN nodes."
@@ -664,6 +673,24 @@ suggestion chip — pair it with `jetpacs-flow-row' for wrapping tag rows."
               'on_tap on-tap
               'icon icon
               'padding padding))
+
+(cl-defun jetpacs-badge (label &key icon color padding)
+  "A compact, non-interactive status pill: an optional leading ICON and LABEL
+on a tonal container tinted by COLOR (a hex string or a Material theme token
+like \"error\"/\"primary\"/\"tertiary\").  Unlike a chip it carries no tap and
+no outline; unlike a nested icon+label `jetpacs-row' (which renders
+`fillMaxWidth') it is intrinsic-width, so it sits correctly as a trailing
+element in a row — the standard status-badge slot in `jetpacs-list-item'.
+
+An additive node (SPEC §9): it embeds a fallback `text' child (the label in
+COLOR), so a companion predating the `badge' node degrades to a colored label
+rather than nothing — callers need not gate on `jetpacs-node-supported-p'."
+  (jetpacs--node "badge"
+              'label label
+              'icon icon
+              'color color
+              'padding padding
+              'children (vector (jetpacs-text label 'label nil color))))
 
 (cl-defun jetpacs-section-header (title &key trailing padding)
   "A styled section label. TRAILING is an optional node shown at the end

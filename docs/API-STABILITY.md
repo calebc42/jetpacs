@@ -71,7 +71,7 @@ keywords; `box`/`surface`/`card` take
 `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
 `:swipe-start`/`:swipe-end`.)
 
-Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip`
+Input: `jetpacs-button` `jetpacs-icon-button` `jetpacs-chip` `jetpacs-assist-chip` `jetpacs-badge`
 `jetpacs-menu` `jetpacs-menu-item` `jetpacs-checkbox` `jetpacs-switch` `jetpacs-slider`
 `jetpacs-text-input` `jetpacs-enum-list` `jetpacs-date-button` `jetpacs-time-button`
 `jetpacs-editor` `jetpacs-toolbar-item`.

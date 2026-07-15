@@ -117,14 +117,17 @@ handler registered with `jetpacs-defaction`
 
 ## Layout
 
-- **`(jetpacs-row &rest CHILDREN... :spacing :align :scroll :weight)`** /
-  **`(jetpacs-column &rest CHILDREN... :spacing :align :scroll :weight)`** —
+- **`(jetpacs-row &rest CHILDREN... :spacing :align :scroll :weight :fill)`** /
+  **`(jetpacs-column &rest CHILDREN... :spacing :align :scroll :weight :fill)`** —
   the workhorses. Children first, then optional trailing keywords:
   `:spacing` in dp, `:align` for the cross axis (row:
   `"top"`/`"center"`/`"bottom"`; column: `"start"`/`"center"`/`"end"`),
-  `:scroll` to pan/scroll on overflow, and `:weight` — this container's own
-  flex share when it is itself a child of a row/column (see the weight caveat
-  above; this is how you make a nested column flex rather than swallow its row).
+  `:scroll` to pan/scroll on overflow, `:weight` — this container's own
+  flex share when it is itself a child of a row/column (this is how you make a
+  nested column flex rather than swallow its row; see the weight caveat above),
+  and `:fill` — `nil` opts out of the default `fillMaxWidth` so the container
+  sizes to its content (the other way to keep a nested column from swallowing
+  its row: `:fill nil` for content-sized, `:weight` for take-the-rest).
 - **`(jetpacs-scroll-row &rest CHILDREN)`** /
   **`(jetpacs-scroll-column &rest CHILDREN)`** — the pre-scrolled
   variants. A scrolling row ignores child weights.
@@ -199,6 +202,13 @@ handler registered with `jetpacs-defaction`
   *filter* chip (has selected state).
 - **`(jetpacs-assist-chip LABEL &key on-tap icon padding)`** — a flat
   tappable suggestion chip (a `#tag`); pair with `jetpacs-flow-row`.
+- **`(jetpacs-badge LABEL &key icon color padding)`** — a compact,
+  non-interactive status pill: an optional leading icon and label on a
+  `color`-tinted container (`color` a hex or a theme token like `"error"`).
+  Intrinsic width, so it is the safe trailing element in a `jetpacs-list-item`
+  (a nested icon+label `row` would render `fillMaxWidth`). Additive node — it
+  embeds a fallback colored-text child, so a companion predating `badge`
+  degrades to a colored label; no `jetpacs-node-supported-p` gate needed.
 - **`(jetpacs-menu ITEMS &key icon padding)`** — an overflow dropdown
   of **`(jetpacs-menu-item LABEL ACTION &key icon)`**; opens
   on-device, icon defaults to the vertical ellipsis.

@@ -68,11 +68,13 @@ grammar and both consumers stand on it
    as the first payload, not a hardcoded special case. Sequenced
    *after* transport S3 so the pairing wizard bakes in the
    trust-on-first-use pin step once, not twice.
-4. **Hardening residue** (small, from the completed plan's deferred
-   acceptance notes): a Kotlin-side unit test pinning `SDUI_NODE_TYPES`
-   against the renderer's `when` cases (the drift guard's other half),
-   and an `fboundp` sweep asserting every symbol promised in
-   [API-STABILITY.md](API-STABILITY.md) is bound.
+4. **Hardening residue — landed** (`dff6388`, "three-leg node-type +
+   contract drift gates"): the Kotlin `SduiRendererNodeTypesTest` pins
+   `SDUI_NODE_TYPES` to the renderer's `when (type)` cases — completing
+   the node-type mirror (lint = golden = set = dispatch) — and the elisp
+   `jetpacs-api-stability-symbols-bound` sweep asserts every symbol named
+   in [API-STABILITY.md](API-STABILITY.md) (212 today) is bound. Both run
+   in the standing suites; nothing outstanding here.
 5. **MELPA packaging.** Explicitly deferred until after the repo split;
    the split is done. Package the elisp client properly (the
    `emacs/core/` sources are already package-shaped; the bundle stays

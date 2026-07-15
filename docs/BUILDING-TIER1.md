@@ -422,16 +422,25 @@ automatic monotonic revisions, and the companion keeps rendering the
 last push while Emacs is away.
 
 A live notification — ongoing, with a running chronometer (the shape
-of a clock or timer):
+of a clock or timer) and a *Done* action button that clears it:
 
 ```elisp
 (jetpacs-surface-push "notification:myapp.brew"
   (jetpacs-notification-spec
    :channel "myapp" :ongoing t
    :chronometer `((base_ms . ,(truncate (* 1000 (float-time)))))
-   :body (list (jetpacs-text "Tea steeping" 'title))))
+   :body (list (jetpacs-text "Tea steeping" 'title))
+   :actions (list (jetpacs-notification-action
+                   "Done" (jetpacs-action "myapp.brew-done")
+                   :icon "check" :dismiss t))))
 ;; later: (jetpacs-surface-remove "notification:myapp.brew")
 ```
+
+Action buttons live in `:actions` ([SPEC §9](SPEC.md#9-widget-vocabulary));
+each dispatches its action like any tap. `:dismiss t` clears the
+notification when tapped (the Done/Snooze affordance), and `:reply t`
+(with an optional `:reply-hint`) turns a button into an inline text
+reply whose typed text arrives in the action's `event.action` `fields`.
 
 Five blank home-screen widget slots (`widget:custom1` … `custom5`)
 render lists of `jetpacs-widget-item` rows; `header_action` is the

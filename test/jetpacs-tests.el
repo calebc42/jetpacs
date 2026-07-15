@@ -2509,6 +2509,88 @@ post-construction riders (scroll_here, dialog_style) are legal anywhere."
                (cons '(dialog_style . "sheet")
                      (jetpacs-column (jetpacs-text "d"))))))
 
+;; ─── Notification action buttons (SPEC §9, meta.actions) ─────────────────────
+
+(ert-deftest jetpacs-notification-action-builds-shapes ()
+  "The constructor emits the documented `meta.actions' entry shape."
+  ;; icon + dismiss.
+  (let ((a (jetpacs-notification-action
+            "Done" (jetpacs-action "a.b") :icon "check" :dismiss t)))
+    (should (equal "Done" (alist-get 'label a)))
+    (should (equal "check" (alist-get 'icon a)))
+    (should (eq t (alist-get 'dismiss a)))
+    (should (assq 'on_tap a))
+    (should-not (assq 'input a)))
+  ;; An inline reply with a hint and a custom key.
+  (let ((a (jetpacs-notification-action
+            "Reply" (jetpacs-action "a.c") :reply-hint "Note" :reply-key "note")))
+    (should (equal "Note" (alist-get 'hint (alist-get 'input a))))
+    (should (equal "note" (alist-get 'key (alist-get 'input a)))))
+  ;; A bare :reply still emits an `input' object (empty), defaulting the key
+  ;; companion-side — never a JSON null.
+  (let ((a (jetpacs-notification-action "Reply" (jetpacs-action "a.c") :reply t)))
+    (should (assq 'input a))
+    (should (hash-table-p (alist-get 'input a))))
+  ;; The spec builder threads actions into meta.actions as a vector.
+  (let* ((spec (jetpacs-notification-spec
+                :channel "myapp" :body (list (jetpacs-text "x" 'title))
+                :actions (list (jetpacs-notification-action
+                                "Done" (jetpacs-action "a.b") :dismiss t))))
+         (actions (alist-get 'actions (alist-get 'meta spec))))
+    (should (vectorp actions))
+    (should (= 1 (length actions)))))
+
+(ert-deftest jetpacs-lint-passes-notification-actions ()
+  "A notification spec with well-formed actions lints clean (SPEC §9)."
+  (should-not
+   (jetpacs-lint-spec
+    (jetpacs-notification-spec
+     :channel "myapp" :ongoing t
+     :body (list (jetpacs-text "Tea steeping" 'title))
+     :actions (list (jetpacs-notification-action
+                     "Done" (jetpacs-action "a.b") :icon "check" :dismiss t)
+                    (jetpacs-notification-action
+                     "Reply" (jetpacs-action "a.c") :reply-hint "Note"))))))
+
+(ert-deftest jetpacs-lint-flags-notification-actions ()
+  "Missing required keys error; an unknown entry/input key warns."
+  ;; Missing on_tap.
+  (should (cl-some
+           (lambda (p) (string-match-p "missing required `on_tap'" (cdr p)))
+           (jetpacs-lint-spec
+            (jetpacs-notification-spec
+             :body (list (jetpacs-text "x" 'title))
+             :actions (list '((label . "Done")))))))
+  ;; Missing label.
+  (should (cl-some
+           (lambda (p) (string-match-p "missing required `label'" (cdr p)))
+           (jetpacs-lint-spec
+            (jetpacs-notification-spec
+             :body (list (jetpacs-text "x" 'title))
+             :actions (list `((on_tap . ,(jetpacs-action "a.b"))))))))
+  ;; An unknown key on the entry and on the input sub-object both warn.
+  (should (cl-some
+           (lambda (p) (string-match-p "unknown key `frob' on notification action"
+                                       (cdr p)))
+           (jetpacs-lint-spec
+            (jetpacs-notification-spec
+             :body (list (jetpacs-text "x" 'title))
+             :actions (list `((label . "R") (on_tap . ,(jetpacs-action "a.b"))
+                              (frob . t)))))))
+  ;; A malformed embedded on_tap action is still caught by the generic walk.
+  (should (jetpacs-lint-spec
+           (jetpacs-notification-spec
+            :body (list (jetpacs-text "x" 'title))
+            :actions (list '((label . "R") (on_tap . ((when_offline . "nope")))))))))
+
+(ert-deftest jetpacs-lint-actions-key-not-confused-with-chrome ()
+  "A chrome `actions' array (t-tagged nodes, e.g. top_bar) is never mistaken
+for a notification `meta.actions' entry, so no spurious label/on_tap errors."
+  (should-not
+   (jetpacs-lint-spec
+    `((actions . [((t . "icon_button") (icon . "search")
+                   (on_tap . ((action . "a.b")))) ])))))
+
 (defun jetpacs-tests--golden-json-lines (file)
   "Parse FILE's \"NN {json}\" golden lines into elisp values."
   (let (out)

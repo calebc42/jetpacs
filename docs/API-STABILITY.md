@@ -29,7 +29,9 @@ change signature incompatibly. Everything else is internal.
 > substrate (section buffers as collapsible cards below); `1.10.0` is the
 > remote-hosts hub (the server pillar's front door below); `1.11.0` is the
 > Spec 1.0-rc schema registry (`jetpacs-lint-payload` and the authored
-> node/kind schema tables under Validation below).
+> node/kind schema tables under Validation below); `1.12.0` is
+> configurable notification action buttons (`jetpacs-notification-action`
+> and the `:actions` argument to `jetpacs-notification-spec`, SPEC §9).
 
 ## The two rules
 
@@ -87,6 +89,12 @@ Actions: `jetpacs-action` `jetpacs-clipboard-action`.
 
 Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
 `jetpacs-tile`.
+
+Notification surfaces: `jetpacs-notification-spec` (`meta` + a content
+body) and `jetpacs-notification-action` (since 1.12.0: a `meta.actions`
+button — `label`, an `on_tap` action, and optional `:icon` / `:dismiss` /
+`:reply` inline text reply; the `:actions` argument of
+`jetpacs-notification-spec` takes a list of them, SPEC §9).
 
 ### Session & negotiation (`jetpacs.el`)
 

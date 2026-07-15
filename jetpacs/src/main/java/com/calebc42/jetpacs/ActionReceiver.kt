@@ -1,9 +1,11 @@
 package com.calebc42.jetpacs
 
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.app.RemoteInput
 import org.json.JSONObject
 import kotlin.concurrent.thread
 
@@ -80,12 +82,29 @@ class ActionReceiver : BroadcastReceiver() {
         val actionName = action.optString("action")
         val argsObject = action.optJSONObject("args") ?: JSONObject()
 
+        // Inline reply (SPEC §8): a notification action with a RemoteInput
+        // delivers the typed text in `fields` under the author-chosen key.
+        val inputKey = intent.getStringExtra(EXTRA_INPUT_KEY)
+        val fields: Any = if (inputKey != null) {
+            val reply = RemoteInput.getResultsFromIntent(intent)
+                ?.getCharSequence(inputKey)?.toString()
+            if (reply != null) JSONObject().put(inputKey, reply) else JSONObject.NULL
+        } else {
+            JSONObject.NULL
+        }
+
+        // A `dismiss` action clears its notification once tapped (Done/Snooze).
+        if (intent.getBooleanExtra(EXTRA_DISMISS, false)) {
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+                ?.cancel(NotificationRenderer.notifId(surface))
+        }
+
         val event = JSONObject().apply {
             put("surface", surface)
             put("revision_seen", revision)
             put("action", actionName)
             put("args", argsObject)
-            put("fields", JSONObject.NULL)
+            put("fields", fields)
             put("queued_at", JSONObject.NULL)
         }
 
@@ -122,6 +141,8 @@ class ActionReceiver : BroadcastReceiver() {
         const val EXTRA_SURFACE = "surface"
         const val EXTRA_REVISION = "revision"
         const val EXTRA_ACTION = "action"
+        const val EXTRA_DISMISS = "dismiss"
+        const val EXTRA_INPUT_KEY = "input_key"
         const val EXTRA_ID = "id"
         const val EXTRA_VALUE_JSON = "value_json"
         private const val TAG = "JetpacsActionReceiver"

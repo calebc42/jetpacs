@@ -72,17 +72,45 @@ so updates can never be silently rejected as stale."
 ;; (e.g. the org-clock re-assert below), or that push could be rejected.
 (add-hook 'jetpacs-connected-hook #'jetpacs--absorb-revision-snapshot -50)
 
+(cl-defun jetpacs-notification-action (label action &key icon dismiss
+                                             reply reply-hint reply-key)
+  "An action button for a notification `meta.actions' (SPEC §9).
+LABEL is the button text; ACTION is a §5 action object (see `jetpacs-action')
+dispatched when the button is tapped.
+
+ICON is an optional §9 icon name, best-effort: a companion maps it to a
+platform glyph, and modern Android does not draw action icons in the
+shade (label only), so never make the icon load-bearing.
+
+DISMISS non-nil cancels the notification when the button is tapped — the
+Done / Snooze affordance.
+
+REPLY non-nil turns the button into an inline text reply.  REPLY-HINT is
+its placeholder and REPLY-KEY (a string, default \"reply\") the key the
+typed text arrives under in the dispatched action's `event.action' `fields'.
+A non-nil REPLY-HINT or REPLY-KEY implies REPLY."
+  (append `((label . ,label) (on_tap . ,action))
+          (when icon    `((icon . ,icon)))
+          (when dismiss `((dismiss . t)))
+          (when (or reply reply-hint reply-key)
+            (let ((input (append (when reply-hint `((hint . ,reply-hint)))
+                                 (when reply-key  `((key . ,reply-key))))))
+              `((input . ,(or input (make-hash-table :test 'equal))))))))
+
 (cl-defun jetpacs-notification-spec (&key channel ongoing chronometer
-                                       priority category body)
+                                       priority category body actions)
   "Build a notification surface spec.
 CHRONOMETER is an alist like `((base_ms . 1718038200000)).
-BODY is a list of UI-tree nodes."
+BODY is a list of UI-tree nodes.  ACTIONS is a list of
+`jetpacs-notification-action' entries rendered as the platform
+notification's action buttons (SPEC §9)."
   (let ((meta (append
                (when channel     `((channel . ,channel)))
                (when ongoing     `((ongoing . t)))
                (when priority    `((priority . ,priority)))
                (when category    `((category . ,category)))
-               (when chronometer `((chronometer . ,chronometer))))))
+               (when chronometer `((chronometer . ,chronometer)))
+               (when actions     `((actions . ,(vconcat actions)))))))
     `((meta . ,(or meta (make-hash-table :test 'equal)))
       (children . ,(vconcat body)))))
 

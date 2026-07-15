@@ -192,7 +192,10 @@ state.changed   {id, value}
 `surface` and `revision_seen` are the context the interaction happened
 in (which surface, at which cached revision); `queued_at` (epoch ms) is
 stamped onto events delivered from the offline queue (§6) and absent on
-live ones; `fields` is reserved (currently `null`). The
+live ones; `fields` carries values a companion collected as part of the
+interaction — presently only an inline-reply notification action's typed
+text as `{key: text}` (§9) — and is `null` when the interaction gathered
+none. The
 `when_offline`/`dedupe`/`ttl_s` fields an author writes on an action
 object (below) are queue policy: the companion consumes them when the
 event is queued and does not echo them in the delivered frame.
@@ -486,7 +489,30 @@ Summary by family:
   empty string renders a bare attention dot) — cosmetic, never
   load-bearing, silently ignored by older companions.
 - **Notification specs** add `meta` (channel, ongoing, category, priority,
-  `chronometer: {base_ms}`) above a body of content nodes.
+  `chronometer: {base_ms}`) above a body of content nodes. `meta.actions`
+  is an ordered array of action buttons rendered as the platform
+  notification's own actions (the OS caps how many are shown — author the
+  most important first). Each entry carries `label` (required) and
+  `on_tap` (required — a §5 action object dispatched when the button is
+  tapped), plus optional:
+  - `icon` — a §9 icon name, best-effort. A companion maps it to a
+    platform glyph; note that Android ≥ 7 does not draw action icons in
+    the shade (label only), so never make the icon load-bearing. Absent
+    or unresolvable → a default glyph.
+  - `dismiss` — when true, tapping the button cancels the notification
+    (the Done / Snooze affordance).
+  - `input` — `{hint?, key?}`; turns the button into an inline text
+    reply. The typed text rides back in the dispatched `event.action`'s
+    `fields` as `{key: text}` (`key` defaults to `reply`), so the same
+    action handler reads the reply from the payload. Pair it with
+    `dismiss` to clear the notification once the reply is sent.
+
+  `meta.actions` is additive — a companion that predates it ignores the
+  unknown meta key and posts the notification with no action buttons; it
+  never fails. (A `button` node placed directly in the body is still
+  honored as an action when `meta.actions` is absent, the older implicit
+  form.) Emit via `jetpacs-notification-action` / `jetpacs-notification-spec
+  :actions`.
 
 ### Editor toolbars
 

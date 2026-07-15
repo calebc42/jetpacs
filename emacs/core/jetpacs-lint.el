@@ -53,6 +53,11 @@ companion gates on `jetpacs-node-supported-p' instead.")
     on_day_tap on_month_change on_point_tap on_button)
   "Node keys whose value is an embedded action object (SPEC §9).")
 
+(defconst jetpacs-lint--notification-action-keys '(label on_tap icon dismiss input)
+  "Keys a notification `meta.actions' entry may carry (SPEC §9).
+An entry is required to carry `label' and `on_tap'; `input' is the inline
+text-reply sub-object `{hint?, key?}'.")
+
 (defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe)
   "The fields an action object may carry (SPEC §5).
 `action' and `builtin' are mutually exclusive; a `builtin' additionally
@@ -347,6 +352,30 @@ scalar serializability are the generic walk's job, not repeated here."
         (jetpacs-lint--check-toolbar-item lp (cons 'long_press path)
                                           report t)))))
 
+(defun jetpacs-lint--check-notification-action (entry path report)
+  "Validate a notification `meta.actions' ENTRY at PATH via REPORT (SPEC §9).
+Enforces the required `label'/`on_tap' and warns on a key outside the
+vocabulary; the embedded `on_tap' action and the `input' sub-object are
+left to the generic walk (`on_tap' is an action key; `input' recurses)."
+  (if (not (jetpacs-lint--alist-p entry))
+      (funcall report path (format "notification action must be an object: %S" entry))
+    (unless (assq 'label entry)
+      (funcall report path "notification action missing required `label'"))
+    (unless (assq 'on_tap entry)
+      (funcall report path "notification action missing required `on_tap'"))
+    (dolist (pair entry)
+      (unless (memq (car pair) jetpacs-lint--notification-action-keys)
+        (funcall report path
+                 (format "warning: unknown key `%s' on notification action"
+                         (car pair)))))
+    (when-let ((input (cdr (assq 'input entry))))
+      (when (jetpacs-lint--alist-p input)
+        (dolist (pair input)
+          (unless (memq (car pair) '(hint key))
+            (funcall report path
+                     (format "warning: unknown key `%s' on notification action `input'"
+                             (car pair)))))))))
+
 (defun jetpacs-lint--check-schema (node type path report)
   "Enforce TYPE's key schema on NODE at PATH via REPORT (SPEC §9).
 A missing required key is an error; a key outside the schema row (and
@@ -386,6 +415,17 @@ deliberate newer-companion target, but is more often a typo."
           (dolist (item (append val nil))
             (jetpacs-lint--check-toolbar-item item (cons i kpath) report)
             (jetpacs-lint--walk item (cons i kpath) report)
+            (setq i (1+ i)))))
+       ;; `actions' is overloaded: a notification's `meta.actions' entries
+       ;; (SPEC §9) carry no `t' and get the action-button vocabulary check;
+       ;; a chrome `actions' array (top_bar) holds ordinary `t'-tagged nodes
+       ;; and is just walked.  The generic walk runs for both either way.
+       ((and (eq key 'actions) (jetpacs-lint--node-seq-p val))
+        (let ((i 0))
+          (dolist (entry (append val nil))
+            (unless (assq 't entry)
+              (jetpacs-lint--check-notification-action entry (cons i kpath) report))
+            (jetpacs-lint--walk entry (cons i kpath) report)
             (setq i (1+ i)))))
        ((jetpacs-lint--node-seq-p val)
         (let ((i 0))

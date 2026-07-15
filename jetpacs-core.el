@@ -13,7 +13,7 @@
 
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
-;; Version: 1.11.0
+;; Version: 1.12.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; URL: https://github.com/calebc42/jetpacs
 
@@ -66,7 +66,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.11.0"
+(defconst jetpacs-api-version "1.12.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -2732,6 +2732,11 @@ companion gates on `jetpacs-node-supported-p' instead.")
     on_day_tap on_month_change on_point_tap on_button)
   "Node keys whose value is an embedded action object (SPEC §9).")
 
+(defconst jetpacs-lint--notification-action-keys '(label on_tap icon dismiss input)
+  "Keys a notification `meta.actions' entry may carry (SPEC §9).
+An entry is required to carry `label' and `on_tap'; `input' is the inline
+text-reply sub-object `{hint?, key?}'.")
+
 (defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe)
   "The fields an action object may carry (SPEC §5).
 `action' and `builtin' are mutually exclusive; a `builtin' additionally
@@ -3026,6 +3031,30 @@ scalar serializability are the generic walk's job, not repeated here."
         (jetpacs-lint--check-toolbar-item lp (cons 'long_press path)
                                           report t)))))
 
+(defun jetpacs-lint--check-notification-action (entry path report)
+  "Validate a notification `meta.actions' ENTRY at PATH via REPORT (SPEC §9).
+Enforces the required `label'/`on_tap' and warns on a key outside the
+vocabulary; the embedded `on_tap' action and the `input' sub-object are
+left to the generic walk (`on_tap' is an action key; `input' recurses)."
+  (if (not (jetpacs-lint--alist-p entry))
+      (funcall report path (format "notification action must be an object: %S" entry))
+    (unless (assq 'label entry)
+      (funcall report path "notification action missing required `label'"))
+    (unless (assq 'on_tap entry)
+      (funcall report path "notification action missing required `on_tap'"))
+    (dolist (pair entry)
+      (unless (memq (car pair) jetpacs-lint--notification-action-keys)
+        (funcall report path
+                 (format "warning: unknown key `%s' on notification action"
+                         (car pair)))))
+    (when-let ((input (cdr (assq 'input entry))))
+      (when (jetpacs-lint--alist-p input)
+        (dolist (pair input)
+          (unless (memq (car pair) '(hint key))
+            (funcall report path
+                     (format "warning: unknown key `%s' on notification action `input'"
+                             (car pair)))))))))
+
 (defun jetpacs-lint--check-schema (node type path report)
   "Enforce TYPE's key schema on NODE at PATH via REPORT (SPEC §9).
 A missing required key is an error; a key outside the schema row (and
@@ -3065,6 +3094,17 @@ deliberate newer-companion target, but is more often a typo."
           (dolist (item (append val nil))
             (jetpacs-lint--check-toolbar-item item (cons i kpath) report)
             (jetpacs-lint--walk item (cons i kpath) report)
+            (setq i (1+ i)))))
+       ;; `actions' is overloaded: a notification's `meta.actions' entries
+       ;; (SPEC §9) carry no `t' and get the action-button vocabulary check;
+       ;; a chrome `actions' array (top_bar) holds ordinary `t'-tagged nodes
+       ;; and is just walked.  The generic walk runs for both either way.
+       ((and (eq key 'actions) (jetpacs-lint--node-seq-p val))
+        (let ((i 0))
+          (dolist (entry (append val nil))
+            (unless (assq 't entry)
+              (jetpacs-lint--check-notification-action entry (cons i kpath) report))
+            (jetpacs-lint--walk entry (cons i kpath) report)
             (setq i (1+ i)))))
        ((jetpacs-lint--node-seq-p val)
         (let ((i 0))
@@ -3339,17 +3379,45 @@ so updates can never be silently rejected as stale."
 ;; (e.g. the org-clock re-assert below), or that push could be rejected.
 (add-hook 'jetpacs-connected-hook #'jetpacs--absorb-revision-snapshot -50)
 
+(cl-defun jetpacs-notification-action (label action &key icon dismiss
+                                             reply reply-hint reply-key)
+  "An action button for a notification `meta.actions' (SPEC §9).
+LABEL is the button text; ACTION is a §5 action object (see `jetpacs-action')
+dispatched when the button is tapped.
+
+ICON is an optional §9 icon name, best-effort: a companion maps it to a
+platform glyph, and modern Android does not draw action icons in the
+shade (label only), so never make the icon load-bearing.
+
+DISMISS non-nil cancels the notification when the button is tapped — the
+Done / Snooze affordance.
+
+REPLY non-nil turns the button into an inline text reply.  REPLY-HINT is
+its placeholder and REPLY-KEY (a string, default \"reply\") the key the
+typed text arrives under in the dispatched action's `event.action' `fields'.
+A non-nil REPLY-HINT or REPLY-KEY implies REPLY."
+  (append `((label . ,label) (on_tap . ,action))
+          (when icon    `((icon . ,icon)))
+          (when dismiss `((dismiss . t)))
+          (when (or reply reply-hint reply-key)
+            (let ((input (append (when reply-hint `((hint . ,reply-hint)))
+                                 (when reply-key  `((key . ,reply-key))))))
+              `((input . ,(or input (make-hash-table :test 'equal))))))))
+
 (cl-defun jetpacs-notification-spec (&key channel ongoing chronometer
-                                       priority category body)
+                                       priority category body actions)
   "Build a notification surface spec.
 CHRONOMETER is an alist like `((base_ms . 1718038200000)).
-BODY is a list of UI-tree nodes."
+BODY is a list of UI-tree nodes.  ACTIONS is a list of
+`jetpacs-notification-action' entries rendered as the platform
+notification's action buttons (SPEC §9)."
   (let ((meta (append
                (when channel     `((channel . ,channel)))
                (when ongoing     `((ongoing . t)))
                (when priority    `((priority . ,priority)))
                (when category    `((category . ,category)))
-               (when chronometer `((chronometer . ,chronometer))))))
+               (when chronometer `((chronometer . ,chronometer)))
+               (when actions     `((actions . ,(vconcat actions)))))))
     `((meta . ,(or meta (make-hash-table :test 'equal)))
       (children . ,(vconcat body)))))
 

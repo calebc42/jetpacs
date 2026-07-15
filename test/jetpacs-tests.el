@@ -2173,6 +2173,160 @@ against both the static batch-1 catalog and a welcome-reported one."
         (should (equal (mapcar (lambda (s) (alist-get 'id s)) specs)
                        '("too-new")))))))
 
+(ert-deftest jetpacs-triggers-when-serialized ()
+  "A `:when' gate rides the wire spec as a `when' vector of predicates."
+  (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
+        (jetpacs--session '((granted . ("triggers"))
+                         (device . ((state_types . ("power" "time.window"))))))
+        (jetpacs-triggers-changed-hook nil))
+    (jetpacs-trigger-register "gated" :type "time"
+                           :params '((every_s . 3600))
+                           :when '(((type . "power") (state . "disconnected"))
+                                   ((type . "time.window") (after . "22:00"))))
+    (let* ((specs (append (jetpacs-triggers--specs) nil))
+           (gate (alist-get 'when (car specs))))
+      (should (= (length specs) 1))
+      (should (vectorp gate))
+      (should (= (length gate) 2))
+      (should (equal (alist-get 'type (aref gate 0)) "power"))
+      (should (equal (alist-get 'state (aref gate 0)) "disconnected"))
+      (should (equal (alist-get 'after (aref gate 1)) "22:00")))))
+
+(ert-deftest jetpacs-triggers-when-negotiation-skip ()
+  "A `:when'-gated registration pushes only under a FULL state_types match.
+Three ways (mirroring `jetpacs-triggers-unsupported-type-skipped'): no
+report at all, a partial report, a full report.  Skips are whole-
+registration — the gate is never stripped: a pre-`when' companion
+ignores unknown keys inside a trigger entry, so a stripped push would
+arm the trigger ungated (SPEC §11's normative client rule)."
+  (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
+        (jetpacs--session '((granted . ("triggers"))))
+        (jetpacs-triggers-changed-hook nil)
+        (jetpacs-triggers--push-timer nil))
+    (cl-letf (((symbol-function 'jetpacs-connected-p) (lambda () t))
+              ((symbol-function 'jetpacs-send) #'ignore))
+      (jetpacs-trigger-register "plain" :type "power")
+      (jetpacs-trigger-register "gated" :type "power"
+                             :when '(((type . "power") (state . "connected"))
+                                     ((type . "time.window") (before . "09:00"))))
+      (cl-flet ((pushed-ids ()
+                  (mapcar (lambda (s) (alist-get 'id s))
+                          (append (jetpacs-triggers--specs) nil))))
+        ;; 1. No state_types report (a pre-`when' companion): skip.
+        (should (equal (pushed-ids) '("plain")))
+        ;; 2. A partial report — one predicate type missing: still skip.
+        (setq jetpacs--session '((granted . ("triggers"))
+                              (device . ((state_types . ("power"))))))
+        (should (equal (pushed-ids) '("plain")))
+        ;; 3. Every predicate type reported: the gate flies.
+        (setq jetpacs--session
+              '((granted . ("triggers"))
+                (device . ((state_types . ("power" "time.window"))))))
+        (should (equal (pushed-ids) '("gated" "plain")))))))
+
+(ert-deftest jetpacs-device-state-wrapper-shapes ()
+  "jetpacs-device-state shapes state.get args; nil keywords are omitted."
+  (let (calls)
+    (cl-letf (((symbol-function 'jetpacs-device--invoke)
+               (lambda (cap args &optional _cb)
+                 (push (cons cap args) calls))))
+      (jetpacs-device-state #'ignore)
+      (jetpacs-device-state #'ignore :types '("power" "battery.level"))
+      (jetpacs-device-state #'ignore
+                         :when '(((type . "power") (state . "disconnected")))))
+    (setq calls (nreverse calls))
+    (should (cl-every (lambda (c) (equal (car c) "state.get")) calls))
+    ;; Bare: no args at all.
+    (should-not (cdr (nth 0 calls)))
+    ;; :types → a vector, no `when' key.
+    (let ((args (cdr (nth 1 calls))))
+      (should (equal (append (alist-get 'types args) nil)
+                     '("power" "battery.level")))
+      (should-not (assq 'when args)))
+    ;; :when → a vector of predicate alists.
+    (let ((gate (alist-get 'when (cdr (nth 2 calls)))))
+      (should (vectorp gate))
+      (should (equal (alist-get 'type (aref gate 0)) "power")))))
+
+(ert-deftest jetpacs-automations-view-shows-gates ()
+  "A `:when'-gated registration renders its gate line on the card."
+  (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
+        (jetpacs-triggers--last-fired (make-hash-table :test 'equal))
+        (jetpacs-triggers-disabled nil)
+        (jetpacs-triggers-changed-hook nil))
+    (jetpacs-trigger-register "gated" :type "battery.level"
+                           :params '((below . 20))
+                           :when '(((type . "power") (state . "disconnected"))
+                                   ((type . "time.window") (after . "22:00")
+                                    (before . "07:00"))))
+    (let ((json (json-serialize
+                 (jetpacs-tests--canon (jetpacs-automations--view nil))
+                 :null-object :null :false-object :false)))
+      (should (string-search "when power state=disconnected" json))
+      (should (string-search "time.window after=22:00 before=07:00" json)))
+    ;; An ungated card renders no gate line.
+    (should-not (string-search
+                 "when "
+                 (json-serialize
+                  (jetpacs-tests--canon
+                   (jetpacs-automations--card
+                    "plain" '(:type "screen" :params ((state . "off")))))
+                  :null-object :null :false-object :false)))))
+
+(ert-deftest jetpacs-lint-trigger-registration ()
+  "jetpacs-lint-trigger validates gates, on_fire shape, and placeholders."
+  ;; A clean, fully-loaded registration lints clean.
+  (should-not (jetpacs-lint-trigger
+               '((id . "ok") (type . "battery.level")
+                 (params . ((below . 20)))
+                 (when . [((type . "power") (state . "disconnected"))
+                          ((type . "time.window") (after . "22:00")
+                           (before . "07:00") (days . ["mon" "tue"]))])
+                 (policy . "wake")
+                 (on_fire . [((cap . "flashlight") (args . ((on . t))))
+                             ((notify . ((title . "Battery ${data.level}")
+                                         (text . "${id} fired"))))]))))
+  ;; The lint's predicate-type vocabulary mirrors the companion's.
+  (should (equal jetpacs-lint-state-predicate-types
+                 (sort (copy-sequence jetpacs-lint-state-predicate-types)
+                       #'string<)))
+  (cl-flet ((problems-of (spec) (mapcar #'cdr (jetpacs-lint-trigger spec))))
+    ;; Unknown predicate type, boundless battery.level, bad HH:MM, bad day.
+    (should (seq-find (lambda (p) (string-search "unknown state-predicate" p))
+                      (problems-of '((id . "x") (type . "power")
+                                     (when . [((type . "martian"))])))))
+    (should (seq-find (lambda (p) (string-search "above' or `below" p))
+                      (problems-of '((id . "x") (type . "power")
+                                     (when . [((type . "battery.level"))])))))
+    (should (seq-find (lambda (p) (string-search "HH:MM" p))
+                      (problems-of
+                       '((id . "x") (type . "power")
+                         (when . [((type . "time.window") (after . "25:99"))])))))
+    (should (seq-find (lambda (p) (string-search "unknown day" p))
+                      (problems-of
+                       '((id . "x") (type . "power")
+                         (when . [((type . "time.window") (days . ["monday"]))])))))
+    ;; on_fire: exactly one of cap/notify; the cap name never interpolates.
+    (should (seq-find (lambda (p) (string-search "neither" p))
+                      (problems-of '((id . "x") (type . "power")
+                                     (on_fire . [((other . 1))])))))
+    (should (seq-find (lambda (p) (string-search "both" p))
+                      (problems-of
+                       '((id . "x") (type . "power")
+                         (on_fire . [((cap . "vibrate") (notify . ((title . "t"))))])))))
+    (should (seq-find (lambda (p) (string-search "never interpolate" p))
+                      (problems-of
+                       '((id . "x") (type . "power")
+                         (on_fire . [((cap . "${data.cap}"))])))))
+    ;; A ${…} outside the token grammar warns; a grammatical one doesn't.
+    (should (seq-find (lambda (p) (string-search "stay literal" p))
+                      (problems-of
+                       '((id . "x") (type . "power")
+                         (on_fire . [((notify . ((title . "${data.}"))))])))))
+    (should-not (problems-of
+                 '((id . "x") (type . "power")
+                   (on_fire . [((notify . ((title . "${data.level}"))))]))))))
+
 (ert-deftest jetpacs-triggers-fire-dispatch ()
   "An inbound trigger.fired event.action reaches the per-id handler."
   (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
@@ -3753,13 +3907,22 @@ shapes — without touching the wire."
       (jetpacs-device-settings-open "wifi")
       (jetpacs-device-keep-screen-on t)
       (jetpacs-device-brightness 128)
-      (jetpacs-device-dnd "priority"))
+      (jetpacs-device-dnd "priority")
+      (jetpacs-device-state #'ignore
+                         :types '("power" "battery.level")
+                         :when '(((type . "power")
+                                  (state . "disconnected")))))
     (nreverse calls)))
 
 (defun jetpacs-tests--frame-cases ()
   "Outbound protocol frame payloads pinned by test/frames.golden.
 Trigger and capability frames today; new wire frames add cases here."
-  (let ((jetpacs-triggers--table (make-hash-table :test 'equal)))
+  (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
+        ;; The gated registration needs a state_types report or the
+        ;; negotiation (correctly) skips it from the specs.
+        (jetpacs--session
+         '((device . ((state_types . ("battery.level" "power"
+                                      "time.window")))))))
     ;; Batch Emacs is disconnected, so these registers never send.
     (jetpacs-trigger-register "power-sync" :type "power"
                            :params '((state . "connected"))
@@ -3771,6 +3934,15 @@ Trigger and capability frames today; new wire frames add cases here."
                                       (args . ((on . t))))
                                      ((notify . ((title . "Charging ${id}")
                                                  (text . "plug ${data.plug}"))))])
+    (jetpacs-trigger-register "quiet-notify" :type "battery.level"
+                           :params '((below . 20))
+                           ;; SPEC §11 `when': the gate rides the entry as
+                           ;; plain data; the companion ANDs it at fire time.
+                           :when '(((type . "power")
+                                    (state . "disconnected"))
+                                   ((type . "time.window")
+                                    (after . "22:00") (before . "07:00")
+                                    (days . ["mon" "tue" "wed" "thu" "fri"]))))
     (jetpacs-trigger-register "screen-off" :type "screen"
                            :params '((state . "off")))
     (append

@@ -291,6 +291,12 @@ class JetpacsConnection(
                         if ("triggers" in granted) {
                             put("trigger_types",
                                 JSONArray(TriggerHost.SUPPORTED_TYPES.sorted()))
+                            // The sample-able predicate catalog (SPEC §11
+                            // "State predicates & sampling") — what a `when`
+                            // gate may reference. Negotiated separately from
+                            // trigger_types: sample-ability ≠ trigger-ability.
+                            put("state_types",
+                                JSONArray(StateSampler.STATE_TYPES.sorted()))
                         }
                     })
                 }

@@ -57,27 +57,8 @@ class TriggerHost(private val context: Context) {
      */
     fun replaceSet(triggers: JSONArray?): String? {
         val dao = JetpacsRuntime.database?.triggerDao() ?: return "trigger store unavailable"
-        val parsed = mutableListOf<TriggerRow>()
-        if (triggers != null) {
-            for (i in 0 until triggers.length()) {
-                val t = triggers.optJSONObject(i) ?: continue
-                val id = t.optString("id")
-                val type = t.optString("type")
-                if (id.isEmpty() || type.isEmpty())
-                    return "trigger ${i}: missing id or type"
-                if (type !in SUPPORTED_TYPES)
-                    return "trigger '$id': unknown type '$type'"
-                parsed.add(TriggerRow(
-                    id = id,
-                    type = type,
-                    params = (t.optJSONObject("params") ?: JSONObject()).toString(),
-                    policy = t.optString("policy", "queue"),
-                    dedupe = t.optString("dedupe").ifEmpty { null },
-                    throttleS = if (t.has("throttle_s")) t.optLong("throttle_s") else null,
-                    onFire = t.optJSONArray("on_fire")?.toString(),
-                ))
-            }
-        }
+        val (parsed, err) = parseTriggerRows(triggers)
+        if (parsed == null) return err
         dao.replaceAll(parsed)
         arm(parsed)
         Log.i(TAG, "Trigger set replaced: ${parsed.size} trigger(s) armed")
@@ -160,7 +141,9 @@ class TriggerHost(private val context: Context) {
         }
 
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-            val transport = transportName(caps)
+            // Transport naming lives with the level samplers (StateSampler),
+            // so the edge and the predicate can never disagree on vocabulary.
+            val transport = StateSampler.transportName(caps)
             val first = networkTransports.put(network, transport) == null
             if (first) fireNetwork("available", transport)
         }
@@ -168,15 +151,6 @@ class TriggerHost(private val context: Context) {
         override fun onLost(network: Network) {
             fireNetwork("lost", networkTransports.remove(network))
         }
-    }
-
-    private fun transportName(caps: NetworkCapabilities): String = when {
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bluetooth"
-        else -> "other"
     }
 
     private fun fireNetwork(event: String, transport: String?) {
@@ -349,12 +323,63 @@ class TriggerHost(private val context: Context) {
         private val lastFired = ConcurrentHashMap<String, Long>()
 
         /**
+         * SPEC §11 replace-set parsing and validation, extracted from
+         * [replaceSet] so it is unit-testable without Room: the parsed
+         * rows, or (null, error). Whole-set semantics — one bad entry
+         * (unknown type, malformed `when`) rejects everything, so the
+         * client never half-arms. A malformed `when` in particular must
+         * reject rather than be dropped: a trigger stored without its
+         * gate would fire UNGATED, the §11 critical hazard.
+         */
+        internal fun parseTriggerRows(
+            triggers: JSONArray?,
+        ): Pair<List<TriggerRow>?, String?> {
+            val parsed = mutableListOf<TriggerRow>()
+            if (triggers != null) {
+                for (i in 0 until triggers.length()) {
+                    val t = triggers.optJSONObject(i) ?: continue
+                    val id = t.optString("id")
+                    val type = t.optString("type")
+                    if (id.isEmpty() || type.isEmpty())
+                        return null to "trigger ${i}: missing id or type"
+                    if (type !in SUPPORTED_TYPES)
+                        return null to "trigger '$id': unknown type '$type'"
+                    val whenArr = t.optJSONArray("when")
+                    if (whenArr != null) {
+                        StateSampler.validateWhen(whenArr)?.let {
+                            return null to "trigger '$id': $it"
+                        }
+                    }
+                    parsed.add(TriggerRow(
+                        id = id,
+                        type = type,
+                        params = (t.optJSONObject("params") ?: JSONObject()).toString(),
+                        policy = t.optString("policy", "queue"),
+                        dedupe = t.optString("dedupe").ifEmpty { null },
+                        throttleS = if (t.has("throttle_s")) t.optLong("throttle_s") else null,
+                        onFire = t.optJSONArray("on_fire")?.toString(),
+                        whenJson = whenArr?.toString(),
+                    ))
+                }
+            }
+            return parsed to null
+        }
+
+        /**
          * The firing pipeline — deliberately the same shape as
          * [ActionReceiver.handleTap]: live connection ⇒ send the
          * `event.action`, else the offline queue per policy. Static so the
          * alarm and boot receivers can fire without a host instance.
          */
         fun fireRow(context: Context, row: TriggerRow, data: JSONObject) {
+            // SPEC §11 `when`: the state gate guards the ENTIRE fire — a
+            // failed gate means the fire never happened (no event.action,
+            // no on_fire, and, because this runs before the throttle
+            // bookkeeping, no consumed lastFired slot).
+            if (!StateSampler.evaluateWhen(context, row.whenJson)) {
+                Log.d(TAG, "Gated ${row.id}: `when` does not hold")
+                return
+            }
             val now = System.currentTimeMillis()
             row.throttleS?.let { t ->
                 val last = lastFired[row.id]

@@ -602,7 +602,8 @@ capability.result    {ok, result?}     companion → client (reply)
                        "write_settings": false, "notification_policy": false,
                        "notification_listener": false, "fine_location": false,
                        "bluetooth_connect": false},
-             "trigger_types": ["airplane", "battery.level", "boot", "..."]}
+             "trigger_types": ["airplane", "battery.level", "boot", "..."],
+             "state_types": ["airplane", "battery.level", "headset", "..."]}
   ```
 
   `caps` is the invocable capability set. `perms` reports the runtime
@@ -615,6 +616,10 @@ capability.result    {ok, result?}     companion → client (reply)
   companion's trigger-type catalog: because `triggers.set` rejects a
   set wholesale on an unknown type, the client uses this list to skip
   a too-new registration instead of poisoning the push.
+  `state_types` (also under the `triggers` grant) is the
+  state-predicate catalog — what a §11 `when` gate may reference and
+  `state.get` can sample; the client-side rule it drives is normative
+  in §11's `when` bullet.
 
 - **Trust model.** This flows in the already-trusted direction: the
   post-handshake client drives notifications, reminders, and dialogs,
@@ -644,6 +649,7 @@ capability.result    {ok, result?}     companion → client (reply)
 | `screen.keep_on` | `{on}` | — | a window flag held only while the companion's Jetpacs UI is on screen — it cannot pin the device awake from the background |
 | `brightness.set` | `{level}` | — | 0–255, switches to manual brightness; ungranted → `cap-permission` (`write_settings` + the grant deep-link) |
 | `dnd.set` | `{mode}` | — | `on` \| `off` \| `priority`; ungranted → `cap-permission` (`notification_policy` + the grant deep-link) |
+| `state.get` | `{types?, when?}` | `{states, unavailable?, holds?}` | sample the §11 state predicates. `states` maps each requested type (default: every `device.state_types` entry) to its current state object (shapes in §11 "State predicates & sampling"); a type that cannot be sampled lands in `unavailable` as its typed failure code, never failing the batch. `when` — a §11 predicate array — adds `holds`, evaluated by the same code path that gates fires, so a gate is testable from Emacs before it ships; a malformed `when` → `cap-failed` |
 
 ## 11. Device triggers (optional)
 
@@ -655,7 +661,7 @@ cannot host triggers does not grant it, and a client must not send
 `triggers.set` without the grant.
 
 ```
-triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
+triggers.set   {triggers: [{id, type, params?, when?, policy?, dedupe?,
                             throttle_s?, on_fire?}]}        client → companion
 ```
 
@@ -687,6 +693,29 @@ triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
 - `throttle_s` is a host-side minimum interval between fires of one
   trigger. Threshold types (e.g. battery level) must fire on edge
   crossings computed host-side, never on every underlying broadcast.
+- `when` — an optional state gate: a flat array of state predicates
+  (see "State predicates & sampling" below), ANDed at fire time. The
+  gate guards the **entire** fire: when any predicate does not hold,
+  the fire never happened — no `event.action` is queued or delivered,
+  no `on_fire` runs, and no `throttle_s` bookkeeping is consumed (the
+  gate is checked before the throttle, so a suppressed fire cannot eat
+  the slot of a real one). A predicate that cannot be evaluated — an
+  ungranted permission, an unknown type — counts as **not holding**:
+  fail closed, never fire garbage. There is no OR, no nesting, no
+  negation: predicates are two-valued, so a complement is expressed by
+  flipping the value; a rule that needs OR is two registrations, or
+  logic in Emacs. Companions that support `when` validate it and
+  reject the whole set on a malformed gate, like any unknown type.
+
+  **Client rule (normative).** A client may include `when` in a
+  registration only when **every** predicate's `type` appears in the
+  session's `device.state_types` report (§10). Otherwise it must skip
+  the whole registration (with a message) — it must **never** strip
+  `when` and push the rest. Rationale: a companion that predates this
+  field ignores unknown keys *inside* a trigger entry rather than
+  rejecting the set, so a pushed-anyway gate would arm the trigger
+  ungated — "notify below 20%" silently becomes "notify always",
+  strictly worse than a skip.
 - `on_fire` — the companion-local response, executed at fire time even
   with Emacs dead, **in addition to** the `trigger.fired` event (which
   still queues and delivers, so the client always learns of the fire
@@ -700,8 +729,10 @@ triggers.set   {triggers: [{id, type, params?, policy?, dedupe?,
   acts on its own, so the vocabulary is deliberately closed: **no
   conditionals, no loops** — a rule that needs logic while Emacs is
   dead means "keep Emacs alive", not a rule language in the companion.
-  Unknown entries and failing capabilities are logged and skipped,
-  never fatal.
+  (`when` is not a conditional in this sense: it is a declarative
+  state gate — sampled device state ANDed at fire time — not control
+  flow inside the response.) Unknown entries and failing capabilities
+  are logged and skipped, never fatal.
 
   **Placeholders.** String values inside `notify` and inside a `cap`
   entry's `args` (recursively — nested objects and arrays, so
@@ -743,6 +774,38 @@ its push against that report and skips what this companion can't host.
 batch; each will document its runtime-permission behavior here
 (SSID needs fine location — degrade to `network`'s transport-only
 matching when ungranted, never fire garbage).
+
+### State predicates & sampling
+
+Some device signals are useful as *levels* (sample-able booleans), not
+only as edges. The welcome's `device.state_types` (under the `triggers`
+grant, §10) is this companion's catalog of state-predicate types — the
+shared vocabulary of `when` gates (above) and `state.get` (§10). It is
+negotiated separately from `trigger_types` because sample-ability and
+trigger-ability differ: `boot` / `time` / `timezone.changed` /
+`package` are edge-only, and `time.window` is predicate-only. Where a
+signal has both views it carries the same name in both catalogs, and
+sampling costs nothing standing: every sampler is a cached-system-state
+read — no listeners, no polling.
+
+A predicate is a flat object: `type` plus type-specific match fields
+reusing the trigger catalog's `params` vocabulary. A predicate with no
+match fields asserts the type's *natural state*, noted per row:
+
+| type | fields | holds when |
+|---|---|---|
+| `power` | `{state?}` | the power state equals `state` (default `connected`) |
+| `battery.level` | `{above: pct}` or `{below: pct}` | the level is strictly above / below the threshold; exactly the trigger's threshold vocabulary, one bound required |
+| `screen` | `{state?}` | `on` / `off` — the screen is interactive or not (default `on`); `unlocked` — the keyguard is dismissed |
+| `airplane` | `{state?}` | airplane mode equals `state` (default `on`) |
+| `network` | `{transport?}` | a network is connected, and its transport matches when given |
+| `headset` | `{state?}` | wired or USB audio output present (`plugged`, the default) or absent (`unplugged`) |
+| `time.window` | `{after?, before?, days?}` | the local clock is inside the window. `after`/`before` are `"HH:MM"` strings, half-open `[after, before)`; the window wraps midnight when `after` > `before`; an absent bound is open. `days` is an array of `mon`…`sun` filtering on the calendar day of the moment tested; absent = every day. Predicate-only: it has no edge trigger, and `state.get` reports it under `unavailable` |
+
+Sampled state objects (`state.get`'s `states` values) are shaped like
+the type's trigger `data` column above, with the level-view
+substitutions: `screen` adds `locked` (boolean), and `network` reports
+`{connected, transport?}` instead of an event.
 
 ## 12. Conformance
 

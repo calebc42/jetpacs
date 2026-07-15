@@ -31,7 +31,11 @@ change signature incompatibly. Everything else is internal.
 > Spec 1.0-rc schema registry (`jetpacs-lint-payload` and the authored
 > node/kind schema tables under Validation below); `1.12.0` is
 > configurable notification action buttons (`jetpacs-notification-action`
-> and the `:actions` argument to `jetpacs-notification-spec`, SPEC §9).
+> and the `:actions` argument to `jetpacs-notification-spec`, SPEC §9);
+> `1.13.0` is the conditions core (the `:when` state gate on
+> `jetpacs-trigger-register`, `jetpacs-device-state`, and
+> `jetpacs-lint-trigger` with its predicate-type vocabulary under
+> Validation below — SPEC §10–§11).
 
 ## The two rules
 
@@ -221,6 +225,14 @@ Since 1.11.0 (the Spec 1.0-rc schema registry): `jetpacs-lint-payload`
 `jetpacs-lint-node-schema` `jetpacs-lint-kind-schema`
 `jetpacs-lint-node-common-keys`, published in `contract.json`
 (contract_format 2) as `node_schema` / `kind_schema` / `spec_version`.
+
+Since 1.13.0 (the conditions core): `jetpacs-lint-trigger` (validate one
+wire-shaped `triggers.set` entry — `when` predicate shapes, the on_fire
+exactly-one-of `cap`/`notify` rule, and the `${…}` placeholder grammar)
+plus `jetpacs-lint-state-predicate-types` (the SPEC §11 state-predicate
+vocabulary, mirroring the companion's `StateSampler.STATE_TYPES` —
+lint-time advisory; the live authority is the welcome's
+`device.state_types` report).
 `jetpacs-lint-spec` additionally enforces the node schema: a missing
 required key is an error; a key outside a node's schema is a
 `warning: `-prefixed problem, not an error — companions must ignore

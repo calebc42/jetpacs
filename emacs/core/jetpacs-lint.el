@@ -66,6 +66,38 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
 
+(defconst jetpacs-lint-state-predicate-types
+  '("airplane" "battery.level" "headset" "network" "power" "screen"
+    "time.window")
+  "State-predicate types a trigger `when' gate may reference (SPEC §11).
+Mirrors StateSampler.kt's STATE_TYPES; extend both (and SPEC §11's
+predicate table) together.  Lint-time advisory only: the live
+negotiation authority is the welcome's `device.state_types' report
+\(`jetpacs-triggers--when-supported-p'), never this list.")
+
+(defconst jetpacs-lint--predicate-fields
+  '(("power"         state)
+    ("battery.level" above below)
+    ("screen"        state)
+    ("airplane"      state)
+    ("network"       transport)
+    ("headset"       state)
+    ("time.window"   after before days))
+  "Match fields each state-predicate type may carry (SPEC §11).")
+
+(defconst jetpacs-lint--time-window-re
+  "\\`\\(?:[01]?[0-9]\\|2[0-3]\\):[0-5][0-9]\\'"
+  "The \"HH:MM\" grammar of a `time.window' bound.")
+
+(defconst jetpacs-lint--day-names '("mon" "tue" "wed" "thu" "fri" "sat" "sun")
+  "The `time.window' `days' vocabulary (SPEC §11).")
+
+(defconst jetpacs-lint--placeholder-re
+  "\\${\\(?:id\\|type\\|data\\.[A-Za-z0-9_]+\\)}"
+  "The on_fire placeholder token grammar (SPEC §11 / §9): `${id}',
+`${type}', `${data.FIELD}'.  A `${…}' outside this grammar is left
+literal by the companion — almost always a typo worth a warning.")
+
 (defconst jetpacs-lint-action-builtins
   '(("view.switch" view)
     ("clipboard.copy" text)
@@ -485,6 +517,122 @@ means an empty payload."
             (funcall report (list key)
                      (format "warning: unknown payload key `%s' on %s"
                              key kind)))))))
+    (nreverse problems)))
+
+;; ─── Trigger registrations (SPEC §11) ────────────────────────────────────────
+
+(defun jetpacs-lint--check-predicate (p path report)
+  "Validate state predicate P at PATH via REPORT (SPEC §11)."
+  (if (not (jetpacs-lint--alist-p p))
+      (funcall report path (format "predicate must be an object: %S" p))
+    (let* ((type (alist-get 'type p))
+           (row (assoc type jetpacs-lint--predicate-fields)))
+      (cond
+       ((not (stringp type))
+        (funcall report path "predicate missing `type'"))
+       ((not (member type jetpacs-lint-state-predicate-types))
+        (funcall report path (format "unknown state-predicate type: %S" type))))
+      (when row
+        (dolist (pair p)
+          (unless (or (eq (car pair) 'type) (memq (car pair) (cdr row)))
+            (funcall report path
+                     (format "warning: unknown key `%s' on %s predicate"
+                             (car pair) type)))))
+      (pcase type
+        ("battery.level"
+         (unless (or (assq 'above p) (assq 'below p))
+           (funcall report path "battery.level needs `above' or `below'")))
+        ("time.window"
+         (dolist (bound '(after before))
+           (when-let ((v (alist-get bound p)))
+             (unless (and (stringp v)
+                          (string-match-p jetpacs-lint--time-window-re v))
+               (funcall report path
+                        (format "`%s' must be \"HH:MM\": %S" bound v)))))
+         (when-let ((days (alist-get 'days p)))
+           (dolist (d (append days nil))
+             (unless (member d jetpacs-lint--day-names)
+               (funcall report path (format "unknown day: %S" d))))))))))
+
+(defun jetpacs-lint--check-placeholders (val path report)
+  "Warn via REPORT about `${…}' tokens in VAL outside the SPEC §11 grammar.
+Recurses over strings, alists, and sequences the way the companion's
+interpolation does."
+  (cond
+   ((stringp val)
+    (let ((start 0))
+      (while (string-match "\\${[^}]*}" val start)
+        (let ((token (match-string 0 val)))
+          (unless (string-match-p
+                   (concat "\\`" jetpacs-lint--placeholder-re "\\'") token)
+            (funcall report path
+                     (format "warning: placeholder %s is outside the \
+${id}/${type}/${data.FIELD} grammar and will stay literal" token))))
+        (setq start (match-end 0)))))
+   ((jetpacs-lint--alist-p val)
+    (dolist (pair val)
+      (jetpacs-lint--check-placeholders (cdr pair) (cons (car pair) path)
+                                        report)))
+   ((or (vectorp val) (proper-list-p val))
+    (let ((i 0))
+      (dolist (x (append val nil))
+        (jetpacs-lint--check-placeholders x (cons i path) report)
+        (setq i (1+ i)))))))
+
+(defun jetpacs-lint--check-on-fire-entry (entry path report)
+  "Validate one on_fire ENTRY at PATH via REPORT (SPEC §11)."
+  (if (not (jetpacs-lint--alist-p entry))
+      (funcall report path (format "on_fire entry must be an object: %S" entry))
+    (let ((cap (assq 'cap entry)) (notify (assq 'notify entry)))
+      (cond
+       ((and cap notify)
+        (funcall report path "on_fire entry has both `cap' and `notify'"))
+       ((and (not cap) (not notify))
+        (funcall report path "on_fire entry has neither `cap' nor `notify'")))
+      ;; The cap NAME never interpolates (§11) — a token there is a bug,
+      ;; not a dynamic dispatch.
+      (when (and cap (stringp (cdr cap))
+                 (string-match-p "\\${" (cdr cap)))
+        (funcall report path "`cap' names never interpolate — no ${…} here"))
+      (when-let ((args (cdr (assq 'args entry))))
+        (jetpacs-lint--check-placeholders args (cons 'args path) report))
+      (when notify
+        (jetpacs-lint--check-placeholders (cdr notify) (cons 'notify path)
+                                          report)))))
+
+;;;###autoload
+(defun jetpacs-lint-trigger (spec)
+  "Return a list of (PATH . PROBLEM) for trigger registration SPEC, nil if clean.
+SPEC is one wire-shaped `triggers.set' entry alist (what
+`jetpacs-triggers--specs' emits): `id'/`type' plus the optional
+`params', `when', `policy', `dedupe', `throttle_s', `on_fire'.
+Advisory and lint/CI-time, like `jetpacs-lint-spec': it validates the
+`when' predicate shapes against `jetpacs-lint-state-predicate-types',
+the on_fire exactly-one-of `cap'/`notify' rule, and the `${…}'
+placeholder grammar.  The live push negotiates against the session
+reports instead (`jetpacs-triggers--supported-p' and
+`jetpacs-triggers--when-supported-p')."
+  (let* (problems
+         (report (lambda (path msg) (push (cons (reverse path) msg) problems))))
+    (if (not (jetpacs-lint--alist-p spec))
+        (funcall report nil (format "registration is not an object: %S" spec))
+      (unless (stringp (alist-get 'id spec))
+        (funcall report '(id) "missing or non-string `id'"))
+      (unless (stringp (alist-get 'type spec))
+        (funcall report '(type) "missing or non-string `type'"))
+      (when-let ((policy (alist-get 'policy spec)))
+        (unless (member policy jetpacs-lint--when-offline-values)
+          (funcall report '(policy) (format "invalid policy: %S" policy))))
+      (when-let ((gate (alist-get 'when spec)))
+        (let ((i 0))
+          (dolist (p (append gate nil))
+            (jetpacs-lint--check-predicate p (list i 'when) report)
+            (setq i (1+ i)))))
+      (when-let ((on-fire (alist-get 'on_fire spec)))
+        (let ((i 0))
+          (dolist (entry (append on-fire nil))
+            (jetpacs-lint--check-on-fire-entry entry (list i 'on_fire) report)
+            (setq i (1+ i))))))
     (nreverse problems)))
 
 ;; ─── Headless render harness ─────────────────────────────────────────────────

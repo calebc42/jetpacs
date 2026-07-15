@@ -55,6 +55,10 @@ data class TriggerRow(
     val throttleS: Long? = null,
     /** The SPEC §11 on_fire list, run by [TriggerHost] at fire time. */
     val onFire: String? = null,
+    /** The SPEC §11 `when` state gate (a JSON array of predicates),
+     * evaluated by [TriggerHost] before every fire.  Named to sidestep
+     * the SQL `WHEN` keyword. */
+    val whenJson: String? = null,
 )
 
 @Dao
@@ -109,7 +113,7 @@ interface EventDao {
 
 @Database(
     entities = [QueuedEvent::class, TriggerRow::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class JetpacsDatabase : RoomDatabase() {
@@ -141,13 +145,19 @@ abstract class JetpacsDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE triggers ADD COLUMN whenJson TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): JetpacsDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     JetpacsDatabase::class.java,
                     "jetpacs_queue.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
                 INSTANCE = instance
                 instance
             }

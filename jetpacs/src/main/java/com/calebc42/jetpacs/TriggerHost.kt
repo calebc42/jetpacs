@@ -4,11 +4,13 @@ import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
+import android.net.wifi.WifiManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -117,6 +119,12 @@ class TriggerHost(private val context: Context) {
             register(airplaneReceiver, IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED))
         if ("timezone.changed" in types)
             register(timezoneReceiver, IntentFilter(Intent.ACTION_TIMEZONE_CHANGED))
+        if ("wifi.enabled" in types)
+            register(wifiStateReceiver,
+                IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION))
+        if ("bluetooth.enabled" in types)
+            register(bluetoothStateReceiver,
+                IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
         if ("package" in types) register(packageReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -195,6 +203,17 @@ class TriggerHost(private val context: Context) {
         }
     }
 
+    /** Fire every ROW of an adapter-state TYPE whose optional boolean
+     * `enabled` param matches ENABLED (absent = both edges). */
+    private fun fireEnabledRows(type: String, enabled: Boolean) {
+        val data = JSONObject().put("enabled", enabled)
+        for (row in rowsOf(type)) {
+            val p = row.param()
+            if (!p.has("enabled") || p.optBoolean("enabled") == enabled)
+                fireRow(context, row, data)
+        }
+    }
+
     // ── Receivers ────────────────────────────────────────────────────────────
 
     private val powerReceiver = object : BroadcastReceiver() {
@@ -265,6 +284,33 @@ class TriggerHost(private val context: Context) {
         }
     }
 
+    private val wifiStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            // WIFI_STATE_CHANGED is sticky: the registration-time replay
+            // must not fire (the headsetReceiver discipline).
+            if (isInitialStickyBroadcast) return
+            when (intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE,
+                    WifiManager.WIFI_STATE_UNKNOWN)) {
+                WifiManager.WIFI_STATE_ENABLED -> fireEnabledRows("wifi.enabled", true)
+                WifiManager.WIFI_STATE_DISABLED -> fireEnabledRows("wifi.enabled", false)
+                // ENABLING / DISABLING / UNKNOWN are transitions, not edges.
+            }
+        }
+    }
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE,
+                    BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_ON ->
+                    fireEnabledRows("bluetooth.enabled", true)
+                BluetoothAdapter.STATE_OFF ->
+                    fireEnabledRows("bluetooth.enabled", false)
+                // TURNING_ON / TURNING_OFF are transitions, not edges.
+            }
+        }
+    }
+
     private val timezoneReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
             val data = JSONObject()
@@ -316,6 +362,10 @@ class TriggerHost(private val context: Context) {
         val SUPPORTED_TYPES = setOf(
             "time", "power", "battery.level", "screen", "headset",
             "airplane", "boot", "timezone.changed", "package", "network",
+            // Post-batch-1 types negotiate via the welcome's trigger_types
+            // report only; the client's static fallback list stays frozen
+            // at batch 1 (see jetpacs-triggers-supported-types).
+            "wifi.enabled", "bluetooth.enabled",
         )
 
         /** Per-trigger last-fire clock for `throttle_s` (process-lifetime;

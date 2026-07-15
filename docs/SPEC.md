@@ -769,6 +769,8 @@ its push against that report and skips what this companion can't host.
 | `timezone.changed` | — | `{tz}` | the new zone id |
 | `package` | `{event?, package?}` — `added` \| `removed` | `{event, package}` | update-replacing broadcasts are filtered out |
 | `network` | `{event?, transport?}` — `available` \| `lost`; `wifi` \| `cellular` \| `ethernet` \| `vpn` \| `bluetooth` | `{event, transport?}` | the default-network callback (permission-free); fires once per network gain/loss |
+| `wifi.enabled` | `{enabled?}` | `{enabled}` | the Wi-Fi *adapter* state — enabled/disabled edges only, transitional states are not edges. Distinct from `network` (radio on ≠ connected) and from the reserved `wifi.ssid`. Install-time `ACCESS_WIFI_STATE`, no runtime grant |
+| `bluetooth.enabled` | `{enabled?}` | `{enabled}` | the Bluetooth *adapter* state, same edge discipline. Install-time legacy `BLUETOOTH` (≤ API 30) only; a device without Bluetooth simply never fires it. Distinct from the reserved `bluetooth.device` |
 
 `wifi.ssid` and `bluetooth.device` are the remaining connectivity
 batch; each will document its runtime-permission behavior here
@@ -800,6 +802,8 @@ match fields asserts the type's *natural state*, noted per row:
 | `airplane` | `{state?}` | airplane mode equals `state` (default `on`) |
 | `network` | `{transport?}` | a network is connected, and its transport matches when given |
 | `headset` | `{state?}` | wired or USB audio output present (`plugged`, the default) or absent (`unplugged`) |
+| `wifi.enabled` | `{enabled?}` | the Wi-Fi adapter state equals `enabled` (default `true`) |
+| `bluetooth.enabled` | `{enabled?}` | the Bluetooth adapter state equals `enabled` (default `true`); no adapter → unevaluable, so never holds |
 | `time.window` | `{after?, before?, days?}` | the local clock is inside the window. `after`/`before` are `"HH:MM"` strings, half-open `[after, before)`; the window wraps midnight when `after` > `before`; an absent bound is open. `days` is an array of `mon`…`sun` filtering on the calendar day of the moment tested; absent = every day. Predicate-only: it has no edge trigger, and `state.get` reports it under `unavailable` |
 
 Sampled state objects (`state.get`'s `states` values) are shaped like

@@ -37,6 +37,14 @@
     <!-- `network` triggers (SPEC §11): the default-network callback. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Adapter-state triggers & predicates (SPEC §11 `wifi.enabled` /
+         `bluetooth.enabled`). Both install-time; BLUETOOTH is the legacy
+         isEnabled() permission — API 31+ needs nothing for isEnabled
+         (BLUETOOTH_CONNECT above covers the rest of the API). -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+
     <!-- Special access the effectors gate on (SPEC §10). DECLARING these
          is what makes the app appear in the system grant screens at all —
          without the declaration the "Modify system settings" / "Do Not

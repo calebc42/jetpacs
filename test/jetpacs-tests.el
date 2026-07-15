@@ -2173,6 +2173,22 @@ against both the static batch-1 catalog and a welcome-reported one."
         (should (equal (mapcar (lambda (s) (alist-get 'id s)) specs)
                        '("too-new")))))))
 
+(ert-deftest jetpacs-triggers-new-types-not-in-fallback ()
+  "Post-batch-1 trigger types negotiate via device.trigger_types ONLY.
+The static fallback catalog is frozen at batch 1: a companion old
+enough to omit the report is also too old to host the newer types, so
+appending them would push registrations that whole-set-reject."
+  (dolist (type '("wifi.enabled" "bluetooth.enabled"
+                  "calendar.event" "sms.received" "call.state"))
+    (should-not (member type jetpacs-triggers-supported-types)))
+  ;; No report → unsupported; a report carrying the type → supported.
+  (let ((jetpacs--session nil))
+    (should-not (jetpacs-triggers--supported-p "wifi.enabled")))
+  (let ((jetpacs--session
+         '((device . ((trigger_types . ("bluetooth.enabled" "wifi.enabled")))))))
+    (should (jetpacs-triggers--supported-p "wifi.enabled"))
+    (should (jetpacs-triggers--supported-p "bluetooth.enabled"))))
+
 (ert-deftest jetpacs-triggers-when-serialized ()
   "A `:when' gate rides the wire spec as a `when' vector of predicates."
   (let ((jetpacs-triggers--table (make-hash-table :test 'equal))

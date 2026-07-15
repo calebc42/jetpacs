@@ -1,6 +1,7 @@
 package com.calebc42.jetpacs
 
 import android.app.KeyguardManager
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -8,6 +9,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.PowerManager
 import android.provider.Settings
@@ -49,7 +51,7 @@ object StateSampler {
      * §11's predicate table; extend all three together. */
     val STATE_TYPES = setOf(
         "power", "battery.level", "screen", "airplane", "network",
-        "headset", "time.window",
+        "headset", "time.window", "wifi.enabled", "bluetooth.enabled",
     )
 
     private val DAY_NAMES = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -116,6 +118,19 @@ object StateSampler {
                 put("state", if (wired != null) "plugged" else "unplugged")
                 wired?.productName?.let { put("name", it.toString()) }
             }
+        }
+        "wifi.enabled" -> {
+            val wm = context.applicationContext
+                .getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: throw CapabilityException("cap-failed", "no Wi-Fi service")
+            JSONObject().put("enabled", wm.isWifiEnabled)
+        }
+        "bluetooth.enabled" -> {
+            val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE)
+                as? BluetoothManager)?.adapter
+                ?: throw CapabilityException(
+                    "cap-failed", "no Bluetooth adapter on this device")
+            JSONObject().put("enabled", adapter.isEnabled)
         }
         "time.window" -> throw CapabilityException(
             "cap-failed", "time.window is predicate-only — it has no sampled state")
@@ -213,6 +228,8 @@ object StateSampler {
                 (p.optString("transport").isEmpty() ||
                     p.optString("transport") == state.optString("transport"))
             "headset" -> state.optString("state") == p.optString("state", "plugged")
+            "wifi.enabled", "bluetooth.enabled" ->
+                state.optBoolean("enabled") == p.optBoolean("enabled", true)
             else -> false
         }
 

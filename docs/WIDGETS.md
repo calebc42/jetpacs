@@ -192,6 +192,42 @@ handler registered with `jetpacs-defaction`
   affordances. All embedded actions dispatch verbatim — bake the
   file/position into the args yourself.
 
+## Composites (since 1.13.0)
+
+High-frequency shapes that would otherwise be hand-rolled on every
+screen. Each **composes the primitive nodes above** and adds no new
+wire type — like `jetpacs-list-item`, they render on any companion with
+no change. Reach for these before writing a row/column by hand.
+
+- **`(jetpacs-stepper ID VALUE ON-CHANGE &key min max step)`** — a
+  `− value +` cluster over a numeric `VALUE`. Tapping −/+ dispatches
+  `ON-CHANGE` with the new, clamped number baked into its args as
+  `value` — **server-side, so the handler gets a real number, not a
+  string.** `:min`/`:max` bound it (`:max` nil = unbounded), `:step`
+  the increment. Sizes to its content, so it never triggers the row
+  flex trap.
+- **`(jetpacs-segmented ID OPTIONS ON-CHANGE &key selected scroll)`** —
+  a single-select chip group (the filter row). Each `OPTIONS` entry is
+  a string (value = label) or a plist `(:value :label :icon)`; the
+  tapped chip's value is baked into `ON-CHANGE` as `value`, and
+  `:selected` marks the current one. Wraps (a `flow_row`) by default;
+  `:scroll` makes it a one-line rail.
+- **`(jetpacs-stat VALUE &key label icon color weight on-tap padding)`**
+  — a metric tile: a large value with an optional label beneath and
+  icon above, `:color` tinting both. `:weight` lets several tiles share
+  a row equally; `:on-tap` makes it tappable. An elevated card — the
+  dashboard staple.
+- **`(jetpacs-kv LABEL VALUE &key spacing)`** — a property/definition
+  row: a muted label and a value filling the width to its right.
+  `VALUE` is a string (rendered `body`) or a ready node used as-is.
+- **`(jetpacs-sectioned-list SECTIONS &key empty)`** — a `lazy_column`
+  with built-in empty handling. Each `SECTIONS` entry is a plist
+  `(:header H :items ITEMS :empty E)`: `H` is a string
+  (→ `jetpacs-section-header`), a node, or nil; a section's `:empty`
+  shows when its `:items` is empty; the top-level `:empty` shows alone
+  when *every* section is empty. Erases the `append`/`apply` +
+  per-list empty-check plumbing.
+
 ## Buttons & inputs
 
 - **`(jetpacs-button LABEL ACTION &key icon variant weight padding)`**

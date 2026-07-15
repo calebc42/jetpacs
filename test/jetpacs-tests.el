@@ -1278,7 +1278,19 @@ the composer delete its own matcher."
                      :padding 4)
      ;; Phase 2: fill opt-out (wrapContent) + the status-badge node.
      (jetpacs-column leaf :fill nil)
-     (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1))))
+     (jetpacs-badge "Overdue" :icon "warning" :color "error" :padding 1)
+     ;; Tier-2 composites (pure elisp; expand to the primitive nodes above).
+     (jetpacs-stepper "servings" 4 act :min 1 :max 10 :step 1)
+     (jetpacs-segmented "filter"
+                     (list "All" '(:value "due" :label "Due soon" :icon "schedule"))
+                     act :selected "due")
+     (jetpacs-stat 42 :label "Items" :icon "inventory" :color "primary"
+                :weight 1 :on-tap act)
+     (jetpacs-kv "Location" "Fridge")
+     (jetpacs-sectioned-list
+      (list (list :header "Due" :items (list leaf))
+            (list :header "OK"  :items nil :empty (jetpacs-empty-state :title "none")))
+      :empty (jetpacs-empty-state :title "Empty")))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -1379,6 +1391,133 @@ colored fallback `text' child for older companions, and lints clean."
     (should (null (jetpacs-lint-spec b)))
     ;; A badge is safe as a trailing row element (intrinsic — not flagged).
     (should-not (jetpacs-lint-spec (jetpacs-row (jetpacs-text "t" nil 1) b)))))
+
+;; ─── Tier-2 composites (#4–#8) ──────────────────────────────────────────────
+
+(ert-deftest jetpacs-action-with-arg-bakes-typed-value ()
+  "`jetpacs--action-with-arg' sets a typed value in an action's `args' without
+disturbing existing args, and returns nil for a nil action."
+  (let ((act (jetpacs-action "x" :args '((id . "p1")))))
+    (let ((a (jetpacs--action-with-arg act 'value 3)))
+      (should (equal "p1" (alist-get 'id (alist-get 'args a))))
+      (should (= 3 (alist-get 'value (alist-get 'args a))))   ; a number, not "3"
+      (should (equal "x" (alist-get 'action a))))
+    ;; Overwrites a prior value rather than duplicating the key.
+    (let ((a (jetpacs--action-with-arg
+              (jetpacs--action-with-arg act 'value 1) 'value 9)))
+      (should (= 9 (alist-get 'value (alist-get 'args a))))
+      (should (= 1 (cl-count 'value (alist-get 'args a) :key #'car))))
+    (should (null (jetpacs--action-with-arg nil 'value 1)))))
+
+(ert-deftest jetpacs-stepper-clamps-and-bakes-targets ()
+  "The stepper is a wrap-content row [−, value, +]; the buttons bake the
+clamped target number into their action args, and it lints clean."
+  (let* ((act  (jetpacs-action "grocy.set" :args '((id . "p1"))))
+         (st   (jetpacs-stepper "servings" 4 act :min 1 :max 10 :step 2))
+         (kids (append (alist-get 'children st) nil)))
+    (should (equal "row" (alist-get 't st)))
+    (should (eq :false (alist-get 'fill st)))               ; sizes to content
+    (should (= 3 (length kids)))
+    (should (= 2 (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 0 kids))))))
+    (should (equal "4" (alist-get 'text (nth 1 kids))))
+    (should (= 6 (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 2 kids))))))
+    (should (null (jetpacs-lint-spec st)))
+    ;; Clamping: − at MIN stays at MIN, + at MAX stays at MAX.
+    (let ((lo (jetpacs-stepper "s" 1 act :min 1 :max 10))
+          (hi (jetpacs-stepper "s" 10 act :min 1 :max 10)))
+      (should (= 1 (alist-get 'value (alist-get 'args (alist-get 'on_tap
+                    (aref (alist-get 'children lo) 0))))))
+      (should (= 10 (alist-get 'value (alist-get 'args (alist-get 'on_tap
+                     (aref (alist-get 'children hi) 2)))))))
+    ;; MAX nil = unbounded above.
+    (should (= 6 (alist-get 'value (alist-get 'args (alist-get 'on_tap
+                  (aref (alist-get 'children (jetpacs-stepper "s" 5 act)) 2))))))))
+
+(ert-deftest jetpacs-segmented-single-select ()
+  "The segmented control renders one chip per option (string or plist),
+marks the selected one, and bakes each option's value into its on-tap."
+  (let* ((act (jetpacs-action "grocy.filter"))
+         (seg (jetpacs-segmented "filter"
+                              (list "All" '(:value "due" :label "Due soon" :icon "schedule"))
+                              act :selected "due"))
+         (chips (append (alist-get 'children seg) nil)))
+    (should (equal "flow_row" (alist-get 't seg)))
+    (should (= 2 (length chips)))
+    (should (equal "All" (alist-get 'label (nth 0 chips))))
+    (should (null (alist-get 'selected (nth 0 chips))))
+    (should (equal "All" (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 0 chips))))))
+    (should (equal "Due soon" (alist-get 'label (nth 1 chips))))
+    (should (eq t (alist-get 'selected (nth 1 chips))))
+    (should (equal "schedule" (alist-get 'icon (nth 1 chips))))
+    (should (equal "due" (alist-get 'value (alist-get 'args (alist-get 'on_tap (nth 1 chips))))))
+    ;; :scroll makes it a single-line rail instead of a wrapping flow-row.
+    (should (equal "row" (alist-get 't (jetpacs-segmented "f" '("a") act :scroll t))))
+    (should (null (jetpacs-lint-spec seg)))))
+
+(ert-deftest jetpacs-stat-tile ()
+  "The stat tile is an elevated card > centered column with the value tinted
+by COLOR, an optional icon and label, and an optional weight/tap; lints clean."
+  (let* ((act (jetpacs-action "open"))
+         (s   (jetpacs-stat 42 :label "Items" :icon "inventory" :color "primary"
+                         :weight 1 :on-tap act))
+         (col (aref (alist-get 'children s) 0))
+         (kids (append (alist-get 'children col) nil)))
+    (should (equal "card" (alist-get 't s)))
+    (should (= 1 (alist-get 'weight s)))
+    (should (alist-get 'on_tap s))
+    (should (equal "icon" (alist-get 't (nth 0 kids))))
+    (should (equal "42" (alist-get 'text (nth 1 kids))))
+    (should (equal "primary" (alist-get 'color (nth 1 kids))))
+    (should (equal "Items" (alist-get 'text (nth 2 kids))))
+    (should (null (jetpacs-lint-spec s)))
+    ;; Minimal form: value only, no icon/label.
+    (let ((m (jetpacs-stat "3")))
+      (should (= 1 (length (alist-get 'children (aref (alist-get 'children m) 0)))))
+      (should (null (jetpacs-lint-spec m))))))
+
+(ert-deftest jetpacs-kv-property-row ()
+  "The kv row is a muted label + weighted value; a node value is used as-is."
+  (let* ((row (jetpacs-kv "Location" "Fridge"))
+         (kids (append (alist-get 'children row) nil)))
+    (should (equal "row" (alist-get 't row)))
+    (should (equal "label" (alist-get 'style (nth 0 kids))))
+    (should (equal "Fridge" (alist-get 'text (nth 1 kids))))
+    (should (= 1 (alist-get 'weight (nth 1 kids))))          ; value fills, no off-screen
+    (should (null (jetpacs-lint-spec row)))
+    ;; A node value passes through unwrapped.
+    (let ((n (jetpacs-kv "Qty" (jetpacs-badge "low" :color "error"))))
+      (should (equal "badge" (alist-get 't (aref (alist-get 'children n) 1))))
+      (should (null (jetpacs-lint-spec n))))))
+
+(ert-deftest jetpacs-sectioned-list-headers-items-empty ()
+  "The sectioned list lays out header + items per section, substitutes a
+section's :empty when it has no items, and shows the top-level :empty alone
+when every section is empty."
+  (let* ((leaf (jetpacs-text "x"))
+         (full (jetpacs-sectioned-list
+                (list (list :header "Due" :items (list leaf leaf))
+                      (list :header "OK" :items nil
+                            :empty (jetpacs-empty-state :title "none")))
+                :empty (jetpacs-empty-state :title "All empty")))
+         (kids (append (alist-get 'children full) nil)))
+    (should (equal "lazy_column" (alist-get 't full)))
+    ;; Due: header + 2 items ; OK: header + its own empty  =  5 children.
+    (should (= 5 (length kids)))
+    (should (equal "section_header" (alist-get 't (nth 0 kids))))
+    (should (equal "Due" (alist-get 'title (nth 0 kids))))
+    (should (equal "empty_state" (alist-get 't (nth 4 kids))))
+    (should (null (jetpacs-lint-spec full)))
+    ;; Everything empty → the top-level empty node alone.
+    (let ((none (jetpacs-sectioned-list
+                 (list (list :header "Due" :items nil))
+                 :empty (jetpacs-empty-state :title "All clear"))))
+      (should (= 1 (length (alist-get 'children none))))
+      (should (equal "empty_state" (alist-get 't (aref (alist-get 'children none) 0))))
+      (should (null (jetpacs-lint-spec none))))
+    ;; A ready node header is used as-is (not wrapped in section_header).
+    (let ((h (jetpacs-sectioned-list
+              (list (list :header (jetpacs-text "H" 'title) :items (list leaf))))))
+      (should (equal "text" (alist-get 't (aref (alist-get 'children h) 0)))))))
 
 ;; ─── Hypertext substrate (Tier 0.5) ────────────────────────────────────────
 

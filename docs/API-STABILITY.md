@@ -80,6 +80,10 @@ Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
 `jetpacs-draw-line` `jetpacs-draw-rect` `jetpacs-draw-circle` `jetpacs-draw-path`
 `jetpacs-draw-text` `jetpacs-month-grid`.
 
+Composites (since 1.13.0 — pure-elisp shapes over the primitives above,
+no new wire type): `jetpacs-stepper` `jetpacs-segmented` `jetpacs-stat`
+`jetpacs-kv` `jetpacs-sectioned-list`.
+
 Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-item`
 `jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab` `jetpacs-snackbar-action`.
 (`nav-item`/`drawer-item`/`icon`/`icon-button` take `:badge`;

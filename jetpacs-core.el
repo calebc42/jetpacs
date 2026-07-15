@@ -13,7 +13,7 @@
 
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
-;; Version: 1.12.0
+;; Version: 1.13.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; URL: https://github.com/calebc42/jetpacs
 
@@ -66,7 +66,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.12.0"
+(defconst jetpacs-api-version "1.13.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -2686,6 +2686,120 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
               'year (and year (format "%s" year))
               'time time
               'padding padding))
+
+;; ─── Composites (pure elisp; no new wire node) ───────────────────────────────
+;;
+;; High-frequency shapes a Tier 1 would otherwise hand-roll every screen —
+;; each composes the primitive nodes above (like `jetpacs-list-item') and adds
+;; no `t' to the vocabulary, so the reference companion renders them with no
+;; change.  Grocy hand-wrote every one of these; these erase that boilerplate.
+
+(defun jetpacs--action-with-arg (action key value)
+  "Return a copy of ACTION (an action alist) with (KEY . VALUE) set in its `args'.
+ACTION nil returns nil.  Used by the composites that bake a chosen value
+into the dispatched action server-side (the stepper's target number, the
+segmented control's option) rather than relying on companion value-injection,
+so the handler receives the value already typed (a number stays a number)."
+  (when action
+    (let ((args (assq-delete-all key (copy-alist (alist-get 'args action))))
+          (base (assq-delete-all 'args (copy-alist action))))
+      (append base (list (cons 'args (append args (list (cons key value)))))))))
+
+(cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1))
+  "A −/+ stepper over the numeric VALUE.
+ID names the stepper (its −/+ buttons carry \"Decrease/Increase ID\"
+accessibility labels).  Tapping −/+ dispatches ON-CHANGE with the new,
+clamped number injected into its args as `value' — baked server-side, so
+the handler receives a real number, never a string.  MIN/MAX bound the
+value (MAX nil = unbounded) and STEP is the increment.  Composes an
+icon-button row (`remove' · value · `add') sized to its content, so it sits
+as a compact cluster and never triggers the row flex trap; not a new wire
+node, so no companion support is needed."
+  (let ((dec (max min (- value step)))
+        (inc (if max (min max (+ value step)) (+ value step))))
+    (jetpacs-row
+     (jetpacs-icon-button "remove" (jetpacs--action-with-arg on-change 'value dec)
+                       :content-description (format "Decrease %s" id))
+     (jetpacs-text (number-to-string value) 'title)
+     (jetpacs-icon-button "add" (jetpacs--action-with-arg on-change 'value inc)
+                       :content-description (format "Increase %s" id))
+     :align "center" :spacing 8 :fill nil)))
+
+(cl-defun jetpacs-segmented (id options on-change &key selected scroll)
+  "A single-select chip group over OPTIONS (the id-labelled filter row).
+Each option renders a `jetpacs-chip'; tapping one dispatches ON-CHANGE
+with its value injected into args as `value'.  SELECTED (a string) marks
+the current option.  An OPTIONS entry is a string (value = label) or a
+plist (:value :label :icon).  Wraps by default (a `flow_row'); :scroll
+makes it a single-line horizontal rail (a `scroll_row') instead.  ID is
+carried for symmetry with the form field it usually drives.  Composes
+chips — not a new wire node, no companion support needed."
+  (ignore id)
+  (let ((chips (mapcar
+                (lambda (opt)
+                  (let* ((val   (if (stringp opt) opt (plist-get opt :value)))
+                         (label (if (stringp opt) opt (or (plist-get opt :label) val)))
+                         (icon  (and (not (stringp opt)) (plist-get opt :icon))))
+                    (jetpacs-chip label
+                               :selected (equal val selected)
+                               :icon icon
+                               :on-tap (jetpacs--action-with-arg on-change 'value val))))
+                options)))
+    (if scroll
+        (apply #'jetpacs-scroll-row chips)
+      (apply #'jetpacs-flow-row chips))))
+
+(cl-defun jetpacs-stat (value &key label icon color weight on-tap padding)
+  "A metric tile: a large VALUE, an optional LABEL beneath and ICON above,
+with COLOR (a hex string or a Material theme token like \"primary\") tinting
+the value and icon.  WEIGHT lets several tiles share a row equally; ON-TAP
+makes the tile tappable.  Composes an elevated `card' over a centered
+`column' — the dashboard/overview staple; not a new wire node."
+  (jetpacs-card
+   (list (apply #'jetpacs-column
+                (append (delq nil
+                              (list (and icon (jetpacs-icon icon :color color))
+                                    (jetpacs-text (format "%s" value) 'headline nil color)
+                                    (and label (jetpacs-text label 'caption))))
+                        (list :spacing 2 :align "center"))))
+   :weight weight :on-tap on-tap :padding (or padding 16)))
+
+(cl-defun jetpacs-kv (label value &key spacing)
+  "A property/definition row: LABEL on the left in the muted `label' style,
+VALUE filling the width to its right.  VALUE is a string (rendered as `body'
+text) or a ready node used as-is — a string value is weighted so it wraps
+without pushing anything off-screen.  The detail-screen staple (`grocy--kv');
+composes a `row', not a new wire node.  SPACING is the label→value gap (dp)."
+  (jetpacs-row
+   (jetpacs-text label 'label)
+   (if (stringp value) (jetpacs-text value 'body 1) value)
+   :spacing (or spacing 8) :align "top"))
+
+(cl-defun jetpacs-sectioned-list (sections &key empty)
+  "A `lazy_column' assembled from SECTIONS with built-in empty handling.
+Each SECTION is a plist:
+  :header  a string (→ `jetpacs-section-header'), a ready node, or nil.
+  :items   the section's list of child nodes.
+  :empty   a node shown in place of the items when :items is empty.
+When every section is empty and EMPTY is given, that node (an
+`jetpacs-empty-state', typically) is shown alone.  Erases the
+`append'/`apply' + per-list empty-check plumbing every list screen repeats,
+completing the `jetpacs-list-item' story; composes a `lazy_column', not a
+new wire node."
+  (let ((any (cl-some (lambda (s) (plist-get s :items)) sections)))
+    (if (and (not any) empty)
+        (jetpacs-lazy-column empty)
+      (apply #'jetpacs-lazy-column
+             (cl-loop for s in sections
+                      for header = (plist-get s :header)
+                      for items  = (plist-get s :items)
+                      for sempty = (plist-get s :empty)
+                      append (delq nil
+                                   (cons (cond ((null header) nil)
+                                               ((stringp header)
+                                                (jetpacs-section-header header))
+                                               (t header))
+                                         (or items (and sempty (list sempty))))))))))
 
 ;; ─── Home-screen widgets ─────────────────────────────────────────────────────
 ;;

@@ -1,14 +1,20 @@
 package com.calebc42.jetpacs
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.net.wifi.WifiManager
+import android.provider.Telephony
+import android.telephony.TelephonyManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -57,27 +63,8 @@ class TriggerHost(private val context: Context) {
      */
     fun replaceSet(triggers: JSONArray?): String? {
         val dao = JetpacsRuntime.database?.triggerDao() ?: return "trigger store unavailable"
-        val parsed = mutableListOf<TriggerRow>()
-        if (triggers != null) {
-            for (i in 0 until triggers.length()) {
-                val t = triggers.optJSONObject(i) ?: continue
-                val id = t.optString("id")
-                val type = t.optString("type")
-                if (id.isEmpty() || type.isEmpty())
-                    return "trigger ${i}: missing id or type"
-                if (type !in SUPPORTED_TYPES)
-                    return "trigger '$id': unknown type '$type'"
-                parsed.add(TriggerRow(
-                    id = id,
-                    type = type,
-                    params = (t.optJSONObject("params") ?: JSONObject()).toString(),
-                    policy = t.optString("policy", "queue"),
-                    dedupe = t.optString("dedupe").ifEmpty { null },
-                    throttleS = if (t.has("throttle_s")) t.optLong("throttle_s") else null,
-                    onFire = t.optJSONArray("on_fire")?.toString(),
-                ))
-            }
-        }
+        val (parsed, err) = parseTriggerRows(triggers)
+        if (parsed == null) return err
         dao.replaceAll(parsed)
         arm(parsed)
         Log.i(TAG, "Trigger set replaced: ${parsed.size} trigger(s) armed")
@@ -96,6 +83,7 @@ class TriggerHost(private val context: Context) {
     fun shutdown() {
         disarmReceivers()
         armNetworkCallback(false)
+        CalendarTriggers.disarm(context)
         rows = emptyList()
     }
 
@@ -136,6 +124,30 @@ class TriggerHost(private val context: Context) {
             register(airplaneReceiver, IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED))
         if ("timezone.changed" in types)
             register(timezoneReceiver, IntentFilter(Intent.ACTION_TIMEZONE_CHANGED))
+        if ("wifi.enabled" in types)
+            register(wifiStateReceiver,
+                IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION))
+        if ("bluetooth.enabled" in types)
+            register(bluetoothStateReceiver,
+                IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        // The telephony pair is runtime-permission-gated: ungranted rows
+        // are skipped with a log (they stay stored and arm on the next
+        // replace-set / service restart after granting). Both receivers
+        // are context-registered, so they are live only while the FGS
+        // runs — deliberate: a dead bridge is a deaf app, not a manifest
+        // receiver silently accumulating other people's messages.
+        if ("sms.received" in types) {
+            if (runtimeGranted(Manifest.permission.RECEIVE_SMS))
+                register(smsReceiver,
+                    IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION))
+            else Log.w(TAG, "sms.received registered but RECEIVE_SMS ungranted — skipping")
+        }
+        if ("call.state" in types) {
+            if (runtimeGranted(Manifest.permission.READ_PHONE_STATE))
+                register(callStateReceiver,
+                    IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED))
+            else Log.w(TAG, "call.state registered but READ_PHONE_STATE ungranted — skipping")
+        }
         if ("package" in types) register(packageReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -144,6 +156,7 @@ class TriggerHost(private val context: Context) {
         armNetworkCallback("network" in types)
         // `boot` triggers arm nothing here — BootReceiver fires them.
         armTimeAlarms(context, newRows.filter { it.type == "time" })
+        armCalendar(context, newRows)
     }
 
     // ── Connectivity (callback API, permission-free) ─────────────────────────
@@ -160,7 +173,9 @@ class TriggerHost(private val context: Context) {
         }
 
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-            val transport = transportName(caps)
+            // Transport naming lives with the level samplers (StateSampler),
+            // so the edge and the predicate can never disagree on vocabulary.
+            val transport = StateSampler.transportName(caps)
             val first = networkTransports.put(network, transport) == null
             if (first) fireNetwork("available", transport)
         }
@@ -168,15 +183,6 @@ class TriggerHost(private val context: Context) {
         override fun onLost(network: Network) {
             fireNetwork("lost", networkTransports.remove(network))
         }
-    }
-
-    private fun transportName(caps: NetworkCapabilities): String = when {
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bluetooth"
-        else -> "other"
     }
 
     private fun fireNetwork(event: String, transport: String?) {
@@ -218,6 +224,17 @@ class TriggerHost(private val context: Context) {
         for (row in rowsOf(type)) {
             val want = row.param().optString("state")
             if (want.isEmpty() || want == state) fireRow(context, row, data)
+        }
+    }
+
+    /** Fire every ROW of an adapter-state TYPE whose optional boolean
+     * `enabled` param matches ENABLED (absent = both edges). */
+    private fun fireEnabledRows(type: String, enabled: Boolean) {
+        val data = JSONObject().put("enabled", enabled)
+        for (row in rowsOf(type)) {
+            val p = row.param()
+            if (!p.has("enabled") || p.optBoolean("enabled") == enabled)
+                fireRow(context, row, data)
         }
     }
 
@@ -291,6 +308,33 @@ class TriggerHost(private val context: Context) {
         }
     }
 
+    private val wifiStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            // WIFI_STATE_CHANGED is sticky: the registration-time replay
+            // must not fire (the headsetReceiver discipline).
+            if (isInitialStickyBroadcast) return
+            when (intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE,
+                    WifiManager.WIFI_STATE_UNKNOWN)) {
+                WifiManager.WIFI_STATE_ENABLED -> fireEnabledRows("wifi.enabled", true)
+                WifiManager.WIFI_STATE_DISABLED -> fireEnabledRows("wifi.enabled", false)
+                // ENABLING / DISABLING / UNKNOWN are transitions, not edges.
+            }
+        }
+    }
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE,
+                    BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_ON ->
+                    fireEnabledRows("bluetooth.enabled", true)
+                BluetoothAdapter.STATE_OFF ->
+                    fireEnabledRows("bluetooth.enabled", false)
+                // TURNING_ON / TURNING_OFF are transitions, not edges.
+            }
+        }
+    }
+
     private val timezoneReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
             val data = JSONObject()
@@ -322,6 +366,72 @@ class TriggerHost(private val context: Context) {
         }
     }
 
+    private fun runtimeGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * `sms.received` (SPEC §11, opt-in payload, fail-closed): multipart
+     * segments are concatenated before matching; `contains` reads the
+     * body but only `include_body: true` emits it; nothing here is ever
+     * logged (the clipboard.read discipline — content crosses the wire
+     * as trigger data or not at all).
+     */
+    private val smsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            val msgs = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
+            if (msgs.isEmpty()) return
+            val from = msgs[0]?.displayOriginatingAddress
+            val body = msgs.joinToString("") { it?.messageBody ?: "" }
+            for (row in rowsOf("sms.received")) {
+                val p = row.param()
+                if (smsRowMatches(p, from, body))
+                    fireRow(c, row, buildSmsData(p, from, body))
+            }
+        }
+    }
+
+    private val callDedupe = CallStateDedupe()
+
+    /**
+     * `call.state` (SPEC §11): the phone-state broadcast arrives once
+     * per phone account and — under READ_CALL_LOG — again carrying the
+     * number, so [CallStateDedupe] reduces the stream to one fire per
+     * transition per row class. Rows that want the number (a `number`
+     * filter or `include_number`) ride the number-carrying duplicate
+     * when READ_CALL_LOG is granted; a `number`-filtered row without an
+     * available number never fires (fail closed), and `include_number`
+     * without one simply omits the field.
+     */
+    private val callStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            val state = when (intent.getStringExtra(TelephonyManager.EXTRA_STATE)) {
+                TelephonyManager.EXTRA_STATE_RINGING -> "ringing"
+                TelephonyManager.EXTRA_STATE_OFFHOOK -> "offhook"
+                TelephonyManager.EXTRA_STATE_IDLE -> "idle"
+                else -> return
+            }
+            @Suppress("DEPRECATION")
+            val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+            val (firePlain, fireNumbered) = callDedupe.classify(state, number != null)
+            val hasCallLog = runtimeGranted(Manifest.permission.READ_CALL_LOG)
+            for (row in rowsOf("call.state")) {
+                val p = row.param()
+                val want = p.optString("state")
+                if (want.isNotEmpty() && want != state) continue
+                val filter = p.optString("number")
+                val wantsNumber = filter.isNotEmpty() || p.optBoolean("include_number")
+                if (!(if (wantsNumber && hasCallLog) fireNumbered else firePlain)) continue
+                if (filter.isNotEmpty() &&
+                    (number == null || !number.contains(filter))) continue
+                val data = JSONObject().put("state", state)
+                if (p.optBoolean("include_number") && number != null)
+                    data.put("number", number)
+                fireRow(c, row, data)
+            }
+        }
+    }
+
     private fun plugType(c: Context): String? {
         val sticky = c.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         return when (sticky?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)) {
@@ -342,11 +452,99 @@ class TriggerHost(private val context: Context) {
         val SUPPORTED_TYPES = setOf(
             "time", "power", "battery.level", "screen", "headset",
             "airplane", "boot", "timezone.changed", "package", "network",
+            // Post-batch-1 types negotiate via the welcome's trigger_types
+            // report only; the client's static fallback list stays frozen
+            // at batch 1 (see jetpacs-triggers-supported-types).
+            "wifi.enabled", "bluetooth.enabled", "calendar.event",
+            "sms.received", "call.state",
         )
+
+        /** Pure `sms.received` matcher (SPEC §11): `from` is a substring
+         * of the originating address, `contains` a substring of the
+         * concatenated body. Reading the body to match `contains` does
+         * not imply emitting it (see [buildSmsData]). */
+        internal fun smsRowMatches(params: JSONObject, from: String?, body: String): Boolean {
+            val wantFrom = params.optString("from")
+            if (wantFrom.isNotEmpty() && (from == null || !from.contains(wantFrom)))
+                return false
+            val wantContains = params.optString("contains")
+            if (wantContains.isNotEmpty() && !body.contains(wantContains))
+                return false
+            return true
+        }
+
+        /** The `sms.received` fire data: `{from, body?}`. `body` rides
+         * only under `include_body: true` — opt-in, fail-closed, so a
+         * `contains`-matched message never leaks its body by default. */
+        internal fun buildSmsData(params: JSONObject, from: String?, body: String): JSONObject =
+            JSONObject().apply {
+                from?.let { put("from", it) }
+                if (params.optBoolean("include_body")) put("body", body)
+            }
+
+        /** Delegate the `calendar.event` slice of [newRows] to
+         * [CalendarTriggers] — only under READ_CALENDAR (else skip with a
+         * log; the rows stay stored and arm on a re-set after granting). */
+        private fun armCalendar(context: Context, newRows: List<TriggerRow>) {
+            val calRows = newRows.filter { it.type == "calendar.event" }
+            when {
+                calRows.isEmpty() -> CalendarTriggers.disarm(context)
+                CalendarTriggers.granted(context) ->
+                    CalendarTriggers.arm(context, calRows)
+                else -> {
+                    Log.w(TAG, "calendar.event registered but READ_CALENDAR " +
+                        "ungranted — skipping ${calRows.size} row(s)")
+                    CalendarTriggers.disarm(context)
+                }
+            }
+        }
 
         /** Per-trigger last-fire clock for `throttle_s` (process-lifetime;
          * the FGS process IS the trigger host's lifetime). */
         private val lastFired = ConcurrentHashMap<String, Long>()
+
+        /**
+         * SPEC §11 replace-set parsing and validation, extracted from
+         * [replaceSet] so it is unit-testable without Room: the parsed
+         * rows, or (null, error). Whole-set semantics — one bad entry
+         * (unknown type, malformed `when`) rejects everything, so the
+         * client never half-arms. A malformed `when` in particular must
+         * reject rather than be dropped: a trigger stored without its
+         * gate would fire UNGATED, the §11 critical hazard.
+         */
+        internal fun parseTriggerRows(
+            triggers: JSONArray?,
+        ): Pair<List<TriggerRow>?, String?> {
+            val parsed = mutableListOf<TriggerRow>()
+            if (triggers != null) {
+                for (i in 0 until triggers.length()) {
+                    val t = triggers.optJSONObject(i) ?: continue
+                    val id = t.optString("id")
+                    val type = t.optString("type")
+                    if (id.isEmpty() || type.isEmpty())
+                        return null to "trigger ${i}: missing id or type"
+                    if (type !in SUPPORTED_TYPES)
+                        return null to "trigger '$id': unknown type '$type'"
+                    val whenArr = t.optJSONArray("when")
+                    if (whenArr != null) {
+                        StateSampler.validateWhen(whenArr)?.let {
+                            return null to "trigger '$id': $it"
+                        }
+                    }
+                    parsed.add(TriggerRow(
+                        id = id,
+                        type = type,
+                        params = (t.optJSONObject("params") ?: JSONObject()).toString(),
+                        policy = t.optString("policy", "queue"),
+                        dedupe = t.optString("dedupe").ifEmpty { null },
+                        throttleS = if (t.has("throttle_s")) t.optLong("throttle_s") else null,
+                        onFire = t.optJSONArray("on_fire")?.toString(),
+                        whenJson = whenArr?.toString(),
+                    ))
+                }
+            }
+            return parsed to null
+        }
 
         /**
          * The firing pipeline — deliberately the same shape as
@@ -355,6 +553,14 @@ class TriggerHost(private val context: Context) {
          * alarm and boot receivers can fire without a host instance.
          */
         fun fireRow(context: Context, row: TriggerRow, data: JSONObject) {
+            // SPEC §11 `when`: the state gate guards the ENTIRE fire — a
+            // failed gate means the fire never happened (no event.action,
+            // no on_fire, and, because this runs before the throttle
+            // bookkeeping, no consumed lastFired slot).
+            if (!StateSampler.evaluateWhen(context, row.whenJson)) {
+                Log.d(TAG, "Gated ${row.id}: `when` does not hold")
+                return
+            }
             val now = System.currentTimeMillis()
             row.throttleS?.let { t ->
                 val last = lastFired[row.id]
@@ -368,7 +574,7 @@ class TriggerHost(private val context: Context) {
             // The companion-local response runs first (instant, dumb) and
             // IN ADDITION to the event below — Emacs still learns of the
             // fire on (re)connect and stays the source of truth.
-            row.onFire?.let { executeOnFire(context, row.id, it) }
+            executeOnFire(context, row, data)
 
             val payload = JSONObject().apply {
                 put("action", "trigger.fired")
@@ -412,29 +618,87 @@ class TriggerHost(private val context: Context) {
          * needs logic Emacs-dead means "keep Emacs alive", not a rule
          * language in Kotlin. Unknown entries and capability failures are
          * logged and skipped, never fatal (additive rule).
+         *
+         * String values inside `notify` and inside a `cap` entry's `args`
+         * are interpolated against this fire's `data` first ([interpolate]);
+         * the `cap` name itself is never interpolated — capability selection
+         * is not data-driven.
          */
-        private fun executeOnFire(context: Context, id: String, onFireJson: String) {
-            val list = runCatching { JSONArray(onFireJson) }.getOrNull() ?: return
+        private fun executeOnFire(context: Context, row: TriggerRow, data: JSONObject) {
+            val list = runCatching { JSONArray(row.onFire ?: return) }.getOrNull() ?: return
+            val id = row.id
             for (i in 0 until list.length()) {
                 val entry = list.optJSONObject(i) ?: continue
                 when {
                     entry.has("cap") -> {
                         val cap = entry.optString("cap")
+                        val args = interpolateValue(
+                            entry.optJSONObject("args") ?: JSONObject(),
+                            id, row.type, data) as JSONObject
                         try {
-                            DeviceCapabilities.invoke(
-                                context, cap, entry.optJSONObject("args") ?: JSONObject())
+                            DeviceCapabilities.invoke(context, cap, args)
                             Log.d(TAG, "on_fire[$id]: $cap ok")
                         } catch (e: CapabilityException) {
                             Log.w(TAG, "on_fire[$id]: $cap failed: ${e.code} (${e.message})")
                         }
                     }
-                    entry.has("notify") ->
-                        postOnFireNotification(
-                            context, id, entry.optJSONObject("notify") ?: JSONObject())
+                    entry.has("notify") -> {
+                        val notify = interpolateValue(
+                            entry.optJSONObject("notify") ?: JSONObject(),
+                            id, row.type, data) as JSONObject
+                        postOnFireNotification(context, id, notify)
+                    }
                     else -> Log.d(TAG, "on_fire[$id]: ignoring unknown entry $i")
                 }
             }
         }
+
+        /**
+         * SPEC §11 on_fire placeholders / §9 snippet grammar: substitute
+         * `${id}`, `${type}`, and `${data.FIELD}` in [template] against this
+         * fire. A single pass — substituted text is never re-scanned — and
+         * unknown or unresolvable tokens are left literal (a `data.FIELD`
+         * that is absent or JSON null stays as the raw `${…}`). The result
+         * is always a string: a numeric or boolean field renders in its JSON
+         * form (`63`, `true`).
+         */
+        internal fun interpolate(
+            template: String, id: String, type: String, data: JSONObject
+        ): String =
+            PLACEHOLDER.replace(template) { m ->
+                when (val token = m.groupValues[1]) {
+                    "id" -> id
+                    "type" -> type
+                    else -> {
+                        val field = m.groupValues[2] // token == "data.$field"
+                        val v = if (data.has(field)) data.opt(field) else null
+                        if (v == null || v === JSONObject.NULL) m.value else v.toString()
+                    }
+                }
+            }
+
+        /**
+         * Recurse [interpolate] over any on_fire value: strings are
+         * interpolated, objects/arrays are rebuilt with interpolated
+         * members (so `intent.start` extras are covered), everything else
+         * passes through unchanged.
+         */
+        internal fun interpolateValue(
+            value: Any?, id: String, type: String, data: JSONObject
+        ): Any? = when (value) {
+            is String -> interpolate(value, id, type, data)
+            is JSONObject -> JSONObject().also { out ->
+                for (key in value.keys())
+                    out.put(key, interpolateValue(value.get(key), id, type, data))
+            }
+            is JSONArray -> JSONArray().also { out ->
+                for (i in 0 until value.length())
+                    out.put(interpolateValue(value.get(i), id, type, data))
+            }
+            else -> value
+        }
+
+        private val PLACEHOLDER = Regex("""\$\{(id|type|data\.([A-Za-z0-9_]+))}""")
 
         private const val NOTIFY_CHANNEL = "jetpacs_automations"
 
@@ -470,6 +734,7 @@ class TriggerHost(private val context: Context) {
                 fireRow(context, row, JSONObject())
             }
             armTimeAlarms(context, rows.filter { it.type == "time" })
+            armCalendar(context, rows)
             Log.i(TAG, "Boot: rearmed ${rows.size} trigger(s)")
         }
 
@@ -531,6 +796,35 @@ class TriggerHost(private val context: Context) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
+    }
+}
+
+/**
+ * Reduces the duplicated `call.state` broadcast stream to one fire per
+ * transition per row class (SPEC §11). ACTION_PHONE_STATE_CHANGED
+ * arrives once per phone account, and again carrying the incoming
+ * number when READ_CALL_LOG is granted. [classify] returns, for one
+ * broadcast, whether to fire the number-indifferent rows and whether to
+ * fire the number-wanting rows: the former fire on the first broadcast
+ * of a new state, the latter on the (possibly same) broadcast that
+ * first carries the number.
+ */
+internal class CallStateDedupe {
+    private var lastState: String? = null
+    private var numberedFired = false
+
+    @Synchronized
+    fun classify(state: String, hasNumber: Boolean): Pair<Boolean, Boolean> {
+        if (state != lastState) {
+            lastState = state
+            numberedFired = hasNumber
+            return true to hasNumber   // new transition: plain fires now
+        }
+        // A duplicate of the current state: plain already fired; let the
+        // number-wanting rows fire once, when the number first appears.
+        val fireNumbered = hasNumber && !numberedFired
+        if (fireNumbered) numberedFired = true
+        return false to fireNumbered
     }
 }
 

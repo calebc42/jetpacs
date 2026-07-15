@@ -13,7 +13,7 @@
 
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
-;; Version: 1.17.0
+;; Version: 1.18.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; URL: https://github.com/calebc42/jetpacs
 
@@ -66,7 +66,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.17.0"
+(defconst jetpacs-api-version "1.18.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -3116,6 +3116,43 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
 
+(defconst jetpacs-lint-state-predicate-types
+  '("airplane" "battery.level" "bluetooth.enabled" "calendar.event"
+    "call.state" "headset" "network" "power" "screen" "time.window"
+    "wifi.enabled")
+  "State-predicate types a trigger `when' gate may reference (SPEC §11).
+Mirrors StateSampler.kt's STATE_TYPES; extend both (and SPEC §11's
+predicate table) together.  Lint-time advisory only: the live
+negotiation authority is the welcome's `device.state_types' report
+\(`jetpacs-triggers--when-supported-p'), never this list.")
+
+(defconst jetpacs-lint--predicate-fields
+  '(("power"             state)
+    ("battery.level"     above below)
+    ("screen"            state)
+    ("airplane"          state)
+    ("network"           transport)
+    ("headset"           state)
+    ("time.window"       after before days)
+    ("wifi.enabled"      enabled)
+    ("bluetooth.enabled" enabled)
+    ("calendar.event"    calendar title_contains)
+    ("call.state"        state))
+  "Match fields each state-predicate type may carry (SPEC §11).")
+
+(defconst jetpacs-lint--time-window-re
+  "\\`\\(?:[01]?[0-9]\\|2[0-3]\\):[0-5][0-9]\\'"
+  "The \"HH:MM\" grammar of a `time.window' bound.")
+
+(defconst jetpacs-lint--day-names '("mon" "tue" "wed" "thu" "fri" "sat" "sun")
+  "The `time.window' `days' vocabulary (SPEC §11).")
+
+(defconst jetpacs-lint--placeholder-re
+  "\\${\\(?:id\\|type\\|data\\.[A-Za-z0-9_]+\\)}"
+  "The on_fire placeholder token grammar (SPEC §11 / §9): `${id}',
+`${type}', `${data.FIELD}'.  A `${…}' outside this grammar is left
+literal by the companion — almost always a typo worth a warning.")
+
 (defconst jetpacs-lint-action-builtins
   '(("view.switch" view)
     ("clipboard.copy" text)
@@ -3568,6 +3605,122 @@ means an empty payload."
             (funcall report (list key)
                      (format "warning: unknown payload key `%s' on %s"
                              key kind)))))))
+    (nreverse problems)))
+
+;; ─── Trigger registrations (SPEC §11) ────────────────────────────────────────
+
+(defun jetpacs-lint--check-predicate (p path report)
+  "Validate state predicate P at PATH via REPORT (SPEC §11)."
+  (if (not (jetpacs-lint--alist-p p))
+      (funcall report path (format "predicate must be an object: %S" p))
+    (let* ((type (alist-get 'type p))
+           (row (assoc type jetpacs-lint--predicate-fields)))
+      (cond
+       ((not (stringp type))
+        (funcall report path "predicate missing `type'"))
+       ((not (member type jetpacs-lint-state-predicate-types))
+        (funcall report path (format "unknown state-predicate type: %S" type))))
+      (when row
+        (dolist (pair p)
+          (unless (or (eq (car pair) 'type) (memq (car pair) (cdr row)))
+            (funcall report path
+                     (format "warning: unknown key `%s' on %s predicate"
+                             (car pair) type)))))
+      (pcase type
+        ("battery.level"
+         (unless (or (assq 'above p) (assq 'below p))
+           (funcall report path "battery.level needs `above' or `below'")))
+        ("time.window"
+         (dolist (bound '(after before))
+           (when-let ((v (alist-get bound p)))
+             (unless (and (stringp v)
+                          (string-match-p jetpacs-lint--time-window-re v))
+               (funcall report path
+                        (format "`%s' must be \"HH:MM\": %S" bound v)))))
+         (when-let ((days (alist-get 'days p)))
+           (dolist (d (append days nil))
+             (unless (member d jetpacs-lint--day-names)
+               (funcall report path (format "unknown day: %S" d))))))))))
+
+(defun jetpacs-lint--check-placeholders (val path report)
+  "Warn via REPORT about `${…}' tokens in VAL outside the SPEC §11 grammar.
+Recurses over strings, alists, and sequences the way the companion's
+interpolation does."
+  (cond
+   ((stringp val)
+    (let ((start 0))
+      (while (string-match "\\${[^}]*}" val start)
+        (let ((token (match-string 0 val)))
+          (unless (string-match-p
+                   (concat "\\`" jetpacs-lint--placeholder-re "\\'") token)
+            (funcall report path
+                     (format "warning: placeholder %s is outside the \
+${id}/${type}/${data.FIELD} grammar and will stay literal" token))))
+        (setq start (match-end 0)))))
+   ((jetpacs-lint--alist-p val)
+    (dolist (pair val)
+      (jetpacs-lint--check-placeholders (cdr pair) (cons (car pair) path)
+                                        report)))
+   ((or (vectorp val) (proper-list-p val))
+    (let ((i 0))
+      (dolist (x (append val nil))
+        (jetpacs-lint--check-placeholders x (cons i path) report)
+        (setq i (1+ i)))))))
+
+(defun jetpacs-lint--check-on-fire-entry (entry path report)
+  "Validate one on_fire ENTRY at PATH via REPORT (SPEC §11)."
+  (if (not (jetpacs-lint--alist-p entry))
+      (funcall report path (format "on_fire entry must be an object: %S" entry))
+    (let ((cap (assq 'cap entry)) (notify (assq 'notify entry)))
+      (cond
+       ((and cap notify)
+        (funcall report path "on_fire entry has both `cap' and `notify'"))
+       ((and (not cap) (not notify))
+        (funcall report path "on_fire entry has neither `cap' nor `notify'")))
+      ;; The cap NAME never interpolates (§11) — a token there is a bug,
+      ;; not a dynamic dispatch.
+      (when (and cap (stringp (cdr cap))
+                 (string-match-p "\\${" (cdr cap)))
+        (funcall report path "`cap' names never interpolate — no ${…} here"))
+      (when-let ((args (cdr (assq 'args entry))))
+        (jetpacs-lint--check-placeholders args (cons 'args path) report))
+      (when notify
+        (jetpacs-lint--check-placeholders (cdr notify) (cons 'notify path)
+                                          report)))))
+
+;;;###autoload
+(defun jetpacs-lint-trigger (spec)
+  "Return a list of (PATH . PROBLEM) for trigger registration SPEC, nil if clean.
+SPEC is one wire-shaped `triggers.set' entry alist (what
+`jetpacs-triggers--specs' emits): `id'/`type' plus the optional
+`params', `when', `policy', `dedupe', `throttle_s', `on_fire'.
+Advisory and lint/CI-time, like `jetpacs-lint-spec': it validates the
+`when' predicate shapes against `jetpacs-lint-state-predicate-types',
+the on_fire exactly-one-of `cap'/`notify' rule, and the `${…}'
+placeholder grammar.  The live push negotiates against the session
+reports instead (`jetpacs-triggers--supported-p' and
+`jetpacs-triggers--when-supported-p')."
+  (let* (problems
+         (report (lambda (path msg) (push (cons (reverse path) msg) problems))))
+    (if (not (jetpacs-lint--alist-p spec))
+        (funcall report nil (format "registration is not an object: %S" spec))
+      (unless (stringp (alist-get 'id spec))
+        (funcall report '(id) "missing or non-string `id'"))
+      (unless (stringp (alist-get 'type spec))
+        (funcall report '(type) "missing or non-string `type'"))
+      (when-let ((policy (alist-get 'policy spec)))
+        (unless (member policy jetpacs-lint--when-offline-values)
+          (funcall report '(policy) (format "invalid policy: %S" policy))))
+      (when-let ((gate (alist-get 'when spec)))
+        (let ((i 0))
+          (dolist (p (append gate nil))
+            (jetpacs-lint--check-predicate p (list i 'when) report)
+            (setq i (1+ i)))))
+      (when-let ((on-fire (alist-get 'on_fire spec)))
+        (let ((i 0))
+          (dolist (entry (append on-fire nil))
+            (jetpacs-lint--check-on-fire-entry entry (list i 'on_fire) report)
+            (setq i (1+ i))))))
     (nreverse problems)))
 
 ;; ─── Headless render harness ─────────────────────────────────────────────────
@@ -4587,7 +4740,7 @@ included.  Lets an editor enumerate available sources and their fields."
 
 (defvar jetpacs-triggers--table (make-hash-table :test 'equal)
   "Map of trigger id (string) -> registration plist.
-Keys: :type :params :policy :dedupe :throttle-s :on-fire :handler.")
+Keys: :type :params :when :policy :dedupe :throttle-s :on-fire :handler.")
 
 (defconst jetpacs-triggers-supported-types
   '("time" "power" "battery.level" "screen" "headset" "airplane"
@@ -4596,7 +4749,10 @@ Keys: :type :params :policy :dedupe :throttle-s :on-fire :handler.")
 The fallback when the welcome carries no `device.trigger_types' — a
 newer companion reports its own catalog there and that report wins
 (see `jetpacs-triggers--supported-p').  Mirrors TriggerHost.kt's
-SUPPORTED_TYPES; extend both (and SPEC §11) together.")
+SUPPORTED_TYPES batch 1.  This list is FROZEN: types added after
+batch 1 negotiate via the welcome report only and are never appended
+here, because a companion old enough to omit the report is also too
+old to host them.")
 
 (defun jetpacs-triggers--supported-p (type)
   "Non-nil when the companion can host trigger TYPE.
@@ -4607,6 +4763,23 @@ the companion reject the whole replace-set."
   (let ((reported (alist-get 'trigger_types
                              (alist-get 'device jetpacs--session))))
     (and (member type (or reported jetpacs-triggers-supported-types)) t)))
+
+(defun jetpacs-triggers--when-supported-p (gate)
+  "Non-nil when every predicate type in GATE is sample-able here.
+GATE is a `:when' list of predicate alists; the authority is the
+session's `device.state_types' report (SPEC §11).  Deliberately NO
+static fallback, unlike `jetpacs-triggers--supported-p': a companion
+that predates `when' silently ignores unknown keys inside a trigger
+entry, so pushing a gate it cannot evaluate would arm the trigger
+UNGATED — \"notify below 20%\" becomes \"notify always\", strictly
+worse than a skip.  Absent report = nothing is supported, and the
+caller must skip the whole registration, never strip the gate and
+push the rest."
+  (let ((reported (alist-get 'state_types
+                             (alist-get 'device jetpacs--session))))
+    (and (seq-every-p (lambda (p) (member (alist-get 'type p) reported))
+                      gate)
+         t)))
 
 (defcustom jetpacs-triggers-disabled nil
   "Trigger ids excluded from the pushed set (the Automations toggles).
@@ -4623,24 +4796,30 @@ from the phone."
   "Hook run after any registry change (register, unregister, toggle).
 The Automations view re-pushes here; keep handlers cheap.")
 
-(cl-defun jetpacs-trigger-register (id &key type params policy dedupe
+(cl-defun jetpacs-trigger-register (id &key type params when policy dedupe
                                     throttle-s on-fire handler)
   "Register device trigger ID and push the updated set.
 TYPE (string, required) names a SPEC §11 catalog type; PARAMS is the
-plain-data match config alist for that type.  POLICY is the §5
-`when_offline' vocabulary (\"queue\" | \"drop\" | \"wake\", default
-queue); DEDUPE collapses queued fires sharing the key; THROTTLE-S is
-the host-side minimum seconds between fires.  ON-FIRE is the reserved
-companion-local response list (SPEC §11) — plain data, sent verbatim.
-HANDLER is called with (DATA ARGS) when the trigger fires: DATA is the
-type-shaped payload, ARGS the full `trigger.fired' args alist.
-Re-registering an existing ID replaces it."
+plain-data match config alist for that type.  WHEN is a state gate: a
+list of predicate alists (each `type' + match fields, SPEC §11 \"State
+predicates & sampling\"), ANDed by the companion at fire time — a
+failed gate suppresses the ENTIRE fire, event and on_fire both.  A
+gate this companion can't evaluate makes the whole registration skip
+\(see `jetpacs-triggers--when-supported-p'; test a gate live with
+`jetpacs-device-state').  POLICY is the §5 `when_offline' vocabulary
+\(\"queue\" | \"drop\" | \"wake\", default queue); DEDUPE collapses
+queued fires sharing the key; THROTTLE-S is the host-side minimum
+seconds between fires.  ON-FIRE is the companion-local response list
+\(SPEC §11) — plain data, sent verbatim.  HANDLER is called with
+\(DATA ARGS) when the trigger fires: DATA is the type-shaped payload,
+ARGS the full `trigger.fired' args alist.  Re-registering an existing
+ID replaces it."
   (unless (and (stringp id) (not (string-empty-p id)))
     (error "Trigger id must be a non-empty string"))
   (unless (stringp type)
     (error "Trigger %s needs a :type string" id))
   (jetpacs--claim "trigger" id)
-  (puthash id (list :type type :params params :policy policy
+  (puthash id (list :type type :params params :when when :policy policy
                     :dedupe dedupe :throttle-s throttle-s
                     :on-fire on-fire :handler handler)
            jetpacs-triggers--table)
@@ -4689,7 +4868,10 @@ settings seam so it survives restarts."
 
 (defun jetpacs-trigger-test-fire (id)
   "Run trigger ID's handler with synthetic fire args (`test' flag set).
-Exercises the exact dispatch path a device fire takes, minus the wire."
+Exercises the exact dispatch path a device fire takes, minus the wire.
+Deliberately BYPASSES the registration's `:when' gate (the gate is
+companion-side, and this never leaves Emacs): it tests the dispatch
+path, not the gate — evaluate a gate with `jetpacs-device-state'."
   (interactive
    (list (completing-read "Test-fire trigger: "
                           (hash-table-keys jetpacs-triggers--table) nil t)))
@@ -4707,7 +4889,10 @@ the frame stays additive-friendly; disabled ids are excluded, which is
 what disables them (replace-set: absent = can never fire).  A type
 this companion doesn't support is skipped with a message: the
 companion rejects a replace-set wholesale, so one too-new registration
-must cost itself, never the set."
+must cost itself, never the set.  A `:when'-gated registration whose
+gate this companion can't evaluate is likewise skipped WHOLE — never
+stripped of its gate and pushed, which would arm it ungated (SPEC
+§11's normative client rule)."
   (let (specs)
     (maphash
      (lambda (id reg)
@@ -4716,12 +4901,19 @@ must cost itself, never the set."
         ((not (jetpacs-triggers--supported-p (plist-get reg :type)))
          (message "Jetpacs triggers: skipping %s — companion lacks type %s"
                   id (plist-get reg :type)))
+        ((and (plist-get reg :when)
+              (not (jetpacs-triggers--when-supported-p (plist-get reg :when))))
+         (message (concat "Jetpacs triggers: skipping %s — companion can't "
+                          "evaluate its `when' gate")
+                  id))
         (t
          (push (append
                 `((id . ,id)
                   (type . ,(plist-get reg :type)))
                 (when-let ((params (plist-get reg :params)))
                   `((params . ,params)))
+                (when-let ((gate (plist-get reg :when)))
+                  `((when . ,(vconcat gate))))
                 (when-let ((policy (plist-get reg :policy)))
                   `((policy . ,policy)))
                 (when-let ((dedupe (plist-get reg :dedupe)))
@@ -5069,6 +5261,33 @@ Never log or persist what arrives here."
      (funcall callback
               (and ok (alist-get 'text (alist-get 'result payload)))))))
 
+(cl-defun jetpacs-device-state (callback &key types when)
+  "Sample device state predicates (SPEC §10 `state.get').
+CALLBACK receives the result alist: `states' maps each sampled type to
+its current state object (shaped like the type's trigger `data'),
+`unavailable' — when present — maps a type that could not be sampled
+to its typed failure code (never failing the batch), and `holds' (only
+with :WHEN) is the AND-ed verdict of the gate, evaluated by the same
+companion code path that gates fires — which is the point: a §11
+`when' gate is testable from Emacs before it ships.
+
+TYPES is a list of state-type strings (default: everything this
+companion can sample); WHEN is a list of predicate alists exactly as
+`jetpacs-trigger-register' takes them:
+
+  (jetpacs-device-state
+   (lambda (result) (message \"holds: %s\" (alist-get \\='holds result)))
+   :when \\='(((type . \"power\") (state . \"disconnected\"))))"
+  (jetpacs-device--invoke
+   "state.get"
+   (append (when types `((types . ,(vconcat types))))
+           (when when `((when . ,(vconcat when)))))
+   (lambda (ok payload)
+     (if (not ok)
+         (message "Jetpacs device state.get: %s [%s]"
+                  (alist-get 'detail payload) (alist-get 'code payload))
+       (funcall callback (alist-get 'result payload))))))
+
 (defun jetpacs-device-settings-open (panel)
   "Open the companion's settings PANEL.
 PANEL is wifi, internet, bluetooth, volume, nfc, or any
@@ -5109,7 +5328,11 @@ Needs Do Not Disturb access — see the Device permissions screen."
     ;; the notification-listener service ships (automation plan Task 9).
     (notification_listener "Notification access (feature not shipped yet)" nil)
     (fine_location "Location (Wi-Fi SSID triggers)" "app")
-    (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app"))
+    (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app")
+    (read_calendar "Calendar (calendar.event triggers)" "app")
+    (receive_sms "SMS (sms.received triggers)" "app")
+    (read_phone_state "Phone (call.state triggers)" "app")
+    (read_call_log "Call log (the number on call.state)" "app"))
   "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
 PANEL feeds `settings.open': a grant screen action, or \"app\" for
 Glasspane's own app-info page (runtime permissions live there).")
@@ -16413,30 +16636,51 @@ render must stay cheap).  Reset to `unknown' after installing it.")
       (format-time-string "Last fired %b %e %H:%M" at)
     "Never fired"))
 
+(defun jetpacs-automations--gate-summary (gate)
+  "One line for a registration's `:when' state GATE (SPEC §11)."
+  (concat "when "
+          (mapconcat
+           (lambda (p)
+             (let ((type (alist-get 'type p))
+                   (fields (cl-remove 'type p :key #'car)))
+               (if fields
+                   (format "%s %s" type
+                           (mapconcat (lambda (kv)
+                                        (format "%s=%s" (car kv) (cdr kv)))
+                                      fields " "))
+                 type)))
+           gate " ∧ ")))
+
 (defun jetpacs-automations--card (id reg)
   "The management card for trigger ID."
   (let ((enabled (jetpacs-trigger-enabled-p id)))
     (jetpacs-card
      (list
-      (jetpacs-column
-       (jetpacs-row
-        (jetpacs-box (list (jetpacs-text id 'title)) :weight 1)
-        (jetpacs-switch (concat "trigger-enabled/" id)
-                     :checked enabled
-                     :on-change (jetpacs-action "trigger.toggle"
-                                             :args `((id . ,id))
-                                             :when-offline "drop")))
-       (jetpacs-text (jetpacs-automations--summary reg) 'caption)
-       (jetpacs-row
-        (jetpacs-box (list (jetpacs-text (jetpacs-automations--last-fired id)
-                                   'caption))
-                  :weight 1)
-        (jetpacs-button "Fire now"
-                     (jetpacs-action "trigger.test"
-                                  :args `((id . ,id))
-                                  :when-offline "drop")
-                     :variant "text"
-                     :icon "play_arrow")))))))
+      (apply
+       #'jetpacs-column
+       (delq
+        nil
+        (list
+         (jetpacs-row
+          (jetpacs-box (list (jetpacs-text id 'title)) :weight 1)
+          (jetpacs-switch (concat "trigger-enabled/" id)
+                       :checked enabled
+                       :on-change (jetpacs-action "trigger.toggle"
+                                               :args `((id . ,id))
+                                               :when-offline "drop")))
+         (jetpacs-text (jetpacs-automations--summary reg) 'caption)
+         (when-let ((gate (plist-get reg :when)))
+           (jetpacs-text (jetpacs-automations--gate-summary gate) 'caption))
+         (jetpacs-row
+          (jetpacs-box (list (jetpacs-text (jetpacs-automations--last-fired id)
+                                     'caption))
+                    :weight 1)
+          (jetpacs-button "Fire now"
+                       (jetpacs-action "trigger.test"
+                                    :args `((id . ,id))
+                                    :when-offline "drop")
+                       :variant "text"
+                       :icon "play_arrow")))))))))
 
 (defun jetpacs-automations--view (snackbar)
   "The Automations screen: every registered trigger, or an empty state."

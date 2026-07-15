@@ -37,6 +37,14 @@
     <!-- `network` triggers (SPEC §11): the default-network callback. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Adapter-state triggers & predicates (SPEC §11 `wifi.enabled` /
+         `bluetooth.enabled`). Both install-time; BLUETOOTH is the legacy
+         isEnabled() permission — API 31+ needs nothing for isEnabled
+         (BLUETOOTH_CONNECT above covers the rest of the API). -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+
     <!-- Special access the effectors gate on (SPEC §10). DECLARING these
          is what makes the app appear in the system grant screens at all —
          without the declaration the "Modify system settings" / "Do Not
@@ -52,6 +60,22 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- `calendar.event` triggers & predicates (SPEC §11): runtime
+         permission; ungranted rows are skipped with a log, and the
+         predicate never holds — fail closed. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
+    <!-- The telephony pair (SPEC §11 `sms.received` / `call.state`):
+         runtime permissions, opt-in payloads, fail-closed. RECEIVE_SMS
+         delivers message bodies; READ_PHONE_STATE the call-state edges;
+         READ_CALL_LOG is the ADDITIONAL grant (Android 9+) that lets the
+         incoming number reach a call.state rule — without it a
+         number-filtered rule never fires. Play-hostile by nature; this
+         is an F-Droid-class personal companion (ROADMAP item 10). -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
 
     <!-- Android 11 package visibility: without these, `apps.list` returns
          nothing and TTS finds no engine. -->
@@ -195,6 +219,12 @@
         <!-- Fires `time` triggers (SPEC §11); alarm PendingIntents only. -->
         <receiver
             android:name="com.calebc42.jetpacs.TriggerAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Fires `calendar.event` boundary alarms (SPEC §11); same
+             cold-read idiom as TriggerAlarmReceiver. -->
+        <receiver
+            android:name="com.calebc42.jetpacs.CalendarAlarmReceiver"
             android:exported="false" />
 
         <!-- Reboot persistence: rearm triggers + reminders, restart the

@@ -19,7 +19,7 @@
 
 (defvar jetpacs-triggers--table (make-hash-table :test 'equal)
   "Map of trigger id (string) -> registration plist.
-Keys: :type :params :policy :dedupe :throttle-s :on-fire :handler.")
+Keys: :type :params :when :policy :dedupe :throttle-s :on-fire :handler.")
 
 (defconst jetpacs-triggers-supported-types
   '("time" "power" "battery.level" "screen" "headset" "airplane"
@@ -28,7 +28,10 @@ Keys: :type :params :policy :dedupe :throttle-s :on-fire :handler.")
 The fallback when the welcome carries no `device.trigger_types' — a
 newer companion reports its own catalog there and that report wins
 (see `jetpacs-triggers--supported-p').  Mirrors TriggerHost.kt's
-SUPPORTED_TYPES; extend both (and SPEC §11) together.")
+SUPPORTED_TYPES batch 1.  This list is FROZEN: types added after
+batch 1 negotiate via the welcome report only and are never appended
+here, because a companion old enough to omit the report is also too
+old to host them.")
 
 (defun jetpacs-triggers--supported-p (type)
   "Non-nil when the companion can host trigger TYPE.
@@ -39,6 +42,23 @@ the companion reject the whole replace-set."
   (let ((reported (alist-get 'trigger_types
                              (alist-get 'device jetpacs--session))))
     (and (member type (or reported jetpacs-triggers-supported-types)) t)))
+
+(defun jetpacs-triggers--when-supported-p (gate)
+  "Non-nil when every predicate type in GATE is sample-able here.
+GATE is a `:when' list of predicate alists; the authority is the
+session's `device.state_types' report (SPEC §11).  Deliberately NO
+static fallback, unlike `jetpacs-triggers--supported-p': a companion
+that predates `when' silently ignores unknown keys inside a trigger
+entry, so pushing a gate it cannot evaluate would arm the trigger
+UNGATED — \"notify below 20%\" becomes \"notify always\", strictly
+worse than a skip.  Absent report = nothing is supported, and the
+caller must skip the whole registration, never strip the gate and
+push the rest."
+  (let ((reported (alist-get 'state_types
+                             (alist-get 'device jetpacs--session))))
+    (and (seq-every-p (lambda (p) (member (alist-get 'type p) reported))
+                      gate)
+         t)))
 
 (defcustom jetpacs-triggers-disabled nil
   "Trigger ids excluded from the pushed set (the Automations toggles).
@@ -55,24 +75,30 @@ from the phone."
   "Hook run after any registry change (register, unregister, toggle).
 The Automations view re-pushes here; keep handlers cheap.")
 
-(cl-defun jetpacs-trigger-register (id &key type params policy dedupe
+(cl-defun jetpacs-trigger-register (id &key type params when policy dedupe
                                     throttle-s on-fire handler)
   "Register device trigger ID and push the updated set.
 TYPE (string, required) names a SPEC §11 catalog type; PARAMS is the
-plain-data match config alist for that type.  POLICY is the §5
-`when_offline' vocabulary (\"queue\" | \"drop\" | \"wake\", default
-queue); DEDUPE collapses queued fires sharing the key; THROTTLE-S is
-the host-side minimum seconds between fires.  ON-FIRE is the reserved
-companion-local response list (SPEC §11) — plain data, sent verbatim.
-HANDLER is called with (DATA ARGS) when the trigger fires: DATA is the
-type-shaped payload, ARGS the full `trigger.fired' args alist.
-Re-registering an existing ID replaces it."
+plain-data match config alist for that type.  WHEN is a state gate: a
+list of predicate alists (each `type' + match fields, SPEC §11 \"State
+predicates & sampling\"), ANDed by the companion at fire time — a
+failed gate suppresses the ENTIRE fire, event and on_fire both.  A
+gate this companion can't evaluate makes the whole registration skip
+\(see `jetpacs-triggers--when-supported-p'; test a gate live with
+`jetpacs-device-state').  POLICY is the §5 `when_offline' vocabulary
+\(\"queue\" | \"drop\" | \"wake\", default queue); DEDUPE collapses
+queued fires sharing the key; THROTTLE-S is the host-side minimum
+seconds between fires.  ON-FIRE is the companion-local response list
+\(SPEC §11) — plain data, sent verbatim.  HANDLER is called with
+\(DATA ARGS) when the trigger fires: DATA is the type-shaped payload,
+ARGS the full `trigger.fired' args alist.  Re-registering an existing
+ID replaces it."
   (unless (and (stringp id) (not (string-empty-p id)))
     (error "Trigger id must be a non-empty string"))
   (unless (stringp type)
     (error "Trigger %s needs a :type string" id))
   (jetpacs--claim "trigger" id)
-  (puthash id (list :type type :params params :policy policy
+  (puthash id (list :type type :params params :when when :policy policy
                     :dedupe dedupe :throttle-s throttle-s
                     :on-fire on-fire :handler handler)
            jetpacs-triggers--table)
@@ -121,7 +147,10 @@ settings seam so it survives restarts."
 
 (defun jetpacs-trigger-test-fire (id)
   "Run trigger ID's handler with synthetic fire args (`test' flag set).
-Exercises the exact dispatch path a device fire takes, minus the wire."
+Exercises the exact dispatch path a device fire takes, minus the wire.
+Deliberately BYPASSES the registration's `:when' gate (the gate is
+companion-side, and this never leaves Emacs): it tests the dispatch
+path, not the gate — evaluate a gate with `jetpacs-device-state'."
   (interactive
    (list (completing-read "Test-fire trigger: "
                           (hash-table-keys jetpacs-triggers--table) nil t)))
@@ -139,7 +168,10 @@ the frame stays additive-friendly; disabled ids are excluded, which is
 what disables them (replace-set: absent = can never fire).  A type
 this companion doesn't support is skipped with a message: the
 companion rejects a replace-set wholesale, so one too-new registration
-must cost itself, never the set."
+must cost itself, never the set.  A `:when'-gated registration whose
+gate this companion can't evaluate is likewise skipped WHOLE — never
+stripped of its gate and pushed, which would arm it ungated (SPEC
+§11's normative client rule)."
   (let (specs)
     (maphash
      (lambda (id reg)
@@ -148,12 +180,19 @@ must cost itself, never the set."
         ((not (jetpacs-triggers--supported-p (plist-get reg :type)))
          (message "Jetpacs triggers: skipping %s — companion lacks type %s"
                   id (plist-get reg :type)))
+        ((and (plist-get reg :when)
+              (not (jetpacs-triggers--when-supported-p (plist-get reg :when))))
+         (message (concat "Jetpacs triggers: skipping %s — companion can't "
+                          "evaluate its `when' gate")
+                  id))
         (t
          (push (append
                 `((id . ,id)
                   (type . ,(plist-get reg :type)))
                 (when-let ((params (plist-get reg :params)))
                   `((params . ,params)))
+                (when-let ((gate (plist-get reg :when)))
+                  `((when . ,(vconcat gate))))
                 (when-let ((policy (plist-get reg :policy)))
                   `((policy . ,policy)))
                 (when-let ((dedupe (plist-get reg :dedupe)))

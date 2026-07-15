@@ -46,30 +46,51 @@
       (format-time-string "Last fired %b %e %H:%M" at)
     "Never fired"))
 
+(defun jetpacs-automations--gate-summary (gate)
+  "One line for a registration's `:when' state GATE (SPEC §11)."
+  (concat "when "
+          (mapconcat
+           (lambda (p)
+             (let ((type (alist-get 'type p))
+                   (fields (cl-remove 'type p :key #'car)))
+               (if fields
+                   (format "%s %s" type
+                           (mapconcat (lambda (kv)
+                                        (format "%s=%s" (car kv) (cdr kv)))
+                                      fields " "))
+                 type)))
+           gate " ∧ ")))
+
 (defun jetpacs-automations--card (id reg)
   "The management card for trigger ID."
   (let ((enabled (jetpacs-trigger-enabled-p id)))
     (jetpacs-card
      (list
-      (jetpacs-column
-       (jetpacs-row
-        (jetpacs-box (list (jetpacs-text id 'title)) :weight 1)
-        (jetpacs-switch (concat "trigger-enabled/" id)
-                     :checked enabled
-                     :on-change (jetpacs-action "trigger.toggle"
-                                             :args `((id . ,id))
-                                             :when-offline "drop")))
-       (jetpacs-text (jetpacs-automations--summary reg) 'caption)
-       (jetpacs-row
-        (jetpacs-box (list (jetpacs-text (jetpacs-automations--last-fired id)
-                                   'caption))
-                  :weight 1)
-        (jetpacs-button "Fire now"
-                     (jetpacs-action "trigger.test"
-                                  :args `((id . ,id))
-                                  :when-offline "drop")
-                     :variant "text"
-                     :icon "play_arrow")))))))
+      (apply
+       #'jetpacs-column
+       (delq
+        nil
+        (list
+         (jetpacs-row
+          (jetpacs-box (list (jetpacs-text id 'title)) :weight 1)
+          (jetpacs-switch (concat "trigger-enabled/" id)
+                       :checked enabled
+                       :on-change (jetpacs-action "trigger.toggle"
+                                               :args `((id . ,id))
+                                               :when-offline "drop")))
+         (jetpacs-text (jetpacs-automations--summary reg) 'caption)
+         (when-let ((gate (plist-get reg :when)))
+           (jetpacs-text (jetpacs-automations--gate-summary gate) 'caption))
+         (jetpacs-row
+          (jetpacs-box (list (jetpacs-text (jetpacs-automations--last-fired id)
+                                     'caption))
+                    :weight 1)
+          (jetpacs-button "Fire now"
+                       (jetpacs-action "trigger.test"
+                                    :args `((id . ,id))
+                                    :when-offline "drop")
+                       :variant "text"
+                       :icon "play_arrow")))))))))
 
 (defun jetpacs-automations--view (snackbar)
   "The Automations screen: every registered trigger, or an empty state."

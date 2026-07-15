@@ -88,6 +88,7 @@ object DeviceCapabilities {
         "screen.keep_on" to ::screenKeepOn,
         "brightness.set" to ::brightnessSet,
         "dnd.set" to ::dndSet,
+        "state.get" to ::stateGet,
     )
 
     /** Invocable capability names, for the welcome's `device.caps`. */
@@ -608,6 +609,42 @@ object DeviceCapabilities {
         return JSONObject()
     }
 
+    // ── state sampling (SPEC §10 `state.get` / §11 predicates) ───────────────
+
+    /**
+     * `state.get {types?, when?}` → `{states, unavailable?, holds?}` —
+     * sample the SPEC §11 state predicates. `states` maps each requested
+     * type (default: every `device.state_types` entry) to its current
+     * state object; a type that can't be sampled lands in `unavailable`
+     * as its typed failure code, never failing the batch. A `when` array
+     * adds `holds`, evaluated by the exact code path `fireRow` gates on —
+     * which is the point: a §11 gate is testable from Emacs before it
+     * ships.
+     */
+    private fun stateGet(context: Context, args: JSONObject): JSONObject {
+        val requested = args.optJSONArray("types")
+            ?.let { arr -> (0 until arr.length()).map { arr.optString(it) } }
+            ?: StateSampler.STATE_TYPES.sorted()
+        val states = JSONObject()
+        val unavailable = JSONObject()
+        for (type in requested) {
+            try {
+                states.put(type, StateSampler.sample(context, type))
+            } catch (e: CapabilityException) {
+                unavailable.put(type, e.code)
+            }
+        }
+        val out = JSONObject().put("states", states)
+        if (unavailable.length() > 0) out.put("unavailable", unavailable)
+        args.optJSONArray("when")?.let { whenArr ->
+            StateSampler.validateWhen(whenArr)?.let {
+                throw CapabilityException("cap-failed", "state.get: $it")
+            }
+            out.put("holds", StateSampler.evaluateWhen(context, whenArr.toString()))
+        }
+        return out
+    }
+
     // ── the device permission report ─────────────────────────────────────────
 
     /**
@@ -630,6 +667,10 @@ object DeviceCapabilities {
         put("fine_location", granted(context, Manifest.permission.ACCESS_FINE_LOCATION))
         put("bluetooth_connect",
             granted(context, Manifest.permission.BLUETOOTH_CONNECT, Build.VERSION_CODES.S))
+        put("read_calendar", granted(context, Manifest.permission.READ_CALENDAR))
+        put("receive_sms", granted(context, Manifest.permission.RECEIVE_SMS))
+        put("read_phone_state", granted(context, Manifest.permission.READ_PHONE_STATE))
+        put("read_call_log", granted(context, Manifest.permission.READ_CALL_LOG))
     }
 
     /** True when [permission] is granted (or the device predates [sinceSdk]). */

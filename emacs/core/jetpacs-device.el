@@ -249,6 +249,33 @@ Never log or persist what arrives here."
      (funcall callback
               (and ok (alist-get 'text (alist-get 'result payload)))))))
 
+(cl-defun jetpacs-device-state (callback &key types when)
+  "Sample device state predicates (SPEC §10 `state.get').
+CALLBACK receives the result alist: `states' maps each sampled type to
+its current state object (shaped like the type's trigger `data'),
+`unavailable' — when present — maps a type that could not be sampled
+to its typed failure code (never failing the batch), and `holds' (only
+with :WHEN) is the AND-ed verdict of the gate, evaluated by the same
+companion code path that gates fires — which is the point: a §11
+`when' gate is testable from Emacs before it ships.
+
+TYPES is a list of state-type strings (default: everything this
+companion can sample); WHEN is a list of predicate alists exactly as
+`jetpacs-trigger-register' takes them:
+
+  (jetpacs-device-state
+   (lambda (result) (message \"holds: %s\" (alist-get \\='holds result)))
+   :when \\='(((type . \"power\") (state . \"disconnected\"))))"
+  (jetpacs-device--invoke
+   "state.get"
+   (append (when types `((types . ,(vconcat types))))
+           (when when `((when . ,(vconcat when)))))
+   (lambda (ok payload)
+     (if (not ok)
+         (message "Jetpacs device state.get: %s [%s]"
+                  (alist-get 'detail payload) (alist-get 'code payload))
+       (funcall callback (alist-get 'result payload))))))
+
 (defun jetpacs-device-settings-open (panel)
   "Open the companion's settings PANEL.
 PANEL is wifi, internet, bluetooth, volume, nfc, or any
@@ -289,7 +316,11 @@ Needs Do Not Disturb access — see the Device permissions screen."
     ;; the notification-listener service ships (automation plan Task 9).
     (notification_listener "Notification access (feature not shipped yet)" nil)
     (fine_location "Location (Wi-Fi SSID triggers)" "app")
-    (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app"))
+    (bluetooth_connect "Nearby devices (Bluetooth triggers)" "app")
+    (read_calendar "Calendar (calendar.event triggers)" "app")
+    (receive_sms "SMS (sms.received triggers)" "app")
+    (read_phone_state "Phone (call.state triggers)" "app")
+    (read_call_log "Call log (the number on call.state)" "app"))
   "PERM-KEY LABEL PANEL rows for the Device permissions dialog.
 PANEL feeds `settings.open': a grant screen action, or \"app\" for
 Glasspane's own app-info page (runtime permissions live there).")

@@ -175,6 +175,24 @@ Note: the companion re-shows a snackbar only when the text *changes*,
 so two identical messages back-to-back display once."
   (setq jetpacs-shell--snackbar text))
 
+;; The buffer navigator lives in jetpacs-tablist.el; every satellite that lands
+;; command output here already requires it, so a forward declaration keeps this
+;; module free of a hard tablist dependency.
+(defvar jetpacs-tablist-view-buffer-function)
+
+(defun jetpacs-shell-view-buffer-of (fn)
+  "Call FN (returning a buffer or buffer name) and view the result.
+Window excursion contains the pop-to-buffer these commands do; errors land
+in the snackbar instead of dying silently.  The shared wrapper the stock
+satellites (tools, project, sql, hosts) land command output through."
+  (condition-case err
+      (let ((buf (save-window-excursion (funcall fn))))
+        (when (bufferp buf) (setq buf (buffer-name buf)))
+        (if (and (stringp buf) (get-buffer buf))
+            (funcall jetpacs-tablist-view-buffer-function buf)
+          (jetpacs-shell-notify "Nothing to show")))
+    (error (jetpacs-shell-notify (error-message-string err)))))
+
 ;; ─── Route params (parameterized navigation) ─────────────────────────────────
 ;; A detail screen used to need a module state var plus a set-the-var-then-
 ;; switch action (grocy--selected-product-id + a `grocy.open-product' handler
@@ -515,7 +533,10 @@ yank the user off whatever they're looking at."
   (when (timerp jetpacs-shell--repush-timer)
     (cancel-timer jetpacs-shell--repush-timer)
     (setq jetpacs-shell--repush-timer nil))
-  (when tab
+  ;; Only a registered tab may become the current tab — the invariant
+  ;; `jetpacs-shell-current-tab' relies on.  A non-tab TAB (a stale `nav.tab'
+  ;; payload, say) is ignored here rather than corrupting the state.
+  (when (and tab (jetpacs-shell--tab-p tab))
     (unless (equal tab jetpacs-shell--current-tab)
       (run-hook-with-args 'jetpacs-shell-view-switched-hook tab))
     (setq jetpacs-shell--current-tab tab))

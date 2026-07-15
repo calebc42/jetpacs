@@ -73,7 +73,8 @@ files must not round-trip through the editor."
   :type 'integer :group 'jetpacs)
 
 (defvar jetpacs-files--dir nil
-  "Directory being browsed, or nil for the landing dir (`jetpacs-files-default-dir').")
+  "Directory being browsed, or nil for the landing dir
+`jetpacs-files-default-dir'.")
 
 (defvar jetpacs-files--file nil
   "Absolute path of the file open in the editor, or nil.")

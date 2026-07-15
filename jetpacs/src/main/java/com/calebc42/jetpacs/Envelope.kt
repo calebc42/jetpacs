@@ -3,7 +3,7 @@ package com.calebc42.jetpacs
 import org.json.JSONObject
 
 /** Protocol version the companion speaks. */
-const val Jetpacs_PROTOCOL_VERSION = 1
+const val JETPACS_PROTOCOL_VERSION = 1
 
 /** Namespaced message kinds. Extended as later phases land. */
 object Kind {
@@ -45,7 +45,7 @@ class Frame(
     val payload: JSONObject = JSONObject(),
     val id: String = nextId(),
     val replyTo: String? = null,
-    val v: Int = Jetpacs_PROTOCOL_VERSION,
+    val v: Int = JETPACS_PROTOCOL_VERSION,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("v", v)
@@ -74,7 +74,7 @@ class Frame(
                 payload = obj.optJSONObject("payload") ?: JSONObject(),
                 id = obj.optString("id"),
                 replyTo = replyTo,
-                v = obj.optInt("v", Jetpacs_PROTOCOL_VERSION),
+                v = obj.optInt("v", JETPACS_PROTOCOL_VERSION),
             )
         }
     }

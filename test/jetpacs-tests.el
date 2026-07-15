@@ -4241,6 +4241,85 @@ core views) are included."
       (jetpacs--on-action '((action . "app.open") (args . ((app . "nope")))) nil)
       (should (equal (jetpacs-apps-current) "hello-app")))))
 
+(ert-deftest jetpacs-apps-open-tabless-keeps-current-tab-valid ()
+  "app.open onto a tab-less app clears the current tab (never leaves it on a
+non-tab view, nor on a tab from the app just left) and forces the client onto
+the landing view; a tab app still lands on and selects its real tab."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-shell-views nil)
+        (jetpacs-shell--current-tab nil)
+        forced)
+    (cl-letf (((symbol-function 'jetpacs-connected-p) (lambda (&rest _) t))
+              ((symbol-function 'jetpacs-surface-push)
+               (cl-function
+                (lambda (_surface _spec &optional _ttl _stale current-view)
+                  (setq forced current-view)))))
+      (jetpacs-shell-define-view "a.home" :builder #'ignore
+                              :tab '(:icon "i" :label "A") :order 10)
+      (jetpacs-shell-define-view "b.main" :builder #'ignore :order 20) ; nav-only
+      (jetpacs-defapp "a" :views '("a.home"))
+      (jetpacs-defapp "b" :views '("b.main"))
+      ;; Tab app: current tab is its real tab, client forced onto it.
+      (jetpacs--on-action '((action . "app.open") (args . ((app . "a")))) nil)
+      (should (equal jetpacs-shell--current-tab "a.home"))
+      (should (equal forced "a.home"))
+      ;; Tab-less app: current tab clears to nil (never "b.main"), and the
+      ;; client is still forced onto the landing view.
+      (jetpacs--on-action '((action . "app.open") (args . ((app . "b")))) nil)
+      (should (null jetpacs-shell--current-tab))
+      (should (equal forced "b.main")))))
+
+(ert-deftest jetpacs-defapp-redefine-releases-dropped-views ()
+  "Re-`jetpacs-defapp' with a shrunk :views set releases ownership of the
+views it dropped, so a later `jetpacs-app-unregister' can't tear down a view
+the app no longer owns."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-shell-views nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (jetpacs-shell-define-view "x.a" :builder #'ignore :tab '(:icon "i" :label "A"))
+    (jetpacs-shell-define-view "x.b" :builder #'ignore :tab '(:icon "i" :label "B"))
+    (jetpacs-defapp "x" :views '("x.a" "x.b"))
+    (should (equal (jetpacs--owner-of "view" "x.b") "x"))
+    ;; Drop x.b from the app: its ownership record must be released.
+    (jetpacs-defapp "x" :views '("x.a"))
+    (should (null (jetpacs--owner-of "view" "x.b")))
+    (should (equal (jetpacs--owner-of "view" "x.a") "x"))))
+
+(ert-deftest jetpacs-apps-vanilla-is-default-home-base ()
+  "Installing an app never makes it the default landing app while the vanilla
+\"Jetpacs\" home base exists: the core tabs stay visible until the user opens
+another app deliberately.  Falls back to registration order when the home
+base is absent."
+  (let ((jetpacs-apps--registry nil)
+        (jetpacs-apps--current nil)
+        (jetpacs-shell-views nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal)))
+    (dolist (v '("buffers" "files" "eval" "tools"))
+      (jetpacs-shell-define-view v :builder #'ignore
+                              :tab (list :icon "i" :label v) :order 10))
+    (jetpacs-defapp "jetpacs" :label "Jetpacs"
+                 :views '("buffers" "files" "eval" "tools") :order 900)
+    ;; A newly installed app registers at a lower order than the home base.
+    (jetpacs-shell-define-view "demo.home" :builder #'ignore
+                            :tab '(:icon "i" :label "Demo") :order 10)
+    (jetpacs-defapp "demo" :label "Demo" :views '("demo.home") :order 100)
+    ;; The default lands on the home base, not the lower-order new app, so the
+    ;; core tabs stay visible.
+    (should (equal (jetpacs-apps-current) "jetpacs"))
+    (should (jetpacs-apps--view-visible-p "files"))
+    (should-not (jetpacs-apps--view-visible-p "demo.home"))
+    ;; Opening the new app explicitly still switches to it.
+    (setq jetpacs-apps--current "demo")
+    (should (equal (jetpacs-apps-current) "demo"))
+    (should (jetpacs-apps--view-visible-p "demo.home"))
+    (should-not (jetpacs-apps--view-visible-p "files"))
+    ;; With no home base configured, fall back to first-registered order.
+    (let ((jetpacs-apps--current nil)
+          (jetpacs-apps-default-app nil))
+      (should (equal (jetpacs-apps-current) "demo")))))
+
 (ert-deftest jetpacs-apps-owned-chrome-gating ()
   "Owned drawer items and top actions show only in their app; unowned everywhere."
   (let ((jetpacs-apps--registry nil)
@@ -4962,7 +5041,7 @@ The row is built on `jetpacs-list-item', whose flexible middle is a weighted
   (let ((jetpacs-project--current default-directory)
         seam-called grep-regexp)
     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "needle"))
-              ((symbol-function 'jetpacs-project--view-buffer-of)
+              ((symbol-function 'jetpacs-shell-view-buffer-of)
                (lambda (fn)
                  (setq seam-called t)
                  (cl-letf (((symbol-function 'project-find-regexp)
@@ -4976,7 +5055,7 @@ The row is built on `jetpacs-list-item', whose flexible middle is a weighted
 (ert-deftest jetpacs-project-shell-invokes-seam ()
   "project.shell hands `project-shell' to the buffer seam."
   (let ((jetpacs-project--current default-directory) seam-arg)
-    (cl-letf (((symbol-function 'jetpacs-project--view-buffer-of)
+    (cl-letf (((symbol-function 'jetpacs-shell-view-buffer-of)
                (lambda (fn) (setq seam-arg fn))))
       (funcall (gethash "project.shell" jetpacs-action-handlers) nil nil))
     (should (eq seam-arg #'project-shell))))
@@ -5015,7 +5094,7 @@ offers New connection."
 an unknown one."
   (let ((sql-connection-alist '((demo (sql-product 'postgres))))
         outcome)
-    (cl-letf (((symbol-function 'jetpacs-sql--view-buffer-of)
+    (cl-letf (((symbol-function 'jetpacs-shell-view-buffer-of)
                (lambda (_fn) (setq outcome 'connected)))
               ((symbol-function 'jetpacs-shell-notify)
                (lambda (&rest _) (setq outcome 'notified))))
@@ -5034,7 +5113,7 @@ an unknown one."
     (should (string-search "sql.new" s))
     (should (string-search "Postgres" s)))
   (let (outcome)
-    (cl-letf (((symbol-function 'jetpacs-sql--view-buffer-of)
+    (cl-letf (((symbol-function 'jetpacs-shell-view-buffer-of)
                (lambda (_fn) (setq outcome 'started)))
               ((symbol-function 'jetpacs-shell-notify)
                (lambda (&rest _) (setq outcome 'notified))))

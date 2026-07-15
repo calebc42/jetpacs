@@ -247,7 +247,7 @@ internal fun JetpacsSettingsScreen(
                 JetpacsActionRow(
                     icon = Icons.Default.Cable,
                     title = "Jetpacs information",
-                    summary = "Jetpacs $version · protocol $Jetpacs_PROTOCOL_VERSION · Android ${Build.VERSION.SDK_INT}",
+                    summary = "Jetpacs $version · protocol $JETPACS_PROTOCOL_VERSION · Android ${Build.VERSION.SDK_INT}",
                 )
             }
 

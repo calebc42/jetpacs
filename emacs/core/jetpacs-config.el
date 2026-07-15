@@ -297,7 +297,7 @@ paging the buffer on Android."
 Called by jetpacs-init.el once `jetpacs-core' is required: migrate any legacy
 layout, load the create-once installed-app list and adopt+require each app,
 apply the foundation defaults, then load `custom-file' and the user override.
-Invariants are re-asserted separately at connect (`jetpacs-before-connect-hook')."
+Invariants are re-asserted at connect via `jetpacs-before-connect-hook'."
   (add-to-list 'load-path jetpacs-lib-dir)
   (jetpacs-config-migrate-legacy)
   ;; The core bundle was adopted by the entry file BEFORE core could run, so

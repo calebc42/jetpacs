@@ -183,7 +183,7 @@ class WireGoldenConformanceTest {
     @Test
     fun contractIsFormatTwoAndCoherent() {
         assertEquals(2, contract.getInt("contract_format"))
-        assertEquals(Jetpacs_PROTOCOL_VERSION, contract.getInt("protocol_version"))
+        assertEquals(JETPACS_PROTOCOL_VERSION, contract.getInt("protocol_version"))
         assertTrue(contract.getString("spec_version").isNotEmpty())
         // The third mirror leg: the published node vocabulary is exactly the
         // renderer's (elisp already pins lint = golden = SDUI_NODE_TYPES).
@@ -211,7 +211,7 @@ class WireGoldenConformanceTest {
         assertTrue(lines.isNotEmpty())
         for (line in lines) {
             val frame = Frame.fromJson(JSONObject(line))
-            assertEquals(Jetpacs_PROTOCOL_VERSION, frame.v) // defaulted: golden pins payloads
+            assertEquals(JETPACS_PROTOCOL_VERSION, frame.v) // defaulted: golden pins payloads
             assertTrue(frame.kind.isNotEmpty())
             val entry = kindSchema.optJSONObject(frame.kind)
             assertTrue("kind `${frame.kind}` not in schema", entry != null)

@@ -58,6 +58,8 @@
                      "core/jetpacs-customize.el"
                      "core/jetpacs-modus.el"
                      "core/jetpacs-tools.el"
+                     "core/jetpacs-project.el"
+                     "core/jetpacs-sql.el"
                      "core/jetpacs-hosts.el"
                      "core/jetpacs-automations.el"
                      "core/jetpacs-app-store.el"))

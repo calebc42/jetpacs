@@ -21,7 +21,8 @@
                    jetpacs-keymap jetpacs-sync jetpacs-complete jetpacs-settings
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
                    jetpacs-package-browser jetpacs-customize jetpacs-modus
-                   jetpacs-tools jetpacs-hosts jetpacs-automations))
+                   jetpacs-tools jetpacs-project jetpacs-sql
+                   jetpacs-hosts jetpacs-automations))
   (require feature))
 
 (dolist (feature '(glasspane glasspane-ui glasspane-org jetpacs-magit))
@@ -54,6 +55,10 @@
   (error "Shell has no customize view"))
 (unless (assoc "tools" jetpacs-shell-views)
   (error "Shell has no tools view"))
+(unless (assoc "project" jetpacs-shell-views)
+  (error "Shell has no project view"))
+(unless (assoc "sql" jetpacs-shell-views)
+  (error "Shell has no sql view"))
 (unless (assoc "hosts" jetpacs-shell-views)
   (error "Shell has no hosts view"))
 (unless (assoc "automations" jetpacs-shell-views)

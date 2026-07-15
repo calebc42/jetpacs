@@ -11,11 +11,21 @@
 ;;
 ;; Two extraction paths:
 ;;
-;;  - Prot's modus themes (built into Emacs; the reference implementation
-;;    for this feature): when a modus-* theme is active we read its named
-;;    palette via `modus-themes-get-color-value' — `bg-main', `bg-dim',
-;;    accent colors, and the `bg-*-subtle' tints that map one-to-one onto
-;;    Material's container roles, with modus's contrast guarantees intact.
+;;  - Prot's modus themes AND anything built on them.  Modus 5.0 formalized
+;;    an API for deriving themes from modus (the ef-themes, standard-themes,
+;;    and third-party skins all build on it), so we detect the whole family
+;;    through `modus-themes-get-current-theme' — the theme carrying a
+;;    `:modus-core-palette' property — rather than a `modus-' name prefix,
+;;    which would miss every derivative.  We then read modus's *semantic*
+;;    palette mappings via `modus-themes-get-color-value': `accent-0' for
+;;    the identity hue, `err' for the error role, `bg-dim'/`fg-dim'/`border'
+;;    for the muted surface, and the `keyword'/`string'/`prose-todo'/
+;;    `fg-heading-N' code roles.  Semantic roles — not raw hues like `blue'
+;;    or `red' — are what keep the mirror faithful under the deuteranopia/
+;;    tritanopia variants (which remap those roles off red/blue/yellow) and
+;;    under any derivative whose accents differ, and we read them WITH the
+;;    user's palette overrides applied.  Container tones are blended from
+;;    each resolved accent, so modus's contrast intent carries over.
 ;;
 ;;  - Any other theme: resolved face attributes (`default', `link',
 ;;    `font-lock-*', `error', `shadow', `mode-line-inactive', outline
@@ -36,6 +46,14 @@
 (require 'cl-lib)
 (require 'color)
 (require 'jetpacs)
+
+;; The modus themes are an optional runtime dependency: every call below is
+;; `fboundp'-guarded, but declare the API so the byte-compiler stays quiet
+;; when modus is not on the load path.  `modus-themes-get-current-theme' is
+;; the modus 5.0 derivative-registry entry point; the accessor predates it.
+(declare-function modus-themes-get-color-value "modus-themes"
+                  (color &optional with-overrides theme))
+(declare-function modus-themes-get-current-theme "modus-themes" ())
 
 (defcustom jetpacs-theme-sync nil
   "When non-nil, mirror the active Emacs theme onto the companion app.
@@ -114,21 +132,44 @@ frame reports, and for anything the display can't resolve."
 
 ;; ─── Modus palette access ────────────────────────────────────────────────────
 
+(defun jetpacs-theme--modus-theme ()
+  "The active modus-family theme (a modus theme or a derivative), or nil.
+
+Modus 5.0 turned modus into a platform: a derivative theme registers via
+`modus-themes-theme', which stamps a `:modus-core-palette' theme property,
+and `modus-themes-get-current-theme' returns the enabled theme bearing
+that property.  So this covers the whole family — the ef-themes,
+standard-themes, and any third-party skin — not just the `modus-'
+originals.
+
+On modus 4.x (Emacs 30's bundled copy) that registry does not exist yet,
+so fall back to a name-prefix match: 4.x still has the palette accessor
+and the same semantic mappings, it just cannot enumerate derivatives."
+  (cond
+   ((fboundp 'modus-themes-get-current-theme)
+    (modus-themes-get-current-theme))
+   ((fboundp 'modus-themes-get-color-value)
+    (cl-find-if (lambda (theme)
+                  (string-prefix-p "modus-" (symbol-name theme)))
+                custom-enabled-themes))))
+
 (defun jetpacs-theme--modus-p ()
-  "Non-nil when a modus theme is active and its palette API is available.
-The API (`modus-themes-get-color-value') exists from modus-themes 4 /
-Emacs 30's bundled copy; older bundled versions fall through to the
-generic face extraction, which handles modus fine — just without the
-palette's purpose-built container tints."
+  "Non-nil when a modus-family theme is active and its palette API is usable.
+Older modus versions that lack `modus-themes-get-color-value' fall through
+to the generic face extraction, which handles modus fine — just without the
+palette's purpose-built semantic roles."
   (and (fboundp 'modus-themes-get-color-value)
-       (cl-find-if (lambda (theme)
-                     (string-prefix-p "modus-" (symbol-name theme)))
-                   custom-enabled-themes)
+       (jetpacs-theme--modus-theme)
        t))
 
 (defun jetpacs-theme--modus (key)
-  "Hex value of the active modus theme's palette color KEY, or nil."
-  (when-let ((value (ignore-errors (modus-themes-get-color-value key))))
+  "Hex value of the active modus theme's palette color KEY, or nil.
+Read WITH overrides so the user's own `modus-themes-common-palette-overrides'
+and theme-specific overrides (e.g. a recolored accent) are mirrored, and let
+the accessor resolve semantic mappings recursively down to a hex.  KEY that
+is absent from the palette yields the `unspecified' symbol, which the
+`stringp' guard drops."
+  (when-let ((value (ignore-errors (modus-themes-get-color-value key :with-overrides))))
     (and (stringp value) (jetpacs-theme--hex value))))
 
 ;; ─── Palette construction ────────────────────────────────────────────────────
@@ -142,65 +183,71 @@ palette's purpose-built container tints."
 
 Role mapping follows Material grammar, not face taxonomy: `primary' is
 the theme's IDENTITY accent — it lands on the hero chrome (FAB,
-buttons, switches), so it comes from the keyword face, where theme
-authors put their signature hue (purple in the stock theme, blue in
-doom-one, pink in dracula), and from modus's flagship blue.  The link
-face is deliberately NOT primary: links are blue in nearly every theme
+buttons, switches).  Under modus it is `accent-0', the palette's
+designated primary accent (so a derivative whose identity hue is green
+gets a green FAB, not a hardcoded blue one); otherwise it is the
+keyword face, where theme authors put their signature hue (purple in
+the stock theme, blue in doom-one, pink in dracula).  The link face is
+deliberately NOT primary: links are blue in nearly every theme
 regardless of its identity, which painted the hero chrome blue under
 themes that read as anything-but-blue.  `secondary' is the same hue
-muted (Material derives it from primary's hue, never a second
-competing accent); `tertiary' is the contrasting accent (constant
-face / modus cyan), mirroring Material's hue-shifted tertiary."
+muted (Material derives it from primary's hue, never a second competing
+accent — so we mute the resolved primary rather than reach for modus's
+`accent-1', which is a distinct hue); `tertiary' is the contrasting
+accent (`accent-2' / constant face), mirroring Material's hue-shifted
+tertiary.  `error' is modus's semantic `err' role, not raw `red', so the
+deuteranopia/tritanopia variants stay accessible."
   (let* ((modus (jetpacs-theme--modus-p))
          (bg (or (and modus (jetpacs-theme--modus 'bg-main))
                  (jetpacs-theme--face-color :background 'default)))
          (fg (or (and modus (jetpacs-theme--modus 'fg-main))
                  (jetpacs-theme--face-color :foreground 'default))))
     (when (and bg fg)
-      (let* ((primary (or (and modus (jetpacs-theme--modus 'blue))
+      (let* ((primary (or (and modus (jetpacs-theme--modus 'accent-0))
                           (jetpacs-theme--face-color
                            :foreground 'font-lock-keyword-face 'link
                            'font-lock-function-name-face)
                           fg))
-             (secondary (or (and modus (jetpacs-theme--modus 'blue-faint))
-                            ;; Muted primary: sink it halfway into the
-                            ;; theme's mid-gray, like Material's
-                            ;; low-chroma secondary tonal palette.
-                            (jetpacs-theme--blend
+             ;; Muted primary: sink it halfway into the theme's mid-gray,
+             ;; like Material's low-chroma secondary tonal palette.  Same
+             ;; derivation for modus and non-modus — modus's `accent-1' is
+             ;; a competing hue, not a muted primary, so we don't use it.
+             (secondary (or (jetpacs-theme--blend
                              primary (jetpacs-theme--blend fg bg 0.5) 0.5)
                             primary))
-             (tertiary (or (and modus (jetpacs-theme--modus 'cyan))
+             (tertiary (or (and modus (jetpacs-theme--modus 'accent-2))
                            (jetpacs-theme--face-color
                             :foreground 'font-lock-constant-face)
                            secondary))
-             (err (or (and modus (jetpacs-theme--modus 'red))
+             (err (or (and modus (jetpacs-theme--modus 'err))
                       (jetpacs-theme--face-color :foreground 'error)
                       "#b3261e"))
-             ;; Container tone: modus ships purpose-built subtle tints
-             ;; (documented as legible under fg-main); otherwise sink the
-             ;; accent most of the way into the background.
-             (container (lambda (accent modus-key)
-                          (or (and modus (jetpacs-theme--modus modus-key))
-                              (jetpacs-theme--blend accent bg 0.22))))
+             ;; Container tone: sink each resolved accent most of the way
+             ;; into the background.  We blend rather than read modus's
+             ;; `bg-*-subtle' tints because those are keyed to a fixed hue
+             ;; (bg-blue-subtle only suits a blue accent), whereas blending
+             ;; the actual accent tracks any derivative or override.
+             (container (lambda (accent)
+                          (jetpacs-theme--blend accent bg 0.22)))
              (on-container (lambda (accent)
                              (if modus fg
                                (jetpacs-theme--blend accent fg 0.35)))))
         (jetpacs-theme--compact
          `((primary . ,primary)
            (on_primary . ,bg)
-           (primary_container . ,(funcall container primary 'bg-blue-subtle))
+           (primary_container . ,(funcall container primary))
            (on_primary_container . ,(funcall on-container primary))
            (secondary . ,secondary)
            (on_secondary . ,bg)
-           (secondary_container . ,(funcall container secondary 'bg-blue-nuanced))
+           (secondary_container . ,(funcall container secondary))
            (on_secondary_container . ,(funcall on-container secondary))
            (tertiary . ,tertiary)
            (on_tertiary . ,bg)
-           (tertiary_container . ,(funcall container tertiary 'bg-cyan-subtle))
+           (tertiary_container . ,(funcall container tertiary))
            (on_tertiary_container . ,(funcall on-container tertiary))
            (error . ,err)
            (on_error . ,bg)
-           (error_container . ,(funcall container err 'bg-red-subtle))
+           (error_container . ,(funcall container err))
            (on_error_container . ,(funcall on-container err))
            (background . ,bg)
            (on_background . ,fg)
@@ -219,6 +266,46 @@ face / modus cyan), mirroring Material's hue-shifted tertiary."
                            (jetpacs-theme--blend fg bg 0.5)))))))))
 
 (defun jetpacs-theme--syntax ()
+  "Editor token-color alist for the active theme.
+Keys mirror the companion's SyntaxColors; missing values are omitted and
+the companion keeps its static color for that token.  Under a modus-family
+theme we read the palette's semantic code roles (exact even in a batch/tty
+frame, where face specs do not realize, and accessible on the deuteranopia/
+tritanopia variants); otherwise we resolve font-lock and org faces."
+  (if (jetpacs-theme--modus-p)
+      (jetpacs-theme--syntax-modus)
+    (jetpacs-theme--syntax-faces)))
+
+(defun jetpacs-theme--syntax-modus ()
+  "Token colors from modus's semantic palette mappings.
+Headings walk `fg-heading-1'..`fg-heading-8' (modus offers more levels than
+font-lock outlines expose); nested parens borrow modus's `rainbow-N'
+mappings, its purpose-built rainbow-delimiter set (`rainbow-0' is `fg-main',
+skipped so parens stay tinted).  `number' has no modus role of its own, so
+it tracks `constant', as the face path also does."
+  (let ((heading (cl-loop for n from 1 to 8
+                          for hex = (jetpacs-theme--modus
+                                     (intern (format "fg-heading-%d" n)))
+                          when hex collect hex))
+        (paren (cl-loop for n from 1 to 8
+                        for hex = (jetpacs-theme--modus
+                                   (intern (format "rainbow-%d" n)))
+                        when hex collect hex)))
+    (jetpacs-theme--compact
+     `((comment . ,(jetpacs-theme--modus 'comment))
+       (string . ,(jetpacs-theme--modus 'string))
+       (keyword . ,(jetpacs-theme--modus 'keyword))
+       (function . ,(jetpacs-theme--modus 'fnname))
+       (constant . ,(jetpacs-theme--modus 'constant))
+       (number . ,(jetpacs-theme--modus 'constant))
+       (link . ,(jetpacs-theme--modus 'fg-link))
+       (meta . ,(jetpacs-theme--modus 'preprocessor))
+       (todo . ,(jetpacs-theme--modus 'prose-todo))
+       (done . ,(jetpacs-theme--modus 'prose-done))
+       (heading . ,(and heading (vconcat heading)))
+       (paren . ,(and paren (vconcat paren)))))))
+
+(defun jetpacs-theme--syntax-faces ()
   "Editor token-color alist from the theme's font-lock/org/outline faces.
 Keys mirror the companion's SyntaxColors; missing faces are simply
 omitted and the companion keeps its static color for that token."

@@ -3990,37 +3990,146 @@ garbage from a tty/batch session)."
                    (funcall real face attr frame inherit)))))
       (should-not (jetpacs-theme-payload)))))
 
+(defvar jetpacs-tests--modus5-p
+  (let ((dir (getenv "JETPACS_MODUS_DIR")))
+    (when (and dir (file-directory-p dir))
+      (add-to-list 'load-path dir)
+      (add-to-list 'custom-theme-load-path dir))
+    (ignore-errors (require 'modus-themes nil t))
+    (fboundp 'modus-themes-get-current-theme))
+  "Non-nil when the modus 5.0+ derivative API is loadable.
+Emacs's bundled modus (4.x on Emacs 30) has the palette accessor and the
+same semantic mappings but not the derivative registry that
+`modus-themes-get-current-theme' walks.  Point JETPACS_MODUS_DIR at a
+modus-themes >=5.0 checkout to exercise the derivative-detection tests.")
+
 (ert-deftest jetpacs-theme-modus-palette ()
-  "The modus path reads the palette API — exact in batch, where face specs
-don't even apply (min-colors) but the palette variables are plain data."
+  "The modus path reads the palette's SEMANTIC roles — exact in batch, where
+face specs don't even apply (min-colors) but the palette is plain data.
+Reading roles (`accent-0', `err', `prose-todo') rather than raw hues is what
+keeps the mirror faithful across derivatives and the color-vision variants.
+Holds on both the bundled modus 4.x and a 5.0+ checkout."
   (skip-unless (memq 'modus-vivendi (custom-available-themes)))
   (unwind-protect
       (progn
         (load-theme 'modus-vivendi t)
         (should (jetpacs-theme--modus-p))
         (let* ((payload (jetpacs-theme-payload))
-               (colors (alist-get 'colors payload)))
+               (colors (alist-get 'colors payload))
+               (syntax (alist-get 'syntax payload)))
           (should (eq (alist-get 'dark payload) t))
           (should (equal (alist-get 'background colors)
                          (jetpacs-theme--modus 'bg-main)))
+          ;; Primary is the palette's designated identity accent, not raw blue.
           (should (equal (alist-get 'primary colors)
-                         (jetpacs-theme--modus 'blue)))
+                         (jetpacs-theme--modus 'accent-0)))
+          ;; Tertiary is the contrasting accent.
+          (should (equal (alist-get 'tertiary colors)
+                         (jetpacs-theme--modus 'accent-2)))
+          ;; Error is the semantic role, not raw red (accessibility variants
+          ;; remap `err' away from red — see -deuteranopia test below).
           (should (equal (alist-get 'error colors)
-                         (jetpacs-theme--modus 'red)))
-          ;; Secondary stays in the identity hue, muted (modus blue-faint).
-          (should (equal (alist-get 'secondary colors)
-                         (jetpacs-theme--modus 'blue-faint)))
-          ;; Container roles take the palette's purpose-built subtle tints.
-          (should (equal (alist-get 'primary_container colors)
-                         (jetpacs-theme--modus 'bg-blue-subtle)))
-          (should (equal (alist-get 'secondary_container colors)
-                         (jetpacs-theme--modus 'bg-blue-nuanced)))
+                         (jetpacs-theme--modus 'err)))
+          ;; Secondary is a muted derivation of primary, not a second hue.
+          (should (alist-get 'secondary colors))
+          (should-not (equal (alist-get 'secondary colors)
+                             (alist-get 'primary colors)))
+          ;; Containers are derived blends: present, and not the raw accent.
+          (should (alist-get 'primary_container colors))
+          (should-not (equal (alist-get 'primary_container colors)
+                             (alist-get 'primary colors)))
+          (should (equal (alist-get 'surface_variant colors)
+                         (jetpacs-theme--modus 'bg-dim)))
+          (should (equal (alist-get 'outline colors)
+                         (jetpacs-theme--modus 'border)))
           (should (equal (alist-get 'on_primary_container colors)
                          (jetpacs-theme--modus 'fg-main)))
+          ;; Syntax reads semantic code roles too (exact in batch).
+          (should (equal (alist-get 'keyword syntax)
+                         (jetpacs-theme--modus 'keyword)))
+          (should (equal (alist-get 'function syntax)
+                         (jetpacs-theme--modus 'fnname)))
+          (should (equal (alist-get 'todo syntax)
+                         (jetpacs-theme--modus 'prose-todo)))
+          (should (equal (alist-get 'done syntax)
+                         (jetpacs-theme--modus 'prose-done)))
           (should (stringp (json-serialize payload
                                            :null-object :null
                                            :false-object :false)))))
     (disable-theme 'modus-vivendi)))
+
+(ert-deftest jetpacs-theme-modus-error-is-accessible ()
+  "`error' tracks the semantic `err' role, so a deuteranopia-optimized modus
+theme — which must not signal errors with red — does NOT mirror as raw red.
+This is the whole point of reading roles instead of hues."
+  (skip-unless (memq 'modus-vivendi-deuteranopia (custom-available-themes)))
+  (unwind-protect
+      (progn
+        (load-theme 'modus-vivendi-deuteranopia t)
+        (should (jetpacs-theme--modus-p))
+        (let ((colors (alist-get 'colors (jetpacs-theme-payload))))
+          (should (equal (alist-get 'error colors) (jetpacs-theme--modus 'err)))
+          ;; The accessible `err' is not the palette's raw red.
+          (should-not (equal (jetpacs-theme--modus 'err)
+                             (jetpacs-theme--modus 'red)))))
+    (disable-theme 'modus-vivendi-deuteranopia)))
+
+(ert-deftest jetpacs-theme-modus-respects-overrides ()
+  "The palette is read WITH overrides, so a user's palette override (here a
+recolored identity accent) is mirrored onto the companion's primary role."
+  (skip-unless (memq 'modus-vivendi (custom-available-themes)))
+  (let ((modus-themes-common-palette-overrides '((accent-0 "#123456"))))
+    (unwind-protect
+        (progn
+          (load-theme 'modus-vivendi t)
+          (should (equal (alist-get 'primary
+                                    (alist-get 'colors (jetpacs-theme-payload)))
+                         "#123456")))
+      (disable-theme 'modus-vivendi))))
+
+(ert-deftest jetpacs-theme-modus-derivative-detected ()
+  "A theme BUILT ON modus (modus 5.0's derivative API) is detected as
+modus-family through its `:modus-core-palette' property — not a `modus-'
+name prefix, which every derivative would fail — and its own identity accent
+is mirrored.  This is the cross-theme compatibility guarantee: the ef-themes,
+standard-themes, and third-party skins all ride this same path."
+  (skip-unless jetpacs-tests--modus5-p)
+  (let* ((dir (make-temp-file "jetpacs-modus-deriv" t))
+         (file (expand-file-name "jetpacs-testderiv-theme.el" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert (prin1-to-string
+                     '(progn
+                        (require 'modus-themes)
+                        (defvar jetpacs-testderiv-palette
+                          (append '((bg-main "#0a0a12")
+                                    (fg-main "#e6e6ea")
+                                    (green-lush "#3fbf6f")
+                                    (accent-0 green-lush))
+                                  modus-themes-vivendi-palette))
+                        (defvar jetpacs-testderiv-palette-user nil)
+                        (defvar jetpacs-testderiv-palette-overrides nil)
+                        (modus-themes-theme
+                         'jetpacs-testderiv 'jetpacs-test-derivatives
+                         "Test derivative with a green identity accent." 'dark
+                         'jetpacs-testderiv-palette
+                         'jetpacs-testderiv-palette-user
+                         'jetpacs-testderiv-palette-overrides)
+                        (provide-theme 'jetpacs-testderiv)))))
+          (add-to-list 'custom-theme-load-path dir)
+          (load-theme 'jetpacs-testderiv t)
+          ;; The derivative's name has no `modus-' prefix, yet it is detected.
+          (should (eq (jetpacs-theme--modus-theme) 'jetpacs-testderiv))
+          (should (jetpacs-theme--modus-p))
+          (let ((colors (alist-get 'colors (jetpacs-theme-payload))))
+            ;; Its own identity accent lands on primary, not a stock blue.
+            (should (equal (alist-get 'primary colors) "#3fbf6f"))
+            ;; Its own surface, not the base modus one.
+            (should (equal (alist-get 'surface colors) "#0a0a12"))))
+      (when (custom-theme-enabled-p 'jetpacs-testderiv)
+        (disable-theme 'jetpacs-testderiv))
+      (delete-directory dir t))))
 
 ;; ─── Stock settings screen ──────────────────────────────────────────────────
 

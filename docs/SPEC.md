@@ -296,7 +296,14 @@ keeps the client's look while the client is away); `colors: null` clears
 the mirror and the persisted palette. The reference client extracts the
 palette from the running Emacs theme (`jetpacs-theme.el`, opt-in via
 `jetpacs-theme-sync`), leaning on the modus-themes palette API when a
-modus theme is active and on resolved face attributes otherwise.
+modus-family theme is active and on resolved face attributes otherwise.
+"modus-family" is detected through `modus-themes-get-current-theme`, so it
+covers not just the `modus-*` originals but anything built on the modus 5.0
+derivative API (the ef-themes, standard-themes, third-party skins); the
+client reads that theme's *semantic* palette roles (`accent-0`, `err`,
+`prose-todo`, `fg-heading-N`, …) with the user's palette overrides applied,
+which keeps the mirror faithful across derivatives and the deuteranopia/
+tritanopia color-vision variants.
 
 The minibuffer bridge rides on dialogs: when a client action handler hits
 a prompting call (`y-or-n-p`, `completing-read`, `read-passwd`,

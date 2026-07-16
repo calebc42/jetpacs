@@ -710,7 +710,9 @@ class TriggerHost(private val context: Context) {
             else -> value
         }
 
-        private val PLACEHOLDER = Regex("""\$\{(id|type|data\.([A-Za-z0-9_]+))}""")
+        // The closing brace MUST stay escaped: Android's ICU regex engine
+        // rejects a bare `}` (host JVM accepts it, so unit tests can't catch it).
+        private val PLACEHOLDER = Regex("""\$\{(id|type|data\.([A-Za-z0-9_]+))\}""")
 
         private const val NOTIFY_CHANNEL = "jetpacs_automations"
 

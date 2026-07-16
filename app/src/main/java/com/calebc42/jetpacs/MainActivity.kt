@@ -126,6 +126,11 @@ class MainActivity : ComponentActivity() {
         // Relaunching from recents redelivers the original intent — that is a
         // "reopen the app" gesture, not a fresh row tap; don't re-navigate.
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        // This activity is exported (it's the launcher activity), so any app
+        // can hand it a forged action extra; only fire actions this app
+        // composed (the JetpacsLaunch token contract). Forged or pre-token
+        // intents still open the app — they just don't act.
+        if (!JetpacsLaunch.verifyToken(this, intent)) return
         sendBroadcast(Intent(this, ActionReceiver::class.java).apply {
             action = ActionReceiver.ACTION_TAP
             putExtra(ActionReceiver.EXTRA_SURFACE, JetpacsWidgetProvider.SURFACE)

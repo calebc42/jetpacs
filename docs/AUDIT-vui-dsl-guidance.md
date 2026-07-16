@@ -246,14 +246,25 @@ the *why* so they aren't re-proposed:
   mount/unmount event in a pure-rebuild model. The nearest real needs —
   "run a load once" and "tear down on app unregister" — are served by
   B1's start-once semantics and `jetpacs-app-unregister`.
-- **Emacs-side reconciliation + cursor preservation.** The companion
-  reconciles; C1 gives it the keys to do so correctly. Duplicating a
-  diff in Emacs is wasted work.
+- **Emacs-side *state* reconciliation + cursor preservation.** The
+  companion reconciles; C1 gives it the keys to do so correctly.
+  Duplicating that diff in Emacs is wasted work. **Scope note
+  (2026-07-16,
+  [AUDIT-architecture-vui-vulpea.md](AUDIT-architecture-vui-vulpea.md)):**
+  this rejection covers *state* reconciliation only. Comparing
+  successive trees in Emacs to shrink the *wire payload* (C2 delta
+  frames, background build reuse) is not duplicated work — Compose
+  cannot diff what hasn't crossed the wire — and stays a
+  measurement-gated roadmap item there, not a Tier-D rejection.
 - **`vui-defcontext` provider/consumer.** Elisp dynamic variables
   (`defvar` + `let`) already *are* context — a deeply nested builder
   can read a `let`-bound dynamic var with zero new machinery. Adopt the
   *pattern* (document "bind a dynamic var to thread config/theme/owner
-  through a builder tree"); do **not** add a context API.
+  through a builder tree"); do **not** add a context API. **Caveat:**
+  the dynamic binding only spans the synchronous build pass — it is
+  gone by the time a `jetpacs-async` loader's resolve callback or a
+  timer fires, so loaders must capture what they need lexically (the
+  problem vui's `vui-with-async-context` exists to solve).
 - **A `jetpacs-defcomponent` macro.** Without instances or lifecycle it
   would only add prop-validation sugar over a plain `defun` (which is
   already how composites are written). Not worth the concept.

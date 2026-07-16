@@ -541,35 +541,38 @@ yank the user off whatever they're looking at."
     (unless (equal tab jetpacs-shell--current-tab)
       (run-hook-with-args 'jetpacs-shell-view-switched-hook tab))
     (setq jetpacs-shell--current-tab tab))
-  (condition-case err
-      (let* ((active (jetpacs-shell--active-view))
-             (target (or switch-to tab))
-             ;; A navigation push lands the user on TARGET, so feedback
-             ;; (e.g. "Saved init.el") must attach there, not to the view
-             ;; they're leaving.
-             (snack-view (or target active))
-             (snackbar (prog1 jetpacs-shell--snackbar
-                         (setq jetpacs-shell--snackbar nil)))
-             (views (mapcar
-                     (lambda (entry)
-                       (let ((name (car entry)))
-                         (cons (intern name)
-                               (jetpacs-shell--build-view
-                                name (cdr entry)
-                                (when (equal name snack-view)
-                                  snackbar)))))
-                     (jetpacs-shell--visible-views))))
-        (jetpacs-surface-push
-         jetpacs-shell-surface-id
-         `((views . ,views)
-           (initial_view . ,active))
-         nil nil
-         ;; Force the companion onto a view only when this push *is* a
-         ;; navigation — see SWITCH-TO above.
-         target)
-        (run-hooks 'jetpacs-shell-after-push-hook))
-    (error
-     (message "Jetpacs shell push failed: %s" (error-message-string err)))))
+  (let ((snackbar (prog1 jetpacs-shell--snackbar
+                    (setq jetpacs-shell--snackbar nil))))
+    (condition-case err
+        (let* ((active (jetpacs-shell--active-view))
+               (target (or switch-to tab))
+               ;; A navigation push lands the user on TARGET, so feedback
+               ;; (e.g. "Saved init.el") must attach there, not to the view
+               ;; they're leaving.
+               (snack-view (or target active))
+               (views (mapcar
+                       (lambda (entry)
+                         (let ((name (car entry)))
+                           (cons (intern name)
+                                 (jetpacs-shell--build-view
+                                  name (cdr entry)
+                                  (when (equal name snack-view)
+                                    snackbar)))))
+                       (jetpacs-shell--visible-views))))
+          (jetpacs-surface-push
+           jetpacs-shell-surface-id
+           `((views . ,views)
+             (initial_view . ,active))
+           nil nil
+           ;; Force the companion onto a view only when this push *is* a
+           ;; navigation — see SWITCH-TO above.
+           target)
+          (run-hooks 'jetpacs-shell-after-push-hook))
+      (error
+       ;; A failed push showed nothing: requeue the snackbar for the next
+       ;; one (unless something queued fresher feedback meanwhile).
+       (setq jetpacs-shell--snackbar (or jetpacs-shell--snackbar snackbar))
+       (message "Jetpacs shell push failed: %s" (error-message-string err))))))
 
 (defun jetpacs-shell-refresh (&rest _)
   "Bypass app caches (via `jetpacs-shell-refresh-hook') and push.

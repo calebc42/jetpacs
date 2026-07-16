@@ -798,6 +798,87 @@ optional \"HH:MM\" rendered in a second card below the date. MONTH-INDEX
 ;; no `t' to the vocabulary, so the reference companion renders them with no
 ;; change.  Grocy hand-wrote every one of these; these erase that boilerplate.
 
+;; ─── Semantic text (A1) ──────────────────────────────────────────────────────
+;;
+;; Intent-level text shorthands: `jetpacs-error' reads better than `jetpacs-text
+;; ... :color "error"' and puts the theme decision (which color *is* muted, what
+;; a heading *is*) in one place instead of re-derived per screen.  Each is a
+;; pure function returning an existing `text'/`rich_text' node — no new wire
+;; node, no companion support needed — except the `success'/`warning' colors:
+;; those tokens land in the renderer's `resolveColor' separately (plan K0); a
+;; companion predating them falls through to the ambient text color, so the
+;; text still renders (just untinted).  See docs/PLAN-dsl-ergonomics.md (A1).
+
+(cl-defun jetpacs-heading (text &key (level 1) padding)
+  "A heading showing TEXT at LEVEL (1 → title, 2 → headline, ≥3 → body).
+PADDING is the surrounding inset (dp).  A thin wrapper over `jetpacs-text'
+that names the intent instead of re-picking a style at every call site."
+  (jetpacs-text text
+                :style (pcase level (1 'title) (2 'headline) (_ 'body))
+                :padding padding))
+
+(cl-defun jetpacs-muted (text &key (style 'caption) padding)
+  "De-emphasized TEXT tinted `on_surface_variant' (the muted theme color).
+STYLE is the text style (default `caption'); PADDING the inset (dp)."
+  (jetpacs-text text :style style :color "on_surface_variant" :padding padding))
+
+(cl-defun jetpacs-error (text &key padding)
+  "TEXT in the theme error color.  PADDING is the inset (dp)."
+  (jetpacs-text text :color "error" :padding padding))
+
+(cl-defun jetpacs-warning (text &key padding)
+  "TEXT in the theme warning color (amber).  PADDING is the inset (dp).
+Uses the additive `warning' color token (renderer K0): a companion predating
+it resolves `warning' to the ambient text color, so the text still shows —
+just untinted.  No `jetpacs-node-supported-p' gate is needed."
+  (jetpacs-text text :color "warning" :padding padding))
+
+(cl-defun jetpacs-success (text &key padding)
+  "TEXT in the theme success color (green).  PADDING is the inset (dp).
+Uses the additive `success' color token (renderer K0); see `jetpacs-warning'
+for the older-companion fallback."
+  (jetpacs-text text :color "success" :padding padding))
+
+(cl-defun jetpacs-strong (text &key padding)
+  "Bold TEXT — a one-span `rich_text', since plain `text' carries no weight.
+PADDING is the inset (dp)."
+  (jetpacs-rich-text (list (jetpacs-span text :bold t)) :padding padding))
+
+(cl-defun jetpacs-code (text &key padding)
+  "Inline monospace/code TEXT — a one-span `rich_text'.
+PADDING is the inset (dp).  For a multi-line code block use `jetpacs-markup'
+with :syntax; this is the inline `verbatim'/`~code~' run."
+  (jetpacs-rich-text (list (jetpacs-span text :code t)) :padding padding))
+
+;; ─── Sub-tree error boundary (A2) ────────────────────────────────────────────
+
+(defmacro jetpacs-try (body &rest keys)
+  "Evaluate BODY (a node-producing form); on error return a fallback node.
+A builder that signals blanks the whole view — one throwing card takes down
+the dashboard.  Wrapping the card in `jetpacs-try' contains the failure to
+that subtree: siblings still render, and the throw becomes a local fallback
+node instead of an empty surface.
+
+KEYS: :fallback FN — a function of the error object returning a node
+      (default: a muted `jetpacs-empty-state' captioned with the error).
+The error is always logged to *Messages* first, so it is never swallowed
+silently.  This is a macro that merely *chooses* which node to emit, so it
+adds nothing to the wire and needs no companion support; it pairs with the
+renderer's defensive rendering (plan K2), which stops a malformed *node*
+from blanking the surface the same way this stops a malformed *builder*.
+See docs/PLAN-dsl-ergonomics.md (A2)."
+  (declare (indent 1))
+  (let ((fb (plist-get keys :fallback)))
+    `(condition-case err
+         ,body
+       (error
+        (message "jetpacs-try: %s" (error-message-string err))
+        ,(if fb
+             `(funcall ,fb err)
+           `(jetpacs-empty-state
+             :title "Couldn't render"
+             :caption (error-message-string err)))))))
+
 (defun jetpacs--action-with-arg (action key value)
   "Return a copy of ACTION (an action alist) with (KEY . VALUE) set in its `args'.
 ACTION nil returns nil.  Used by the composites that bake a chosen value

@@ -242,6 +242,45 @@ no change. Reach for these before writing a row/column by hand.
   when *every* section is empty. Erases the `append`/`apply` +
   per-list empty-check plumbing.
 
+### Semantic text (since 1.19.0)
+
+Intent-named text shorthands — `jetpacs-error` reads better than
+`(jetpacs-text ... :color "error")` and puts the theme decision in one
+place. Each returns a plain `text`/`rich_text` node, so nothing changes
+on the wire.
+
+- **`(jetpacs-heading TEXT &key level padding)`** — a heading at `:level`
+  (`1` → `title`, `2` → `headline`, `≥3` → `body`).
+- **`(jetpacs-muted TEXT &key style padding)`** — de-emphasized text
+  tinted `on_surface_variant`; `:style` defaults to `caption`.
+- **`(jetpacs-error TEXT &key padding)`** — text in the theme error color.
+- **`(jetpacs-warning TEXT &key padding)`** / **`(jetpacs-success TEXT
+  &key padding)`** — the amber/green status colors. These emit the
+  `warning`/`success` color tokens; a companion whose `resolveColor`
+  predates them falls through to the ambient text color, so the text
+  still renders (just untinted).
+- **`(jetpacs-strong TEXT &key padding)`** / **`(jetpacs-code TEXT &key
+  padding)`** — bold / inline-monospace text as a one-span `rich_text`
+  (plain `text` carries no emphasis). For a multi-line code block use
+  `jetpacs-markup` with `:syntax`.
+
+- **`(jetpacs-try BODY &key fallback)`** *(a macro)* — a sub-tree error
+  boundary. A builder that signals blanks the whole view; wrap a
+  fragment in `jetpacs-try` and a throw becomes a local fallback node
+  while the siblings still render — the shape a dashboard of independent
+  cards wants. `:fallback` is a function of the error returning a node
+  (default: a `jetpacs-empty-state` captioned with the message); the
+  error is always logged to `*Messages*`, never swallowed. Pairs with
+  the renderer's defensive rendering, which contains a malformed *node*
+  the same way this contains a malformed *builder*.
+
+```elisp
+(jetpacs-column
+ (jetpacs-try (stat-cards data))
+ (jetpacs-try (chart-card data)
+   :fallback (lambda (e) (jetpacs-error (format "Chart failed: %s" e)))))
+```
+
 ## Buttons & inputs
 
 - **`(jetpacs-button LABEL ACTION &key icon variant weight padding)`**

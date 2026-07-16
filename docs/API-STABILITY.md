@@ -35,7 +35,10 @@ change signature incompatibly. Everything else is internal.
 > `1.18.0` is the conditions core (the `:when` state gate on
 > `jetpacs-trigger-register`, `jetpacs-device-state`, and
 > `jetpacs-lint-trigger` with its predicate-type vocabulary under
-> Validation below — SPEC §10–§11).
+> Validation below — SPEC §10–§11); `1.19.0` is the DSL-ergonomics
+> authoring batch (the semantic-text shorthands and the `jetpacs-try`
+> sub-tree error boundary below — pure composites/macros over existing
+> nodes, no wire change; docs/PLAN-dsl-ergonomics.md A1/A2).
 
 ## The two rules
 
@@ -89,7 +92,15 @@ Visualization: `jetpacs-chart` `jetpacs-chart-series` `jetpacs-canvas`
 
 Composites (since 1.13.0 — pure-elisp shapes over the primitives above,
 no new wire type): `jetpacs-stepper` `jetpacs-segmented` `jetpacs-stat`
-`jetpacs-kv` `jetpacs-sectioned-list`.
+`jetpacs-kv` `jetpacs-sectioned-list`. Since 1.19.0, semantic-text
+shorthands (intent-named wrappers over `jetpacs-text`/`jetpacs-rich-text`):
+`jetpacs-heading` `jetpacs-muted` `jetpacs-error` `jetpacs-warning`
+`jetpacs-success` `jetpacs-strong` `jetpacs-code` — and `jetpacs-try`, a
+macro wrapping a node-producing form so a builder throw becomes a local
+fallback node instead of blanking the view. (`jetpacs-warning`/
+`jetpacs-success` emit the `warning`/`success` color tokens; a companion
+predating them in `resolveColor` falls through to the ambient text color,
+so the text still renders untinted.)
 
 Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-item`
 `jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab` `jetpacs-snackbar-action`.

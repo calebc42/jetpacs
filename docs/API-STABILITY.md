@@ -45,7 +45,10 @@ change signature incompatibly. Everything else is internal.
 > change; docs/PLAN-dsl-ergonomics.md B1); `1.21.0` is the devtools
 > instrumentation batch (the live report, last-spec accessor, and reset
 > below — pure observation of existing seams, no wire change;
-> docs/AUDIT-architecture-vui-vulpea.md item 1.4).
+> docs/AUDIT-architecture-vui-vulpea.md item 1.4); `1.22.0` is the
+> explicit `:key` lazy-list identity on `jetpacs-row`/`jetpacs-card`/
+> `jetpacs-list-item` (an additive wire attr — SPEC §9, ebp
+> SPEC-CHANGES #12; companions that predate it key by id/position).
 
 ## The two rules
 
@@ -83,7 +86,10 @@ Layout: `jetpacs-row` `jetpacs-flow-row` `jetpacs-scroll-row` `jetpacs-column`
 (`row`/`column`/`flow-row` take trailing `:spacing`/`:align`/`:scroll`
 keywords; `box`/`surface`/`card` take
 `:width`/`:height`/`:fill-fraction`/`:border`; `card` takes
-`:swipe-start`/`:swipe-end`. Since 1.13.0, additively: `box`/`surface`/
+`:swipe-start`/`:swipe-end`. Since 1.22.0, `row`/`card`/`list-item`
+take `:key` — a stable string identity for the node as a `lazy_column`
+child, so structural pushes preserve its client-side state, scroll
+anchor, and animation. Since 1.13.0, additively: `box`/`surface`/
 `card` accept their children as a single list *or* `&rest` nodes (like
 `row`/`column`), and `jetpacs-text`'s options are positional *or*
 keyword.)

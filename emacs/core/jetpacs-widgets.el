@@ -134,8 +134,11 @@ renderer to preserve column alignment (dired, magit, tables, ascii)."
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"top\"/\"center\"/\"bottom\"),
 :scroll (pan sideways on overflow), :weight (this row's own flex share
-when it is itself a child of a `row'/`column'), and :fill (nil to wrap
-content instead of filling the parent width).
+when it is itself a child of a `row'/`column'), :fill (nil to wrap
+content instead of filling the parent width), and :key (a stable string
+identity for this row as a `lazy_column' child — reconciliation keeps
+its client-side state, scroll anchor, and animation across pushes that
+insert/remove/reorder rows; SPEC §9).
 
 Layout note: a `row'/`column' renders `fillMaxWidth', so an *unweighted* one
 placed inside a row fills it and pushes the later siblings off-screen.  Give
@@ -150,6 +153,7 @@ should size to its content (see WIDGETS.md)."
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
                 'weight (plist-get opts :weight)
+                'key (plist-get opts :key)
                 ;; Default is fill (renderer default); emit only the opt-out.
                 'fill (and (plist-member opts :fill)
                            (not (plist-get opts :fill)) :false))))
@@ -279,11 +283,16 @@ the size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
 full swipe fires the action and the card springs back (push the updated list
 in the handler).  They win over the legacy single-action :on-swipe.  Old
 companions render no gesture, so a swipe action must also be reachable by tap
-or menu.  :on-tap, :padding and :weight as named."
+or menu.  :on-tap, :padding and :weight as named.  :key gives the card a
+stable identity as a `lazy_column' child, so reconciliation preserves its
+client-side state, scroll anchor, and animation across pushes that
+insert/remove/reorder rows (SPEC §9; falls back to a stateful child's id,
+then position)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "card"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'on_tap (plist-get opts :on-tap)
                 'on_swipe (plist-get opts :on-swipe)
                 'swipe_start (plist-get opts :swipe-start)
@@ -307,7 +316,7 @@ revealed background (hex; defaults to a theme container color)."
               'color color))
 
 (cl-defun jetpacs-list-item (&key leading title subtitle overline trailing
-                                  on-tap swipe-start swipe-end padding
+                                  on-tap swipe-start swipe-end padding key
                                   (spacing 12))
   "An elevated list-item card with a flexible middle and pinned edges — the
 standard \"leading · title/subtitle · trailing\" list row, laid out so the
@@ -320,6 +329,9 @@ TRAILING is a single node, or a list of nodes, pinned at the end (a status
 badge, icon buttons) — each keeps its intrinsic width.
 ON-TAP makes the whole card tappable; SWIPE-START / SWIPE-END attach swipe
 actions; PADDING pads the card; SPACING is the gap between the row's parts.
+KEY rides the outer card as its stable `lazy_column' identity (see
+`jetpacs-card') — give every dynamic list row one (the org id, the file
+path) so reorders and inserts never smear state across rows.
 
 The middle column carries the flex weight, so the trailing children keep their
 width — the layout trap a bare `(jetpacs-row (jetpacs-column …) …)' falls into,
@@ -341,7 +353,8 @@ intrinsic-width leaf (a `jetpacs-text' badge, `jetpacs-icon-button') — a neste
     (jetpacs-card
      (list (apply #'jetpacs-row
                   (append children (list :align "center" :spacing spacing))))
-     :on-tap on-tap :swipe-start swipe-start :swipe-end swipe-end :padding padding)))
+     :on-tap on-tap :swipe-start swipe-start :swipe-end swipe-end
+     :padding padding :key key)))
 
 (cl-defun jetpacs-tab-item (label &key icon)
   "One tab in a `jetpacs-tabs' row: LABEL with an optional ICON above it."

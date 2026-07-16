@@ -1305,7 +1305,11 @@ the composer delete its own matcher."
      (jetpacs-warning "w")
      (jetpacs-success "s")
      (jetpacs-strong "b")
-     (jetpacs-code "c"))))
+     (jetpacs-code "c")
+     ;; :key — stable lazy-list reconciliation identity (SPEC §9, 1.22.0).
+     (jetpacs-row leaf :key "r1")
+     (jetpacs-card (list leaf) :key "k1")
+     (jetpacs-list-item :title "Keyed" :key "li1"))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -5723,6 +5727,26 @@ app; warn-and-arm-nothing when owner-unaware and a second app is present."
         (should (null sent))))))
 
 ;; ─── Devtools instrumentation (1.21.0) ──────────────────────────────────────
+
+;; ─── :key — lazy-list reconciliation identity (1.22.0) ──────────────────────
+
+(ert-deftest jetpacs-key-attr-emitted ()
+  "`:key' rides row/card and threads through `jetpacs-list-item' to its card."
+  (let ((leaf (jetpacs-text "x")))
+    (should (equal (alist-get 'key (jetpacs-row leaf :key "r")) "r"))
+    (should (equal (alist-get 'key (jetpacs-card (list leaf) :key "c")) "c"))
+    ;; The composite's OUTER card (the lazy_column child) carries the key.
+    (should (equal (alist-get 'key (jetpacs-list-item :title "t" :key "li"))
+                   "li"))
+    ;; Absent :key emits nothing — byte-identical to the pre-1.22.0 shape.
+    (should-not (assq 'key (jetpacs-row leaf)))))
+
+(ert-deftest jetpacs-key-attr-lints-clean ()
+  "`key' is a common node key: legal on any lazy_column child, no warning."
+  (let* ((keyed (append (jetpacs-box (list (jetpacs-text "x")))
+                        '((key . "b1"))))
+         (spec (jetpacs-lazy-column keyed)))
+    (should-not (jetpacs-lint-spec spec))))
 
 (ert-deftest jetpacs-devtools-build-recording ()
   "`jetpacs-shell--build-view' records wall clock + retains the spec."

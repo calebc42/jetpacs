@@ -113,11 +113,15 @@ Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
 must name one of these and carry every listed key.  `build-contract.el'
 derives the discriminated action schema in `ebp/contract.json' from this.")
 
-(defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style)
+(defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style key)
   "Keys legal on any node, attached after construction.
 `scroll_here' marks a lazy_column child as its scroll target
 \(`jetpacs-scroll-here', SPEC §9); `dialog_style' rides a dialog spec's
-root node (`jetpacs-send-dialog', SPEC §7).")
+root node (`jetpacs-send-dialog', SPEC §7); `key' is a lazy_column
+child's stable reconciliation identity — preferred over the child's
+`id', then position — so structural pushes preserve client-side state
+\(SPEC §9; the `:key' option on `jetpacs-row'/`jetpacs-card'/
+`jetpacs-list-item').")
 
 (defconst jetpacs-lint-node-schema
   ;; (TYPE REQUIRED-KEYS OPTIONAL-KEYS) — one row per entry of

@@ -22,8 +22,8 @@ import javax.crypto.spec.SecretKeySpec
  *
  *   hello → challenge{nonce_s} → response{nonce_c, mac} → welcome{server_proof}
  *
- *   mac          = HMAC(token, "jetpacs1:client:nonce_s:nonce_c")
- *   server_proof = HMAC(token, "jetpacs1:server:nonce_c:nonce_s")
+ *   mac          = HMAC(token, "ebp1:client:nonce_s:nonce_c")
+ *   server_proof = HMAC(token, "ebp1:server:nonce_c:nonce_s")
  */
 object JetpacsAuth {
     private const val PREFS = "jetpacs"

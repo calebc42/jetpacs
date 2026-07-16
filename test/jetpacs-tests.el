@@ -625,13 +625,13 @@ the buffer alive (it may be the user's, and it keeps the server warm)."
         (should (equal (alist-get 'mac resp)
                        (jetpacs--hmac-sha256-hex
                         jetpacs-auth-token
-                        (format "jetpacs1:client:deadbeef:%s" cnonce))))
+                        (format "ebp1:client:deadbeef:%s" cnonce))))
         ;; A welcome carrying the matching server proof verifies…
         (should (jetpacs--auth-verify-welcome
                  `((server_proof
                     . ,(jetpacs--hmac-sha256-hex
                         jetpacs-auth-token
-                        (format "jetpacs1:server:%s:deadbeef" cnonce))))))
+                        (format "ebp1:server:%s:deadbeef" cnonce))))))
         ;; …a wrong or missing proof is refused (fail closed)…
         (should-not (jetpacs--auth-verify-welcome '((server_proof . "bogus"))))
         (should-not (jetpacs--auth-verify-welcome '((protocol . 1))))))

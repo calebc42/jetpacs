@@ -232,7 +232,7 @@ welcome is accepted (the legacy path — the companion won't send one anyway)."
                  `((nonce . ,jetpacs--auth-client-nonce)
                    (mac . ,(jetpacs--hmac-sha256-hex
                             jetpacs-auth-token
-                            (format "jetpacs1:client:%s:%s"
+                            (format "ebp1:client:%s:%s"
                                     snonce jetpacs--auth-client-nonce)))))))))
 
 (defun jetpacs--auth-verify-welcome (payload)
@@ -246,7 +246,7 @@ the port — is refused.  With no token configured, any welcome passes
            (equal (alist-get 'server_proof payload)
                   (jetpacs--hmac-sha256-hex
                    jetpacs-auth-token
-                   (format "jetpacs1:server:%s:%s"
+                   (format "ebp1:server:%s:%s"
                            jetpacs--auth-client-nonce
                            jetpacs--auth-server-nonce))))))
 

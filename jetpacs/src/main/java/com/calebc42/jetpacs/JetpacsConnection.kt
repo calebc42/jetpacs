@@ -244,7 +244,7 @@ class JetpacsConnection(
             return
         }
         val token = JetpacsAuth.token(context)
-        val expected = JetpacsAuth.hmacHex(token, "jetpacs1:client:$serverNonce:$clientNonce")
+        val expected = JetpacsAuth.hmacHex(token, "ebp1:client:$serverNonce:$clientNonce")
         if (clientNonce.isEmpty() || !JetpacsAuth.macEquals(mac, expected)) {
             Log.w(TAG, "Pairing failed: bad client MAC")
             send(error(frame.id, "auth-failed",
@@ -268,7 +268,7 @@ class JetpacsConnection(
                 // The mutual half: prove WE hold the token too, so Emacs can
                 // refuse a rogue app that squatted the port before we bound it.
                 put("server_proof",
-                    JetpacsAuth.hmacHex(token, "jetpacs1:server:$clientNonce:$serverNonce"))
+                    JetpacsAuth.hmacHex(token, "ebp1:server:$clientNonce:$serverNonce"))
                 put("granted", JSONArray(granted))
                 // The node-vocabulary catalog (SPEC §3, §9): every widget
                 // node this build can render. Always present (rendering

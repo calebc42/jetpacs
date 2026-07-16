@@ -55,7 +55,11 @@ change signature incompatibly. Everything else is internal.
 > the descriptor, companion-opaque), `jetpacs-additive` (the badge's
 > self-describing degrade, generalized), `jetpacs-action-with-arg`
 > (promoted from `--`), and `jetpacs-test-reset-state` (the public
-> test-fixture seam replacing let-bound internals).
+> test-fixture seam replacing let-bound internals); `1.25.0` is the
+> command-visibility vocabulary (`jetpacs-command-visible-p`,
+> `jetpacs-suppressed-commands`, and the `jetpacs-unsupported` symbol
+> property under Command visibility below — the device M-x picker's
+> completion predicate; pure elisp, no wire change).
 
 ## The two rules
 
@@ -157,6 +161,18 @@ positive knowledge, since a version floor is not a build guarantee) and
 `jetpacs-feature-p`. A reporting surface only: nothing in the core gates
 on it, and consumers keep feature-local guards (e.g.
 `(sqlite-available-p)`) at the point of consumption.
+
+### Command visibility (`jetpacs-commands.el`, since 1.25.0)
+
+`jetpacs-command-visible-p` (should this command be offered on the
+device? — the device M-x picker's `completing-read` predicate),
+`jetpacs-suppressed-commands` (the customization var: symbols and
+name regexps to hide), and the `'jetpacs-unsupported` symbol property
+(the definition-site channel — `(put 'my-cmd 'jetpacs-unsupported t)`
+marks a command not-for-mobile without touching the user's list).
+UX-level suggestion filtering only, applied server-side before
+candidates ship; the dispatch boundary remains the SPEC §5 allowlist,
+and the Eval tab remains the escape hatch.
 
 ### Actions & state (`jetpacs-surfaces.el`)
 

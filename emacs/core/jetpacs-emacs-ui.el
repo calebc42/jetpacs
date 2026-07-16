@@ -12,6 +12,7 @@
 ;;; Code:
 
 (require 'jetpacs)
+(require 'jetpacs-commands)
 (require 'jetpacs-surfaces)
 (require 'jetpacs-widgets)
 (require 'jetpacs-buffer)
@@ -516,10 +517,14 @@ by a long history — the layout bug the old plain-column version had."
 ;; bridge turns into a live-filtering (vertico-style) picker dialog. The
 ;; chosen command is then run with `call-interactively' (its own prompts,
 ;; if any, are bridged too). Result lands in the Eval tab's history.
+;; Candidates pass `jetpacs-command-visible-p', so mobile-nonsensical
+;; commands (`jetpacs-suppressed-commands' and the `jetpacs-unsupported'
+;; property) never reach the device; the Eval tab is the escape hatch.
 (jetpacs-defaction "emacs.mx.show"
   (lambda (_ _)
     (let ((cmd-name (condition-case nil
-                        (completing-read "M-x " obarray #'commandp t)
+                        (completing-read "M-x " obarray
+                                         #'jetpacs-command-visible-p t)
                       (quit nil))))
       (when (and (stringp cmd-name) (not (string-empty-p cmd-name)))
         (let ((cmd (intern-soft cmd-name)))

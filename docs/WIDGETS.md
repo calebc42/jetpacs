@@ -43,7 +43,8 @@ NODE ignores it and an older one renders the fallback via the
 unknown-node path — the self-describing degrade `badge` ships with,
 generalized. No `jetpacs-node-supported-p` gate needed; one push serves
 both. (`tabs` is the exception — its children are its pages — so it
-keeps the explicit gate.)
+keeps the explicit gate; passing a tabs node to `jetpacs-additive`
+signals an error rather than silently discarding the pages.)
 
 ## Conventions shared across constructors
 
@@ -101,7 +102,9 @@ handler registered with `jetpacs-defaction`
   of the same key in the offline queue. `:confirm` (since 1.23.0) is a
   prompt string shown as a native yes/no dialog before the handler runs
   — a declarative guard for destructive taps; declining is a clean
-  no-op. **The undo convention:** prefer a snackbar undo
+  no-op. The prompt resolves client-side, indexed by action name + args
+  when the descriptor is built — the companion never echoes `confirm`
+  (SPEC §5) — so it also gates offline taps at replay. **The undo convention:** prefer a snackbar undo
   (`jetpacs-snackbar-action` on the next push) for anything cheap to
   restore, and reserve `:confirm` for what an undo can't bring back —
   a confirm interrupts every tap, an undo costs only the mistaken one.

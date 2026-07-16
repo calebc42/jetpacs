@@ -281,7 +281,14 @@ drive.  `disabled-command-function' is nil'd so a novice.el disabled
 command runs instead of raw-reading a confirmation char (another hang)."
   (let* ((action  (alist-get 'action payload))
          (args    (alist-get 'args payload))
-         (confirm (alist-get 'confirm payload))
+         ;; The prompt resolves client-side: `jetpacs-action' indexed it by
+         ;; name + args when the descriptor was built, because the
+         ;; companion treats `confirm' as opaque and never echoes it in
+         ;; `event.action' (SPEC §5).  A payload-carried prompt (a future
+         ;; companion, or a descriptor fed back directly) still gates
+         ;; when the index has nothing.
+         (confirm (or (jetpacs--confirm-for action args)
+                      (alist-get 'confirm payload)))
          (fn      (gethash action jetpacs-action-handlers)))
     (if fn
         (progn
@@ -429,16 +436,36 @@ The rotation empties the on-device widgets."
 (defun jetpacs-test-reset-state ()
   "Reset all per-session UI/session state — the test-fixture seam.
 Clears the ui-state store, the state-change subscriptions, the form
-registry, and (when the shell is loaded) the route params, so an ERT
-fixture gets a pristine session without binding internals.  Public since
-1.23.0 — a Tier 1 test suite that let-binds `jetpacs--ui-state' and
-friends is the bug report this answers.  Never called by the core at
+registry, and the last-action timestamp; when the module is loaded, also
+the shell's route params, current tab, and pending snackbar, the async
+cache and its pending push timer (`jetpacs-async-reset'), the source
+memo cache (`jetpacs-source-invalidate'), and the devtools recording
+\(`jetpacs-devtools-reset') — so an ERT fixture gets a pristine session
+without binding internals.  Public since 1.23.0 — a Tier 1 test suite
+that let-binds `jetpacs--ui-state' and friends is the bug report this
+answers; scope completed in 1.24.0.  Never called by the core at
 runtime; a live session's state is owned by the connection lifecycle."
   (clrhash jetpacs--ui-state)
   (clrhash jetpacs--state-handlers)
   (clrhash jetpacs--forms)
+  ;; The confirm-prompt index re-populates as descriptors are rebuilt; a
+  ;; stale entry would gate another test's same-named action.
+  (clrhash jetpacs--confirm-index)
+  ;; 0 = the load-time "no recent action" state; a stale stamp keeps
+  ;; `jetpacs-witheditor--phone-initiated-p' true for its whole window.
+  (setq jetpacs--last-action-time 0)
   (when (boundp 'jetpacs-shell--route-params)
-    (clrhash jetpacs-shell--route-params)))
+    (clrhash jetpacs-shell--route-params))
+  (when (boundp 'jetpacs-shell--current-tab)
+    (setq jetpacs-shell--current-tab nil))
+  (when (boundp 'jetpacs-shell--snackbar)
+    (setq jetpacs-shell--snackbar nil))
+  (when (fboundp 'jetpacs-async-reset)
+    (jetpacs-async-reset))
+  (when (fboundp 'jetpacs-source-invalidate)
+    (jetpacs-source-invalidate))
+  (when (fboundp 'jetpacs-devtools-reset)
+    (jetpacs-devtools-reset)))
 
 (defun jetpacs--forms-of-owner (owner)
   "The registered forms owned by OWNER."

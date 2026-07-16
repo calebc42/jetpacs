@@ -66,7 +66,8 @@ text-reply sub-object `{hint?, key?}'.")
 carries the payload keys its kind requires (`jetpacs-lint-action-builtins').
 `confirm' (since 1.23.0) is a prompt string the Emacs dispatch gate shows
 as a native yes/no dialog before running the handler — companion-opaque
-\(round-tripped, never interpreted on-device).")
+and never echoed in `event.action' (SPEC §5): the client resolves the
+prompt from the index `jetpacs-action' builds, not from the wire.")
 
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
@@ -352,7 +353,16 @@ recursion, not here."
       (when (and wo (not (member wo jetpacs-lint--when-offline-values)))
         (funcall report path (format "invalid when_offline: %S" wo)))
       (when (and args-cell (cdr args-cell) (not (jetpacs-lint--alist-p (cdr args-cell))))
-        (funcall report path "action `args' must be an object")))))
+        (funcall report path "action `args' must be an object"))
+      ;; The dispatch gate only prompts for a non-empty string — any other
+      ;; `confirm' value would ship and then silently never gate, the worst
+      ;; failure mode for a field whose whole job is guarding destruction.
+      (let ((confirm (cdr (assq 'confirm val))))
+        (when (and confirm
+                   (or (not (stringp confirm)) (string-empty-p confirm)))
+          (funcall report path
+                   (format "action `confirm' must be a non-empty string: %S"
+                           confirm)))))))
 
 (defun jetpacs-lint--check-color (key val path report)
   "Validate color attribute KEY=VAL at PATH via REPORT."
@@ -476,6 +486,23 @@ exempt."
                            (alist-get 't child))))
         (setq i (1+ i))))))
 
+(defun jetpacs-lint--check-child-keys (node type path report)
+  "Warn when a child of NODE (of TYPE) carries `key' outside a `lazy_column'.
+`key' is a lazy_column child's reconciliation identity (SPEC §9); on any
+other parent's child the companion never reads it — dead weight that
+usually means the author keyed the wrong level of the tree.  A warning,
+not an error: the wire shape stays legal (`key' is a common node key)."
+  (unless (equal type "lazy_column")
+    (let ((i 0))
+      (dolist (child (append (alist-get 'children node) nil))
+        (when (and (jetpacs-lint--alist-p child) (assq 'key child))
+          (funcall report (cons i (cons 'children path))
+                   (format (concat "warning: `key' on a child of %s is inert — "
+                                   "reconciliation identity is read only on "
+                                   "`lazy_column' children (SPEC §9)")
+                           type)))
+        (setq i (1+ i))))))
+
 (defun jetpacs-lint--walk (node path report)
   "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
   (when (assq 't node)
@@ -484,7 +511,8 @@ exempt."
           (funcall report path (format "unknown or invalid node type: %S" type))
         (jetpacs-lint--check-schema node type path report)
         (when (equal type "row")
-          (jetpacs-lint--check-row-layout node path report)))))
+          (jetpacs-lint--check-row-layout node path report))
+        (jetpacs-lint--check-child-keys node type path report))))
   (dolist (pair node)
     (let* ((key (car pair)) (val (cdr pair)) (kpath (cons key path)))
       (cond

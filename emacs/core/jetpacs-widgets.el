@@ -180,8 +180,10 @@ ignored — a scrolling row has no bounded width to distribute."
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
 :scroll (make the column scroll vertically), :weight (this column's own
-flex share when it is a child of a `row'/`column'), and :fill (nil to wrap
-content instead of filling the parent width).
+flex share when it is a child of a `row'/`column'), :fill (nil to wrap
+content instead of filling the parent width), and :key (a stable string
+identity for this column as a `lazy_column' child — see `jetpacs-row';
+SPEC §9).
 
 Layout note: a `column' renders `fillMaxWidth', so an *unweighted* one placed
 inside a row fills it and pushes the later siblings off-screen — give it
@@ -195,6 +197,7 @@ inside a row fills it and pushes the later siblings off-screen — give it
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
                 'weight (plist-get opts :weight)
+                'key (plist-get opts :key)
                 'fill (and (plist-member opts :fill)
                            (not (plist-get opts :fill)) :false))))
 
@@ -212,12 +215,14 @@ Pass as the :border of `jetpacs-box' / `jetpacs-surface' / `jetpacs-card'."
 CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
 accepted — issue #9), optionally followed by keywords: :alignment,
 :padding, :weight, :on-tap, :width, :height, :fill-fraction (0.0-1.0 of
-the parent width), and :border (an `jetpacs-border' spec).  WIDTH/HEIGHT fix
-the box size (dp)."
+the parent width), :border (an `jetpacs-border' spec), and :key (a stable
+string identity for this box as a `lazy_column' child — see `jetpacs-row';
+SPEC §9).  WIDTH/HEIGHT fix the box size (dp)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "box"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'alignment (plist-get opts :alignment)
                 'padding (plist-get opts :padding)
                 'weight (plist-get opts :weight)
@@ -237,11 +242,13 @@ string or a theme token (\"primary\", \"surface_container\",
 surface to full width (e.g. zebra rows in a list).  :width/:height fix the
 size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
 :border is an `jetpacs-border' spec stroked with :shape.  :elevation and
-:padding as named."
+:padding as named.  :key is a stable string identity for this surface as
+a `lazy_column' child — see `jetpacs-row'; SPEC §9."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "surface"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'color (plist-get opts :color)
                 'shape (plist-get opts :shape)
                 'elevation (plist-get opts :elevation)
@@ -452,6 +459,70 @@ action args when building it (the client adds nothing)."
 
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
+(defvar jetpacs--confirm-index (make-hash-table :test 'equal)
+  "Map of action name -> ((NORMALIZED-ARGS . PROMPT) …), newest first.
+Written by `jetpacs-action' whenever a descriptor carries :confirm; read
+back by the dispatch gate (`jetpacs--on-action') to decide whether an
+inbound `event.action' needs a yes/no prompt.  The prompt must resolve
+client-side: the companion treats `confirm' as opaque author-side policy
+and does not echo it in the delivered frame (SPEC §5), so a gate that
+trusted the payload would never fire on-device.  Entries are refreshed
+by every re-render (construction re-registers) and persist otherwise —
+dropping :confirm from a control keeps gating stale queued taps until
+restart, which errs in the safe direction.")
+
+(defun jetpacs--confirm-key-name (k)
+  "The wire name of args key K, matching `json-serialize' (colon stripped)."
+  (cond ((keywordp k) (substring (symbol-name k) 1))
+        ((symbolp k) (symbol-name k))
+        (t (format "%s" k))))
+
+(defun jetpacs--confirm-normalize (v)
+  "Canonical identity of an action-args value across the JSON round trip.
+The companion parses the descriptor's `args' and re-emits them in the
+event, so what survives is structural — org.json neither preserves
+object key order nor the `.0' of a whole-valued double.  Objects
+normalize to (:obj . PAIRS) sorted by key with string key names, arrays
+\(authored vectors, decoded lists) to (:arr . ITEMS), and whole floats
+to integers; scalars (strings, ints, t/:false/:null) pass through."
+  (cond
+   ((vectorp v)
+    (cons :arr (mapcar #'jetpacs--confirm-normalize (append v nil))))
+   ((and (floatp v) (= v (ftruncate v))) (truncate v))
+   ((null v) nil)
+   ((and (proper-list-p v)
+         (cl-every (lambda (e)
+                     (and (consp e) (car e)
+                          (or (symbolp (car e)) (stringp (car e)))))
+                   v))
+    (cons :obj (sort (mapcar (lambda (kv)
+                               (cons (jetpacs--confirm-key-name (car kv))
+                                     (jetpacs--confirm-normalize (cdr kv))))
+                             v)
+                     (lambda (a b) (string< (car a) (car b))))))
+   ((proper-list-p v)
+    (cons :arr (mapcar #'jetpacs--confirm-normalize v)))
+   (t v)))
+
+(defun jetpacs--confirm-register (action args prompt)
+  "Index PROMPT as the confirm gate for ACTION dispatched with ARGS."
+  (let ((key (jetpacs--confirm-normalize args)))
+    (puthash action
+             (cons (cons key prompt)
+                   (assoc-delete-all key (gethash action jetpacs--confirm-index)))
+             jetpacs--confirm-index)))
+
+(defun jetpacs--confirm-for (action args)
+  "The confirm prompt registered for dispatching ACTION with ARGS, or nil.
+Exact args identity wins (per-row prompts name the right row); when the
+name is indexed but the echoed args match no entry, the newest prompt
+for the name is the fallback — a round trip that defeats normalization
+must fail toward prompting, never toward an ungated destructive action."
+  (let ((entries (gethash action jetpacs--confirm-index)))
+    (when entries
+      (or (cdr (assoc (jetpacs--confirm-normalize args) entries))
+          (cdar entries)))))
+
 (cl-defun jetpacs-action (action &key args (when-offline "queue") dedupe confirm)
   "An action descriptor.
 ACTION names an allowlisted handler (`jetpacs-defaction'); ARGS is an
@@ -463,7 +534,11 @@ CONFIRM, when non-nil, is a prompt string shown as a native yes/no dialog
 clean no-op.  For destructive actions (delete, remove): pair it with an
 undo snackbar (`jetpacs-snackbar-action') where an undo is cheap, and
 reserve :confirm for what an undo can't restore.  The gate runs at
-dispatch time in Emacs, so a queued offline tap confirms on replay."
+dispatch time in Emacs, resolving the prompt from a client-side index
+keyed by action name + args — the companion never echoes `confirm'
+\(SPEC §5) — so a queued offline tap confirms on replay."
+  (when (and (stringp confirm) (not (string-empty-p confirm)))
+    (jetpacs--confirm-register action args confirm))
   (jetpacs--node nil
               'action action
               'when_offline when-offline
@@ -930,7 +1005,11 @@ caller never needs to gate on `jetpacs-node-supported-p'.  Any existing
 children of NODE are replaced — so this fits the leaf additive nodes
 \(`chart', `canvas', `month_grid'), NOT `tabs', whose children are its
 pages; a tabs fallback keeps the explicit
-`jetpacs-node-supported-p' gate."
+`jetpacs-node-supported-p' gate — passing a tabs node signals an error
+\(since 1.24.0) rather than silently discarding the pages."
+  (when (equal (alist-get 't node) "tabs")
+    (error "jetpacs-additive: a `tabs' node's children are its pages — %s"
+           "gate on jetpacs-node-supported-p instead"))
   (append (assq-delete-all 'children (copy-alist node))
           (list (cons 'children (vector fallback)))))
 

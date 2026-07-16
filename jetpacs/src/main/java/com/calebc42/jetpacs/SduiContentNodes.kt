@@ -312,6 +312,13 @@ internal fun resolveColor(attr: String): Color {
         "tertiary_container" -> cs.tertiaryContainer
         "error" -> cs.error
         "error_container" -> cs.errorContainer
+        // M3 defines no success/warning roles; supply theme-aware pairs so the
+        // DSL's `jetpacs-success'/`jetpacs-warning' semantic text has an
+        // adaptive color. Additive: an older companion never emits these (the
+        // client owns the names), and an unknown token falls through to
+        // parseHexColor -> Unspecified -> ambient, so text still renders.
+        "success" -> if (cs.surface.luminance() < 0.5f) Color(0xFF7CC77C) else Color(0xFF2E7D32)
+        "warning" -> if (cs.surface.luminance() < 0.5f) Color(0xFFE0B252) else Color(0xFFB26A00)
         "surface" -> cs.surface
         "surface_variant" -> cs.surfaceVariant
         "surface_container" -> cs.surfaceContainer

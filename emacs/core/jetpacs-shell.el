@@ -40,6 +40,7 @@
 (require 'jetpacs-widgets)
 (require 'jetpacs-surfaces)
 (require 'jetpacs-buffer)
+(require 'jetpacs-async)
 
 ;; ─── View registry ───────────────────────────────────────────────────────────
 

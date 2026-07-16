@@ -61,7 +61,10 @@ when it returns nil rather than relying on degradation.
   `box`/`surface`/`card` (and `image` for width/height).
 - **Colors** — a hex string (`"#7E55B3"`) or a Material theme token
   (`"primary"`, `"surface_container"`, `"primary_container"`, …) that
-  adapts to the device's light/dark theme. Prefer tokens.
+  adapts to the device's light/dark theme. Prefer tokens. Besides the
+  M3 roles, the companion also resolves `"success"` and `"warning"`
+  (theme-aware green/amber) for status text; an older companion that
+  predates them falls back to the ambient color, so text still renders.
 - **Icons** — snake_case Material icon names (`"menu_book"`,
   `"format_bold"`, `"waving_hand"`). The companion resolves Outlined →
   AutoMirrored → Filled; an unknown name renders a placeholder glyph,
@@ -242,6 +245,45 @@ no change. Reach for these before writing a row/column by hand.
   when *every* section is empty. Erases the `append`/`apply` +
   per-list empty-check plumbing.
 
+### Semantic text (since 1.19.0)
+
+Intent-named text shorthands — `jetpacs-error` reads better than
+`(jetpacs-text ... :color "error")` and puts the theme decision in one
+place. Each returns a plain `text`/`rich_text` node, so nothing changes
+on the wire.
+
+- **`(jetpacs-heading TEXT &key level padding)`** — a heading at `:level`
+  (`1` → `title`, `2` → `headline`, `≥3` → `body`).
+- **`(jetpacs-muted TEXT &key style padding)`** — de-emphasized text
+  tinted `on_surface_variant`; `:style` defaults to `caption`.
+- **`(jetpacs-error TEXT &key padding)`** — text in the theme error color.
+- **`(jetpacs-warning TEXT &key padding)`** / **`(jetpacs-success TEXT
+  &key padding)`** — the amber/green status colors. These emit the
+  `warning`/`success` color tokens; a companion whose `resolveColor`
+  predates them falls through to the ambient text color, so the text
+  still renders (just untinted).
+- **`(jetpacs-strong TEXT &key padding)`** / **`(jetpacs-code TEXT &key
+  padding)`** — bold / inline-monospace text as a one-span `rich_text`
+  (plain `text` carries no emphasis). For a multi-line code block use
+  `jetpacs-markup` with `:syntax`.
+
+- **`(jetpacs-try BODY &key fallback)`** *(a macro)* — a sub-tree error
+  boundary. A builder that signals blanks the whole view; wrap a
+  fragment in `jetpacs-try` and a throw becomes a local fallback node
+  while the siblings still render — the shape a dashboard of independent
+  cards wants. `:fallback` is a function of the error returning a node
+  (default: a `jetpacs-empty-state` captioned with the message); the
+  error is always logged to `*Messages*`, never swallowed. Pairs with
+  the renderer's defensive rendering, which contains a malformed *node*
+  the same way this contains a malformed *builder*.
+
+```elisp
+(jetpacs-column
+ (jetpacs-try (stat-cards data))
+ (jetpacs-try (chart-card data)
+   :fallback (lambda (e) (jetpacs-error (format "Chart failed: %s" e)))))
+```
+
 ## Buttons & inputs
 
 - **`(jetpacs-button LABEL ACTION &key icon variant weight padding)`**
@@ -415,6 +457,35 @@ for wiring them up.
   QS tile; `:state` is `active` / `inactive` / `unavailable`. Without
   `:in-app` the tap fires silently from the shade, **no unlock
   required** — compose accordingly.
+
+## Async data (since 1.20.0)
+
+- **`(jetpacs-async KEY LOADER &key owner)`** — a keyed loader you call
+  **from inside a view builder**, so you stop hand-rolling the three
+  display states of every fetch. It returns `(pending)` /
+  `(ready . VALUE)` / `(error . MESSAGE)`: on first sight of `KEY` it
+  starts `LOADER` (a `(lambda (resolve reject) …)`) once and returns
+  `(pending)`; the loader calls `resolve` with the value or `reject`
+  with a message, which caches the result and schedules **one** coalesced
+  push, so the next build reads the ready value. A loader that throws is
+  caught as `(error . …)` — it never takes down the push — and may return
+  a cleanup thunk, run when the entry is swept, to abort itself.
+
+  ```elisp
+  (pcase (jetpacs-async (list 'stock product-id)
+                        (lambda (resolve reject)
+                          (grocy--fetch-stock product-id resolve reject)))
+    (`(pending . ,_) (jetpacs-progress))
+    (`(error   . ,e) (jetpacs-error e))
+    (`(ready   . ,d) (stock-card d)))
+  ```
+
+  Eviction rides the push cycle: a `KEY` a build stops asking for is
+  swept after that push (its `LOADER` cleanup runs), so a view that
+  stops needing data stops paying for it. `:owner` scopes the entry to an
+  app (defaults to the current `with-jetpacs-owner`); `jetpacs-app-unregister`
+  drops it on teardown. The builder stays a pure read of the cache — the
+  only impurity is the idempotent first-call start.
 
 ## Testing your trees
 

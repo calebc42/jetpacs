@@ -30,6 +30,7 @@
 (require 'jetpacs-widgets)
 (require 'jetpacs-lint)
 (require 'jetpacs-source)
+(require 'jetpacs-async)
 (require 'jetpacs-shell)
 (require 'jetpacs-spec)
 (require 'jetpacs-keymap)
@@ -1293,7 +1294,15 @@ the composer delete its own matcher."
      (jetpacs-sectioned-list
       (list (list :header "Due" :items (list leaf))
             (list :header "OK"  :items nil :empty (jetpacs-empty-state :title "none")))
-      :empty (jetpacs-empty-state :title "Empty")))))
+      :empty (jetpacs-empty-state :title "Empty"))
+     ;; Semantic text shorthands (A1; pure text/rich_text, no new wire node).
+     (jetpacs-heading "H" :level 2 :padding 4)
+     (jetpacs-muted "m")
+     (jetpacs-error "e")
+     (jetpacs-warning "w")
+     (jetpacs-success "s")
+     (jetpacs-strong "b")
+     (jetpacs-code "c"))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -1533,6 +1542,164 @@ when every section is empty."
     (let ((h (jetpacs-sectioned-list
               (list (list :header (jetpacs-text "H" 'title) :items (list leaf))))))
       (should (equal "text" (alist-get 't (aref (alist-get 'children h) 0)))))))
+
+;; ─── Semantic text + error boundary (A1, A2) ────────────────────────────────
+
+(ert-deftest jetpacs-semantic-text-shorthands ()
+  "The A1 shorthands emit plain text/rich_text carrying the intended
+color/style, keep their text visible, and lint clean."
+  ;; heading: level → style, padding rides through.
+  (let ((h (jetpacs-heading "H" :level 2 :padding 4)))
+    (should (equal "text" (alist-get 't h)))
+    (should (equal "headline" (alist-get 'style h)))
+    (should (= 4 (alist-get 'padding h)))
+    (should (member "H" (jetpacs-test-visible-text h))))
+  (should (equal "title" (alist-get 'style (jetpacs-heading "H"))))          ; default level 1
+  (should (equal "body"  (alist-get 'style (jetpacs-heading "H" :level 3)))) ; ≥3 → body
+  ;; muted: on_surface_variant tint, caption style by default.
+  (let ((m (jetpacs-muted "m")))
+    (should (equal "on_surface_variant" (alist-get 'color m)))
+    (should (equal "caption" (alist-get 'style m)))
+    (should (member "m" (jetpacs-test-visible-text m))))
+  ;; error/warning/success carry the theme color token verbatim.
+  (should (equal "error"   (alist-get 'color (jetpacs-error "e"))))
+  (should (equal "warning" (alist-get 'color (jetpacs-warning "w"))))
+  (should (equal "success" (alist-get 'color (jetpacs-success "s"))))
+  ;; strong/code are one-span rich_text (plain text carries no bold/code).
+  (let ((b (jetpacs-strong "b")))
+    (should (equal "rich_text" (alist-get 't b)))
+    (should (eq t (alist-get 'bold (aref (alist-get 'spans b) 0))))
+    (should (member "b" (jetpacs-test-visible-text b))))
+  (let ((c (jetpacs-code "c")))
+    (should (equal "rich_text" (alist-get 't c)))
+    (should (eq t (alist-get 'code (aref (alist-get 'spans c) 0))))
+    (should (member "c" (jetpacs-test-visible-text c))))
+  ;; All are wire-valid views (lint-clean AND serializable).
+  (dolist (n (list (jetpacs-heading "H") (jetpacs-muted "m") (jetpacs-error "e")
+                   (jetpacs-warning "w") (jetpacs-success "s")
+                   (jetpacs-strong "b") (jetpacs-code "c")))
+    (should (jetpacs-test-view-ok n))))
+
+(ert-deftest jetpacs-try-contains-subtree-errors ()
+  "`jetpacs-try' returns its body node on success and, on a throw, a fallback
+node (default empty_state, or a custom :fallback) without signaling."
+  ;; Success path: the body's node passes through untouched.
+  (should (equal (jetpacs-text "ok") (jetpacs-try (jetpacs-text "ok"))))
+  ;; Failure path: a throw becomes the default empty_state, no signal escapes.
+  (let ((node (jetpacs-try (error "boom"))))
+    (should (equal "empty_state" (alist-get 't node)))
+    (should (equal "Couldn't render" (alist-get 'title node)))
+    (should (string-match-p "boom" (alist-get 'caption node))))
+  ;; :fallback receives the error object and its node is returned instead.
+  (let ((node (jetpacs-try (error "kaboom")
+                :fallback (lambda (e)
+                            (jetpacs-error (format "failed: %s"
+                                                   (error-message-string e)))))))
+    (should (equal "text" (alist-get 't node)))
+    (should (equal "error" (alist-get 'color node)))
+    (should (string-match-p "kaboom" (alist-get 'text node))))
+  ;; A sibling survives when one `jetpacs-try' fragment throws.
+  (let* ((col (jetpacs-column
+               (jetpacs-try (jetpacs-text "alive"))
+               (jetpacs-try (error "dead"))))
+         (kids (append (alist-get 'children col) nil)))
+    (should (equal "text" (alist-get 't (nth 0 kids))))
+    (should (equal "alive" (alist-get 'text (nth 0 kids))))
+    (should (equal "empty_state" (alist-get 't (nth 1 kids)))))
+  ;; The fallback node is itself a wire-valid view.
+  (should (jetpacs-test-view-ok (jetpacs-try (error "x")))))
+
+;; ─── Async loader (B1) ──────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-async-pending-then-ready ()
+  "First call for a key returns (pending) and starts the loader once; a
+synchronous resolve caches the value and schedules exactly one coalesced
+push, and the next call reads (ready . VALUE)."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((pushes 0) (starts 0))
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (lambda (&rest _) (cl-incf pushes))))
+          (let ((first (jetpacs-async '(stock 1)
+                                      (lambda (resolve _reject)
+                                        (cl-incf starts)
+                                        (funcall resolve 42)))))
+            (should (equal '(pending) first))
+            (should (= 1 starts))
+            (should (timerp jetpacs-async--push-timer))   ; a push was scheduled
+            (jetpacs-async--flush-push)
+            (should (= 1 pushes))
+            ;; Second call reads the cache; the loader is not started again.
+            (let ((second (jetpacs-async '(stock 1)
+                                         (lambda (_r _rej) (cl-incf starts)))))
+              (should (equal '(ready . 42) second))
+              (should (= 1 starts))))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-reject-and-throw ()
+  "reject yields (error . MESSAGE); a loader that throws synchronously is
+caught as (error . MESSAGE) with no signal escaping."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (cl-letf (((symbol-function 'jetpacs-shell-push) #'ignore))
+        ;; reject with a message string.
+        (should (equal '(pending)
+                       (jetpacs-async '(r)
+                         (lambda (_res reject) (funcall reject "nope")))))
+        (should (equal '(error . "nope") (jetpacs-async '(r) #'ignore)))
+        ;; A synchronous throw is caught, not signaled.
+        (should (equal '(pending)
+                       (jetpacs-async '(t)
+                         (lambda (_res _rej) (error "loader boom")))))
+        (let ((state (jetpacs-async '(t) #'ignore)))
+          (should (eq 'error (car state)))
+          (should (string-match-p "loader boom" (cdr state)))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-coalesces-pushes ()
+  "Several completions in one tick schedule a single push."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((pushes 0))
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (lambda (&rest _) (cl-incf pushes))))
+          (jetpacs-async '(a) (lambda (res _) (funcall res 1)))
+          (jetpacs-async '(b) (lambda (res _) (funcall res 2)))
+          (should (timerp jetpacs-async--push-timer))
+          (jetpacs-async--flush-push)
+          (should (= 1 pushes))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-sweeps-untouched-keys ()
+  "A key asked in one build but not the next is swept after the next push,
+running the loader's registered cancel thunk."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((cancelled nil))
+        ;; Build 1 asks for A; the loader returns a cleanup thunk.
+        (jetpacs-async '(a) (lambda (_res _rej) (lambda () (setq cancelled t))))
+        (jetpacs-async--after-push)             ; A stamped current gen → survives
+        (should (gethash '(a) jetpacs-async--cache))
+        (should-not cancelled)
+        ;; Build 2 does NOT ask for A → swept on the next post-push sweep.
+        (jetpacs-async--after-push)
+        (should-not (gethash '(a) jetpacs-async--cache))
+        (should cancelled))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-owner-teardown ()
+  "Clearing an owner drops its entries (running cancels) and leaves others."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((cancelled nil))
+        (jetpacs-async '(mine) (lambda (_r _j) (lambda () (setq cancelled t)))
+                       :owner "app1")
+        (jetpacs-async '(theirs) #'ignore :owner "app2")
+        (jetpacs-async-clear-owner "app1")
+        (should-not (gethash '(mine) jetpacs-async--cache))
+        (should cancelled)
+        (should (gethash '(theirs) jetpacs-async--cache)))
+    (jetpacs-async-reset)))
 
 ;; ─── Ergonomics: children-API + text keywords (#9, #10) ─────────────────────
 

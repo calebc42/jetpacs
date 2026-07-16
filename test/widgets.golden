@@ -66,3 +66,10 @@
 65 {"children":[{"align":"center","children":[{"color":"primary","name":"inventory","t":"icon"},{"color":"primary","style":"headline","t":"text","text":"42"},{"style":"caption","t":"text","text":"Items"}],"spacing":2,"t":"column"}],"fill_fraction":0.3,"on_tap":{"action":"x.y","args":{"k":"v"},"dedupe":"d","when_offline":"drop"},"padding":16,"t":"card","weight":1}
 66 {"align":"top","children":[{"style":"label","t":"text","text":"Location"},{"style":"body","t":"text","text":"Fridge","weight":1}],"spacing":8,"t":"row"}
 67 {"children":[{"t":"section_header","title":"Due"},{"t":"text","text":"leaf"},{"t":"section_header","title":"OK"},{"t":"empty_state","title":"none"}],"t":"lazy_column"}
+68 {"padding":4,"style":"headline","t":"text","text":"H"}
+69 {"color":"on_surface_variant","style":"caption","t":"text","text":"m"}
+70 {"color":"error","t":"text","text":"e"}
+71 {"color":"warning","t":"text","text":"w"}
+72 {"color":"success","t":"text","text":"s"}
+73 {"spans":[{"bold":true,"text":"b"}],"t":"rich_text"}
+74 {"spans":[{"code":true,"text":"c"}],"t":"rich_text"}

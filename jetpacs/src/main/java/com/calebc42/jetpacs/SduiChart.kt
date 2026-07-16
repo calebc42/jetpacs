@@ -52,7 +52,7 @@ fun SduiChart(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Un
     val kind = node.optString("kind", "line")
     val seriesArr = node.optJSONArray("series") ?: JSONArray()
     val onPointTap = node.optJSONObject("on_point_tap")
-    val heightDp = node.optInt("height", 160)
+    val heightDp = node.optInt("height", 160).coerceAtLeast(0)  // K2: never negative
 
     val series = ArrayList<ChartSeries>()
     var yMin = Double.POSITIVE_INFINITY

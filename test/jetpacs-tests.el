@@ -1313,7 +1313,11 @@ the composer delete its own matcher."
      ;; 1.23.0 — the declarative confirm gate and the additive-degrade wrapper.
      (jetpacs-action "x.del" :confirm "Delete it?")
      (jetpacs-additive (jetpacs-badge "Overdue" :color "error")
-                    (jetpacs-text "Overdue" :style 'label :color "error")))))
+                    (jetpacs-text "Overdue" :style 'label :color "error"))
+     ;; 1.24.0 — :key completes the container coverage (SPEC §9).
+     (jetpacs-column leaf :key "c1")
+     (jetpacs-box (list leaf) :key "b1")
+     (jetpacs-surface (list leaf) :key "s1"))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -5743,7 +5747,22 @@ app; warn-and-arm-nothing when owner-unaware and a second app is present."
     (should (equal (alist-get 'key (jetpacs-list-item :title "t" :key "li"))
                    "li"))
     ;; Absent :key emits nothing — byte-identical to the pre-1.22.0 shape.
-    (should-not (assq 'key (jetpacs-row leaf)))))
+    (should-not (assq 'key (jetpacs-row leaf)))
+    ;; 1.24.0 completes the container coverage: column/box/surface.
+    (should (equal (alist-get 'key (jetpacs-column leaf :key "co")) "co"))
+    (should (equal (alist-get 'key (jetpacs-box (list leaf) :key "b")) "b"))
+    (should (equal (alist-get 'key (jetpacs-surface (list leaf) :key "s")) "s"))
+    (should-not (assq 'key (jetpacs-column leaf)))))
+
+(ert-deftest jetpacs-key-outside-lazy-column-warns ()
+  "A `key' on a non-lazy_column parent's child is inert — lint warns (1.24.0)."
+  (let* ((keyed (jetpacs-row (jetpacs-text "x") :key "r1"))
+         (problems (jetpacs-lint-spec (jetpacs-column keyed))))
+    (should (= 1 (length problems)))
+    (should (string-prefix-p "warning: `key'" (cdar problems)))
+    ;; The same keyed child directly under a lazy_column is the documented
+    ;; use — clean.
+    (should-not (jetpacs-lint-spec (jetpacs-lazy-column keyed)))))
 
 (ert-deftest jetpacs-key-attr-lints-clean ()
   "`key' is a common node key: legal on any lazy_column child, no warning."
@@ -5800,17 +5819,44 @@ additive visualization nodes."
     (let ((b (jetpacs-additive (jetpacs-badge "O" :color "error") fb)))
       (should (= 1 (length (alist-get 'children b)))))))
 
+(ert-deftest jetpacs-additive-rejects-tabs ()
+  "`jetpacs-additive' on `tabs' would silently discard the pages — it
+signals instead (1.24.0); the tabs fallback is the explicit
+`jetpacs-node-supported-p' gate."
+  (should-error
+   (jetpacs-additive (jetpacs-tabs (list (jetpacs-tab-item "A"))
+                                   (list (jetpacs-text "page")))
+                     (jetpacs-text "fallback"))))
+
 (ert-deftest jetpacs-test-reset-state-clears-session ()
-  "The public fixture seam empties ui-state, subscriptions, forms, and routes."
+  "The public fixture seam empties every piece of per-session state:
+ui-state, subscriptions, forms, routes, the shell tab and snackbar, the
+action timestamp, and the async/source/devtools stores (scope completed
+in 1.24.0)."
   (jetpacs-ui-state-put "x" "1")
   (jetpacs-on-state-change "x" #'ignore)
   (jetpacs-form "test-ns" "test-owner")
   (puthash "some.view" '((id . "1")) jetpacs-shell--route-params)
+  (setq jetpacs-shell--current-tab "settings")
+  (setq jetpacs-shell--snackbar "Saved")
+  (setq jetpacs--last-action-time (float-time))
+  ;; A synchronously-resolving loader leaves a ready cache entry and a
+  ;; pending zero-delay push timer — both must not leak into the next test.
+  (jetpacs-async "reset-test" (lambda (resolve _reject) (funcall resolve 1)))
+  (puthash '("src" nil tok) '(a) jetpacs--source-cache)
+  (puthash "v" '((t . "text")) jetpacs-devtools--specs)
   (jetpacs-test-reset-state)
   (should (zerop (hash-table-count jetpacs--ui-state)))
   (should (zerop (hash-table-count jetpacs--state-handlers)))
   (should (zerop (hash-table-count jetpacs--forms)))
-  (should (zerop (hash-table-count jetpacs-shell--route-params))))
+  (should (zerop (hash-table-count jetpacs-shell--route-params)))
+  (should-not jetpacs-shell--current-tab)
+  (should-not jetpacs-shell--snackbar)
+  (should (zerop jetpacs--last-action-time))
+  (should (zerop (hash-table-count jetpacs-async--cache)))
+  (should-not jetpacs-async--push-timer)
+  (should (zerop (hash-table-count jetpacs--source-cache)))
+  (should (zerop (hash-table-count jetpacs-devtools--specs))))
 
 (ert-deftest jetpacs-action-with-arg-public ()
   "`jetpacs-action-with-arg' is public; the old `--' name survives as an alias."

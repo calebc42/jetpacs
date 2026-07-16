@@ -43,7 +43,8 @@ NODE ignores it and an older one renders the fallback via the
 unknown-node path — the self-describing degrade `badge` ships with,
 generalized. No `jetpacs-node-supported-p` gate needed; one push serves
 both. (`tabs` is the exception — its children are its pages — so it
-keeps the explicit gate.)
+keeps the explicit gate; passing a tabs node to `jetpacs-additive`
+signals an error rather than silently discarding the pages.)
 
 ## Conventions shared across constructors
 

@@ -55,7 +55,14 @@ change signature incompatibly. Everything else is internal.
 > the descriptor, companion-opaque), `jetpacs-additive` (the badge's
 > self-describing degrade, generalized), `jetpacs-action-with-arg`
 > (promoted from `--`), and `jetpacs-test-reset-state` (the public
-> test-fixture seam replacing let-bound internals).
+> test-fixture seam replacing let-bound internals); `1.24.0` is the
+> adversarial-review follow-up batch: `:key` on `jetpacs-column`/
+> `jetpacs-box`/`jetpacs-surface` (completing the lazy_column-child
+> container coverage — same additive attr as 1.22.0), the full
+> `jetpacs-test-reset-state` scope (async/source/devtools stores, shell
+> tab and snackbar, the action timestamp), a lint warning for `key` on a
+> non-`lazy_column` parent's child, and `jetpacs-additive` signalling on
+> a `tabs` node instead of silently discarding its pages.
 
 ## The two rules
 
@@ -96,7 +103,9 @@ keywords; `box`/`surface`/`card` take
 `:swipe-start`/`:swipe-end`. Since 1.22.0, `row`/`card`/`list-item`
 take `:key` — a stable string identity for the node as a `lazy_column`
 child, so structural pushes preserve its client-side state, scroll
-anchor, and animation. Since 1.13.0, additively: `box`/`surface`/
+anchor, and animation; `column`/`box`/`surface` take it since 1.24.0
+(and lint warns when a `key` sits on a non-`lazy_column` parent's
+child, where the companion never reads it). Since 1.13.0, additively: `box`/`surface`/
 `card` accept their children as a single list *or* `&rest` nodes (like
 `row`/`column`), and `jetpacs-text`'s options are positional *or*
 keyword.)
@@ -318,10 +327,13 @@ failure — one line in an ERT suite), and `jetpacs-lint-views` (from
 `jetpacs-shell.el`: build and lint every registered view, returning the
 ones with problems — the app-wide CI gate `(should-not (jetpacs-lint-views
 t))`). Since 1.23.0, `jetpacs-test-reset-state` (from
-`jetpacs-surfaces.el`): reset ui-state, state-change subscriptions, the
-form registry, and route params to pristine — the ERT fixture seam, so a
-Tier-1 suite never let-binds `--` internals. These ship what every
-Tier 1 used to re-derive privately.
+`jetpacs-surfaces.el`): reset every piece of per-session state to
+pristine — ui-state, state-change subscriptions, the form registry, the
+last-action timestamp, and (when loaded) the shell's route params /
+current tab / pending snackbar, the async cache and push timer, the
+source memo cache, and the devtools recording (scope completed in
+1.24.0) — the ERT fixture seam, so a Tier-1 suite never let-binds `--`
+internals. These ship what every Tier 1 used to re-derive privately.
 
 ### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
 

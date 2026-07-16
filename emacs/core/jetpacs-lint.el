@@ -476,6 +476,23 @@ exempt."
                            (alist-get 't child))))
         (setq i (1+ i))))))
 
+(defun jetpacs-lint--check-child-keys (node type path report)
+  "Warn when a child of NODE (of TYPE) carries `key' outside a `lazy_column'.
+`key' is a lazy_column child's reconciliation identity (SPEC §9); on any
+other parent's child the companion never reads it — dead weight that
+usually means the author keyed the wrong level of the tree.  A warning,
+not an error: the wire shape stays legal (`key' is a common node key)."
+  (unless (equal type "lazy_column")
+    (let ((i 0))
+      (dolist (child (append (alist-get 'children node) nil))
+        (when (and (jetpacs-lint--alist-p child) (assq 'key child))
+          (funcall report (cons i (cons 'children path))
+                   (format (concat "warning: `key' on a child of %s is inert — "
+                                   "reconciliation identity is read only on "
+                                   "`lazy_column' children (SPEC §9)")
+                           type)))
+        (setq i (1+ i))))))
+
 (defun jetpacs-lint--walk (node path report)
   "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
   (when (assq 't node)
@@ -484,7 +501,8 @@ exempt."
           (funcall report path (format "unknown or invalid node type: %S" type))
         (jetpacs-lint--check-schema node type path report)
         (when (equal type "row")
-          (jetpacs-lint--check-row-layout node path report)))))
+          (jetpacs-lint--check-row-layout node path report))
+        (jetpacs-lint--check-child-keys node type path report))))
   (dolist (pair node)
     (let* ((key (car pair)) (val (cdr pair)) (kpath (cons key path)))
       (cond

@@ -15,7 +15,7 @@
 
 ;; Author: calebch42 <calebch42@gmail.com>
 ;; Maintainer: calebch42 <calebch42@gmail.com>
-;; Version: 1.23.0
+;; Version: 1.24.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; Keywords: comm, tools
 ;; URL: https://github.com/calebc42/jetpacs
@@ -71,7 +71,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.23.0"
+(defconst jetpacs-api-version "1.24.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -2139,8 +2139,10 @@ ignored — a scrolling row has no bounded width to distribute."
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
 :scroll (make the column scroll vertically), :weight (this column's own
-flex share when it is a child of a `row'/`column'), and :fill (nil to wrap
-content instead of filling the parent width).
+flex share when it is a child of a `row'/`column'), :fill (nil to wrap
+content instead of filling the parent width), and :key (a stable string
+identity for this column as a `lazy_column' child — see `jetpacs-row';
+SPEC §9).
 
 Layout note: a `column' renders `fillMaxWidth', so an *unweighted* one placed
 inside a row fills it and pushes the later siblings off-screen — give it
@@ -2154,6 +2156,7 @@ inside a row fills it and pushes the later siblings off-screen — give it
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
                 'weight (plist-get opts :weight)
+                'key (plist-get opts :key)
                 'fill (and (plist-member opts :fill)
                            (not (plist-get opts :fill)) :false))))
 
@@ -2171,12 +2174,14 @@ Pass as the :border of `jetpacs-box' / `jetpacs-surface' / `jetpacs-card'."
 CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
 accepted — issue #9), optionally followed by keywords: :alignment,
 :padding, :weight, :on-tap, :width, :height, :fill-fraction (0.0-1.0 of
-the parent width), and :border (an `jetpacs-border' spec).  WIDTH/HEIGHT fix
-the box size (dp)."
+the parent width), :border (an `jetpacs-border' spec), and :key (a stable
+string identity for this box as a `lazy_column' child — see `jetpacs-row';
+SPEC §9).  WIDTH/HEIGHT fix the box size (dp)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "box"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'alignment (plist-get opts :alignment)
                 'padding (plist-get opts :padding)
                 'weight (plist-get opts :weight)
@@ -2196,11 +2201,13 @@ string or a theme token (\"primary\", \"surface_container\",
 surface to full width (e.g. zebra rows in a list).  :width/:height fix the
 size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
 :border is an `jetpacs-border' spec stroked with :shape.  :elevation and
-:padding as named."
+:padding as named.  :key is a stable string identity for this surface as
+a `lazy_column' child — see `jetpacs-row'; SPEC §9."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "surface"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'color (plist-get opts :color)
                 'shape (plist-get opts :shape)
                 'elevation (plist-get opts :elevation)
@@ -2889,7 +2896,11 @@ caller never needs to gate on `jetpacs-node-supported-p'.  Any existing
 children of NODE are replaced — so this fits the leaf additive nodes
 \(`chart', `canvas', `month_grid'), NOT `tabs', whose children are its
 pages; a tabs fallback keeps the explicit
-`jetpacs-node-supported-p' gate."
+`jetpacs-node-supported-p' gate — passing a tabs node signals an error
+\(since 1.24.0) rather than silently discarding the pages."
+  (when (equal (alist-get 't node) "tabs")
+    (error "jetpacs-additive: a `tabs' node's children are its pages — %s"
+           "gate on jetpacs-node-supported-p instead"))
   (append (assq-delete-all 'children (copy-alist node))
           (list (cons 'children (vector fallback)))))
 
@@ -3667,6 +3678,23 @@ exempt."
                            (alist-get 't child))))
         (setq i (1+ i))))))
 
+(defun jetpacs-lint--check-child-keys (node type path report)
+  "Warn when a child of NODE (of TYPE) carries `key' outside a `lazy_column'.
+`key' is a lazy_column child's reconciliation identity (SPEC §9); on any
+other parent's child the companion never reads it — dead weight that
+usually means the author keyed the wrong level of the tree.  A warning,
+not an error: the wire shape stays legal (`key' is a common node key)."
+  (unless (equal type "lazy_column")
+    (let ((i 0))
+      (dolist (child (append (alist-get 'children node) nil))
+        (when (and (jetpacs-lint--alist-p child) (assq 'key child))
+          (funcall report (cons i (cons 'children path))
+                   (format (concat "warning: `key' on a child of %s is inert — "
+                                   "reconciliation identity is read only on "
+                                   "`lazy_column' children (SPEC §9)")
+                           type)))
+        (setq i (1+ i))))))
+
 (defun jetpacs-lint--walk (node path report)
   "Walk NODE at PATH (reversed key list), reporting problems via REPORT."
   (when (assq 't node)
@@ -3675,7 +3703,8 @@ exempt."
           (funcall report path (format "unknown or invalid node type: %S" type))
         (jetpacs-lint--check-schema node type path report)
         (when (equal type "row")
-          (jetpacs-lint--check-row-layout node path report)))))
+          (jetpacs-lint--check-row-layout node path report))
+        (jetpacs-lint--check-child-keys node type path report))))
   (dolist (pair node)
     (let* ((key (car pair)) (val (cdr pair)) (kpath (cons key path)))
       (cond
@@ -4503,16 +4532,33 @@ The rotation empties the on-device widgets."
 (defun jetpacs-test-reset-state ()
   "Reset all per-session UI/session state — the test-fixture seam.
 Clears the ui-state store, the state-change subscriptions, the form
-registry, and (when the shell is loaded) the route params, so an ERT
-fixture gets a pristine session without binding internals.  Public since
-1.23.0 — a Tier 1 test suite that let-binds `jetpacs--ui-state' and
-friends is the bug report this answers.  Never called by the core at
+registry, and the last-action timestamp; when the module is loaded, also
+the shell's route params, current tab, and pending snackbar, the async
+cache and its pending push timer (`jetpacs-async-reset'), the source
+memo cache (`jetpacs-source-invalidate'), and the devtools recording
+\(`jetpacs-devtools-reset') — so an ERT fixture gets a pristine session
+without binding internals.  Public since 1.23.0 — a Tier 1 test suite
+that let-binds `jetpacs--ui-state' and friends is the bug report this
+answers; scope completed in 1.24.0.  Never called by the core at
 runtime; a live session's state is owned by the connection lifecycle."
   (clrhash jetpacs--ui-state)
   (clrhash jetpacs--state-handlers)
   (clrhash jetpacs--forms)
+  ;; 0 = the load-time "no recent action" state; a stale stamp keeps
+  ;; `jetpacs-witheditor--phone-initiated-p' true for its whole window.
+  (setq jetpacs--last-action-time 0)
   (when (boundp 'jetpacs-shell--route-params)
-    (clrhash jetpacs-shell--route-params)))
+    (clrhash jetpacs-shell--route-params))
+  (when (boundp 'jetpacs-shell--current-tab)
+    (setq jetpacs-shell--current-tab nil))
+  (when (boundp 'jetpacs-shell--snackbar)
+    (setq jetpacs-shell--snackbar nil))
+  (when (fboundp 'jetpacs-async-reset)
+    (jetpacs-async-reset))
+  (when (fboundp 'jetpacs-source-invalidate)
+    (jetpacs-source-invalidate))
+  (when (fboundp 'jetpacs-devtools-reset)
+    (jetpacs-devtools-reset)))
 
 (defun jetpacs--forms-of-owner (owner)
   "The registered forms owned by OWNER."

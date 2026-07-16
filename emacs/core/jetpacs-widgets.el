@@ -180,8 +180,10 @@ ignored — a scrolling row has no bounded width to distribute."
 ARGS is child nodes, optionally followed by keywords: :spacing (dp
 between children), :align (cross-axis \"start\"/\"center\"/\"end\"),
 :scroll (make the column scroll vertically), :weight (this column's own
-flex share when it is a child of a `row'/`column'), and :fill (nil to wrap
-content instead of filling the parent width).
+flex share when it is a child of a `row'/`column'), :fill (nil to wrap
+content instead of filling the parent width), and :key (a stable string
+identity for this column as a `lazy_column' child — see `jetpacs-row';
+SPEC §9).
 
 Layout note: a `column' renders `fillMaxWidth', so an *unweighted* one placed
 inside a row fills it and pushes the later siblings off-screen — give it
@@ -195,6 +197,7 @@ inside a row fills it and pushes the later siblings off-screen — give it
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
                 'weight (plist-get opts :weight)
+                'key (plist-get opts :key)
                 'fill (and (plist-member opts :fill)
                            (not (plist-get opts :fill)) :false))))
 
@@ -212,12 +215,14 @@ Pass as the :border of `jetpacs-box' / `jetpacs-surface' / `jetpacs-card'."
 CHILDREN are the nodes as `&rest' or a single list of nodes (both forms
 accepted — issue #9), optionally followed by keywords: :alignment,
 :padding, :weight, :on-tap, :width, :height, :fill-fraction (0.0-1.0 of
-the parent width), and :border (an `jetpacs-border' spec).  WIDTH/HEIGHT fix
-the box size (dp)."
+the parent width), :border (an `jetpacs-border' spec), and :key (a stable
+string identity for this box as a `lazy_column' child — see `jetpacs-row';
+SPEC §9).  WIDTH/HEIGHT fix the box size (dp)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "box"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'alignment (plist-get opts :alignment)
                 'padding (plist-get opts :padding)
                 'weight (plist-get opts :weight)
@@ -237,11 +242,13 @@ string or a theme token (\"primary\", \"surface_container\",
 surface to full width (e.g. zebra rows in a list).  :width/:height fix the
 size (dp), :fill-fraction (0.0-1.0) sets a fraction of parent width, and
 :border is an `jetpacs-border' spec stroked with :shape.  :elevation and
-:padding as named."
+:padding as named.  :key is a stable string identity for this surface as
+a `lazy_column' child — see `jetpacs-row'; SPEC §9."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "surface"
                 'children (vconcat (jetpacs--as-children (car split)))
+                'key (plist-get opts :key)
                 'color (plist-get opts :color)
                 'shape (plist-get opts :shape)
                 'elevation (plist-get opts :elevation)
@@ -930,7 +937,11 @@ caller never needs to gate on `jetpacs-node-supported-p'.  Any existing
 children of NODE are replaced — so this fits the leaf additive nodes
 \(`chart', `canvas', `month_grid'), NOT `tabs', whose children are its
 pages; a tabs fallback keeps the explicit
-`jetpacs-node-supported-p' gate."
+`jetpacs-node-supported-p' gate — passing a tabs node signals an error
+\(since 1.24.0) rather than silently discarding the pages."
+  (when (equal (alist-get 't node) "tabs")
+    (error "jetpacs-additive: a `tabs' node's children are its pages — %s"
+           "gate on jetpacs-node-supported-p instead"))
   (append (assq-delete-all 'children (copy-alist node))
           (list (cons 'children (vector fallback)))))
 

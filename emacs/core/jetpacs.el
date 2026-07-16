@@ -2,7 +2,7 @@
 
 ;; Author: calebch42 <calebch42@gmail.com>
 ;; Maintainer: calebch42 <calebch42@gmail.com>
-;; Version: 1.20.0
+;; Version: 1.21.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; Keywords: comm, tools
 ;; URL: https://github.com/calebc42/jetpacs
@@ -58,7 +58,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.20.0"
+(defconst jetpacs-api-version "1.21.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -140,10 +140,21 @@ so no caller is prepared for an error out of a send."
                         (error-message-string err))))
     (message "Jetpacs: not connected; dropping frame")))
 
+(defvar jetpacs--frame-observer nil
+  "When non-nil, a function called with (KIND PAYLOAD BYTES) after each
+fire-and-forget frame is encoded — including frames dropped while
+disconnected, since what it measures is the traffic the client
+*generates*.  BYTES is the encoded frame's size (internal
+representation, utf-8-equivalent).  Installed by jetpacs-devtools;
+nil costs one test per send.")
+
 (defun jetpacs-send (kind &optional payload reply-to)
   "Send a fire-and-forget frame. Returns its message id."
-  (let ((id (jetpacs--next-id)))
-    (jetpacs--raw-send (jetpacs--encode kind payload reply-to id))
+  (let* ((id (jetpacs--next-id))
+         (line (jetpacs--encode kind payload reply-to id)))
+    (jetpacs--raw-send line)
+    (when jetpacs--frame-observer
+      (funcall jetpacs--frame-observer kind payload (string-bytes line)))
     id))
 
 (defun jetpacs-request (kind payload callback)

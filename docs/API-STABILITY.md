@@ -42,7 +42,10 @@ change signature incompatibly. Everything else is internal.
 > the declarative async loader (`jetpacs-async` and its
 > `jetpacs-async-clear-owner`/`jetpacs-async-reset` teardown below — a
 > keyed loader state machine that re-pushes on completion, still no wire
-> change; docs/PLAN-dsl-ergonomics.md B1).
+> change; docs/PLAN-dsl-ergonomics.md B1); `1.21.0` is the devtools
+> instrumentation batch (the live report, last-spec accessor, and reset
+> below — pure observation of existing seams, no wire change;
+> docs/AUDIT-architecture-vui-vulpea.md item 1.4).
 
 ## The two rules
 
@@ -191,6 +194,16 @@ for is swept after the next push (running any cleanup thunk the loader
 returned); `jetpacs-async-clear-owner` drops an app's entries on teardown
 (wired into `jetpacs-app-unregister`) and `jetpacs-async-reset` clears all
 state.
+
+Devtools (`jetpacs-devtools.el`, since 1.21.0): `jetpacs-devtools-report`
+— the live instrumentation report (per-builder wall clock, serialized
+bytes per surface push, push rate, and a push-storm warning when a
+builder re-triggers every push); `jetpacs-devtools-last-spec` — the spec
+a view's builder last produced, for "what did the phone actually
+receive"; `jetpacs-devtools-reset`; and the `jetpacs-devtools-enabled`
+switch. Observation only — it never sends a frame, and its numbers are
+what the Tier-3 performance gates (build reuse, delta frames, renderer
+skipping) are measured against.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
 `jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`

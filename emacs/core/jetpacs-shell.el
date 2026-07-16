@@ -41,6 +41,7 @@
 (require 'jetpacs-surfaces)
 (require 'jetpacs-buffer)
 (require 'jetpacs-async)
+(require 'jetpacs-devtools)
 
 ;; ─── View registry ───────────────────────────────────────────────────────────
 
@@ -459,22 +460,29 @@ switches views locally, so navigation never waits on Emacs.")
 A broken builder must cost its own screen, not the whole push — with a
 Tier 1 being live-coded against a running session, the rest of the app
 keeps updating and the broken view *shows* its error."
-  (condition-case err
-      (if (plist-get plist :spec)
-          (jetpacs-spec--compile name (plist-get plist :spec) snackbar)
-        (let ((builder (plist-get plist :builder)))
-          ;; A builder that declares a second argument is a param-routed
-          ;; detail — hand it this view's current route params.
-          (if (jetpacs-shell--builder-wants-params builder)
-              (funcall builder snackbar (gethash name jetpacs-shell--route-params))
-            (funcall builder snackbar))))
-    (error
-     (jetpacs-shell-nav-view
-      (capitalize name)
-      (jetpacs-column
-       (jetpacs-text (format "Error building view \"%s\"" name) 'title)
-       (jetpacs-text (error-message-string err) 'body))
-      :snackbar snackbar))))
+  (let* ((start (current-time))
+         (spec
+          (condition-case err
+              (if (plist-get plist :spec)
+                  (jetpacs-spec--compile name (plist-get plist :spec) snackbar)
+                (let ((builder (plist-get plist :builder)))
+                  ;; A builder that declares a second argument is a param-routed
+                  ;; detail — hand it this view's current route params.
+                  (if (jetpacs-shell--builder-wants-params builder)
+                      (funcall builder snackbar (gethash name jetpacs-shell--route-params))
+                    (funcall builder snackbar))))
+            (error
+             (jetpacs-shell-nav-view
+              (capitalize name)
+              (jetpacs-column
+               (jetpacs-text (format "Error building view \"%s\"" name) 'title)
+               (jetpacs-text (error-message-string err) 'body))
+              :snackbar snackbar)))))
+    ;; A degraded error view is recorded too: it IS what was pushed, and
+    ;; its wall clock includes the crash path.
+    (jetpacs-devtools--record-build
+     name (* 1000.0 (float-time (time-subtract (current-time) start))) spec)
+    spec))
 
 (declare-function jetpacs-lint-spec "jetpacs-lint")
 

@@ -30,6 +30,7 @@
 (require 'jetpacs-widgets)
 (require 'jetpacs-lint)
 (require 'jetpacs-source)
+(require 'jetpacs-async)
 (require 'jetpacs-shell)
 (require 'jetpacs-spec)
 (require 'jetpacs-keymap)
@@ -1607,6 +1608,98 @@ node (default empty_state, or a custom :fallback) without signaling."
     (should (equal "empty_state" (alist-get 't (nth 1 kids)))))
   ;; The fallback node is itself a wire-valid view.
   (should (jetpacs-test-view-ok (jetpacs-try (error "x")))))
+
+;; ─── Async loader (B1) ──────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-async-pending-then-ready ()
+  "First call for a key returns (pending) and starts the loader once; a
+synchronous resolve caches the value and schedules exactly one coalesced
+push, and the next call reads (ready . VALUE)."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((pushes 0) (starts 0))
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (lambda (&rest _) (cl-incf pushes))))
+          (let ((first (jetpacs-async '(stock 1)
+                                      (lambda (resolve _reject)
+                                        (cl-incf starts)
+                                        (funcall resolve 42)))))
+            (should (equal '(pending) first))
+            (should (= 1 starts))
+            (should (timerp jetpacs-async--push-timer))   ; a push was scheduled
+            (jetpacs-async--flush-push)
+            (should (= 1 pushes))
+            ;; Second call reads the cache; the loader is not started again.
+            (let ((second (jetpacs-async '(stock 1)
+                                         (lambda (_r _rej) (cl-incf starts)))))
+              (should (equal '(ready . 42) second))
+              (should (= 1 starts))))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-reject-and-throw ()
+  "reject yields (error . MESSAGE); a loader that throws synchronously is
+caught as (error . MESSAGE) with no signal escaping."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (cl-letf (((symbol-function 'jetpacs-shell-push) #'ignore))
+        ;; reject with a message string.
+        (should (equal '(pending)
+                       (jetpacs-async '(r)
+                         (lambda (_res reject) (funcall reject "nope")))))
+        (should (equal '(error . "nope") (jetpacs-async '(r) #'ignore)))
+        ;; A synchronous throw is caught, not signaled.
+        (should (equal '(pending)
+                       (jetpacs-async '(t)
+                         (lambda (_res _rej) (error "loader boom")))))
+        (let ((state (jetpacs-async '(t) #'ignore)))
+          (should (eq 'error (car state)))
+          (should (string-match-p "loader boom" (cdr state)))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-coalesces-pushes ()
+  "Several completions in one tick schedule a single push."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((pushes 0))
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (lambda (&rest _) (cl-incf pushes))))
+          (jetpacs-async '(a) (lambda (res _) (funcall res 1)))
+          (jetpacs-async '(b) (lambda (res _) (funcall res 2)))
+          (should (timerp jetpacs-async--push-timer))
+          (jetpacs-async--flush-push)
+          (should (= 1 pushes))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-sweeps-untouched-keys ()
+  "A key asked in one build but not the next is swept after the next push,
+running the loader's registered cancel thunk."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((cancelled nil))
+        ;; Build 1 asks for A; the loader returns a cleanup thunk.
+        (jetpacs-async '(a) (lambda (_res _rej) (lambda () (setq cancelled t))))
+        (jetpacs-async--after-push)             ; A stamped current gen → survives
+        (should (gethash '(a) jetpacs-async--cache))
+        (should-not cancelled)
+        ;; Build 2 does NOT ask for A → swept on the next post-push sweep.
+        (jetpacs-async--after-push)
+        (should-not (gethash '(a) jetpacs-async--cache))
+        (should cancelled))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-owner-teardown ()
+  "Clearing an owner drops its entries (running cancels) and leaves others."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((cancelled nil))
+        (jetpacs-async '(mine) (lambda (_r _j) (lambda () (setq cancelled t)))
+                       :owner "app1")
+        (jetpacs-async '(theirs) #'ignore :owner "app2")
+        (jetpacs-async-clear-owner "app1")
+        (should-not (gethash '(mine) jetpacs-async--cache))
+        (should cancelled)
+        (should (gethash '(theirs) jetpacs-async--cache)))
+    (jetpacs-async-reset)))
 
 ;; ─── Ergonomics: children-API + text keywords (#9, #10) ─────────────────────
 

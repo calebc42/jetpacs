@@ -38,7 +38,11 @@ change signature incompatibly. Everything else is internal.
 > Validation below — SPEC §10–§11); `1.19.0` is the DSL-ergonomics
 > authoring batch (the semantic-text shorthands and the `jetpacs-try`
 > sub-tree error boundary below — pure composites/macros over existing
-> nodes, no wire change; docs/PLAN-dsl-ergonomics.md A1/A2).
+> nodes, no wire change; docs/PLAN-dsl-ergonomics.md A1/A2); `1.20.0` is
+> the declarative async loader (`jetpacs-async` and its
+> `jetpacs-async-clear-owner`/`jetpacs-async-reset` teardown below — a
+> keyed loader state machine that re-pushes on completion, still no wire
+> change; docs/PLAN-dsl-ergonomics.md B1).
 
 ## The two rules
 
@@ -177,6 +181,16 @@ former doubles as an :overlay predicate), and `jetpacs-shell-clear-route`
 (the explicit back).  A view builder that declares a *second* argument
 receives its route params, so a detail screen is a pure function of them
 rather than of a module state var.
+
+Async loading (`jetpacs-async.el`, since 1.20.0): `jetpacs-async` — call
+it from inside a view builder with a KEY and a `(lambda (resolve reject)
+…)` LOADER; it returns `(pending)` / `(ready . VALUE)` / `(error .
+MESSAGE)`, starting the loader once per key and re-pushing on completion
+so the builder stays a pure read of the cache. A key a build stops asking
+for is swept after the next push (running any cleanup thunk the loader
+returned); `jetpacs-async-clear-owner` drops an app's entries on teardown
+(wired into `jetpacs-app-unregister`) and `jetpacs-async-reset` clears all
+state.
 
 App identity (`jetpacs-apps.el`): `jetpacs-defapp` `jetpacs-apps-remove`
 `jetpacs-apps-current` `jetpacs-apps-current-p` `jetpacs-apps-set-default-fab`

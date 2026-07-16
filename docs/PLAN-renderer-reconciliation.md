@@ -1,6 +1,7 @@
 # Plan: renderer reconciliation — keys, defensive rendering, skippable model
 
-**STATUS (2026-07-15): drafted; K0 + K2 + K1a in progress.** The Kotlin
+**STATUS (2026-07-15): K0 + K2 + K1a landed (`66582aa`); K1b animation
++ viz clamps in progress.** The Kotlin
 / Compose-renderer track from
 [AUDIT-vui-dsl-guidance.md](AUDIT-vui-dsl-guidance.md) (§"The Kotlin
 renderer"). These are *user*-facing correctness/robustness, not
@@ -76,22 +77,23 @@ throws). The real throw sites, all "bad number → Compose precondition":
    ```
 
    Apply each only when it returns non-null; otherwise skip the modifier
-   (render unsized rather than crash). Route the image node,
-   `containerModifier`, and `spacer` through these.
+   (render unsized rather than crash). **DONE** (`66582aa`): image node,
+   `containerModifier`, `spacer`, border width; plus `SduiCanvas`
+   (`size`) and `SduiChart` (`height`) clamped `coerceAtLeast(0)`.
 
-2. **A root guard** in `MainActivity` around the surface render
-   (`RenderChildren(spec…)`, ~L276): this cannot catch composition
-   throws either, but it *can* validate the top-level spec is a
-   well-formed object before rendering and fall back to a "This screen
-   couldn't render — Emacs pushed a malformed view" message that keeps
-   Settings/pairing reachable, instead of a blank surface. Belt to K2's
-   braces.
+2. ~~A root guard in `MainActivity`~~ — **dropped on reflection.** It
+   cannot catch composition throws (the same Compose limitation), and
+   `RenderChildren` already no-ops on a null/malformed children array,
+   so a root try/catch would be theatre. The honest residual after the
+   source-clamps is **detection** (item 3), not a root boundary.
 
-3. **Lint parity** — extend elisp `jetpacs-lint-spec` and the Kotlin
-   `WireGoldenConformanceTest` to flag out-of-range numeric attrs
-   (`aspect_ratio <= 0`, `fill_fraction ∉ (0,1]`, negative dp) so a bad
-   view is caught in CI, not on-device. This is where the "boundary"
-   truly pays off: prevention + detection.
+3. **Lint parity** (open, elisp lane) — extend `jetpacs-lint-spec` and
+   the Kotlin `WireGoldenConformanceTest` to flag out-of-range numeric
+   attrs (`aspect_ratio <= 0`, `fill_fraction ∉ (0,1]`, negative dp) so
+   a bad view is caught in CI, not on-device. This is where prevention
+   is complemented by detection. `jetpacs-lint-spec` is elisp, so this
+   coordinates with the DSL worktree
+   ([PLAN-dsl-ergonomics.md](PLAN-dsl-ergonomics.md)).
 
 ### K2 tests (JVM)
 
@@ -143,12 +145,21 @@ keys `itemsIndexed`.
 still found by the `scroll_here` flag's index; keys only change how
 Compose recycles item compositions.
 
-### K1b / C1 — explicit `:key` DSL affordance + `animateItem()`
+### K1b / C1 — `animateItem()` (landed) + explicit `:key` DSL affordance (open)
 
-Once K1a proves out, add the wire affordance for rows with no natural
-`id`, following the CONTRIBUTING-NODES.md 8-step checklist:
+**Animation — DONE** (this increment): `Modifier.animateItem()` on the
+keyed `lazy_column` child, so insert/remove/move animate instead of
+popping and unchanged rows on a re-push don't animate. It works today
+on K1a's id-derived keys — no wire change needed, since the helper
+already keys stateful rows. `animateItem` is a companion-local render
+detail (gate nothing); `SduiRendererNodeTypesTest` stays green.
 
-1. renderer already reads `key` (K1a's helper prefers it) →
+**Explicit `:key` — open (elisp lane), for rows with no natural `id`.**
+The renderer already prefers a `key` attr (K1a's helper), so this is
+purely the authoring affordance, following CONTRIBUTING-NODES.md's
+8-step checklist and coordinating with the DSL worktree:
+
+1. renderer reads `key` (done) →
 2. add `"key"` to the allowed attrs / lint typing →
 3. elisp: optional `:key` on `jetpacs-card` / `jetpacs-row` /
    `jetpacs-list-item` →
@@ -158,14 +169,9 @@ Once K1a proves out, add the wire affordance for rows with no natural
 7. API-STABILITY entry →
 8. bundles.
 
-Then enable `Modifier.animateItem()` on the keyed child so
-insert/remove/move animate instead of popping — the visible payoff of
-having identity. Gate nothing: `animateItem` is a companion-local
-render detail.
-
-**This is C1 in the audit** — but the correctness core is K1a
-(renderer, no wire), and only the ergonomic affordance is a wire
-change. Sequence accordingly.
+**This is C1 in the audit** — the correctness core (K1a) and the
+animation (this increment) are renderer-only; only the ergonomic
+`:key` affordance is a wire change, left for coordination.
 
 ## K3 — skippable model (largest, least urgent)
 

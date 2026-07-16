@@ -32,8 +32,10 @@ import org.json.JSONObject
  */
 @Composable
 fun SduiCanvas(node: JSONObject, modifier: Modifier) {
-    val wDp = node.optInt("width", 100)
-    val hDp = node.optInt("height", 100)
+    // Clamp non-negative: a malformed negative size would throw in size() and
+    // blank the surface (K2, docs/PLAN-renderer-reconciliation.md).
+    val wDp = node.optInt("width", 100).coerceAtLeast(0)
+    val hDp = node.optInt("height", 100).coerceAtLeast(0)
     val ops = node.optJSONArray("ops") ?: JSONArray()
     val fallback = MaterialTheme.colorScheme.onSurface
 

@@ -48,7 +48,14 @@ change signature incompatibly. Everything else is internal.
 > docs/AUDIT-architecture-vui-vulpea.md item 1.4); `1.22.0` is the
 > explicit `:key` lazy-list identity on `jetpacs-row`/`jetpacs-card`/
 > `jetpacs-list-item` (an additive wire attr — SPEC §9, ebp
-> SPEC-CHANGES #12; companions that predate it key by id/position).
+> SPEC-CHANGES #12; companions that predate it key by id/position);
+> `1.23.0` is the grocy-hardening gap closure
+> (docs/PLAN-grocy-hardening.md #11–#13 + the fixture gap): `:confirm`
+> on `jetpacs-action` (an Emacs-side dispatch gate — the string rides
+> the descriptor, companion-opaque), `jetpacs-additive` (the badge's
+> self-describing degrade, generalized), `jetpacs-action-with-arg`
+> (promoted from `--`), and `jetpacs-test-reset-state` (the public
+> test-fixture seam replacing let-bound internals).
 
 ## The two rules
 
@@ -121,7 +128,12 @@ Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-i
 `text-input` takes `:keyboard`; `jetpacs-send-dialog` takes an optional
 STYLE / `jetpacs-dialog-style`.)
 
-Actions: `jetpacs-action` `jetpacs-clipboard-action`.
+Actions: `jetpacs-action` `jetpacs-clipboard-action`; since 1.23.0,
+`jetpacs-action-with-arg` (bake a typed value into a template action's
+args) and the `:confirm` keyword on `jetpacs-action` (a dispatch-time
+native yes/no gate; declining is a no-op), plus `jetpacs-additive` (wrap
+an additive node with a self-describing fallback child, the badge
+degrade pattern generalized).
 
 Home-surface composition: `jetpacs-widget-item` `jetpacs-widget-divider`
 `jetpacs-tile`.
@@ -305,7 +317,11 @@ is lint-error-free *and* serializable, signalling with the problems on
 failure — one line in an ERT suite), and `jetpacs-lint-views` (from
 `jetpacs-shell.el`: build and lint every registered view, returning the
 ones with problems — the app-wide CI gate `(should-not (jetpacs-lint-views
-t))`). These ship what every Tier 1 used to re-derive privately.
+t))`). Since 1.23.0, `jetpacs-test-reset-state` (from
+`jetpacs-surfaces.el`): reset ui-state, state-change subscriptions, the
+form registry, and route params to pristine — the ERT fixture seam, so a
+Tier-1 suite never let-binds `--` internals. These ship what every
+Tier 1 used to re-derive privately.
 
 ### Declarative binding layer (since 1.5.0 — see [BINDING.md](BINDING.md))
 

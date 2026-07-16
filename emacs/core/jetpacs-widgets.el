@@ -452,13 +452,24 @@ action args when building it (the client adds nothing)."
 
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
-(cl-defun jetpacs-action (action &key args (when-offline "queue") dedupe)
-  "An action descriptor."
+(cl-defun jetpacs-action (action &key args (when-offline "queue") dedupe confirm)
+  "An action descriptor.
+ACTION names an allowlisted handler (`jetpacs-defaction'); ARGS is an
+alist baked in server-side.  WHEN-OFFLINE is the queue policy
+\(\"queue\"/\"drop\"/\"wake\", SPEC §5) and DEDUPE collapses queued repeats.
+
+CONFIRM, when non-nil, is a prompt string shown as a native yes/no dialog
+\(via the minibuffer bridge) before the handler runs — declining is a
+clean no-op.  For destructive actions (delete, remove): pair it with an
+undo snackbar (`jetpacs-snackbar-action') where an undo is cheap, and
+reserve :confirm for what an undo can't restore.  The gate runs at
+dispatch time in Emacs, so a queued offline tap confirms on replay."
   (jetpacs--node nil
               'action action
               'when_offline when-offline
               'args args
-              'dedupe dedupe))
+              'dedupe dedupe
+              'confirm confirm))
 
 (defun jetpacs-clipboard-action (text)
   "A companion-local action that copies TEXT to the device clipboard.
@@ -892,16 +903,36 @@ See docs/PLAN-dsl-ergonomics.md (A2)."
              :title "Couldn't render"
              :caption (error-message-string err)))))))
 
-(defun jetpacs--action-with-arg (action key value)
+(defun jetpacs-action-with-arg (action key value)
   "Return a copy of ACTION (an action alist) with (KEY . VALUE) set in its `args'.
-ACTION nil returns nil.  Used by the composites that bake a chosen value
-into the dispatched action server-side (the stepper's target number, the
-segmented control's option) rather than relying on companion value-injection,
-so the handler receives the value already typed (a number stays a number)."
+ACTION nil returns nil.  Bakes a chosen value into the dispatched action
+server-side — the composites use it (the stepper's target number, the
+segmented control's option) rather than relying on companion
+value-injection, so the handler receives the value already typed (a
+number stays a number).  Public since 1.23.0: the same need arrives in
+any Tier 1 that builds per-row or per-option actions from one template."
   (when action
     (let ((args (assq-delete-all key (copy-alist (alist-get 'args action))))
           (base (assq-delete-all 'args (copy-alist action))))
       (append base (list (cons 'args (append args (list (cons key value)))))))))
+
+(defalias 'jetpacs--action-with-arg #'jetpacs-action-with-arg
+  "Internal alias kept for pre-1.23.0 callers; use `jetpacs-action-with-arg'.")
+
+(defun jetpacs-additive (node fallback)
+  "Mark NODE (an additive wire type) to degrade to FALLBACK on old companions.
+Attaches FALLBACK (a single node) as NODE's children: a companion that
+recognizes NODE's `t' renders it (leaf additive nodes ignore unexpected
+children); one that predates it falls through the renderer's unknown-node
+path, which renders the children — i.e. FALLBACK.  This is the
+self-describing degrade the `badge' node ships with, generalized: the
+caller never needs to gate on `jetpacs-node-supported-p'.  Any existing
+children of NODE are replaced — so this fits the leaf additive nodes
+\(`chart', `canvas', `month_grid'), NOT `tabs', whose children are its
+pages; a tabs fallback keeps the explicit
+`jetpacs-node-supported-p' gate."
+  (append (assq-delete-all 'children (copy-alist node))
+          (list (cons 'children (vector fallback)))))
 
 (cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1) format)
   "A −/+ stepper over the numeric VALUE.

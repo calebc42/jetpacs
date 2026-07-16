@@ -279,9 +279,10 @@ like ivy/counsel/consult reroute prompts through `read-file-name-function'
 primitives run, and would otherwise reach a keyboard UI the phone can't
 drive.  `disabled-command-function' is nil'd so a novice.el disabled
 command runs instead of raw-reading a confirmation char (another hang)."
-  (let* ((action (alist-get 'action payload))
-         (args   (alist-get 'args payload))
-         (fn     (gethash action jetpacs-action-handlers)))
+  (let* ((action  (alist-get 'action payload))
+         (args    (alist-get 'args payload))
+         (confirm (alist-get 'confirm payload))
+         (fn      (gethash action jetpacs-action-handlers)))
     (if fn
         (progn
           (setq jetpacs--last-action-time (float-time))
@@ -291,7 +292,17 @@ command runs instead of raw-reading a confirmation char (another hang)."
                 (read-buffer-function nil)
                 (disabled-command-function nil))
             (condition-case err
-                (funcall fn args payload)
+                ;; The declarative confirm gate (`jetpacs-action' :confirm,
+                ;; 1.23.0): prompt via the bridged `y-or-n-p' — a native
+                ;; dialog on the companion — before the handler runs.
+                ;; Declining is a clean no-op; the gate sits inside the
+                ;; in-action-handler binding so the prompt bridges, and
+                ;; inside the condition-case so a cancelled dialog (quit)
+                ;; aborts quietly like any bridged prompt.
+                (if (and (stringp confirm) (not (string-empty-p confirm))
+                         (not (y-or-n-p confirm)))
+                    (message "Jetpacs action %s declined" action)
+                  (funcall fn args payload))
               ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
               ;; which `error' does not catch — treat it as a clean abort
               ;; rather than letting it unwind through the process filter.
@@ -414,6 +425,20 @@ The rotation empties the on-device widgets."
   (jetpacs-form-reset form)
   (remhash (jetpacs--form-key (jetpacs-form-ns form) (jetpacs-form-owner form))
            jetpacs--forms))
+
+(defun jetpacs-test-reset-state ()
+  "Reset all per-session UI/session state — the test-fixture seam.
+Clears the ui-state store, the state-change subscriptions, the form
+registry, and (when the shell is loaded) the route params, so an ERT
+fixture gets a pristine session without binding internals.  Public since
+1.23.0 — a Tier 1 test suite that let-binds `jetpacs--ui-state' and
+friends is the bug report this answers.  Never called by the core at
+runtime; a live session's state is owned by the connection lifecycle."
+  (clrhash jetpacs--ui-state)
+  (clrhash jetpacs--state-handlers)
+  (clrhash jetpacs--forms)
+  (when (boundp 'jetpacs-shell--route-params)
+    (clrhash jetpacs-shell--route-params)))
 
 (defun jetpacs--forms-of-owner (owner)
   "The registered forms owned by OWNER."

@@ -59,10 +59,14 @@ companion gates on `jetpacs-node-supported-p' instead.")
 An entry is required to carry `label' and `on_tap'; `input' is the inline
 text-reply sub-object `{hint?, key?}'.")
 
-(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe)
+(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe
+                                       confirm)
   "The fields an action object may carry (SPEC §5).
 `action' and `builtin' are mutually exclusive; a `builtin' additionally
-carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
+carries the payload keys its kind requires (`jetpacs-lint-action-builtins').
+`confirm' (since 1.23.0) is a prompt string the Emacs dispatch gate shows
+as a native yes/no dialog before running the handler — companion-opaque
+\(round-tripped, never interpreted on-device).")
 
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
@@ -148,11 +152,15 @@ child's stable reconciliation identity — preferred over the child's
                                              padding))
     ("tabs"            (items children)     (initial scrollable pager_only
                                              on_change id))
+    ;; The additive visualization nodes accept `children' as the
+    ;; `jetpacs-additive' degrade slot (1.23.0): a companion that renders
+    ;; the node ignores them; an older one renders them as the fallback.
     ("chart"           (series)             (kind height y_range summary
-                                             on_point_tap))
-    ("canvas"          (width height ops)   ())
+                                             on_point_tap children))
+    ("canvas"          (width height ops)   (children))
     ("month_grid"      (month)              (marks selected min_month max_month
-                                             on_day_tap on_month_change))
+                                             on_day_tap on_month_change
+                                             children))
     ("icon"            (name)               (size color padding badge))
     ("image"           (url)                (content_description padding width
                                              height aspect_ratio content_scale))

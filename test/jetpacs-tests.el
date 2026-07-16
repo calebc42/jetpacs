@@ -1309,7 +1309,11 @@ the composer delete its own matcher."
      ;; :key — stable lazy-list reconciliation identity (SPEC §9, 1.22.0).
      (jetpacs-row leaf :key "r1")
      (jetpacs-card (list leaf) :key "k1")
-     (jetpacs-list-item :title "Keyed" :key "li1"))))
+     (jetpacs-list-item :title "Keyed" :key "li1")
+     ;; 1.23.0 — the declarative confirm gate and the additive-degrade wrapper.
+     (jetpacs-action "x.del" :confirm "Delete it?")
+     (jetpacs-additive (jetpacs-badge "Overdue" :color "error")
+                    (jetpacs-text "Overdue" :style 'label :color "error")))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -5747,6 +5751,76 @@ app; warn-and-arm-nothing when owner-unaware and a second app is present."
                         '((key . "b1"))))
          (spec (jetpacs-lazy-column keyed)))
     (should-not (jetpacs-lint-spec spec))))
+
+;; ─── Grocy-hardening gap closure (1.23.0) ────────────────────────────────────
+
+(ert-deftest jetpacs-action-confirm-gates-dispatch ()
+  "A `:confirm' action runs its handler only when the prompt is accepted;
+declining is a clean no-op.  A confirm-less action never prompts."
+  (let ((ran 0) (asked nil))
+    (jetpacs-defaction "test.confirm-gate"
+      (lambda (_args _payload) (cl-incf ran)))
+    (unwind-protect
+        (let ((payload (jetpacs-action "test.confirm-gate" :confirm "Sure?")))
+          ;; The descriptor carries the prompt, and lints clean.
+          (should (equal "Sure?" (alist-get 'confirm payload)))
+          (should-not (jetpacs-lint-spec
+                       (jetpacs-button "Del" payload)))
+          ;; Declined -> handler never runs.
+          (cl-letf (((symbol-function 'y-or-n-p)
+                     (lambda (p) (setq asked p) nil)))
+            (jetpacs--on-action payload nil))
+          (should (equal asked "Sure?"))
+          (should (= ran 0))
+          ;; Accepted -> handler runs.
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (jetpacs--on-action payload nil))
+          (should (= ran 1))
+          ;; No :confirm -> no prompt at all.
+          (setq asked nil)
+          (cl-letf (((symbol-function 'y-or-n-p)
+                     (lambda (p) (setq asked p) t)))
+            (jetpacs--on-action (jetpacs-action "test.confirm-gate") nil))
+          (should-not asked)
+          (should (= ran 2)))
+      (remhash "test.confirm-gate" jetpacs-action-handlers))))
+
+(ert-deftest jetpacs-additive-attaches-fallback ()
+  "`jetpacs-additive' replaces NODE's children with the single FALLBACK node
+\(the badge degrade pattern, generalized) and the result lints clean on the
+additive visualization nodes."
+  (let* ((chart (jetpacs-chart (list (jetpacs-chart-series '(1 2 3)))))
+         (fb (jetpacs-text "1 2 3" :style 'caption))
+         (wrapped (jetpacs-additive chart fb)))
+    (should (equal "chart" (alist-get 't wrapped)))
+    (should (equal fb (aref (alist-get 'children wrapped) 0)))
+    (should-not (jetpacs-lint-spec wrapped))
+    ;; Replaces, never appends: wrapping a badge (which ships its own
+    ;; fallback child) leaves exactly one child — the new fallback.
+    (let ((b (jetpacs-additive (jetpacs-badge "O" :color "error") fb)))
+      (should (= 1 (length (alist-get 'children b)))))))
+
+(ert-deftest jetpacs-test-reset-state-clears-session ()
+  "The public fixture seam empties ui-state, subscriptions, forms, and routes."
+  (jetpacs-ui-state-put "x" "1")
+  (jetpacs-on-state-change "x" #'ignore)
+  (jetpacs-form "test-ns" "test-owner")
+  (puthash "some.view" '((id . "1")) jetpacs-shell--route-params)
+  (jetpacs-test-reset-state)
+  (should (zerop (hash-table-count jetpacs--ui-state)))
+  (should (zerop (hash-table-count jetpacs--state-handlers)))
+  (should (zerop (hash-table-count jetpacs--forms)))
+  (should (zerop (hash-table-count jetpacs-shell--route-params))))
+
+(ert-deftest jetpacs-action-with-arg-public ()
+  "`jetpacs-action-with-arg' is public; the old `--' name survives as an alias."
+  (let* ((base (jetpacs-action "a.b" :args '((k . "v"))))
+         (with (jetpacs-action-with-arg base 'n 3)))
+    (should (= 3 (alist-get 'n (alist-get 'args with))))
+    (should (equal "v" (alist-get 'k (alist-get 'args with))))
+    (should (eq (indirect-function 'jetpacs--action-with-arg)
+                (indirect-function 'jetpacs-action-with-arg)))
+    (should-not (jetpacs-action-with-arg nil 'n 1))))
 
 (ert-deftest jetpacs-devtools-build-recording ()
   "`jetpacs-shell--build-view' records wall clock + retains the spec."

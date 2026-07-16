@@ -35,7 +35,15 @@ children, or nothing for a leaf — never a crash.
 **Additive nodes** (`tabs`, `chart`, `canvas`, `month_grid`, and
 whatever arrives next) are negotiated per connection: gate on
 `(jetpacs-node-supported-p 'tabs)` and emit the documented fallback
-when it returns nil rather than relying on degradation.
+when it returns nil — or, for the *leaf* additive nodes (`chart`,
+`canvas`, `month_grid`, and future ones whose `children` slot is free),
+wrap once with **`(jetpacs-additive NODE FALLBACK)`** (since 1.23.0):
+it attaches FALLBACK as NODE's children, so a companion that renders
+NODE ignores it and an older one renders the fallback via the
+unknown-node path — the self-describing degrade `badge` ships with,
+generalized. No `jetpacs-node-supported-p` gate needed; one push serves
+both. (`tabs` is the exception — its children are its pages — so it
+keeps the explicit gate.)
 
 ## Conventions shared across constructors
 
@@ -84,13 +92,23 @@ Actions are descriptors, not code — the wire names an allowlisted
 handler registered with `jetpacs-defaction`
 ([SPEC §5](https://github.com/calebc42/ebp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)).
 
-- **`(jetpacs-action ACTION &key args when-offline dedupe)`** — the
+- **`(jetpacs-action ACTION &key args when-offline dedupe confirm)`** — the
   descriptor embedded under `:on-tap` and friends. `:args` is an alist
   baked in at build time; the handler receives it parsed back
   (`(alist-get 'key args)`). `:when-offline` is `"queue"` (default —
   mutations, replayed on reconnect), `"drop"` (navigation, refreshes),
   or `"wake"` (worth starting Emacs over). `:dedupe` collapses repeats
-  of the same key in the offline queue.
+  of the same key in the offline queue. `:confirm` (since 1.23.0) is a
+  prompt string shown as a native yes/no dialog before the handler runs
+  — a declarative guard for destructive taps; declining is a clean
+  no-op. **The undo convention:** prefer a snackbar undo
+  (`jetpacs-snackbar-action` on the next push) for anything cheap to
+  restore, and reserve `:confirm` for what an undo can't bring back —
+  a confirm interrupts every tap, an undo costs only the mistaken one.
+- **`(jetpacs-action-with-arg ACTION KEY VALUE)`** (since 1.23.0) —
+  a copy of ACTION with `(KEY . VALUE)` set in its args, the typed way
+  to specialize one action template per row/option server-side (a
+  number stays a number; no string parsing in the handler).
 - **`(jetpacs-clipboard-action TEXT)`** — companion-local copy to the
   device clipboard. No round trip, works offline.
 

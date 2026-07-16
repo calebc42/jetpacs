@@ -15,7 +15,7 @@
 
 ;; Author: calebch42 <calebch42@gmail.com>
 ;; Maintainer: calebch42 <calebch42@gmail.com>
-;; Version: 1.22.0
+;; Version: 1.23.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; Keywords: comm, tools
 ;; URL: https://github.com/calebc42/jetpacs
@@ -71,7 +71,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.22.0"
+(defconst jetpacs-api-version "1.23.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -2411,13 +2411,24 @@ action args when building it (the client adds nothing)."
 
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
-(cl-defun jetpacs-action (action &key args (when-offline "queue") dedupe)
-  "An action descriptor."
+(cl-defun jetpacs-action (action &key args (when-offline "queue") dedupe confirm)
+  "An action descriptor.
+ACTION names an allowlisted handler (`jetpacs-defaction'); ARGS is an
+alist baked in server-side.  WHEN-OFFLINE is the queue policy
+\(\"queue\"/\"drop\"/\"wake\", SPEC §5) and DEDUPE collapses queued repeats.
+
+CONFIRM, when non-nil, is a prompt string shown as a native yes/no dialog
+\(via the minibuffer bridge) before the handler runs — declining is a
+clean no-op.  For destructive actions (delete, remove): pair it with an
+undo snackbar (`jetpacs-snackbar-action') where an undo is cheap, and
+reserve :confirm for what an undo can't restore.  The gate runs at
+dispatch time in Emacs, so a queued offline tap confirms on replay."
   (jetpacs--node nil
               'action action
               'when_offline when-offline
               'args args
-              'dedupe dedupe))
+              'dedupe dedupe
+              'confirm confirm))
 
 (defun jetpacs-clipboard-action (text)
   "A companion-local action that copies TEXT to the device clipboard.
@@ -2851,16 +2862,36 @@ See docs/PLAN-dsl-ergonomics.md (A2)."
              :title "Couldn't render"
              :caption (error-message-string err)))))))
 
-(defun jetpacs--action-with-arg (action key value)
+(defun jetpacs-action-with-arg (action key value)
   "Return a copy of ACTION (an action alist) with (KEY . VALUE) set in its `args'.
-ACTION nil returns nil.  Used by the composites that bake a chosen value
-into the dispatched action server-side (the stepper's target number, the
-segmented control's option) rather than relying on companion value-injection,
-so the handler receives the value already typed (a number stays a number)."
+ACTION nil returns nil.  Bakes a chosen value into the dispatched action
+server-side — the composites use it (the stepper's target number, the
+segmented control's option) rather than relying on companion
+value-injection, so the handler receives the value already typed (a
+number stays a number).  Public since 1.23.0: the same need arrives in
+any Tier 1 that builds per-row or per-option actions from one template."
   (when action
     (let ((args (assq-delete-all key (copy-alist (alist-get 'args action))))
           (base (assq-delete-all 'args (copy-alist action))))
       (append base (list (cons 'args (append args (list (cons key value)))))))))
+
+(defalias 'jetpacs--action-with-arg #'jetpacs-action-with-arg
+  "Internal alias kept for pre-1.23.0 callers; use `jetpacs-action-with-arg'.")
+
+(defun jetpacs-additive (node fallback)
+  "Mark NODE (an additive wire type) to degrade to FALLBACK on old companions.
+Attaches FALLBACK (a single node) as NODE's children: a companion that
+recognizes NODE's `t' renders it (leaf additive nodes ignore unexpected
+children); one that predates it falls through the renderer's unknown-node
+path, which renders the children — i.e. FALLBACK.  This is the
+self-describing degrade the `badge' node ships with, generalized: the
+caller never needs to gate on `jetpacs-node-supported-p'.  Any existing
+children of NODE are replaced — so this fits the leaf additive nodes
+\(`chart', `canvas', `month_grid'), NOT `tabs', whose children are its
+pages; a tabs fallback keeps the explicit
+`jetpacs-node-supported-p' gate."
+  (append (assq-delete-all 'children (copy-alist node))
+          (list (cons 'children (vector fallback)))))
 
 (cl-defun jetpacs-stepper (id value on-change &key (min 0) max (step 1) format)
   "A −/+ stepper over the numeric VALUE.
@@ -3219,10 +3250,14 @@ companion gates on `jetpacs-node-supported-p' instead.")
 An entry is required to carry `label' and `on_tap'; `input' is the inline
 text-reply sub-object `{hint?, key?}'.")
 
-(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe)
+(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe
+                                       confirm)
   "The fields an action object may carry (SPEC §5).
 `action' and `builtin' are mutually exclusive; a `builtin' additionally
-carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
+carries the payload keys its kind requires (`jetpacs-lint-action-builtins').
+`confirm' (since 1.23.0) is a prompt string the Emacs dispatch gate shows
+as a native yes/no dialog before running the handler — companion-opaque
+\(round-tripped, never interpreted on-device).")
 
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
@@ -3308,11 +3343,15 @@ child's stable reconciliation identity — preferred over the child's
                                              padding))
     ("tabs"            (items children)     (initial scrollable pager_only
                                              on_change id))
+    ;; The additive visualization nodes accept `children' as the
+    ;; `jetpacs-additive' degrade slot (1.23.0): a companion that renders
+    ;; the node ignores them; an older one renders them as the fallback.
     ("chart"           (series)             (kind height y_range summary
-                                             on_point_tap))
-    ("canvas"          (width height ops)   ())
+                                             on_point_tap children))
+    ("canvas"          (width height ops)   (children))
     ("month_grid"      (month)              (marks selected min_month max_month
-                                             on_day_tap on_month_change))
+                                             on_day_tap on_month_change
+                                             children))
     ("icon"            (name)               (size color padding badge))
     ("image"           (url)                (content_description padding width
                                              height aspect_ratio content_scale))
@@ -4314,9 +4353,10 @@ like ivy/counsel/consult reroute prompts through `read-file-name-function'
 primitives run, and would otherwise reach a keyboard UI the phone can't
 drive.  `disabled-command-function' is nil'd so a novice.el disabled
 command runs instead of raw-reading a confirmation char (another hang)."
-  (let* ((action (alist-get 'action payload))
-         (args   (alist-get 'args payload))
-         (fn     (gethash action jetpacs-action-handlers)))
+  (let* ((action  (alist-get 'action payload))
+         (args    (alist-get 'args payload))
+         (confirm (alist-get 'confirm payload))
+         (fn      (gethash action jetpacs-action-handlers)))
     (if fn
         (progn
           (setq jetpacs--last-action-time (float-time))
@@ -4326,7 +4366,17 @@ command runs instead of raw-reading a confirmation char (another hang)."
                 (read-buffer-function nil)
                 (disabled-command-function nil))
             (condition-case err
-                (funcall fn args payload)
+                ;; The declarative confirm gate (`jetpacs-action' :confirm,
+                ;; 1.23.0): prompt via the bridged `y-or-n-p' — a native
+                ;; dialog on the companion — before the handler runs.
+                ;; Declining is a clean no-op; the gate sits inside the
+                ;; in-action-handler binding so the prompt bridges, and
+                ;; inside the condition-case so a cancelled dialog (quit)
+                ;; aborts quietly like any bridged prompt.
+                (if (and (stringp confirm) (not (string-empty-p confirm))
+                         (not (y-or-n-p confirm)))
+                    (message "Jetpacs action %s declined" action)
+                  (funcall fn args payload))
               ;; Cancelling a bridged prompt raises `quit' (keyboard-quit),
               ;; which `error' does not catch — treat it as a clean abort
               ;; rather than letting it unwind through the process filter.
@@ -4449,6 +4499,20 @@ The rotation empties the on-device widgets."
   (jetpacs-form-reset form)
   (remhash (jetpacs--form-key (jetpacs-form-ns form) (jetpacs-form-owner form))
            jetpacs--forms))
+
+(defun jetpacs-test-reset-state ()
+  "Reset all per-session UI/session state — the test-fixture seam.
+Clears the ui-state store, the state-change subscriptions, the form
+registry, and (when the shell is loaded) the route params, so an ERT
+fixture gets a pristine session without binding internals.  Public since
+1.23.0 — a Tier 1 test suite that let-binds `jetpacs--ui-state' and
+friends is the bug report this answers.  Never called by the core at
+runtime; a live session's state is owned by the connection lifecycle."
+  (clrhash jetpacs--ui-state)
+  (clrhash jetpacs--state-handlers)
+  (clrhash jetpacs--forms)
+  (when (boundp 'jetpacs-shell--route-params)
+    (clrhash jetpacs-shell--route-params)))
 
 (defun jetpacs--forms-of-owner (owner)
   "The registered forms owned by OWNER."

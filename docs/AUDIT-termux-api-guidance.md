@@ -191,6 +191,17 @@ lives inside companion-composed intents, invisible to Emacs); concept
 ✓. **Do first; it is the only item here that closes a hole rather than
 adds a nicety.**
 
+**Landed 2026-07-16** (same branch, commit after this audit): token
+generated once in `JetpacsLaunch`, stamped by the action-carrying
+`openAppIntent` overload (covering shortcuts, widget rows, QS tiles,
+and the trampoline in one place), verified by
+`MainActivity.handleWidgetIntent` before rebroadcast. Absent or
+mismatched token opens the app without firing — which also means
+pinned shortcuts created *before* the token existed degrade to
+open-only and need a re-pin. Hosts other than this repo's `:app`
+(Glasspane's own shell) must add the same `verifyToken` gate per the
+updated `JetpacsLaunch` contract doc.
+
 ## Tier B — amendment notes for the existing plans
 
 These are not new work items; they are findings the owner may fold

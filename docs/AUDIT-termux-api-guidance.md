@@ -198,9 +198,10 @@ and the trampoline in one place), verified by
 `MainActivity.handleWidgetIntent` before rebroadcast. Absent or
 mismatched token opens the app without firing — which also means
 pinned shortcuts created *before* the token existed degrade to
-open-only and need a re-pin. Hosts other than this repo's `:app`
-(Glasspane's own shell) must add the same `verifyToken` gate per the
-updated `JetpacsLaunch` contract doc.
+open-only and need a re-pin. (Correction, same day: Glasspane ships no
+shell of its own — it is elisp-only — so this repo's `:app` is the
+only `JetpacsLaunch` host and is already gated. Any *future* host must
+add the same `verifyToken` gate per the `JetpacsLaunch` contract doc.)
 
 ## Tier B — amendment notes for the existing plans
 

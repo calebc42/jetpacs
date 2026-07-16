@@ -1,11 +1,13 @@
 # Plan: Easer adoptions, second pass — firing history, manual triggers, state edges
 
-**STATUS (2026-07-16): DRAFTED (not executed)** on branch
-`claude/easer-jetpacs-learnings-d47310`. No code has changed; every
-seam, name, and line cited below was verified against this worktree
-(and the Easer checkout) on the drafting date. Item A flags a **live,
-pre-existing crash bug** — it should land ahead of (or independent of)
-everything else here.
+**STATUS (2026-07-16): Item A LANDED (`53b23e8`, merged to main the
+same day); B–F not executed.** Every seam, name, and line cited below
+was verified against the drafting worktree (and the Easer checkout) on
+the drafting date. Item A flagged a **live, pre-existing crash bug**;
+its fix landing first unblocks B and E, which route more
+receiver-driven traffic through `fireRow`. Sequencing for the
+remaining items is folded into ROADMAP's aligned execution path
+(companion lane): B → C → Termux A1 → D → E → F.
 
 This is the **second pass** over
 [Easer](https://github.com/renyuneyun/Easer) (renyuneyun/Easer, the

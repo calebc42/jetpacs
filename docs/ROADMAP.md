@@ -1,6 +1,6 @@
 # Roadmap — the Jetpacs foundation
 
-**STATUS (2026-07-14): current.** This is the *foundation* roadmap: the
+**STATUS (2026-07-16): current.** This is the *foundation* roadmap: the
 wire, the core elisp client, the `:jetpacs` renderer library, and the
 reference companion shell. The **app-level roadmap** — the Glasspane org
 app, PKM conversion, the automation/launcher feature tracks, on-device
@@ -44,6 +44,52 @@ on without depending on this repo's layout.
 The org-logic consolidation is **done**: the core owns the one query
 grammar and both consumers stand on it
 ([PLAN-org-extraction.md](PLAN-org-extraction.md) is the record).
+
+## Now — the aligned execution path (2026-07-16)
+
+Three review tracks merged on this date —
+[AUDIT-architecture-vui-vulpea.md](AUDIT-architecture-vui-vulpea.md)
+(arch N.N below), [PLAN-easer-adoptions.md](PLAN-easer-adoptions.md)
+(Easer A–F), and
+[AUDIT-termux-api-guidance.md](AUDIT-termux-api-guidance.md) (Termux
+A1/A2/B2) — and their items interleave with the standing numbered
+items below as **lanes**. Lanes touch disjoint code and run in
+parallel; order *within* a lane is load-bearing. Already landed with
+the merge: the fireRow receiver-thread crash fix (Easer Item A,
+`53b23e8`) and the launch-trampoline token (Termux A3, `ce7c9d3`).
+
+- **Defects lane — first, three repos in parallel.** jetpacs core:
+  async settle hardening + snackbar restore (arch 1.5 + defect 4, one
+  sitting). glasspane: the `glasspane-vulpea.el` rewrite (arch 1.1).
+  composer: `:requires-ast t` (arch 1.2). Then the CI engine-smoke
+  (arch 1.3) that would have caught both integration breakages.
+- **Measurement lane — jetpacs elisp.** Devtools/instrumentation
+  (arch 1.4) immediately after the core defects: it unblocks every
+  measurement gate below. Then the independent smalls: `:key` attr
+  (arch 1.6), ui-state scope (arch 2.6), `:on-enter`/`:on-leave`
+  (arch 2.7).
+- **Companion lane — Kotlin, ordered.** Easer B (firing history) → C
+  (`manual` + `trigger.fire`; the one contract.json-touching item) →
+  Termux A1 (runtime-permission auto-request) → Easer D (catalog
+  parity) → E (`state.edge`, the keystone) → F (`trigger_unavailable`).
+  Termux A2 (`error_codes` in the contract) rides item 11's
+  conformance track instead, beside a contract regen.
+- **Glasspane lane — opens after arch 1.1.** Vulpea A.4 execution
+  (arch 2.1) → worker-done repush seam (2.2) → schema forms/health
+  (2.3) and database views (2.4) in either order.
+- **On-device / owner lane.** Termux B2 (the wake-Emacs spike: one
+  `RUN_COMMAND` manifest line, then an `intent.start` evening); the
+  Easer items' acceptance rows as they land; battery B0
+  (calendar-bound; still gates transport S5 and new surface classes,
+  item 2).
+
+Two reconciliations recorded so nothing is built twice: arch 2.5
+(visibility-gated pushes, an inbound `app.lifecycle` event) and the
+battery plan's B3 (screen-state frame) are two drafts of **one
+signal** — design them as a single negotiated addition, owner
+sign-off on the wire change. And Tier 3 (arch 3.1 build reuse → 3.2
+transcript deltas → 3.3 renderer skippable model) stays strictly
+behind arch 1.4's measurements — do not start early.
 
 ## Near term
 

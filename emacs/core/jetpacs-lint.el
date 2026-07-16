@@ -310,11 +310,17 @@ frame kinds.")
   "Non-nil when X is a non-empty list or vector whose elements are all alists.
 This is how children, spans, items, rows, and cells are distinguished
 from a single nested node and from plain scalar sequences (a vector of
-strings like table `aligns' is not a node sequence)."
+strings like table `aligns' is not a node sequence).  A stray nil
+element is tolerated (constructors drop nils, but hand-built trees may
+carry one) so one hole can't silently reclassify a whole child list as
+a malformed alist and drop its subtree from traversal."
   (let ((elts (cond ((vectorp x) (append x nil))
                     ((proper-list-p x) x)
                     (t 'bad))))
-    (and (listp elts) elts (cl-every #'jetpacs-lint--alist-p elts))))
+    (and (listp elts)
+         (cl-some #'identity elts)
+         (cl-every (lambda (e) (or (null e) (jetpacs-lint--alist-p e)))
+                   elts))))
 
 (defun jetpacs-lint--serializable-scalar-p (val)
   "Non-nil when VAL is a JSON-serializable scalar.

@@ -148,7 +148,7 @@ should size to its content (see WIDGETS.md)."
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "row"
-                'children (vconcat (car split))
+                'children (vconcat (remq nil (car split)))
                 'spacing (plist-get opts :spacing)
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)
@@ -164,7 +164,7 @@ The right container for chip/tag rows, which overflow a plain `jetpacs-row'.
 Optional trailing keywords: :spacing and :run-spacing (dp)."
   (let* ((split (jetpacs--children-and-opts args)))
     (jetpacs--node "flow_row"
-                'children (vconcat (car split))
+                'children (vconcat (remq nil (car split)))
                 'spacing (plist-get (cdr split) :spacing)
                 'run_spacing (plist-get (cdr split) :run-spacing))))
 
@@ -192,7 +192,7 @@ inside a row fills it and pushes the later siblings off-screen — give it
   (let* ((split (jetpacs--children-and-opts args))
          (opts (cdr split)))
     (jetpacs--node "column"
-                'children (vconcat (car split))
+                'children (vconcat (remq nil (car split)))
                 'spacing (plist-get opts :spacing)
                 'align (plist-get opts :align)
                 'scroll (and (plist-get opts :scroll) t)

@@ -61,7 +61,10 @@ when it returns nil rather than relying on degradation.
   `box`/`surface`/`card` (and `image` for width/height).
 - **Colors** — a hex string (`"#7E55B3"`) or a Material theme token
   (`"primary"`, `"surface_container"`, `"primary_container"`, …) that
-  adapts to the device's light/dark theme. Prefer tokens.
+  adapts to the device's light/dark theme. Prefer tokens. Besides the
+  M3 roles, the companion also resolves `"success"` and `"warning"`
+  (theme-aware green/amber) for status text; an older companion that
+  predates them falls back to the ambient color, so text still renders.
 - **Icons** — snake_case Material icon names (`"menu_book"`,
   `"format_bold"`, `"waving_hand"`). The companion resolves Outlined →
   AutoMirrored → Filled; an unknown name renders a placeholder glyph,

@@ -354,8 +354,12 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                         listState.scrollToItem(scrollTarget)
                     }
                 }
+                // Stable per-child keys so structural pushes preserve each
+                // row's identity (focus, scroll, in-flight edits) instead of
+                // reusing slot compositions by position. See lazyChildKeys.
+                val keys = remember(children) { lazyChildKeys(children) }
                 LazyColumn(state = listState, modifier = baseModifier.fillMaxSize()) {
-                    items(children.length()) { i ->
+                    items(count = children.length(), key = { keys[it] }) { i ->
                         val child = children.optJSONObject(i)
                         if (child != null) SduiNode(child, surfaceId, revision, Modifier, dispatch)
                     }
@@ -382,8 +386,8 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             )
         }
         "spacer" -> {
-            val w = node.optInt("width", 0)
-            val h = node.optInt("height", 0)
+            val w = node.optInt("width", 0).coerceAtLeast(0)
+            val h = node.optInt("height", 0).coerceAtLeast(0)
             Spacer(modifier = baseModifier.size(width = w.dp, height = h.dp))
         }
         "scaffold" -> {
@@ -561,14 +565,17 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             val desc = node.optString("content_description")
             if (url.isNotEmpty()) {
                 var m = baseModifier
-                if (node.has("width")) m = m.width(node.optInt("width").dp)
-                if (node.has("height")) m = m.height(node.optInt("height").dp)
-                if (node.has("aspect_ratio")) m = m.aspectRatio(node.optDouble("aspect_ratio").toFloat())
+                val w = if (node.has("width")) safeDp(node.optInt("width")) else null
+                val h = if (node.has("height")) safeDp(node.optInt("height")) else null
+                if (w != null) m = m.width(w.dp)
+                if (h != null) m = m.height(h.dp)
+                if (node.has("aspect_ratio")) safeAspect(node.optDouble("aspect_ratio"))?.let { m = m.aspectRatio(it) }
                 // Default to full-width only when the server gave no explicit
-                // sizing (the historical behaviour); otherwise honour it.
+                // (valid) sizing; a malformed width falls through to fill.
                 m = when {
-                    node.has("width") -> m
-                    node.has("fill_fraction") -> m.fillMaxWidth(node.optDouble("fill_fraction").toFloat())
+                    w != null -> m
+                    node.has("fill_fraction") ->
+                        safeFraction(node.optDouble("fill_fraction"))?.let { m.fillMaxWidth(it) } ?: m.fillMaxWidth()
                     else -> m.fillMaxWidth()
                 }
                 val scale = when (node.optString("content_scale")) {
@@ -600,22 +607,66 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
 }
 
 /**
+ * Defensive clamps for wire-supplied numbers that feed Compose modifiers
+ * with preconditions. Malformed data (a `0` aspect ratio, a `>1` fraction, a
+ * negative dp) would otherwise throw *during composition* — and Compose has
+ * no clean way to recover from that, so a single bad node would blank the
+ * whole surface. Returning null (skip the modifier) instead of throwing is
+ * the reachable form of an error boundary here (see
+ * docs/PLAN-renderer-reconciliation.md, K2). Split out as pure functions so
+ * they are unit-testable on the JVM without instrumentation.
+ */
+internal fun safeAspect(v: Double): Float? = v.toFloat().takeIf { it.isFinite() && it > 0f }
+internal fun safeFraction(v: Double): Float? = v.toFloat().takeIf { it.isFinite() && it > 0f && it <= 1f }
+internal fun safeDp(v: Int): Int? = v.takeIf { it >= 0 }
+
+/**
+ * Stable, unique reconciliation keys for a lazy list's children (K1a in
+ * docs/PLAN-renderer-reconciliation.md). Without keys, `LazyColumn` keys
+ * items by position, so a structural push (insert/reorder/delete) reuses a
+ * slot's composition for a different node — scrambling the id-keyed
+ * `rememberSeeded` inside and losing an in-flight edit, focus, or scroll on a
+ * shifted row. We prefer an explicit `key`, then a stateful child's `id`
+ * (text_input, collapsible, editor all carry one); keyless leaves fall back
+ * to a namespaced index (status-quo positional behaviour, harmless for
+ * stateless content). Duplicate bases (author error: two children sharing an
+ * id) are disambiguated with a `#n` suffix so Compose never sees a duplicate
+ * key — which would crash the list. Pure and JVM-testable.
+ */
+internal fun lazyChildKeys(children: JSONArray): List<String> {
+    val seen = HashMap<String, Int>()
+    return (0 until children.length()).map { i ->
+        val c = children.optJSONObject(i)
+        val explicit = c?.optString("key").orEmpty()
+        val id = c?.optString("id").orEmpty()
+        val base = when {
+            explicit.isNotEmpty() -> "k:$explicit"
+            id.isNotEmpty() -> "id:$id"
+            else -> "i:$i"
+        }
+        val n = seen.getOrDefault(base, 0)
+        seen[base] = n + 1
+        if (n == 0) base else "$base#$n"
+    }
+}
+
+/**
  * Sizing and border modifiers shared by the container nodes (box, surface,
  * card): explicit width/height in dp, fill_fraction (0..1 of the parent's
  * width), and an optional {width,color} border stroked with the container's
  * SHAPE. All additive — an absent key changes nothing, so a plain container
- * is unaffected.
+ * is unaffected. Out-of-range numbers are skipped, not applied (see safe*).
  */
 @Composable
 private fun containerModifier(node: JSONObject, shape: Shape): Modifier {
     var m: Modifier = Modifier
-    if (node.has("width")) m = m.width(node.optInt("width").dp)
-    if (node.has("height")) m = m.height(node.optInt("height").dp)
-    if (node.has("fill_fraction")) m = m.fillMaxWidth(node.optDouble("fill_fraction").toFloat())
+    if (node.has("width")) safeDp(node.optInt("width"))?.let { m = m.width(it.dp) }
+    if (node.has("height")) safeDp(node.optInt("height"))?.let { m = m.height(it.dp) }
+    if (node.has("fill_fraction")) safeFraction(node.optDouble("fill_fraction"))?.let { m = m.fillMaxWidth(it) }
     node.optJSONObject("border")?.let { b ->
         val c = resolveColor(b.optString("color")).takeIf { it != Color.Unspecified }
             ?: MaterialTheme.colorScheme.outline
-        m = m.border(BorderStroke(b.optInt("width", 1).dp, c), shape)
+        m = m.border(BorderStroke(b.optInt("width", 1).coerceAtLeast(0).dp, c), shape)
     }
     return m
 }

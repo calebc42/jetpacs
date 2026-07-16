@@ -1,8 +1,13 @@
 ;;; jetpacs.el --- Emacs-Android Bridge Protocol client -*- lexical-binding: t; -*-
 
+;; Author: calebch42 <calebch42@gmail.com>
+;; Maintainer: calebch42 <calebch42@gmail.com>
 ;; Version: 1.18.0
 ;; Package-Requires: ((emacs "30.1"))
+;; Keywords: comm, tools
 ;; URL: https://github.com/calebc42/jetpacs
+
+;;; Commentary:
 
 ;; The Version: header MUST equal `jetpacs-api-version' (a test pins it):
 ;; a `package-vc-install' of this repo reports the same number the API

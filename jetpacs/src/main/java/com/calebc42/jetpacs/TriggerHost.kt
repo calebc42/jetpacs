@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 /**
  * The companion as a durable *event source* (SPEC §11): a persisted
@@ -503,6 +504,15 @@ class TriggerHost(private val context: Context) {
          * the FGS process IS the trigger host's lifetime). */
         private val lastFired = ConcurrentHashMap<String, Long>()
 
+        /** Queue writes must leave the caller's thread: the context-
+         * registered receivers deliver [fireRow] on the MAIN thread and
+         * Room refuses main-thread queries. One thread keeps queued
+         * fires in arrival order; the alarm and wire callers are already
+         * off-main and the extra hop is harmless. */
+        private val queueExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "JetpacsTriggerQueue")
+        }
+
         /**
          * SPEC §11 replace-set parsing and validation, extracted from
          * [replaceSet] so it is unit-testable without Room: the parsed
@@ -596,12 +606,14 @@ class TriggerHost(private val context: Context) {
             when (row.policy) {
                 "drop" -> Log.d(TAG, "Dropped fire ${row.id} (policy=drop)")
                 else -> {
-                    JetpacsRuntime.database?.eventDao()?.insert(QueuedEvent(
-                        kind = "event.action",
-                        payload = payload.toString(),
-                        dedupeKey = row.dedupe,
-                    ))
-                    JetpacsRuntime.refreshQueuedCount()
+                    queueExecutor.execute {
+                        JetpacsRuntime.database?.eventDao()?.insert(QueuedEvent(
+                            kind = "event.action",
+                            payload = payload.toString(),
+                            dedupeKey = row.dedupe,
+                        ))
+                        JetpacsRuntime.refreshQueuedCount()
+                    }
                     Log.d(TAG, "Queued fire ${row.id} (policy=${row.policy})")
                     if (row.policy == "wake") EmacsWaker.requestWake(context)
                 }

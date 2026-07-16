@@ -361,7 +361,10 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 LazyColumn(state = listState, modifier = baseModifier.fillMaxSize()) {
                     items(count = children.length(), key = { keys[it] }) { i ->
                         val child = children.optJSONObject(i)
-                        if (child != null) SduiNode(child, surfaceId, revision, Modifier, dispatch)
+                        // animateItem: with stable keys (above), inserts/removes/
+                        // moves animate instead of popping, and unchanged rows on a
+                        // re-push don't animate at all (K1b payoff).
+                        if (child != null) SduiNode(child, surfaceId, revision, Modifier.animateItem(), dispatch)
                     }
                 }
             }

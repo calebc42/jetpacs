@@ -14,7 +14,7 @@
 ;; other setting.  A Custom buffer opened by hand still renders through
 ;; Tier 0, whose widget support can push its buttons and edit fields.
 ;;
-;; Boundary (docs/SPEC.md §5): `customize.set' / `customize.reset'
+;; Boundary (eabp/SPEC.md §5): `customize.set' / `customize.reset'
 ;; accept any symbol satisfying `custom-variable-p' — deliberately wider
 ;; than the `settings.*' registry gate, and exactly as powerful as
 ;; M-x customize itself (which the M-x escape hatch already exposes).

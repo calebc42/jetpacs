@@ -8,7 +8,7 @@
 ;; end is the bottom; below it sit a status/interrupt row and an input
 ;; row whose submit dispatches `comint.send'.
 ;;
-;; Boundary (docs/SPEC.md §5): `comint.send' delivers input only to the
+;; Boundary (eabp/SPEC.md §5): `comint.send' delivers input only to the
 ;; live process of an existing comint buffer — a REPL the user already
 ;; opened (from the palette, M-x, or a curated entry point).  It never
 ;; starts a process, so the wire gains no new execution surface beyond

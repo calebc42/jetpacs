@@ -40,7 +40,7 @@ live transients, where a bounded set of human-written labels fits a pie.
 | module | role |
 |---|---|
 | `jetpacs.el` | transport: NDJSON framing, handshake, pairing auth, reconnect backoff |
-| `jetpacs-widgets.el` | the widget constructors (wire shapes in `test/widgets.golden`) |
+| `jetpacs-widgets.el` | the widget constructors (wire shapes in `eabp/goldens/widgets.golden`) |
 | `jetpacs-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
 | `jetpacs-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
 | `jetpacs-device.el` | device effectors: one thin defun per SPEC §10 capability (`jetpacs-device-intent`, `-flashlight`, `-tts`, …) through the `jetpacs-device--invoke` funnel |
@@ -148,7 +148,7 @@ library names no host class):
 | `jetpacs-files-editor-{body,actions,toolbar}` + open/after-save hooks | jetpacs-files | per-file-type editor behaviour |
 | `jetpacs-settings-register-section` / `jetpacs-settings-after-set-hook` | jetpacs-settings | app settings exposure (the wire allowlist) |
 | `jetpacs-keymap` pie plumbing | jetpacs-keymap | curated Tier 1 pies (see jetpacs-magit.el) |
-| `jetpacs-defaction` | jetpacs-surfaces | every semantic action handler (allowlist rule: [SPEC §5](SPEC.md)) |
+| `jetpacs-defaction` | jetpacs-surfaces | every semantic action handler (allowlist rule: [SPEC §5](https://github.com/calebc42/eabp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)) |
 | `jetpacs-device-*` / `jetpacs-capability-invoke` | jetpacs-device, jetpacs.el | device side-effects from handlers and triggers (SPEC §10) |
 | `jetpacs-deftrigger` / `jetpacs-trigger-register` | jetpacs-triggers | device events → elisp handlers, plus companion-local `on_fire` (SPEC §11) |
 | `jetpacs-surface-push` (`notification:*`, `widget:customN`, `tile:customN`) | jetpacs-surfaces | surfaces beyond the app: notifications, home-screen widgets, QS tiles |
@@ -209,7 +209,8 @@ lands in `:jetpacs` only if it is protocol, in `:app` if it is opinion.
 Audit this table whenever a Kotlin wave lands (last audited
 2026-07-05). Writing a companion
 of your own? This table doubles as your build map — see
-[BUILDING-COMPANION.md](BUILDING-COMPANION.md):
+[BUILDING-COMPANION.md](https://github.com/calebc42/eabp/blob/main/BUILDING-COMPANION.md)
+in the eabp protocol repo:
 
 | Kotlin surface | SPEC section |
 |---|---|
@@ -223,7 +224,7 @@ of your own? This table doubles as your build map — see
 | Dialogs, toasts, pies (`JetpacsDialogState`, `JetpacsPieMenuState`) | §7 |
 | `ReminderScheduler` (replace-set, reboot persistence) | §7 |
 | `EditorSync` / completion / diagnostics / eldoc / fontify | §8 |
-| `SduiRenderer` + node files (shapes pinned by `test/widgets.golden`) | §9 |
+| `SduiRenderer` + node files (shapes pinned by `eabp/goldens/widgets.golden`) | §9 |
 | `SduiToolbar` (data-driven editor toolbars, snippet placeholders) | §9 "Editor toolbars" |
 | `DeviceCapabilities` (catalog + perm map), `JetpacsRuntime.keepScreenOn` | §10 |
 | `TriggerHost` / `TriggerAlarmReceiver` / `BootReceiver` (types, throttle, hysteresis, `on_fire`, reboot rearm) | §11 |

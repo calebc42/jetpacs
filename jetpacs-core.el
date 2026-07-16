@@ -3148,12 +3148,13 @@ on-device) or the empty string for a bare attention dot; nil for none."
 ;;                            so one bad subtree degrades instead of the push.
 ;;
 ;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
-;; (SduiRenderer.kt) and `test/widgets.golden'; the drift test
+;; (SduiRenderer.kt) and `eabp/goldens/widgets.golden'; the drift test
 ;; `jetpacs-lint-types-cover-golden' fails if a constructor emits a `t' not
 ;; listed here.  Since Spec 1.0-rc the tables below also carry the authored
 ;; per-node key schema (`jetpacs-lint-node-schema') and the frame-kind
 ;; schema (`jetpacs-lint-kind-schema'); `build-contract.el' publishes both
-;; in docs/contract.json (contract_format 2) for non-elisp implementations.
+;; in eabp/contract.json (contract_format 2, the eabp protocol submodule)
+;; for non-elisp implementations.
 
 ;;; Code:
 
@@ -3241,7 +3242,7 @@ literal by the companion — almost always a typo worth a warning.")
   "Companion-local builtins → the payload keys each requires (SPEC §5).
 Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
 must name one of these and carry every listed key.  `build-contract.el'
-derives the discriminated action schema in `contract.json' from this.")
+derives the discriminated action schema in `eabp/contract.json' from this.")
 
 (defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style)
   "Keys legal on any node, attached after construction.
@@ -3312,9 +3313,9 @@ root node (`jetpacs-send-dialog', SPEC §7).")
                                              floating_toolbar snackbar
                                              snackbar_action drawer on_refresh)))
   "Per-node key schema: (TYPE REQUIRED OPTIONAL), one row per node type.
-Authored from `test/widgets.golden' ∪ the `jetpacs-widgets.el' constructor
-signatures, hand-reviewed against WIDGETS.md and SPEC §9 (the review is
-SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing REQUIRED
+Authored from `eabp/goldens/widgets.golden' ∪ the `jetpacs-widgets.el'
+constructor signatures, hand-reviewed against WIDGETS.md and SPEC §9 (the
+review is eabp/SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing REQUIRED
 key as an error and a key outside the row (and outside
 `jetpacs-lint-node-common-keys') as a warning — a warning, not an error,
 because companions must ignore unknown keys (the §9 forward-compat rule),
@@ -8904,7 +8905,7 @@ by its header label instead of a fragile index."
 ;; end is the bottom; below it sit a status/interrupt row and an input
 ;; row whose submit dispatches `comint.send'.
 ;;
-;; Boundary (docs/SPEC.md §5): `comint.send' delivers input only to the
+;; Boundary (eabp/SPEC.md §5): `comint.send' delivers input only to the
 ;; live process of an existing comint buffer — a REPL the user already
 ;; opened (from the palette, M-x, or a curated entry point).  It never
 ;; starts a process, so the wire gains no new execution surface beyond
@@ -15126,7 +15127,7 @@ with a keyboard FAB that opens the buffer's keymap."
 ;; other setting.  A Custom buffer opened by hand still renders through
 ;; Tier 0, whose widget support can push its buttons and edit fields.
 ;;
-;; Boundary (docs/SPEC.md §5): `customize.set' / `customize.reset'
+;; Boundary (eabp/SPEC.md §5): `customize.set' / `customize.reset'
 ;; accept any symbol satisfying `custom-variable-p' — deliberately wider
 ;; than the `settings.*' registry gate, and exactly as powerful as
 ;; M-x customize itself (which the M-x escape hatch already exposes).

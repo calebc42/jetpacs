@@ -332,13 +332,18 @@ on the wire.
   once on release with the position as `value`; `:min`/`:max` default
   0.0/1.0, `:steps` > 0 makes it discrete.
 - **`(jetpacs-text-input ID &key value hint label on-submit multi-line
-  min-lines max-lines monospace syntax password keyboard padding)`** —
-  single-line by default (`:on-submit` fires on the keyboard's done
-  key); `:multi-line` accepts newlines, so pair it with a submit
-  button. The typed text lives companion-side under ID — push a *new*
-  id to clear the field. `:password` masks entry (never log such
-  values); `:keyboard` picks the IME from `number` / `decimal` /
-  `email` / `phone` / `uri`.
+  min-lines max-lines monospace syntax password keyboard autofocus
+  clear-on-submit padding)`** — single-line by default (`:on-submit`
+  fires on the keyboard's done key); `:multi-line` accepts newlines, so
+  pair it with a submit button. The typed text lives companion-side
+  under ID — push a *new* id to clear the field, or pass
+  `:clear-on-submit` (since 1.25.0) to reset it in place after the
+  submit dispatch: same composition, so focus and the keyboard survive
+  for chained rapid entry. `:autofocus` (since 1.25.0) grabs focus and
+  raises the keyboard the first time the field composes under a new ID
+  (same-id re-pushes never re-steal). `:password` masks entry (never
+  log such values); `:keyboard` picks the IME from `number` / `decimal`
+  / `email` / `phone` / `uri`.
 - **`(jetpacs-enum-list ID OPTIONS &key value multi-select allow-add
   on-change padding)`** — single or multi select over strings;
   `:allow-add` shows a free-text add affordance.
@@ -387,17 +392,27 @@ Built on the [form registry](#) (`jetpacs-form`); no new wire type.
 
 ## The editor
 
-- **`(jetpacs-editor ID VALUE &key on-save read-only syntax
-  line-numbers complete chromeless publish-state toolbar)`** — a
-  full-height plain-text editor. Unsaved state lives companion-side
-  under ID; `:on-save` receives the full text as `value`. `:syntax`
-  forces highlighting (else inferred from the file extension in ID);
-  `:line-numbers` is `"absolute"` / `"relative"`. `:complete` turns on
-  the Emacs-backed completion strip (see `jetpacs-complete.el`);
-  `:chromeless` drops the filename/undo/save header for inline fields
-  (the eval REPL input); `:publish-state` mirrors the text into
-  `jetpacs-ui-state` via debounced `state.changed`, for button-driven
-  forms.
+- **`(jetpacs-editor ID VALUE &key on-save on-enter read-only syntax
+  line-numbers complete chromeless publish-state autofocus toolbar)`**
+  — a full-height plain-text editor. Unsaved state lives
+  companion-side under ID; `:on-save` receives the full text as
+  `value`. `:syntax` forces highlighting (else inferred from the file
+  extension in ID); `:line-numbers` is `"absolute"` / `"relative"`.
+  `:complete` turns on the Emacs-backed completion strip (see
+  `jetpacs-complete.el`); `:chromeless` drops the filename/undo/save
+  header for inline fields (the eval REPL input); `:publish-state`
+  mirrors the text into `jetpacs-ui-state` via debounced
+  `state.changed`, for button-driven forms — and any action dispatch
+  flushes a pending value first (SPEC §5), so a button handler never
+  reads a debounce-stale buffer. `:on-enter` (since 1.25.0) turns the
+  keyboard's Enter into a dispatch carrying the full buffer as `value`
+  instead of inserting a newline — the outliner's
+  Enter-creates-a-sibling; the keyboard stays up for the editor the
+  handler pushes next, and a literal newline still comes from a
+  hardware Enter or a toolbar snippet. `:autofocus` (since 1.25.0)
+  grabs focus and raises the keyboard on first composition under a new
+  ID — pair it with a per-edit ID generation so a freshly pushed
+  editor is immediately typeable.
 - **`(jetpacs-toolbar-item ICON LABEL &key snippet placement line
   on-tap long-press menu)`** — one keyboard-toolbar chip, passed as a
   list to `:toolbar`. Exactly **one op** per item: `:snippet` (local

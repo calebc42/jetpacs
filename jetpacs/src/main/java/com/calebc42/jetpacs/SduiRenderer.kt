@@ -128,7 +128,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
     val context = LocalContext.current
     val type = node.optString("t")
 
-    val dispatch = onAction ?: { action: JSONObject ->
+    val rawDispatch = onAction ?: { action: JSONObject ->
         val intent = Intent(context, ActionReceiver::class.java).apply {
             this.action = ActionReceiver.ACTION_TAP
             putExtra(ActionReceiver.EXTRA_SURFACE, surfaceId)
@@ -136,6 +136,17 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
             putExtra(ActionReceiver.EXTRA_ACTION, action.toString())
         }
         context.sendBroadcast(intent)
+    }
+    // SPEC §5 ordering guarantee: every diverged stateful-node value reaches
+    // the wire as `state.changed` BEFORE any `event.action` that might read
+    // it. The debounced publishers (text_input, editor publish_state)
+    // register flushers by node id; draining them here — synchronously, on
+    // the same thread that sends the action — preserves order at the
+    // receiver, so a handler reading `jetpacs-ui-state` never races the
+    // 250ms debounce.
+    val dispatch = { action: JSONObject ->
+        PendingStateFlush.flushAll()
+        rawDispatch(action)
     }
 
     val baseModifier = modifier.then(
@@ -414,8 +425,8 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
         // ── Input nodes (SduiInputNodes.kt) ─────────────────────────────
         "text_input" -> SduiTextInput(node, baseModifier, dispatch)
         "editor" -> SduiEditor(node, baseModifier, dispatch)
-        "checkbox" -> SduiCheckbox(node, baseModifier)
-        "switch" -> SduiSwitch(node, baseModifier)
+        "checkbox" -> SduiCheckbox(node, baseModifier, dispatch)
+        "switch" -> SduiSwitch(node, baseModifier, dispatch)
         "enum_list" -> SduiEnumList(node, baseModifier, dispatch)
         "date_button" -> SduiDateButton(node, baseModifier, dispatch)
         "time_button" -> SduiTimeButton(node, baseModifier, dispatch)
@@ -792,6 +803,29 @@ private fun WeightedChildren(
         val weight = child.optDouble("weight", 0.0).toFloat()
         val childModifier = if (weight > 0) weightModifier(weight) else Modifier
         SduiNode(child, surfaceId, revision, childModifier, dispatch)
+    }
+}
+
+/**
+ * Registry of pending debounced `state.changed` flushes (SPEC §5).
+ *
+ * Stateful nodes that publish on a debounce (text_input; editor with
+ * publish_state) register a flush lambda under their widget id; the
+ * action-dispatch path drains the registry synchronously before sending
+ * any `event.action`, so a diverged value always precedes on the wire the
+ * action that might read it. A flusher must be idempotent and cheap: it
+ * re-sends nothing when the last published value is already current.
+ */
+internal object PendingStateFlush {
+    private val flushers = java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
+    fun register(id: String, flush: () -> Unit) {
+        if (id.isNotEmpty()) flushers[id] = flush
+    }
+    fun unregister(id: String) {
+        flushers.remove(id)
+    }
+    fun flushAll() {
+        flushers.values.forEach { it() }
     }
 }
 

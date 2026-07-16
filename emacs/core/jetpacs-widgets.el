@@ -709,7 +709,8 @@ ellipsis. Folding/opening is handled entirely on-device."
 
 (cl-defun jetpacs-text-input (id &key value hint label on-submit single-line
                               multi-line min-lines max-lines monospace syntax
-                              password keyboard padding)
+                              password keyboard autofocus clear-on-submit
+                              padding)
   "A text input field.
 ID identifies the field. ON-SUBMIT is an action dispatched when done.
 The client defaults to single-line; pass MULTI-LINE non-nil for a box that
@@ -722,7 +723,12 @@ the `read-passwd' bridge; such a field's value must not be logged or
 retained beyond the read.
 KEYBOARD picks the IME: \"number\", \"decimal\", \"email\", \"phone\", or
 \"uri\"; nil (or an unknown value) falls back to the text keyboard, and
-PASSWORD always wins."
+PASSWORD always wins.
+AUTOFOCUS makes the field grab focus and raise the keyboard the first
+time it composes under a new ID — re-pushes of the same ID never
+re-steal focus. CLEAR-ON-SUBMIT empties the field client-side after the
+submit dispatch, in place (no ID rotation), so focus and the keyboard
+survive for chained rapid entry; the mirrored ui-state clears with it."
   (jetpacs--node "text_input"
               'id id
               'value value
@@ -738,6 +744,8 @@ PASSWORD always wins."
               'syntax syntax
               'password (and password t)
               'keyboard keyboard
+              'autofocus (and autofocus t)
+              'clear_on_submit (and clear-on-submit t)
               'padding padding))
 
 (cl-defun jetpacs-enum-list (id options &key value multi-select allow-add on-change padding)
@@ -1195,8 +1203,9 @@ carrying one of SNIPPET/LINE/ON-TAP.  Pass the item list to
               'long_press long-press
               'menu (and menu (vconcat menu))))
 
-(cl-defun jetpacs-editor (id value &key on-save read-only syntax line-numbers
-                          complete chromeless publish-state toolbar)
+(cl-defun jetpacs-editor (id value &key on-save on-enter read-only syntax
+                          line-numbers complete chromeless publish-state
+                          autofocus toolbar)
   "A full-height plain-text editor node.
 ID identifies the editor (its unsaved state lives companion-side under
 this key). VALUE seeds the buffer. ON-SAVE is dispatched with the full
@@ -1211,7 +1220,17 @@ CHROMELESS hides the filename/undo/save header and sizes the field
 compactly instead of full-height — an inline field with the full bridge
 \(completion, squiggles, doc line), e.g. the eval REPL input.
 PUBLISH-STATE emits debounced `state.changed' with the text under ID,
-so button-driven forms can read it back from `jetpacs-ui-state'.
+so button-driven forms can read it back from `jetpacs-ui-state' — and
+any action dispatch flushes a pending value first (SPEC §5), so a
+button handler never reads a debounce-stale buffer.
+ON-ENTER turns the keyboard's Enter into a dispatch: the action fires
+with the full buffer injected into args as `value' INSTEAD of inserting
+a newline (the outliner's Enter-creates-a-sibling; a literal newline
+still comes from a hardware Enter or a toolbar snippet), and the
+keyboard stays up for the editor the handler pushes next.
+AUTOFOCUS makes the editor grab focus and raise the keyboard the first
+time it composes under a new ID — pair it with a per-edit ID generation
+so a freshly pushed editor is immediately typeable.
 TOOLBAR attaches a keyboard-adjacent formatting toolbar: a list of
 `jetpacs-toolbar-item's the companion interprets as data (the default
 path), or a string naming a host-registered native toolbar (the Kotlin
@@ -1222,12 +1241,14 @@ editor into the affordance."
               'id id
               'value value
               'on_save on-save
+              'on_enter on-enter
               'read_only (and read-only t)
               'syntax syntax
               'line_numbers line-numbers
               'complete (and complete t)
               'chromeless (and chromeless t)
               'publish_state (and publish-state t)
+              'autofocus (and autofocus t)
               'toolbar (if (and toolbar (listp toolbar))
                            (vconcat toolbar)
                          toolbar)))

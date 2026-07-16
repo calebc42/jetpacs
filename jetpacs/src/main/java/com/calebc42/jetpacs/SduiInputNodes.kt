@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.KeyboardActionHandler
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -52,8 +53,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -135,6 +139,13 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
     val hint = node.optString("hint")
     val label = node.optString("label")
     val onSubmit = node.optJSONObject("on_submit")
+    // Server-requested focus (SPEC §9): first composition under a NEW id
+    // grabs focus and raises the IME — re-pushes of the same id never
+    // re-steal. clear_on_submit resets the text in place (no id rotation),
+    // so the composition — and with it focus and the keyboard — survives
+    // chained rapid entry.
+    val autofocus = node.optBoolean("autofocus", false)
+    val clearOnSubmit = node.optBoolean("clear_on_submit", false)
     val singleLine = node.optBoolean("single_line", true)
     val minLines = node.optInt("min_lines", 1)
     val maxLines = node.optInt("max_lines", if (singleLine) 1 else Int.MAX_VALUE)
@@ -158,8 +169,10 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
     // Debounced state.changed: a broadcast per keystroke flooded the
     // bridge (one frame — or one queue insert offline — per character,
     // and a full dialog re-push from the live-filter picker). 250ms
-    // after typing pauses is fresh enough.
-    var lastSent by remember(id) { mutableStateOf<String?>(null) }
+    // after typing pauses is fresh enough — and any action dispatch
+    // flushes the pending value first (SPEC §5, [PendingStateFlush]).
+    val lastSentState = remember(id) { mutableStateOf<String?>(null) }
+    var lastSent by lastSentState
     LaunchedEffect(text) {
         if (lastSent == null) {
             lastSent = text          // initial composition: nothing typed yet
@@ -171,6 +184,22 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
             lastSent = text
             dispatchStateChanged(context, id, JSONObject.quote(text))
         }
+    }
+    DisposableEffect(id) {
+        PendingStateFlush.register(id) {
+            val t = textState.value
+            if (lastSentState.value != null && t != lastSentState.value) {
+                lastSentState.value = t
+                dispatchStateChanged(context, id, JSONObject.quote(t))
+            }
+        }
+        onDispose { PendingStateFlush.unregister(id) }
+    }
+
+    val focusRequester = remember(id) { FocusRequester() }
+    if (autofocus) LaunchedEffect(id) {
+        withFrameNanos {}            // field must be laid out before it can focus
+        focusRequester.requestFocus()
     }
 
     OutlinedTextField(
@@ -188,7 +217,7 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
         // A multi-line field needs Enter for newlines, so it can't also
         // submit on Enter — multi-line callers submit via a button whose
         // action reads the value back from `jetpacs--ui-state`.
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().focusRequester(focusRequester),
         keyboardOptions = KeyboardOptions(
             keyboardType = when {
                 password -> KeyboardType.Password
@@ -204,8 +233,13 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
             imeAction = if (singleLine) ImeAction.Done else ImeAction.Default
         ),
         keyboardActions = KeyboardActions(onDone = {
-            if (onSubmit != null) dispatchWithValue(dispatch, onSubmit, text)
-            // Flush immediately; the debounce may still be pending.
+            val submitted = text
+            if (onSubmit != null) dispatchWithValue(dispatch, onSubmit, submitted)
+            // Flush immediately; the debounce may still be pending. With
+            // clear_on_submit the field resets in place instead — same
+            // composition, so focus and the keyboard survive — and the
+            // mirrored ui-state clears with it.
+            text = if (clearOnSubmit) "" else submitted
             lastSent = text
             dispatchStateChanged(context, id, JSONObject.quote(text))
         })
@@ -230,6 +264,16 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     val id = node.optString("id")
     val readOnly = node.optBoolean("read_only", false)
     val onSave = node.optJSONObject("on_save")
+    // on_enter turns the IME's Enter into a dispatch: the action fires with
+    // the full buffer injected as `value` INSTEAD of inserting a newline —
+    // the outliner's "Enter creates the next block". A literal newline still
+    // comes from a hardware Enter or a toolbar snippet. The default action
+    // (keyboard hide) is deliberately not performed, so chained entry keeps
+    // the keyboard up while the server swaps the next editor in.
+    val onEnter = node.optJSONObject("on_enter")
+    // Server-requested focus (SPEC §9): same semantics as text_input —
+    // first composition under a NEW id grabs focus and raises the IME.
+    val autofocus = node.optBoolean("autofocus", false)
     // Chromeless: no filename/undo/save header, compact height — an inline
     // field with the full bridge (the eval REPL input).
     val chrome = !node.optBoolean("chromeless", false)
@@ -402,20 +446,48 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     }
 
     // publish_state: mirror the text into ui-state like a text_input, so
-    // button-driven forms (the Eval button) can read it back.
+    // button-driven forms (the Eval button) can read it back. Any action
+    // dispatch flushes a pending value first (SPEC §5, [PendingStateFlush]),
+    // so a Save/submit button never reads a 250ms-stale buffer.
     if (node.optBoolean("publish_state", false)) {
+        val lastPublished = remember(id) { mutableStateOf<CharSequence>(state.text) }
         LaunchedEffect(id) {
-            var lastPublished: CharSequence = state.text
             snapshotFlow { state.text }
                 .collectLatest { t ->
-                    if (t.contentEquals(lastPublished)) return@collectLatest
+                    if (t.contentEquals(lastPublished.value)) return@collectLatest
                     delay(250)
                     val s = t.toString()
-                    lastPublished = s
+                    lastPublished.value = s
                     dispatchStateChanged(context, id, JSONObject.quote(s))
                 }
         }
+        DisposableEffect(id) {
+            PendingStateFlush.register(id) {
+                val s = state.text.toString()
+                if (!s.contentEquals(lastPublished.value)) {
+                    lastPublished.value = s
+                    dispatchStateChanged(context, id, JSONObject.quote(s))
+                }
+            }
+            onDispose { PendingStateFlush.unregister(id) }
+        }
     }
+
+    val focusRequester = remember(id) { FocusRequester() }
+    if (autofocus) LaunchedEffect(id) {
+        withFrameNanos {}            // field must be laid out before it can focus
+        focusRequester.requestFocus()
+    }
+    // Enter-as-dispatch (see on_enter above): the IME action becomes Done,
+    // handled by dispatching with the buffer as `value`; performDefault is
+    // skipped so the keyboard stays up for the next editor.
+    val enterKeyboardOptions =
+        if (onEnter != null && !readOnly) KeyboardOptions(imeAction = ImeAction.Done)
+        else KeyboardOptions.Default
+    val enterHandler =
+        if (onEnter != null && !readOnly)
+            KeyboardActionHandler { dispatchWithValue(dispatch, onEnter, state.text.toString()) }
+        else null
 
     // Eldoc content for the caret position (e.g. an elisp signature).
     // Session-gated; benign staleness (≤ one debounce) is acceptable here,
@@ -493,6 +565,8 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                 state = state,
                 readOnly = readOnly,
                 outputTransformation = outputTx,
+                keyboardOptions = enterKeyboardOptions,
+                onKeyboardAction = enterHandler,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = FontFamily.Monospace,
                     lineHeight = 1.4.em
@@ -501,6 +575,7 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     .fillMaxWidth()
                     .then(sizing)
                     .padding(if (chrome) 8.dp else 2.dp)
+                    .focusRequester(focusRequester)
             )
         } else {
             // Gutter mode. BasicTextField exposes onTextLayout, which gives
@@ -572,6 +647,8 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     state = state,
                     readOnly = readOnly,
                     outputTransformation = outputTx,
+                    keyboardOptions = enterKeyboardOptions,
+                    onKeyboardAction = enterHandler,
                     onTextLayout = { getResult -> textLayout = getResult },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
@@ -579,7 +656,7 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                         color = MaterialTheme.colorScheme.onSurface
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester)
                 )
             }
         }
@@ -762,35 +839,42 @@ private fun CompletionStrip(
 }
 
 @Composable
-internal fun SduiCheckbox(node: JSONObject, modifier: Modifier) {
+internal fun SduiCheckbox(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Unit) {
     val context = LocalContext.current
     val id = node.optString("id")
     val (checkedState, _) = rememberSeededBool(id, node.optBoolean("checked", false))
     var checked by checkedState
     val label = node.optString("label")
+    // SPEC §9 has always declared on_change here; the renderer now
+    // dispatches it (with the new value injected as `value`) in addition
+    // to the state.changed report.
+    val onChange = node.optJSONObject("on_change")
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         Checkbox(checked = checked, onCheckedChange = {
             checked = it
             dispatchStateChanged(context, id, it.toString())
+            if (onChange != null) dispatchWithValue(dispatch, onChange, it)
         })
         if (label.isNotEmpty()) Text(label, modifier = Modifier.padding(start = 8.dp))
     }
 }
 
 @Composable
-internal fun SduiSwitch(node: JSONObject, modifier: Modifier) {
+internal fun SduiSwitch(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Unit) {
     val context = LocalContext.current
     val id = node.optString("id")
     val (checkedState, _) = rememberSeededBool(id, node.optBoolean("checked", false))
     var checked by checkedState
     val label = node.optString("label")
+    val onChange = node.optJSONObject("on_change")
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         if (label.isNotEmpty()) Text(label, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = {
             checked = it
             dispatchStateChanged(context, id, it.toString())
+            if (onChange != null) dispatchWithValue(dispatch, onChange, it)
         })
     }
 }

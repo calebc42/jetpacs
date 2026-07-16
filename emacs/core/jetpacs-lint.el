@@ -49,7 +49,7 @@ is almost always a typo; a Tier 1 deliberately targeting an extended
 companion gates on `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys
-  '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
+  '(on_tap on_change on_submit on_save on_enter on_pick on_reorder on_refresh
     nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger
     on_day_tap on_month_change on_point_tap on_button)
   "Node keys whose value is an embedded action object (SPEC §9).")
@@ -180,10 +180,12 @@ child's stable reconciliation identity — preferred over the child's
     ("text_input"      (id)                 (value hint label on_submit
                                              single_line min_lines max_lines
                                              monospace syntax password keyboard
+                                             autofocus clear_on_submit
                                              padding))
-    ("editor"          (id)                 (value on_save read_only syntax
-                                             line_numbers complete chromeless
-                                             publish_state toolbar))
+    ("editor"          (id)                 (value on_save on_enter read_only
+                                             syntax line_numbers complete
+                                             chromeless publish_state autofocus
+                                             toolbar))
     ("checkbox"        (id)                 (checked label on_change padding))
     ("switch"          (id)                 (checked label on_change padding))
     ("enum_list"       (id options)         (value multi_select allow_add

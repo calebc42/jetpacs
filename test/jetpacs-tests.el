@@ -1317,7 +1317,13 @@ the composer delete its own matcher."
      ;; 1.24.0 — :key completes the container coverage (SPEC §9).
      (jetpacs-column leaf :key "c1")
      (jetpacs-box (list leaf) :key "b1")
-     (jetpacs-surface (list leaf) :key "s1"))))
+     (jetpacs-surface (list leaf) :key "s1")
+     ;; 1.25.0 — fluid editing: server-driven focus, in-place clear, and
+     ;; Enter-as-dispatch (§5 flush-before-dispatch adds no node shape).
+     (jetpacs-text-input "q1" :hint "Add to today" :on-submit act
+                      :autofocus t :clear-on-submit t)
+     (jetpacs-editor "seq-edit-b1-g2.org" "* block" :on-enter act
+                  :chromeless t :complete t :publish-state t :autofocus t))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))

@@ -33,6 +33,7 @@
 (require 'jetpacs-lint)
 (require 'jetpacs-source)
 (require 'jetpacs-async)
+(require 'jetpacs-devtools)
 (require 'jetpacs-shell)
 (require 'jetpacs-spec)
 (require 'jetpacs-keymap)
@@ -5720,6 +5721,70 @@ app; warn-and-arm-nothing when owner-unaware and a second app is present."
           (should-not (jetpacs-reminders-owner-set
                        '(((id . "a") (at_ms . 1))) "glasspane")))
         (should (null sent))))))
+
+;; ─── Devtools instrumentation (1.21.0) ──────────────────────────────────────
+
+(ert-deftest jetpacs-devtools-build-recording ()
+  "`jetpacs-shell--build-view' records wall clock + retains the spec."
+  (jetpacs-devtools-reset)
+  (let ((spec (jetpacs-shell--build-view
+               "devtools-test-view"
+               (list :builder (lambda (_snackbar) (jetpacs-text "hi" 'body)))
+               nil)))
+    (should (eq spec (jetpacs-devtools-last-spec "devtools-test-view")))
+    (let ((rec (gethash "devtools-test-view" jetpacs-devtools--builds)))
+      (should rec)
+      (should (>= (plist-get rec :last-ms) 0.0))
+      (should (= (plist-get rec :count) 1))))
+  (jetpacs-devtools-reset))
+
+(ert-deftest jetpacs-devtools-disabled-records-nothing ()
+  "The `jetpacs-devtools-enabled' switch turns the recorders off."
+  (jetpacs-devtools-reset)
+  (let ((jetpacs-devtools-enabled nil))
+    (jetpacs-devtools--record-build "off-view" 1.0 '(x))
+    (jetpacs-devtools--observe-frame "surface.update" '((surface . "app:off")) 9))
+  (should (null (jetpacs-devtools-last-spec "off-view")))
+  (should (= 0 jetpacs-devtools--frame-count)))
+
+(ert-deftest jetpacs-devtools-frame-observer-wired ()
+  "`jetpacs-send' reports (KIND PAYLOAD BYTES) through the observer,
+and the devtools recorder tallies surface.update frames per surface."
+  (jetpacs-devtools-reset)
+  (let (seen)
+    (let ((jetpacs--frame-observer
+           (lambda (kind payload bytes) (setq seen (list kind payload bytes)))))
+      (jetpacs-send "ping" nil))
+    (should (equal (nth 0 seen) "ping"))
+    (should (> (nth 2 seen) 0)))
+  (jetpacs-devtools--observe-frame "surface.update" '((surface . "app:x")) 123)
+  (jetpacs-devtools--observe-frame "surface.update" '((surface . "app:x")) 200)
+  (should (= 2 jetpacs-devtools--frame-count))
+  (let ((rec (gethash "app:x" jetpacs-devtools--frames)))
+    (should (= (plist-get rec :last-bytes) 200))
+    (should (= (plist-get rec :count) 2)))
+  (jetpacs-devtools-reset))
+
+(ert-deftest jetpacs-devtools-storm-detection ()
+  "`jetpacs-devtools--storm-p' is a pure threshold-within-window check."
+  (let ((now 1000.0))
+    (should-not (jetpacs-devtools--storm-p (list now) now 3 10))
+    (should (jetpacs-devtools--storm-p (list now (- now 1) (- now 2)) now 3 10))
+    ;; Old entries outside the window don't count.
+    (should-not (jetpacs-devtools--storm-p
+                 (list now (- now 11) (- now 12)) now 3 10))))
+
+(ert-deftest jetpacs-devtools-report-renders ()
+  "The report buffer renders the observed surfaces and builders."
+  (jetpacs-devtools-reset)
+  (jetpacs-devtools--observe-frame "surface.update" '((surface . "app:report")) 42)
+  (jetpacs-devtools--record-build "report-view" 3.5 '(spec))
+  (jetpacs-devtools-report)
+  (with-current-buffer "*jetpacs-devtools*"
+    (should (string-match-p "app:report" (buffer-string)))
+    (should (string-match-p "report-view" (buffer-string))))
+  (kill-buffer "*jetpacs-devtools*")
+  (jetpacs-devtools-reset))
 
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

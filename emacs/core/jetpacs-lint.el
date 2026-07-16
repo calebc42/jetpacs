@@ -66,7 +66,8 @@ text-reply sub-object `{hint?, key?}'.")
 carries the payload keys its kind requires (`jetpacs-lint-action-builtins').
 `confirm' (since 1.23.0) is a prompt string the Emacs dispatch gate shows
 as a native yes/no dialog before running the handler — companion-opaque
-\(round-tripped, never interpreted on-device).")
+and never echoed in `event.action' (SPEC §5): the client resolves the
+prompt from the index `jetpacs-action' builds, not from the wire.")
 
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
@@ -352,7 +353,16 @@ recursion, not here."
       (when (and wo (not (member wo jetpacs-lint--when-offline-values)))
         (funcall report path (format "invalid when_offline: %S" wo)))
       (when (and args-cell (cdr args-cell) (not (jetpacs-lint--alist-p (cdr args-cell))))
-        (funcall report path "action `args' must be an object")))))
+        (funcall report path "action `args' must be an object"))
+      ;; The dispatch gate only prompts for a non-empty string — any other
+      ;; `confirm' value would ship and then silently never gate, the worst
+      ;; failure mode for a field whose whole job is guarding destruction.
+      (let ((confirm (cdr (assq 'confirm val))))
+        (when (and confirm
+                   (or (not (stringp confirm)) (string-empty-p confirm)))
+          (funcall report path
+                   (format "action `confirm' must be a non-empty string: %S"
+                           confirm)))))))
 
 (defun jetpacs-lint--check-color (key val path report)
   "Validate color attribute KEY=VAL at PATH via REPORT."

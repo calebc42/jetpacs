@@ -5775,8 +5775,11 @@ app; warn-and-arm-nothing when owner-unaware and a second app is present."
 
 (ert-deftest jetpacs-action-confirm-gates-dispatch ()
   "A `:confirm' action runs its handler only when the prompt is accepted;
-declining is a clean no-op.  A confirm-less action never prompts."
-  (let ((ran 0) (asked nil))
+declining is a clean no-op.  A confirm-less action never prompts.  A
+payload-carried prompt (a descriptor fed straight back) gates even when
+the client-side index knows nothing — the wire-echo fallback path."
+  (let ((ran 0) (asked nil)
+        (jetpacs--confirm-index (make-hash-table :test 'equal)))
     (jetpacs-defaction "test.confirm-gate"
       (lambda (_args _payload) (cl-incf ran)))
     (unwind-protect
@@ -5785,6 +5788,9 @@ declining is a clean no-op.  A confirm-less action never prompts."
           (should (equal "Sure?" (alist-get 'confirm payload)))
           (should-not (jetpacs-lint-spec
                        (jetpacs-button "Del" payload)))
+          ;; Isolate the payload fallback: clear the index the
+          ;; construction above just populated.
+          (clrhash jetpacs--confirm-index)
           ;; Declined -> handler never runs.
           (cl-letf (((symbol-function 'y-or-n-p)
                      (lambda (p) (setq asked p) nil)))
@@ -5795,7 +5801,7 @@ declining is a clean no-op.  A confirm-less action never prompts."
           (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
             (jetpacs--on-action payload nil))
           (should (= ran 1))
-          ;; No :confirm -> no prompt at all.
+          ;; No :confirm anywhere -> no prompt at all.
           (setq asked nil)
           (cl-letf (((symbol-function 'y-or-n-p)
                      (lambda (p) (setq asked p) t)))
@@ -5803,6 +5809,83 @@ declining is a clean no-op.  A confirm-less action never prompts."
           (should-not asked)
           (should (= ran 2)))
       (remhash "test.confirm-gate" jetpacs-action-handlers))))
+
+(ert-deftest jetpacs-action-confirm-gates-device-shaped-payload ()
+  "The gate prompts for the payload the companion actually sends.
+ActionReceiver.kt's `event.action' is {surface, revision_seen, action,
+args, fields, queued_at} — `confirm' is never echoed (SPEC §5), so the
+prompt must resolve from the index `jetpacs-action' built at render
+time.  This is the regression test for the 1.23.0 gate arriving as a
+silent no-op on-device: payload-echo dispatch fails it (the handler
+runs without asking)."
+  (let ((ran 0) (asked nil)
+        (jetpacs--confirm-index (make-hash-table :test 'equal)))
+    (jetpacs-defaction "test.confirm-echo"
+      (lambda (_args _payload) (cl-incf ran)))
+    (unwind-protect
+        (progn
+          ;; Built during a render, then discarded: only the index survives.
+          (jetpacs-action "test.confirm-echo"
+                       :args '((id . 5) (name . "Milk"))
+                       :confirm "Consume Milk?")
+          ;; What the companion delivers: args re-ordered by org.json,
+          ;; no confirm field anywhere in the frame.
+          (let ((payload '((surface . "app:grocy") (revision_seen . 12)
+                           (action . "test.confirm-echo")
+                           (args . ((name . "Milk") (id . 5)))
+                           (fields . :null) (queued_at . :null))))
+            ;; Declined -> handler never runs.
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (p) (setq asked p) nil)))
+              (jetpacs--on-action payload nil))
+            (should (equal asked "Consume Milk?"))
+            (should (= ran 0))
+            ;; Accepted -> handler runs.
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (jetpacs--on-action payload nil))
+            (should (= ran 1))))
+      (remhash "test.confirm-echo" jetpacs-action-handlers))))
+
+(ert-deftest jetpacs-action-confirm-args-identity ()
+  "Per-row prompts resolve by args identity across the JSON round trip;
+a mismatch still prompts (newest registered prompt) rather than opening
+the gate."
+  (let ((jetpacs--confirm-index (make-hash-table :test 'equal)))
+    (jetpacs-action "row.del" :args '((id . 5)) :confirm "Delete Milk?")
+    (jetpacs-action "row.del" :args '((id . 7)) :confirm "Delete Eggs?")
+    (should (equal "Delete Milk?" (jetpacs--confirm-for "row.del" '((id . 5)))))
+    (should (equal "Delete Eggs?" (jetpacs--confirm-for "row.del" '((id . 7)))))
+    ;; org.json rewrites a whole double (2.0 -> 2); identity survives.
+    (jetpacs-action "row.consume" :args '((amount . 2.0)) :confirm "Consume 2?")
+    (should (equal "Consume 2?"
+                   (jetpacs--confirm-for "row.consume" '((amount . 2)))))
+    ;; Vector-authored args come back as decoded lists; identity survives.
+    (jetpacs-action "row.tag" :args '((tags . ["a" "b"])) :confirm "Tag both?")
+    (should (equal "Tag both?"
+                   (jetpacs--confirm-for "row.tag" '((tags . ("a" "b"))))))
+    ;; Unmatched args fail toward the gate: the newest prompt, never nil.
+    (should (equal "Delete Eggs?" (jetpacs--confirm-for "row.del" '((id . 99)))))
+    ;; Re-registering the same action+args replaces, not accumulates.
+    (jetpacs-action "row.del" :args '((id . 5)) :confirm "Delete Milk!?")
+    (should (equal "Delete Milk!?" (jetpacs--confirm-for "row.del" '((id . 5)))))
+    (should (= 2 (length (gethash "row.del" jetpacs--confirm-index))))
+    ;; An action never registered with :confirm has no gate.
+    (should-not (jetpacs--confirm-for "row.other" '((id . 5))))))
+
+(ert-deftest jetpacs-action-confirm-lints-non-string ()
+  "A non-string or empty :confirm is a lint problem, not a silent bypass:
+the dispatch gate only prompts for a non-empty string, so anything else
+would ship and never gate."
+  (let ((jetpacs--confirm-index (make-hash-table :test 'equal)))
+    (should (jetpacs-lint-spec
+             (jetpacs-button "Del" (jetpacs-action "x.del" :confirm 'yes))))
+    (should (jetpacs-lint-spec
+             (jetpacs-button "Del" (jetpacs-action "x.del" :confirm ""))))
+    (should (jetpacs-lint-spec
+             (jetpacs-button "Del" (jetpacs-action "x.del" :confirm 42))))
+    (should-not (jetpacs-lint-spec
+                 (jetpacs-button "Del"
+                              (jetpacs-action "x.del" :confirm "Sure?"))))))
 
 (ert-deftest jetpacs-additive-attaches-fallback ()
   "`jetpacs-additive' replaces NODE's children with the single FALLBACK node

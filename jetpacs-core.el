@@ -2418,6 +2418,70 @@ action args when building it (the client adds nothing)."
 
 ;; ─── Interactive ─────────────────────────────────────────────────────────────
 
+(defvar jetpacs--confirm-index (make-hash-table :test 'equal)
+  "Map of action name -> ((NORMALIZED-ARGS . PROMPT) …), newest first.
+Written by `jetpacs-action' whenever a descriptor carries :confirm; read
+back by the dispatch gate (`jetpacs--on-action') to decide whether an
+inbound `event.action' needs a yes/no prompt.  The prompt must resolve
+client-side: the companion treats `confirm' as opaque author-side policy
+and does not echo it in the delivered frame (SPEC §5), so a gate that
+trusted the payload would never fire on-device.  Entries are refreshed
+by every re-render (construction re-registers) and persist otherwise —
+dropping :confirm from a control keeps gating stale queued taps until
+restart, which errs in the safe direction.")
+
+(defun jetpacs--confirm-key-name (k)
+  "The wire name of args key K, matching `json-serialize' (colon stripped)."
+  (cond ((keywordp k) (substring (symbol-name k) 1))
+        ((symbolp k) (symbol-name k))
+        (t (format "%s" k))))
+
+(defun jetpacs--confirm-normalize (v)
+  "Canonical identity of an action-args value across the JSON round trip.
+The companion parses the descriptor's `args' and re-emits them in the
+event, so what survives is structural — org.json neither preserves
+object key order nor the `.0' of a whole-valued double.  Objects
+normalize to (:obj . PAIRS) sorted by key with string key names, arrays
+\(authored vectors, decoded lists) to (:arr . ITEMS), and whole floats
+to integers; scalars (strings, ints, t/:false/:null) pass through."
+  (cond
+   ((vectorp v)
+    (cons :arr (mapcar #'jetpacs--confirm-normalize (append v nil))))
+   ((and (floatp v) (= v (ftruncate v))) (truncate v))
+   ((null v) nil)
+   ((and (proper-list-p v)
+         (cl-every (lambda (e)
+                     (and (consp e) (car e)
+                          (or (symbolp (car e)) (stringp (car e)))))
+                   v))
+    (cons :obj (sort (mapcar (lambda (kv)
+                               (cons (jetpacs--confirm-key-name (car kv))
+                                     (jetpacs--confirm-normalize (cdr kv))))
+                             v)
+                     (lambda (a b) (string< (car a) (car b))))))
+   ((proper-list-p v)
+    (cons :arr (mapcar #'jetpacs--confirm-normalize v)))
+   (t v)))
+
+(defun jetpacs--confirm-register (action args prompt)
+  "Index PROMPT as the confirm gate for ACTION dispatched with ARGS."
+  (let ((key (jetpacs--confirm-normalize args)))
+    (puthash action
+             (cons (cons key prompt)
+                   (assoc-delete-all key (gethash action jetpacs--confirm-index)))
+             jetpacs--confirm-index)))
+
+(defun jetpacs--confirm-for (action args)
+  "The confirm prompt registered for dispatching ACTION with ARGS, or nil.
+Exact args identity wins (per-row prompts name the right row); when the
+name is indexed but the echoed args match no entry, the newest prompt
+for the name is the fallback — a round trip that defeats normalization
+must fail toward prompting, never toward an ungated destructive action."
+  (let ((entries (gethash action jetpacs--confirm-index)))
+    (when entries
+      (or (cdr (assoc (jetpacs--confirm-normalize args) entries))
+          (cdar entries)))))
+
 (cl-defun jetpacs-action (action &key args (when-offline "queue") dedupe confirm)
   "An action descriptor.
 ACTION names an allowlisted handler (`jetpacs-defaction'); ARGS is an
@@ -2429,7 +2493,11 @@ CONFIRM, when non-nil, is a prompt string shown as a native yes/no dialog
 clean no-op.  For destructive actions (delete, remove): pair it with an
 undo snackbar (`jetpacs-snackbar-action') where an undo is cheap, and
 reserve :confirm for what an undo can't restore.  The gate runs at
-dispatch time in Emacs, so a queued offline tap confirms on replay."
+dispatch time in Emacs, resolving the prompt from a client-side index
+keyed by action name + args — the companion never echoes `confirm'
+\(SPEC §5) — so a queued offline tap confirms on replay."
+  (when (and (stringp confirm) (not (string-empty-p confirm)))
+    (jetpacs--confirm-register action args confirm))
   (jetpacs--node nil
               'action action
               'when_offline when-offline
@@ -3268,7 +3336,8 @@ text-reply sub-object `{hint?, key?}'.")
 carries the payload keys its kind requires (`jetpacs-lint-action-builtins').
 `confirm' (since 1.23.0) is a prompt string the Emacs dispatch gate shows
 as a native yes/no dialog before running the handler — companion-opaque
-\(round-tripped, never interpreted on-device).")
+and never echoed in `event.action' (SPEC §5): the client resolves the
+prompt from the index `jetpacs-action' builds, not from the wire.")
 
 (defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
   "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
@@ -3554,7 +3623,16 @@ recursion, not here."
       (when (and wo (not (member wo jetpacs-lint--when-offline-values)))
         (funcall report path (format "invalid when_offline: %S" wo)))
       (when (and args-cell (cdr args-cell) (not (jetpacs-lint--alist-p (cdr args-cell))))
-        (funcall report path "action `args' must be an object")))))
+        (funcall report path "action `args' must be an object"))
+      ;; The dispatch gate only prompts for a non-empty string — any other
+      ;; `confirm' value would ship and then silently never gate, the worst
+      ;; failure mode for a field whose whole job is guarding destruction.
+      (let ((confirm (cdr (assq 'confirm val))))
+        (when (and confirm
+                   (or (not (stringp confirm)) (string-empty-p confirm)))
+          (funcall report path
+                   (format "action `confirm' must be a non-empty string: %S"
+                           confirm)))))))
 
 (defun jetpacs-lint--check-color (key val path report)
   "Validate color attribute KEY=VAL at PATH via REPORT."
@@ -4384,7 +4462,14 @@ drive.  `disabled-command-function' is nil'd so a novice.el disabled
 command runs instead of raw-reading a confirmation char (another hang)."
   (let* ((action  (alist-get 'action payload))
          (args    (alist-get 'args payload))
-         (confirm (alist-get 'confirm payload))
+         ;; The prompt resolves client-side: `jetpacs-action' indexed it by
+         ;; name + args when the descriptor was built, because the
+         ;; companion treats `confirm' as opaque and never echoes it in
+         ;; `event.action' (SPEC §5).  A payload-carried prompt (a future
+         ;; companion, or a descriptor fed back directly) still gates
+         ;; when the index has nothing.
+         (confirm (or (jetpacs--confirm-for action args)
+                      (alist-get 'confirm payload)))
          (fn      (gethash action jetpacs-action-handlers)))
     (if fn
         (progn
@@ -4544,6 +4629,9 @@ runtime; a live session's state is owned by the connection lifecycle."
   (clrhash jetpacs--ui-state)
   (clrhash jetpacs--state-handlers)
   (clrhash jetpacs--forms)
+  ;; The confirm-prompt index re-populates as descriptors are rebuilt; a
+  ;; stale entry would gate another test's same-named action.
+  (clrhash jetpacs--confirm-index)
   ;; 0 = the load-time "no recent action" state; a stale stamp keeps
   ;; `jetpacs-witheditor--phone-initiated-p' true for its whole window.
   (setq jetpacs--last-action-time 0)

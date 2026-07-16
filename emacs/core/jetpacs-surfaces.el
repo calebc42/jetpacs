@@ -281,7 +281,14 @@ drive.  `disabled-command-function' is nil'd so a novice.el disabled
 command runs instead of raw-reading a confirmation char (another hang)."
   (let* ((action  (alist-get 'action payload))
          (args    (alist-get 'args payload))
-         (confirm (alist-get 'confirm payload))
+         ;; The prompt resolves client-side: `jetpacs-action' indexed it by
+         ;; name + args when the descriptor was built, because the
+         ;; companion treats `confirm' as opaque and never echoes it in
+         ;; `event.action' (SPEC §5).  A payload-carried prompt (a future
+         ;; companion, or a descriptor fed back directly) still gates
+         ;; when the index has nothing.
+         (confirm (or (jetpacs--confirm-for action args)
+                      (alist-get 'confirm payload)))
          (fn      (gethash action jetpacs-action-handlers)))
     (if fn
         (progn
@@ -441,6 +448,9 @@ runtime; a live session's state is owned by the connection lifecycle."
   (clrhash jetpacs--ui-state)
   (clrhash jetpacs--state-handlers)
   (clrhash jetpacs--forms)
+  ;; The confirm-prompt index re-populates as descriptors are rebuilt; a
+  ;; stale entry would gate another test's same-named action.
+  (clrhash jetpacs--confirm-index)
   ;; 0 = the load-time "no recent action" state; a stale stamp keeps
   ;; `jetpacs-witheditor--phone-initiated-p' true for its whole window.
   (setq jetpacs--last-action-time 0)

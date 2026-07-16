@@ -14,7 +14,7 @@ jobs:
     name: Elisp (ERT + guards)
     runs-on: ubuntu-latest
     steps:
-      # The eabp submodule carries the wire contract (SPEC, contract.json,
+      # The ebp submodule carries the wire contract (SPEC, contract.json,
       # goldens) that the drift and conformance tests read.
       - uses: actions/checkout@v4
         with:
@@ -58,7 +58,7 @@ jobs:
     name: Android (:jetpacs + :app)
     runs-on: ubuntu-latest
     steps:
-      # WireGoldenConformanceTest reads eabp/contract.json + eabp/goldens/.
+      # WireGoldenConformanceTest reads ebp/contract.json + ebp/goldens/.
       - uses: actions/checkout@v4
         with:
           submodules: recursive

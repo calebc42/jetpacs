@@ -348,7 +348,7 @@ gating pattern). Degrade, don't assume.
 ### 8. Drive the device (effectors)
 
 `jetpacs-device.el` wraps every
-[SPEC §10](https://github.com/calebc42/eabp/blob/main/SPEC.md#10-device-capabilities-optional) capability in one
+[SPEC §10](https://github.com/calebc42/ebp/blob/main/SPEC.md#10-device-capabilities-optional) capability in one
 thin defun, callable from any action handler, trigger handler, or the
 Eval tab:
 
@@ -382,7 +382,7 @@ for raw `jetpacs-capability-invoke` only when no wrapper exists yet.
 ### 9. React to the device (triggers & automations)
 
 The other direction — Android events delivered to elisp
-([SPEC §11](https://github.com/calebc42/eabp/blob/main/SPEC.md#11-device-triggers-optional)):
+([SPEC §11](https://github.com/calebc42/ebp/blob/main/SPEC.md#11-device-triggers-optional)):
 
 ```elisp
 (jetpacs-deftrigger myapp/on-charge
@@ -417,7 +417,7 @@ The other direction — Android events delivered to elisp
 ### 10. Surfaces beyond the app: notifications, widgets, tiles
 
 `jetpacs-shell-push` serves the `app:*` surface; `jetpacs-surface-push`
-serves every other namespace ([SPEC §4](https://github.com/calebc42/eabp/blob/main/SPEC.md#4-surfaces)) with
+serves every other namespace ([SPEC §4](https://github.com/calebc42/ebp/blob/main/SPEC.md#4-surfaces)) with
 automatic monotonic revisions, and the companion keeps rendering the
 last push while Emacs is away.
 
@@ -436,7 +436,7 @@ of a clock or timer) and a *Done* action button that clears it:
 ;; later: (jetpacs-surface-remove "notification:myapp.brew")
 ```
 
-Action buttons live in `:actions` ([SPEC §9](https://github.com/calebc42/eabp/blob/main/SPEC.md#9-widget-vocabulary));
+Action buttons live in `:actions` ([SPEC §9](https://github.com/calebc42/ebp/blob/main/SPEC.md#9-widget-vocabulary));
 each dispatches its action like any tap. `:dismiss t` clears the
 notification when tapped (the Done/Snooze affordance), and `:reply t`
 (with an optional `:reply-hint`) turns a button into an inline text
@@ -460,7 +460,7 @@ from the shade with the phone still locked, so compose accordingly.
 Refresh these surfaces from `jetpacs-shell-after-push-hook`,
 memo-guarded, so they ride pushes you were making anyway. Persistent
 reminders (`reminders.set`,
-[SPEC §7](https://github.com/calebc42/eabp/blob/main/SPEC.md#7-dialogs-toasts-pies-reminders)) ride the same
+[SPEC §7](https://github.com/calebc42/ebp/blob/main/SPEC.md#7-dialogs-toasts-pies-reminders)) ride the same
 connection and survive reboots; the core has no elisp wrapper for them
 yet.
 
@@ -535,7 +535,7 @@ Chrome every app inherits — link to it, don't rebuild it:
 
 ## The rules that keep the wire safe
 
-Read [SPEC §5](https://github.com/calebc42/eabp/blob/main/SPEC.md#5-events-the-semantic-action-boundary) before
+Read [SPEC §5](https://github.com/calebc42/ebp/blob/main/SPEC.md#5-events-the-semantic-action-boundary) before
 defining actions. In short:
 
 1. **Actions are an allowlist.** `jetpacs-defaction` registers a name; the

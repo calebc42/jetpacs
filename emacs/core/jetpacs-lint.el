@@ -17,12 +17,12 @@
 ;;                            so one bad subtree degrades instead of the push.
 ;;
 ;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
-;; (SduiRenderer.kt) and `eabp/goldens/widgets.golden'; the drift test
+;; (SduiRenderer.kt) and `ebp/goldens/widgets.golden'; the drift test
 ;; `jetpacs-lint-types-cover-golden' fails if a constructor emits a `t' not
 ;; listed here.  Since Spec 1.0-rc the tables below also carry the authored
 ;; per-node key schema (`jetpacs-lint-node-schema') and the frame-kind
 ;; schema (`jetpacs-lint-kind-schema'); `build-contract.el' publishes both
-;; in eabp/contract.json (contract_format 2, the eabp protocol submodule)
+;; in ebp/contract.json (contract_format 2, the ebp protocol submodule)
 ;; for non-elisp implementations.
 
 ;;; Code:
@@ -111,7 +111,7 @@ literal by the companion — almost always a typo worth a warning.")
   "Companion-local builtins → the payload keys each requires (SPEC §5).
 Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
 must name one of these and carry every listed key.  `build-contract.el'
-derives the discriminated action schema in `eabp/contract.json' from this.")
+derives the discriminated action schema in `ebp/contract.json' from this.")
 
 (defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style)
   "Keys legal on any node, attached after construction.
@@ -182,9 +182,9 @@ root node (`jetpacs-send-dialog', SPEC §7).")
                                              floating_toolbar snackbar
                                              snackbar_action drawer on_refresh)))
   "Per-node key schema: (TYPE REQUIRED OPTIONAL), one row per node type.
-Authored from `eabp/goldens/widgets.golden' ∪ the `jetpacs-widgets.el'
+Authored from `ebp/goldens/widgets.golden' ∪ the `jetpacs-widgets.el'
 constructor signatures, hand-reviewed against WIDGETS.md and SPEC §9 (the
-review is eabp/SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing REQUIRED
+review is ebp/SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing REQUIRED
 key as an error and a key outside the row (and outside
 `jetpacs-lint-node-common-keys') as a warning — a warning, not an error,
 because companions must ignore unknown keys (the §9 forward-compat rule),

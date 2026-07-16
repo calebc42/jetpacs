@@ -8,8 +8,8 @@ outrank it in their own domains:
 
 - **Per-symbol authority** — the docstrings (`C-h f jetpacs-card`).
   They carry every keyword's full semantics; this page summarizes.
-- **Normative wire shapes** — [SPEC §9](https://github.com/calebc42/eabp/blob/main/SPEC.md#9-widget-vocabulary)
-  plus [`eabp/goldens/widgets.golden`](../eabp/goldens/widgets.golden),
+- **Normative wire shapes** — [SPEC §9](https://github.com/calebc42/ebp/blob/main/SPEC.md#9-widget-vocabulary)
+  plus [`ebp/goldens/widgets.golden`](../ebp/goldens/widgets.golden),
   one JSON line per constructor, pinned by the ERT suite.
 - **The stability contract** — [API-STABILITY.md](API-STABILITY.md).
   Every constructor named here is on the stable public surface.
@@ -82,7 +82,7 @@ when it returns nil rather than relying on degradation.
 
 Actions are descriptors, not code — the wire names an allowlisted
 handler registered with `jetpacs-defaction`
-([SPEC §5](https://github.com/calebc42/eabp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)).
+([SPEC §5](https://github.com/calebc42/ebp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)).
 
 - **`(jetpacs-action ACTION &key args when-offline dedupe)`** — the
   descriptor embedded under `:on-tap` and friends. `:args` is an alist
@@ -386,7 +386,7 @@ Built on the [form registry](#) (`jetpacs-form`); no new wire type.
   ordinary action — the Emacs escape hatch), or `:menu` (sub-items;
   menus don't nest). `:long-press` adds a secondary op.
   `jetpacs-lint-spec` enforces the vocabulary; full semantics in
-  [SPEC §9 "Editor toolbars"](https://github.com/calebc42/eabp/blob/main/SPEC.md#editor-toolbars).
+  [SPEC §9 "Editor toolbars"](https://github.com/calebc42/ebp/blob/main/SPEC.md#editor-toolbars).
 
 ## Visualization — the ladder
 
@@ -505,6 +505,6 @@ for wiring them up.
 - **`(jetpacs-lint-views &optional errors-only)`** — build and lint
   every registered shell view; returns the ones with problems. The
   app-wide CI gate: `(should-not (jetpacs-lint-views t))`.
-- [`eabp/goldens/widgets.golden`](../eabp/goldens/widgets.golden) — the
+- [`ebp/goldens/widgets.golden`](../ebp/goldens/widgets.golden) — the
   pinned wire shape of every constructor, if you need to see the exact
   JSON.

@@ -10,16 +10,16 @@ which needs any buy-in from this repo:
   [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
 - **Building your own companion** (another platform's renderer) against
   the wire →
-  [BUILDING-COMPANION.md](https://github.com/calebc42/eabp/blob/main/BUILDING-COMPANION.md)
-  in the [eabp protocol repo](https://github.com/calebc42/eabp).
+  [BUILDING-COMPANION.md](https://github.com/calebc42/ebp/blob/main/BUILDING-COMPANION.md)
+  in the [ebp protocol repo](https://github.com/calebc42/ebp).
 - **Contributing to Glasspane** (the reference org app) → it lives in
   [its own repo](https://github.com/calebc42/glasspane); file issues
   and PRs there.
 
 Still here to change the foundation? The conceptual half is
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams) and
-[SPEC.md](https://github.com/calebc42/eabp/blob/main/SPEC.md) (the wire
-contract — the `eabp/` submodule); below is the practical half — setup,
+[SPEC.md](https://github.com/calebc42/ebp/blob/main/SPEC.md) (the wire
+contract — the `ebp/` submodule); below is the practical half — setup,
 tests, and the standing rules.
 
 ## What's most valuable
@@ -39,7 +39,7 @@ gap is a foundation bug.
 
 Clone with `--recurse-submodules` — the wire contract (SPEC, the
 machine-readable `contract.json`, the golden fixtures) lives in the
-`eabp/` submodule, and the test suites read it from there.
+`ebp/` submodule, and the test suites read it from there.
 
 **Emacs side** (Emacs 28+, tested on 30.x): nothing to install — the
 sources under `emacs/` run from a checkout. Batch tests below.
@@ -74,7 +74,7 @@ These are load-bearing; PRs that break them will be asked to change,
 however good the feature.
 
 1. **The command-dispatch boundary (normative,
-   [SPEC §5](https://github.com/calebc42/eabp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)).**
+   [SPEC §5](https://github.com/calebc42/ebp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)).**
    Nothing on the wire names code to run. An action is a name the Emacs
    side explicitly registered (`jetpacs-defaction`); its handler validates
    its args and performs one narrow operation. Never write a handler
@@ -90,19 +90,19 @@ however good the feature.
 4. **The bundle is generated.** Root `jetpacs-core.el` comes from
    `emacs --batch -l emacs/build-bundle.el` — never edit it by hand;
    regenerate after any `emacs/` source change and commit the result.
-5. **The goldens are the wire truth, and they live in the eabp
-   submodule.** `eabp/goldens/widgets.golden` is the machine-checked
-   shape of every node constructor; `eabp/goldens/frames.golden` pins
+5. **The goldens are the wire truth, and they live in the ebp
+   submodule.** `ebp/goldens/widgets.golden` is the machine-checked
+   shape of every node constructor; `ebp/goldens/frames.golden` pins
    the trigger/capability frame payloads (SPEC §10–§11); the elisp
-   lint tables project into `eabp/contract.json`. Regenerate them only
+   lint tables project into `ebp/contract.json`. Regenerate them only
    for an INTENTIONAL wire change
    (`emacs -Q --batch -l test/jetpacs-tests.el -f jetpacs-tests-regen-widget-golden`
    / `-f jetpacs-tests-regen-frame-golden` /
    `emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write`),
    and document the change in SPEC §9 (widgets) or the frame's own
    section. The release flow is two commits, one direction: edit the
-   elisp tables/constructors here → regenerate into `eabp/` → commit in
-   the eabp repo (tag it if the spec or protocol version moved) → bump
+   elisp tables/constructors here → regenerate into `ebp/` → commit in
+   the ebp repo (tag it if the spec or protocol version moved) → bump
    the submodule pointer in this repo. Wire additions must be
    additive — unknown kinds/attrs are ignored, never fatal. If the
    Kotlin counterpart can't land in the same PR, the elisp side must

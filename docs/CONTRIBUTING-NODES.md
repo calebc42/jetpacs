@@ -55,8 +55,8 @@ Adding a node type `foo`:
    The `jetpacs-lint-types-cover-golden` test fails if a golden `t` has no
    linter entry — so it keeps steps 2 and 4 honest.
 6. **Spec** — document `foo`'s wire shape under the right family in
-   [SPEC.md](https://github.com/calebc42/eabp/blob/main/SPEC.md) §9
-   (the `eabp/` submodule — commit there and bump the pointer).
+   [SPEC.md](https://github.com/calebc42/ebp/blob/main/SPEC.md) §9
+   (the `ebp/` submodule — commit there and bump the pointer).
 7. **Public API** — if `jetpacs-foo` is meant for third parties, list it in
    [API-STABILITY.md](API-STABILITY.md).
 8. **Build** — regenerate the bundles

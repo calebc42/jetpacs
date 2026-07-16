@@ -1,10 +1,10 @@
-;;; build-contract.el --- generate eabp/contract.json from the source of truth -*- lexical-binding: t; -*-
+;;; build-contract.el --- generate ebp/contract.json from the source of truth -*- lexical-binding: t; -*-
 
 ;; NOT part of the bundle.  Regenerate the machine-readable wire contract:
 ;;
 ;;   emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write
 ;;
-;; `eabp/contract.json' (the eabp protocol submodule — the published,
+;; `ebp/contract.json' (the ebp protocol submodule — the published,
 ;; pinnable contract repo) publishes the *static* wire vocabulary a Kotlin renderer
 ;; or the composer editor validates emissions against — node types, the authored
 ;; per-node key schema and frame-kind schema (contract_format 3, Spec 1.0-rc),
@@ -33,21 +33,21 @@
 (defconst jetpacs-contract-format 3
   "Schema version of `contract.json' itself — bump on a contract-shape change.
 Format 2 (Spec 1.0-rc freeze, S1) adds `spec_version', `node_schema',
-and `kind_schema'.  Format 3 (the eabp extraction) renames `api_version'
+and `kind_schema'.  Format 3 (the ebp extraction) renames `api_version'
 to `reference_api_version': the field describes the elisp reference
 implementation's Tier-1 surface, not the wire — informational only, so
 the contract repo reads as implementation-neutral.")
 
 (defun jetpacs-contract--spec-version ()
-  "The spec version declared in eabp/SPEC.md's status block (\"1.0-rc\").
+  "The spec version declared in ebp/SPEC.md's status block (\"1.0-rc\").
 SPEC.md is the single source of truth for this number; the ERT test
 `jetpacs-spec-header-version-coherent' keeps the header machine-readable."
   (with-temp-buffer
-    (insert-file-contents (expand-file-name "eabp/SPEC.md" jetpacs-contract--root))
+    (insert-file-contents (expand-file-name "ebp/SPEC.md" jetpacs-contract--root))
     (goto-char (point-min))
     (unless (re-search-forward
              "^Spec: \\*\\*\\([0-9]+\\.[0-9]+\\(?:-rc\\)?\\)\\*\\*" nil t)
-      (error "eabp/SPEC.md header carries no parseable Spec: version"))
+      (error "ebp/SPEC.md header carries no parseable Spec: version"))
     (match-string 1)))
 
 (defun jetpacs-contract--node-schema ()
@@ -138,11 +138,11 @@ builtin mapped to its required payload."
     (concat (json-encode (jetpacs-contract)) "\n")))
 
 (defun jetpacs-contract-file ()
-  "Committed location of `contract.json' (inside the eabp submodule)."
-  (expand-file-name "eabp/contract.json" jetpacs-contract--root))
+  "Committed location of `contract.json' (inside the ebp submodule)."
+  (expand-file-name "ebp/contract.json" jetpacs-contract--root))
 
 (defun jetpacs-contract-write ()
-  "Write the contract to `eabp/contract.json' (UTF-8, LF)."
+  "Write the contract to `ebp/contract.json' (UTF-8, LF)."
   (let ((coding-system-for-write 'utf-8-unix))
     (write-region (jetpacs-contract-string) nil (jetpacs-contract-file)))
   (message "Wrote %s" (jetpacs-contract-file)))

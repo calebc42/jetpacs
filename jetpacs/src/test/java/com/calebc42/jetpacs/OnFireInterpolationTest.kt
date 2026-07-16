@@ -12,7 +12,7 @@ import org.junit.Test
  * The §9 snippet-grammar rules are pinned here — substitution, literal
  * pass-through, JSON-form rendering, single pass, recursion — and the wire
  * pass-through of un-interpolated tokens is pinned by
- * `eabp/goldens/frames.golden` line 00 (via the ERT
+ * `ebp/goldens/frames.golden` line 00 (via the ERT
  * `jetpacs-frames-wire-format`).
  */
 class OnFireInterpolationTest {

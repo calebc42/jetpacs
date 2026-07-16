@@ -32,7 +32,7 @@ execution grounding is [PLAN-phase-h-handoff.md](PLAN-phase-h-handoff.md).
 jetpacs foundation + companion; Glasspane lives in
 [its own repo](https://github.com/calebc42/glasspane) (pure elisp,
 vendoring this repo as a submodule; test partition 63 core / 72 app).
-The eabp → jetpacs rename landed the same day. Retained as the record
+The ebp → jetpacs rename landed the same day. Retained as the record
 of how the platform was hardened. Originally produced from an audit of
 `emacs/core/`, `jetpacs/src/main/java/com/calebc42/jetpacs/` (the
 `:jetpacs` renderer), `test/widgets.golden`, and the existing plan docs.

@@ -14,7 +14,7 @@ data**: field accessors and named transforms only, no expressions or lambdas;
 actions are referenced by name. `jetpacs-lint-view-spec` proves it.
 
 Since **API 1.5.0**. The static vocabulary (layouts, transforms, spec keys,
-chrome kinds, source field types) is published in `eabp/contract.json` under
+chrome kinds, source field types) is published in `ebp/contract.json` under
 `binding` for editors to consume.
 
 ## Sources — the data (`jetpacs-source.el`)
@@ -140,5 +140,5 @@ permissively (primary); disconnected or catalog-omits takes the fallback.
 
 `jetpacs-source-catalog` and `jetpacs-action-catalog` (with `:args`/`:doc`
 metadata on `jetpacs-defaction`) let an editor list a pack's sources and
-actions. Together with `eabp/contract.json`'s `binding` block, that is
+actions. Together with `ebp/contract.json`'s `binding` block, that is
 everything the composer needs to bind a view without reading elisp.

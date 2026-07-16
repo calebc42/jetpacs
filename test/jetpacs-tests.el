@@ -8,11 +8,11 @@
 ;; live in the separate glasspane repo (test/glasspane-tests.el).
 ;;
 ;; The widget wire-format test compares every constructor against the
-;; committed golden snapshot (eabp/goldens/widgets.golden — the eabp
+;; committed golden snapshot (ebp/goldens/widgets.golden — the ebp
 ;; protocol submodule).  After an INTENTIONAL wire-format change,
 ;; regenerate it with:
 ;;   emacs -Q --batch -l test/jetpacs-tests.el -f jetpacs-tests-regen-widget-golden
-;; then commit inside eabp/ and bump the submodule pointer.
+;; then commit inside ebp/ and bump the submodule pointer.
 
 ;;; Code:
 
@@ -1141,7 +1141,7 @@ the composer delete its own matcher."
 ;; ─── Widget wire format (golden snapshot) ───────────────────────────────────
 
 (defconst jetpacs-tests--golden-file
-  (expand-file-name "../eabp/goldens/widgets.golden" jetpacs-tests--dir))
+  (expand-file-name "../ebp/goldens/widgets.golden" jetpacs-tests--dir))
 
 (defun jetpacs-tests--canon (x)
   "Recursively sort alist keys in X so serialization order is stable."
@@ -1874,7 +1874,7 @@ a paragraph with spans becomes a rich_text carrying those spans."
       (should (null (jetpacs-lint-spec n))))))
 
 (defconst jetpacs-tests--hypertext-golden-file
-  (expand-file-name "../eabp/goldens/hypertext.golden" jetpacs-tests--dir))
+  (expand-file-name "../ebp/goldens/hypertext.golden" jetpacs-tests--dir))
 
 (defun jetpacs-hypertext--emit-cases ()
   "Document models exercising every segment kind; each yields a node list."
@@ -3007,13 +3007,13 @@ constant promises (hardening Task 24) — they cannot drift."
       (should (equal (match-string 1) jetpacs-api-version)))))
 
 (ert-deftest jetpacs-spec-header-version-coherent ()
-  "eabp/SPEC.md's status block is machine-readably coherent (freeze S0):
+  "ebp/SPEC.md's status block is machine-readably coherent (freeze S0):
 the header's wire-protocol version equals `jetpacs-protocol-version', the
 spec version's major is that same wire version, and the amendment log the
 header's policy names exists.  The full spec-version string is pinned here
 so a status flip (1.0-rc -> 1.0) is an intentional, reviewed change —
 same philosophy as the contract.json byte-pin."
-  (let ((f (expand-file-name "../eabp/SPEC.md" jetpacs-tests--dir)))
+  (let ((f (expand-file-name "../ebp/SPEC.md" jetpacs-tests--dir)))
     (with-temp-buffer
       (insert-file-contents f)
       (goto-char (point-min))
@@ -3029,7 +3029,7 @@ same philosophy as the contract.json byte-pin."
       (goto-char (point-min))
       (should (re-search-forward "\\[SPEC-CHANGES\\.md\\](SPEC-CHANGES\\.md)" nil t))
       (should (file-exists-p
-               (expand-file-name "../eabp/SPEC-CHANGES.md" jetpacs-tests--dir))))))
+               (expand-file-name "../ebp/SPEC-CHANGES.md" jetpacs-tests--dir))))))
 
 ;; ─── Build-feature probe (Phase H / Task 23) ─────────────────────────────────
 
@@ -3550,7 +3550,7 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
 ;; ─── Drift gates (Stage-1 T1.3) ──────────────────────────────────────────────
 
 (defun jetpacs-tests--golden-node-types ()
-  "The distinct `t' discriminators emitted across eabp/goldens/widgets.golden."
+  "The distinct `t' discriminators emitted across ebp/goldens/widgets.golden."
   (let ((golden jetpacs-tests--golden-file) (seen nil))
     (with-temp-buffer
       (insert-file-contents golden)
@@ -3596,10 +3596,10 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
     (nreverse syms)))
 
 (ert-deftest jetpacs-contract-artifact-current ()
-  "The committed eabp/contract.json byte-matches a fresh generation.
+  "The committed ebp/contract.json byte-matches a fresh generation.
 Regenerate after an intentional wire-vocabulary change:
   emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write
-then commit inside eabp/ and bump the submodule pointer."
+then commit inside ebp/ and bump the submodule pointer."
   (load (expand-file-name "../emacs/build-contract.el" jetpacs-tests--dir) nil t)
   (let ((committed (with-temp-buffer
                      (let ((coding-system-for-read 'utf-8-unix))
@@ -4603,7 +4603,7 @@ base is absent."
 ;; ─── Protocol frame shapes (golden snapshot, SPEC §10–§11) ──────────────────
 
 (defconst jetpacs-tests--frames-golden-file
-  (expand-file-name "../eabp/goldens/frames.golden" jetpacs-tests--dir))
+  (expand-file-name "../ebp/goldens/frames.golden" jetpacs-tests--dir))
 
 (defun jetpacs-tests--device-cases ()
   "One `capability.invoke' payload per `jetpacs-device-*' wrapper.
@@ -4647,7 +4647,7 @@ shapes — without touching the wire."
     (nreverse calls)))
 
 (defun jetpacs-tests--frame-cases ()
-  "Outbound protocol frame payloads pinned by eabp/goldens/frames.golden.
+  "Outbound protocol frame payloads pinned by ebp/goldens/frames.golden.
 Trigger and capability frames today; new wire frames add cases here."
   (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
         ;; The gated registration needs a state_types report or the

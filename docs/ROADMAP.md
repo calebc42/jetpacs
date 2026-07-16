@@ -27,11 +27,19 @@ dependencies by the composer), never from widening the wire grammar
 **Adoptability.** The foundation should outlive any single app and any
 single maintainer: a stranger can build a Tier 1
 ([BUILDING-TIER1.md](BUILDING-TIER1.md)) or a companion
-([BUILDING-COMPANION.md](BUILDING-COMPANION.md)) without asking anyone's
+([BUILDING-COMPANION.md](https://github.com/calebc42/eabp/blob/main/BUILDING-COMPANION.md)
+in the eabp protocol repo) without asking anyone's
 permission, and a future maintainer inherits a versioned, negotiable,
 tested platform (the completed
 [PLAN-platform-hardening.md](PLAN-platform-hardening.md)). Every item
 below is weighed against that.
+
+The wire contract itself is **extracted**: SPEC, `contract.json`, and
+the golden conformance corpus live in the
+[eabp repo](https://github.com/calebc42/eabp), pinned here as the
+`eabp/` submodule ([PLAN-eabp-extraction.md](PLAN-eabp-extraction.md)
+is the record) — the pinnable surface a third-party companion depends
+on without depending on this repo's layout.
 
 The org-logic consolidation is **done**: the core owns the one query
 grammar and both consumers stand on it
@@ -106,8 +114,9 @@ grammar and both consumers stand on it
 7. **Pinned lifecycle semantics, then a second companion.** The
    strongest possible validation of the spec — desktop tray, e-ink,
    TUI, anything
-   ([BUILDING-COMPANION.md](BUILDING-COMPANION.md) is the invitation;
-   the goldens are the conformance kit). Now explicitly gated on the
+   ([BUILDING-COMPANION.md](https://github.com/calebc42/eabp/blob/main/BUILDING-COMPANION.md)
+   is the invitation; the eabp repo's goldens + `validate.py` are the
+   conformance kit). Now explicitly gated on the
    device plan's Task 9: SPEC must pin the visibility/queueing/
    lifecycle rules (termux-gui `Protocol.md` is the model) before a
    clean-room implementer can be expected to get them right.
@@ -132,7 +141,8 @@ grammar and both consumers stand on it
 11. **Spec 1.0.** Freeze the wire
     ([PLAN-spec-freeze.md](PLAN-spec-freeze.md) — **in flight**:
     1.0-rc declared, the freeze surface named, the
-    [SPEC-CHANGES.md](SPEC-CHANGES.md) amendment log instituted): the
+    [SPEC-CHANGES.md](https://github.com/calebc42/eabp/blob/main/SPEC-CHANGES.md)
+    amendment log instituted): the
     envelope, handshake, and §4–§6 semantics stop being "draft".
     Additive node-vocabulary growth continues through negotiation and
     is explicitly *not* a version bump (SPEC §3).

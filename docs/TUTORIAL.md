@@ -15,7 +15,9 @@ The companion documents, for when you outgrow this one:
   icons), read next.
 - [WIDGETS.md](WIDGETS.md) — the reference for every node constructor
   used below.
-- [SPEC.md](SPEC.md) — the wire protocol (normative), §5 especially.
+- [SPEC.md](https://github.com/calebc42/eabp/blob/main/SPEC.md) — the
+  wire protocol (normative, in the eabp repo — the `eabp/` submodule),
+  §5 especially.
 - [API-STABILITY.md](API-STABILITY.md) — exactly what a Tier 1 may
   depend on.
 
@@ -122,7 +124,7 @@ charts, tables — is catalogued in [WIDGETS.md](WIDGETS.md).
 ## 3. A button, an action, a round trip
 
 Interaction crosses the wire under one rule ([SPEC
-§5](SPEC.md#5-events-the-semantic-action-boundary)): **a tap never
+§5](https://github.com/calebc42/eabp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)): **a tap never
 names code**. The spec embeds an action *name*; Emacs holds an
 allowlist mapping names to handlers. The wire can only ask for things
 you explicitly offered.
@@ -169,7 +171,7 @@ Taps also work when Emacs is away: the companion queues them and
 replays on reconnect. The default policy (`:when-offline "queue"`) is
 right for mutations; pass `"drop"` for navigation and refreshes, and
 give repeated mutations a `:dedupe` key ([SPEC
-§6](SPEC.md#6-offline-queue)).
+§6](https://github.com/calebc42/eabp/blob/main/SPEC.md#6-offline-queue)).
 
 ## 4. Own your names
 

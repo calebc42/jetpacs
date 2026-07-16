@@ -46,7 +46,9 @@ Glasspane reference Tier 1 lives in its own repo (it `require`s this
 core); the boundary is enforced by the build on both sides:
 
 - **Jetpacs, the foundation** (this repo) — a written protocol
-  ([docs/SPEC.md](docs/SPEC.md)), the core Emacs client
+  ([SPEC.md](https://github.com/calebc42/eabp/blob/main/SPEC.md), which
+  lives in its own [eabp repo](https://github.com/calebc42/eabp) and is
+  pinned here as the `eabp/` submodule), the core Emacs client
   (`emacs/core/`, bundled as `jetpacs-core.el`), and the app-agnostic
   Android renderer + companion (the `:jetpacs` Gradle library in `jetpacs/`
   and the `:app` companion shell). The foundation renders *any* buffer,
@@ -133,8 +135,8 @@ the glasspane repo):
 ## Status
 
 Proof of concept, but a broad one — everything in
-[docs/SPEC.md](docs/SPEC.md) is implemented on both sides. Working
-today:
+[SPEC.md](https://github.com/calebc42/eabp/blob/main/SPEC.md) is
+implemented on both sides. Working today:
 
 - **Rendering** — any buffer (Tier 0); the tabulated-list, transient,
   and comint renderers (Tier 0.5); the full SPEC §9 widget vocabulary
@@ -161,7 +163,7 @@ Known limitations:
 - **Local-only.** The v0 transport is a loopback TCP socket
   (`127.0.0.1:8765`) guarded by a mutual HMAC pairing handshake. The 1.0
   target adds a Unix domain socket option — see the transport note in the
-  [spec](docs/SPEC.md#1-roles-and-transport).
+  [spec](https://github.com/calebc42/eabp/blob/main/SPEC.md#1-roles-and-transport).
 - **Android-only companion.** iOS has no Emacs port to connect to. The
   protocol is platform-agnostic and now written down precisely so other
   companions can exist.
@@ -269,13 +271,16 @@ with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
 
 ## Layout
 
-- `docs/` — [SPEC.md](docs/SPEC.md) (the wire protocol),
-  [ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams),
+- `eabp/` — the wire contract as a submodule of the
+  [eabp repo](https://github.com/calebc42/eabp): SPEC.md (the protocol),
+  contract.json (the machine-readable vocabulary), the golden conformance
+  corpus, and BUILDING-COMPANION.md (build your own companion/renderer).
+  Pin that repo, not this one, to implement the protocol.
+- `docs/` — [ARCHITECTURE.md](docs/ARCHITECTURE.md) (tiers, modules, seams),
   [TUTORIAL.md](docs/TUTORIAL.md) (hello world, step by step),
   [BUILDING-TIER1.md](docs/BUILDING-TIER1.md) (build your own app),
   [WIDGETS.md](docs/WIDGETS.md) (the widget-DSL reference),
-  [BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md) (build your own
-  companion/renderer), [ROADMAP.md](docs/ROADMAP.md) (the foundation
+  [ROADMAP.md](docs/ROADMAP.md) (the foundation
   roadmap) and the foundation-side `PLAN-*.md` records (the app-level
   plans live in the glasspane repo).
 - `emacs/core/` — the Jetpacs Elisp client (`jetpacs-*.el`): transport, shell,
@@ -286,8 +291,8 @@ with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
   protocol, renderer, offline queue, widgets/tiles/notifications.
 - `app/` — the `:app` Glasspane shell: branding, launcher activity, the
   org capture tile and keyboard toolbar.
-- `test/` — the main and primitives ERT suites, the wire-format goldens,
-  and the core-isolation guard (`core-load-test.el`).
+- `test/` — the main and primitives ERT suites and the core-isolation
+  guard (`core-load-test.el`); the wire-format goldens live in `eabp/`.
 
 ## Contributing
 
@@ -297,7 +302,8 @@ Three doors, and only the last needs buy-in from this repo:
   [docs/TUTORIAL.md](docs/TUTORIAL.md), then
   [docs/BUILDING-TIER1.md](docs/BUILDING-TIER1.md).
 - **Build your own companion** against the wire —
-  [docs/BUILDING-COMPANION.md](docs/BUILDING-COMPANION.md).
+  [BUILDING-COMPANION.md](https://github.com/calebc42/eabp/blob/main/BUILDING-COMPANION.md)
+  in the eabp repo.
 - **Change the foundation itself** — [CONTRIBUTING.md](CONTRIBUTING.md)
   (setup, test suites, and the standing rules, the wire-safety boundary
   chief among them). Contributions to Glasspane go to
@@ -320,6 +326,7 @@ GPLv3 is the natural home for this project: the Emacs side is built on
 GNU Emacs and org-mode (themselves GPLv3+), and the Android side combines
 cleanly with it (its libraries are Apache-2.0, which GPLv3 permits). The
 license covers the *code* in this repository; the **wire protocol itself**
-([docs/SPEC.md](docs/SPEC.md)) is an interface anyone may implement — a
+([SPEC.md](https://github.com/calebc42/eabp/blob/main/SPEC.md) in the
+eabp repo) is an interface anyone may implement — a
 clean-room companion or client written against the spec carries no
 obligation from this repo's license.

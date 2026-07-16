@@ -11,17 +11,18 @@ import java.io.File
 
 /**
  * Conformance leg A of the Spec 1.0 kit (PLAN-spec-freeze S2): the Kotlin
- * side replays the committed golden corpus against `docs/contract.json`
- * (contract_format 2) — the same artifact the ERT suite generates and
- * validates — so the frozen contract is machine-checked by two independent
- * implementations.
+ * side replays the committed golden corpus against `eabp/contract.json`
+ * (contract_format 3, in the eabp protocol submodule) — the same artifact
+ * the ERT suite generates and validates — so the frozen contract is
+ * machine-checked by two independent implementations.
  *
  * Legs:
- *  - `test/frames.golden`: every line parses via [Frame.fromJson], defaults
- *    to protocol v1, names a schema-registered kind sent in the client
- *    direction, and its payload keys satisfy the kind's required/optional
- *    sets; the envelope round-trips through compact single-line NDJSON.
- *  - `test/widgets.golden` and `test/hypertext.golden`: every typed node
+ *  - `eabp/goldens/frames.golden`: every line parses via [Frame.fromJson],
+ *    defaults to protocol v1, names a schema-registered kind sent in the
+ *    client direction, and its payload keys satisfy the kind's
+ *    required/optional sets; the envelope round-trips through compact
+ *    single-line NDJSON.
+ *  - `eabp/goldens/widgets.golden` and `hypertext.golden`: every typed node
  *    validates against `node_schema` (type known, required keys present,
  *    no key outside the schema) and every embedded action against the
  *    discriminated `action_schema`.
@@ -54,10 +55,10 @@ class WireGoldenConformanceTest {
             .map { it.substringAfter(' ') }
 
     private val contract: JSONObject by lazy {
-        JSONObject(repoFile("docs/contract.json").readText())
+        JSONObject(repoFile("eabp/contract.json").readText())
     }
 
-    // ── Schema accessors over contract.json (format 2) ───────────────────
+    // ── Schema accessors over contract.json (format 3) ───────────────────
 
     private fun names(arr: JSONArray): Set<String> =
         (0 until arr.length()).map { arr.getString(it) }.toSet()
@@ -181,8 +182,8 @@ class WireGoldenConformanceTest {
     // ── The contract artifact itself ─────────────────────────────────────
 
     @Test
-    fun contractIsFormatTwoAndCoherent() {
-        assertEquals(2, contract.getInt("contract_format"))
+    fun contractIsFormatThreeAndCoherent() {
+        assertEquals(3, contract.getInt("contract_format"))
         assertEquals(JETPACS_PROTOCOL_VERSION, contract.getInt("protocol_version"))
         assertTrue(contract.getString("spec_version").isNotEmpty())
         // The third mirror leg: the published node vocabulary is exactly the
@@ -207,7 +208,7 @@ class WireGoldenConformanceTest {
 
     @Test
     fun framesGoldenConformsToKindSchema() {
-        val lines = goldenLines("test/frames.golden")
+        val lines = goldenLines("eabp/goldens/frames.golden")
         assertTrue(lines.isNotEmpty())
         for (line in lines) {
             val frame = Frame.fromJson(JSONObject(line))
@@ -225,7 +226,7 @@ class WireGoldenConformanceTest {
 
     @Test
     fun framesGoldenRoundTripsStably() {
-        for (line in goldenLines("test/frames.golden")) {
+        for (line in goldenLines("eabp/goldens/frames.golden")) {
             val obj = JSONObject(line)
             val sent = Frame(kind = obj.getString("kind"), payload = obj.getJSONObject("payload"))
             val wire = sent.toString()
@@ -245,7 +246,7 @@ class WireGoldenConformanceTest {
     @Test
     fun widgetsGoldenConformsToNodeSchema() {
         var typedNodes = 0
-        for (line in goldenLines("test/widgets.golden")) {
+        for (line in goldenLines("eabp/goldens/widgets.golden")) {
             val obj = JSONObject(line)
             val problems = mutableListOf<String>()
             if (obj.has("t")) typedNodes++
@@ -262,7 +263,7 @@ class WireGoldenConformanceTest {
     @Test
     fun hypertextGoldenConformsToNodeSchema() {
         var nodes = 0
-        for (line in goldenLines("test/hypertext.golden")) {
+        for (line in goldenLines("eabp/goldens/hypertext.golden")) {
             val arr = JSONArray(line)
             nodes += arr.length()
             val problems = mutableListOf<String>()
@@ -276,7 +277,7 @@ class WireGoldenConformanceTest {
 
     @Test
     fun codecRereadsGoldenCorpusAsByteStream() {
-        val frames = goldenLines("test/frames.golden").map {
+        val frames = goldenLines("eabp/goldens/frames.golden").map {
             val obj = JSONObject(it)
             Frame(kind = obj.getString("kind"), payload = obj.getJSONObject("payload"))
         }
@@ -305,7 +306,7 @@ class WireGoldenConformanceTest {
     @Test
     fun seededCorruptionsFail() {
         // A renamed required payload key on a real golden line.
-        val line = JSONObject(goldenLines("test/frames.golden").first())
+        val line = JSONObject(goldenLines("eabp/goldens/frames.golden").first())
         val payload = line.getJSONObject("payload")
         payload.put("triggerz", payload.remove("triggers"))
         val p1 = mutableListOf<String>()

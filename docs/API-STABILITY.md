@@ -17,7 +17,7 @@ change signature incompatibly. Everything else is internal.
 > foundation-root invariants — so `(version<= "1.3.0" …)` cannot tell them
 > apart. Policy going forward: **one minor bump per independently landed API
 > batch** (not per individual addition). `1.4.0` opens the binding-layer track
-> (the machine-readable wire contract in `contract.json`, and the promoted
+> (the machine-readable wire contract in `eabp/contract.json`, and the promoted
 > shell/files/action seams below); `1.5.0` is the binding layer itself;
 > `1.6.0` is the org note-index batch (the `vulpea-note` accessor of the one
 > query grammar, plus the guarded vulpea source query); `1.7.0` is the
@@ -62,7 +62,7 @@ change signature incompatibly. Everything else is internal.
 
 ### Widget constructors (`jetpacs-widgets.el`)
 
-The node vocabulary. Wire shapes are pinned by `test/widgets.golden`;
+The node vocabulary. Wire shapes are pinned by `eabp/goldens/widgets.golden`;
 the authoring reference is [WIDGETS.md](WIDGETS.md).
 
 Content: `jetpacs-text` `jetpacs-markup` `jetpacs-rich-text` `jetpacs-span`
@@ -263,7 +263,7 @@ plus the vocabulary defconsts `jetpacs-lint-spec-layouts`
 Since 1.11.0 (the Spec 1.0-rc schema registry): `jetpacs-lint-payload`
 (validate a frame kind + payload alist) and the authored schema tables
 `jetpacs-lint-node-schema` `jetpacs-lint-kind-schema`
-`jetpacs-lint-node-common-keys`, published in `contract.json`
+`jetpacs-lint-node-common-keys`, published in `eabp/contract.json`
 (contract_format 2) as `node_schema` / `kind_schema` / `spec_version`.
 
 Since 1.18.0 (the conditions core): `jetpacs-lint-trigger` (validate one

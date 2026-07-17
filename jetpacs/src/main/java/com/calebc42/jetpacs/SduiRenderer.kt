@@ -810,19 +810,26 @@ private fun WeightedChildren(
  * Registry of pending debounced `state.changed` flushes (SPEC §5).
  *
  * Stateful nodes that publish on a debounce (text_input; editor with
- * publish_state) register a flush lambda under their widget id; the
- * action-dispatch path drains the registry synchronously before sending
- * any `event.action`, so a diverged value always precedes on the wire the
- * action that might read it. A flusher must be idempotent and cheap: it
- * re-sends nothing when the last published value is already current.
+ * publish_state) register a flush lambda; the action-dispatch path drains
+ * the registry synchronously before sending any `event.action`, so a
+ * diverged value always precedes on the wire the action that might read
+ * it. A flusher must be idempotent and cheap: it re-sends nothing when the
+ * last published value is already current.
+ *
+ * Keyed by an opaque per-composition token, NOT by widget id: two live
+ * compositions can legitimately carry the same id (a dialog and the main
+ * surface both rendering `note`), and id keying let the second registration
+ * clobber the first — after which either one's disposal removed the
+ * survivor's flusher too, silently restoring the debounce race this exists
+ * to close.
  */
 internal object PendingStateFlush {
-    private val flushers = java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
-    fun register(id: String, flush: () -> Unit) {
-        if (id.isNotEmpty()) flushers[id] = flush
+    private val flushers = java.util.concurrent.ConcurrentHashMap<Any, () -> Unit>()
+    fun register(token: Any, flush: () -> Unit) {
+        flushers[token] = flush
     }
-    fun unregister(id: String) {
-        flushers.remove(id)
+    fun unregister(token: Any) {
+        flushers.remove(token)
     }
     fun flushAll() {
         flushers.values.forEach { it() }

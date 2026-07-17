@@ -52,6 +52,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -210,21 +211,32 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
             dispatchStateChanged(context, id, JSONObject.quote(text))
         }
     }
-    DisposableEffect(id) {
-        PendingStateFlush.register(id) {
+    val flushToken = remember(id) { Any() }
+    DisposableEffect(flushToken) {
+        PendingStateFlush.register(flushToken) {
             val t = textState.value
             if (lastSentState.value != null && t != lastSentState.value) {
                 lastSentState.value = t
                 dispatchStateChanged(context, id, JSONObject.quote(t))
             }
         }
-        onDispose { PendingStateFlush.unregister(id) }
+        onDispose { PendingStateFlush.unregister(flushToken) }
     }
 
     val focusRequester = remember(id) { FocusRequester() }
+    // Focus is grabbed once per id, not once per composition. A lazy-list
+    // row scrolled out of view and back is disposed and re-composed; a
+    // plain LaunchedEffect(id) would re-fire there and re-raise the
+    // keyboard the user had just dismissed. rememberSaveable survives that
+    // round trip (it is keyed by the list item's own key) and resets when
+    // the id itself changes — which is exactly when a new field appears.
+    var autofocused by rememberSaveable(id) { mutableStateOf(false) }
     if (autofocus) LaunchedEffect(id) {
-        withFrameNanos {}            // field must be laid out before it can focus
-        focusRequester.requestFocus()
+        if (!autofocused) {
+            withFrameNanos {}        // field must be laid out before it can focus
+            focusRequester.requestFocus()
+            autofocused = true
+        }
     }
 
     OutlinedTextField(
@@ -488,22 +500,28 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     dispatchStateChanged(context, id, JSONObject.quote(s))
                 }
         }
-        DisposableEffect(id) {
-            PendingStateFlush.register(id) {
+        val flushToken = remember(id) { Any() }
+        DisposableEffect(flushToken) {
+            PendingStateFlush.register(flushToken) {
                 val s = state.text.toString()
                 if (!s.contentEquals(lastPublished.value)) {
                     lastPublished.value = s
                     dispatchStateChanged(context, id, JSONObject.quote(s))
                 }
             }
-            onDispose { PendingStateFlush.unregister(id) }
+            onDispose { PendingStateFlush.unregister(flushToken) }
         }
     }
 
     val focusRequester = remember(id) { FocusRequester() }
+    // Once per id, not once per composition — see SduiTextInput.
+    var autofocused by rememberSaveable(id) { mutableStateOf(false) }
     if (autofocus) LaunchedEffect(id) {
-        withFrameNanos {}            // field must be laid out before it can focus
-        focusRequester.requestFocus()
+        if (!autofocused) {
+            withFrameNanos {}        // field must be laid out before it can focus
+            focusRequester.requestFocus()
+            autofocused = true
+        }
     }
     // Enter-as-dispatch (see on_enter above): the IME action becomes Done,
     // handled by dispatching with the buffer as `value`; performDefault is

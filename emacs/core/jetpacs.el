@@ -106,7 +106,32 @@ are refused with guidance in *Messages*."
   "Alist of negotiated session info after `session.welcome', or nil.")
 
 (defvar jetpacs-connected-hook nil
-  "Hook run with the welcome payload (alist) after a successful handshake.")
+  "Hook run with the welcome payload (alist) after a successful handshake.
+Run through `jetpacs--run-session-hook', so a member that signals costs
+only itself.")
+
+;; ─── Session hooks ───────────────────────────────────────────────────────────
+
+(defun jetpacs--run-session-hook (hook &rest args)
+  "Run HOOK's members with ARGS, isolating each member's errors.
+The session's own bring-up rides these hooks next to app-registered
+members: the dashboard push, the trigger arm and the theme are all
+`jetpacs-connected-hook' members.  `run-hook-with-args' would let the
+first member that signals skip every later one, so one app's bug could
+silently cost the phone its whole UI — the foundation must survive a
+broken Tier 1, the same way a broken builder costs its own screen and a
+broken predicate its own view.  A failing member is reported by name:
+the error is the app's to fix, so it must not be swallowed."
+  (run-hook-wrapped
+   hook
+   (lambda (fn)
+     (condition-case err
+         (apply fn args)
+       (error (message "Jetpacs: %s member `%s' failed: %s"
+                       hook fn (error-message-string err))))
+     ;; Always nil: `run-hook-wrapped' stops at the first non-nil, and no
+     ;; member's return value may end the session's bring-up.
+     nil)))
 
 ;; ─── Envelope ────────────────────────────────────────────────────────────────
 
@@ -326,7 +351,7 @@ by the transport itself and cannot be overridden here."
      (message "Jetpacs: replay complete (%s delivered, %s expired)"
               (or (alist-get 'delivered payload) 0)
               (or (alist-get 'expired payload) 0))
-     (run-hook-with-args 'jetpacs-queue-drained-hook payload))
+     (jetpacs--run-session-hook 'jetpacs-queue-drained-hook payload))
     ("error"
      (message "Jetpacs error [%s]: %s"
               (alist-get 'code payload) (alist-get 'detail payload)))
@@ -358,7 +383,7 @@ or wrong — nothing is trusted from an unproven peer."
     (let ((granted (alist-get 'granted payload))
           (queued  (or (alist-get 'queued_events payload) 0)))
       (message "Jetpacs: handshake ok. granted=%s queued_events=%s" granted queued)
-      (run-hook-with-args 'jetpacs-connected-hook payload)
+      (jetpacs--run-session-hook 'jetpacs-connected-hook payload)
       ;; Request replay AFTER the connected hooks: the revision snapshot has
       ;; been absorbed and initial surfaces pushed, so replayed events land
       ;; on a coherent state.
@@ -575,7 +600,7 @@ the first frame is served.  See `jetpacs--install-invariants'.")
 (defun jetpacs-connect ()
   "Connect to the companion and run the handshake."
   (interactive)
-  (run-hooks 'jetpacs-before-connect-hook)
+  (jetpacs--run-session-hook 'jetpacs-before-connect-hook)
   (setq jetpacs--user-disconnected nil
         jetpacs--reconnect-delay jetpacs-reconnect-initial-delay)
   (jetpacs--cancel-reconnect)

@@ -5734,6 +5734,45 @@ app; warn-and-arm-nothing when owner-unaware and a second app is present."
                        '(((id . "a") (at_ms . 1))) "glasspane")))
         (should (null sent))))))
 
+;; ─── Session hooks: one broken member must not cost the session ─────────────
+
+(ert-deftest jetpacs-session-hook-isolates-a-broken-member ()
+  "A signalling hook member costs only itself: later members still run.
+The regression: `jetpacs-connected-hook' carries the session's whole
+bring-up (the shell's app:dashboard push at depth 10, the trigger arm,
+the theme) alongside app-registered members.  Under the old bare
+`run-hook-with-args', a Tier 1 whose member signalled skipped every later
+member, so the companion never received app:dashboard and sat on
+\"Waiting for Emacs\" forever — while showing \"Connected\"."
+  (let (ran messages)
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (let ((hook nil))
+        ;; Order matters: the broken member runs FIRST, as a Tier 1's does
+        ;; (depth 0 prepends, and apps load after the core).
+        (add-hook 'hook (lambda (_p) (push 'broken ran) (car (cdr 42))))
+        (add-hook 'hook (lambda (_p) (push 'later ran)) 10)
+        (jetpacs--run-session-hook 'hook '((granted)))))
+    ;; The later member ran despite the earlier one signalling.
+    (should (memq 'broken ran))
+    (should (memq 'later ran))
+    ;; And the failure is reported by name rather than swallowed — the app
+    ;; author has to be able to find their bug.
+    (should (seq-find (lambda (m) (string-match-p "member" m)) messages))))
+
+(ert-deftest jetpacs-session-hook-ignores-member-return-values ()
+  "A member returning non-nil must not end the hook.
+`run-hook-wrapped' stops at the first non-nil wrapper result, so the
+wrapper always returns nil — otherwise a member that merely returns t
+would silently suppress the dashboard push."
+  (let (ran)
+    (let ((hook nil))
+      (add-hook 'hook (lambda (_p) (push 'first ran) t))
+      (add-hook 'hook (lambda (_p) (push 'second ran)) 10)
+      (jetpacs--run-session-hook 'hook nil))
+    (should (memq 'first ran))
+    (should (memq 'second ran))))
+
 ;; ─── Devtools instrumentation (1.21.0) ──────────────────────────────────────
 
 ;; ─── :key — lazy-list reconciliation identity (1.22.0) ──────────────────────

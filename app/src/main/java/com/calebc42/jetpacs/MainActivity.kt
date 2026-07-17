@@ -377,13 +377,34 @@ private const val DEFAULT_PAIR_INSTRUCTIONS =
         "Watch *Messages* for \"Jetpacs: handshake ok\". This screen updates " +
         "automatically once the handshake completes."
 
+/**
+ * Shown when [BridgeScreen]'s gate finds no cached `app:dashboard` — so a LIVE
+ * handshake here is not the happy path, it is a stuck state: Emacs paired and
+ * then never sent a screen. The gate swaps to the dashboard the instant one
+ * arrives, so this screen must never answer a bare "Connected" and leave the
+ * user reading a status row that contradicts its own headline.
+ *
+ * A surface Emacs never pushed cannot be waited out, so say what is actually
+ * wrong and where the error is: an on-connect failure is reported by `message`
+ * into Emacs's *Messages*, and `jetpacs-emacs-ui`'s toast bridge deliberately
+ * drops "Jetpacs"-prefixed messages — so the phone is the one place that error
+ * will never appear on its own.
+ */
 @Composable
 internal fun PairingScreen(instructions: String = DEFAULT_PAIR_INSTRUCTIONS) {
     val isConnected by JetpacsRuntime.connected.collectAsState()
+    val pairedEver by JetpacsRuntime.pairedEver.collectAsState()
+    val handshakeButNoScreen = isConnected && pairedEver
 
+    // Scrolls, and clears both system bars: the stuck state carries enough
+    // explanation to overflow a short screen, and the status rows at the very
+    // bottom are the whole point — they must never hide under the nav bar.
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -397,10 +418,24 @@ internal fun PairingScreen(instructions: String = DEFAULT_PAIR_INSTRUCTIONS) {
             tint = MaterialTheme.colorScheme.primary
         )
 
-        Text("Waiting for Emacs…", style = MaterialTheme.typography.headlineMedium)
-        
         Text(
-            instructions,
+            if (handshakeButNoScreen) "Emacs paired — no screen yet"
+            else "Waiting for Emacs…",
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = TextAlign.Center,
+        )
+
+        Text(
+            if (handshakeButNoScreen) {
+                "The handshake completed, but Emacs hasn't sent a screen to show. " +
+                    "That usually means an app's on-connect code failed — the rest " +
+                    "of the session's startup never ran.\n\n" +
+                    "Look in Emacs at *Messages* (C-h e) just after " +
+                    "\"Jetpacs: handshake ok\" for the error. Errors from Jetpacs " +
+                    "itself are not mirrored to this phone."
+            } else {
+                instructions
+            },
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 16.dp, bottom = 32.dp),
             textAlign = TextAlign.Center
@@ -415,7 +450,16 @@ internal fun PairingScreen(instructions: String = DEFAULT_PAIR_INSTRUCTIONS) {
         }
 
         Spacer(modifier = Modifier.height(32.dp))
-        StatusRow("Connection", if (isConnected) "Connected" else "Listening", isConnected)
+        StatusRow(
+            "Connection",
+            if (isConnected) "Connected" else "Listening",
+            isConnected,
+        )
+        // The second half of what the gate actually reads. Without it the user
+        // sees a green "Connected" and no hint that anything else is pending.
+        if (isConnected) {
+            StatusRow("Emacs screen", "Not sent — nothing to show yet", false)
+        }
     }
 }
 

@@ -94,4 +94,47 @@ class SduiRendererHelpersTest {
         assertTrue("id:b" in before && "id:b" in after)
         assertTrue("id:c" in before && "id:c" in after)
     }
+
+    // ── The seed guard (1.25.0: clear_on_submit) ─────────────────────────
+
+    @Test fun untouchedFieldAdoptsANewSpecValue() {
+        // The point of a re-push: a field the user has not touched takes the
+        // server's new value.
+        assertEquals("b" to "b", seedGuardStep(state = "a", seed = "a", spec = "b"))
+    }
+
+    @Test fun divergedFieldKeepsTypingButReSeeds() {
+        // Mid-typing refresh: keep what the user typed, but advance the seed
+        // so the NEXT server value can still be adopted.
+        assertEquals("typed" to "b", seedGuardStep(state = "typed", seed = "a", spec = "b"))
+    }
+
+    @Test fun redeliveringTheSameSpecValueChangesNothing() {
+        assertEquals("typed" to "a", seedGuardStep(state = "typed", seed = "a", spec = "a"))
+    }
+
+    @Test fun clearOnSubmitResetsSeedWithState() {
+        // Regression: clearing the state while the seed kept the old value
+        // stranded the guard — state "" != seed — and silently blocked every
+        // later server value under that id.
+        assertEquals("" to "", submitStep(submitted = "Buy milk", seed = "Buy milk", clearOnSubmit = true))
+    }
+
+    @Test fun plainSubmitLeavesStateAndSeedAlone() {
+        assertEquals(
+            "Buy milk" to "seeded",
+            submitStep(submitted = "Buy milk", seed = "seeded", clearOnSubmit = false)
+        )
+    }
+
+    @Test fun seededFieldStillAdoptsLaterValuesAfterAClearingSubmit() {
+        // The contract as a sequence: server seeds "Buy milk", the user
+        // submits (field clears), the server later pushes "Buy eggs".
+        var step = seedGuardStep(state = "", seed = "", spec = "Buy milk")
+        assertEquals("Buy milk", step.first)
+        step = submitStep(step.first, step.second, clearOnSubmit = true)
+        assertEquals("", step.first)
+        step = seedGuardStep(step.first, step.second, "Buy eggs")
+        assertEquals("Buy eggs", step.first)   // stuck at "" before the fix
+    }
 }

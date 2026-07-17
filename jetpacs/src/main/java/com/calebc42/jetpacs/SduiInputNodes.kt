@@ -104,15 +104,40 @@ import kotlin.concurrent.thread
  * spec value when the user hasn't diverged from the last seed — otherwise
  * a refresh stomps text mid-typing. Returns (state, lastSeed).
  */
+/**
+ * The seed guard's decision for one spec delivery, as (state, seed).
+ *
+ * Adopt a newly delivered value only while the user has not diverged from
+ * the last seed; either way the seed advances to what was delivered, so a
+ * later push can be adopted again. Pure, so the JVM suite can pin it
+ * ([SduiRendererHelpersTest]) — the composable below is the only caller.
+ */
+internal fun seedGuardStep(state: String, seed: String, spec: String): Pair<String, String> =
+    when {
+        spec == seed -> state to seed        // nothing new delivered
+        state == seed -> spec to spec        // untouched by the user: adopt
+        else -> state to spec                // diverged: keep, re-seed
+    }
+
+/**
+ * The submit transition, as (state, seed).
+ *
+ * `clear_on_submit` resets the seed alongside the state: leaving the seed
+ * on the submitted (or server-seeded) value would strand the guard —
+ * state "" != seed forever — and silently block EVERY later server value
+ * under this id, each skipped delivery advancing the seed again.
+ */
+internal fun submitStep(submitted: String, seed: String, clearOnSubmit: Boolean): Pair<String, String> =
+    if (clearOnSubmit) "" to "" else submitted to seed
+
 @Composable
 internal fun rememberSeeded(id: String, specValue: String): Pair<MutableState<String>, MutableState<String>> {
     val state = remember(id) { mutableStateOf(specValue) }
     val seed = remember(id) { mutableStateOf(specValue) }
     LaunchedEffect(specValue) {
-        if (specValue != seed.value) {
-            if (state.value == seed.value) state.value = specValue
-            seed.value = specValue
-        }
+        val (nextState, nextSeed) = seedGuardStep(state.value, seed.value, specValue)
+        state.value = nextState
+        seed.value = nextSeed
     }
     return state to seed
 }
@@ -134,7 +159,7 @@ internal fun rememberSeededBool(id: String, specValue: Boolean): Pair<MutableSta
 internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSONObject) -> Unit) {
     val context = LocalContext.current
     val id = node.optString("id")
-    val (textState, _) = rememberSeeded(id, node.optString("value", ""))
+    val (textState, seedState) = rememberSeeded(id, node.optString("value", ""))
     var text by textState
     val hint = node.optString("hint")
     val label = node.optString("label")
@@ -239,7 +264,9 @@ internal fun SduiTextInput(node: JSONObject, modifier: Modifier, dispatch: (JSON
             // clear_on_submit the field resets in place instead — same
             // composition, so focus and the keyboard survive — and the
             // mirrored ui-state clears with it.
-            text = if (clearOnSubmit) "" else submitted
+            val (nextText, nextSeed) = submitStep(submitted, seedState.value, clearOnSubmit)
+            text = nextText
+            seedState.value = nextSeed
             lastSent = text
             dispatchStateChanged(context, id, JSONObject.quote(text))
         })

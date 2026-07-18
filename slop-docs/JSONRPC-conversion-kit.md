@@ -6,20 +6,25 @@ the owner can hand-write the new envelope layer and spec prose from it. Sketch
 policy: tables, shapes, and described exercises — no finished implementations.
 
 **Verification note:** JSON-RPC 2.0 facts are against the frozen 2010 spec
-(jsonrpc.org). `jsonrpc.el` facts are from trained knowledge of a stable core
-API and were *not* re-verified live (spend limit); before relying on exact
-keyword names, check the Elisp manual's JSONRPC node (`C-h i m elisp RET m
-jsonrpc RET`) and `M-x find-library jsonrpc`. Items to confirm are marked ✓.
+(jsonrpc.org). `jsonrpc.el` facts were verified 2026-07-18 against the
+library source, **v1.0.29** (`:N` line references below cite that file). The
+formerly ✓-marked items are confirmed except where the text now says
+otherwise — three original claims were wrong and are corrected in place
+(§1 stack note, §3 first paragraph, §4 items 1–2). The manual node stays the
+learning companion: `C-h i m elisp RET m jsonrpc RET`.
 
 ## 1. Governing decision and the layer stack
 
 Decision log #2: the wire speaks JSON-RPC 2.0 — requests (carry `id`, answered
 exactly once), notifications (no `id`, never answered), standard error objects.
 Framing: `Content-Length` headers, so the Emacs side uses core `jsonrpc.el`
-unmodified. Kept from ebp as conventions: dot-namespaced method names, the
-per-method direction table in the contract, readable string codes inside
-`error.data`, and the forward-compat rule (unknown method → method-not-found
-error / logged drop; the connection lives).
+unmodified — for transport, framing, and id bookkeeping; the one caveat
+(Emacs-outbound error `data`, §3) uses a supported subclass seam, not a fork.
+Kept from ebp as conventions: dot-namespaced method names, the per-method
+direction table in the contract, readable string codes inside `error.data`,
+and the forward-compat rule (unknown method → method-not-found error / logged
+drop — implemented in *your* dispatchers, §3–§4; what the library gives you is
+only that the connection survives a handler error).
 
 ```
 your vocabulary     methods, payload schemas, direction rules, handshake,
@@ -99,9 +104,15 @@ door; your spec must give methods the same registered-handler discipline.
 ## 3. Error objects
 
 JSON-RPC reserves `-32768..-32000` (notably `-32601` method-not-found — the
-new face of "unknown kind: log and continue"; `jsonrpc.el` answers it for you
-on unknown *requests* and drops unknown *notifications* ✓). Application codes
-live outside that range; keep the readable string codes as data:
+new face of "unknown kind: log and continue"). **Correction (source-verified):
+`jsonrpc.el` does NOT answer `-32601` for you** — the code appears nowhere in
+the library. Both default dispatchers are `#'ignore` (:57-66), so an unhandled
+request returns a success-shaped `null` result (:344-346) — fail-*open* — and
+notifications are all handed to your dispatcher with no known/unknown
+distinction (:366). Your request dispatcher hand-rolls `-32601` for unknown
+methods and your notification dispatcher logs-and-drops unknowns; neither is
+free. Application codes live outside the reserved range; keep the readable
+string codes as data:
 
 ```json
 {"code": 1001, "message": "capability not supported",
@@ -119,19 +130,45 @@ The `cap-permission` error keeps its best feature: the remedy rides in `data`
 Recommendation carried over from the walk: extend typed errors spec-wide —
 revision rejection and set rejection get codes too.
 
+**Caveat — Emacs-outbound error `data` (source-verified).** Every example
+above is *companion*-emitted (Kotlin side) and unaffected, and inbound
+`error.data` reaches Emacs intact (:486-491). But when an *Emacs* handler
+signals `jsonrpc-error`, the library's reply path emits only `:code` and
+`:message` — `:data` is stripped in the dispatch loop before any overridable
+generic runs (:347-358). Under this kit that bites only `edit.complete`
+responses (§2.4) and direction-enforcement errors (§5.5). If those ever need
+typed `data`: stash it handler-side (a dynamic variable or connection slot is
+safe — the reply is emitted synchronously within the dispatch extent) and
+re-attach it in a `jsonrpc-convert-to-endpoint` override (:170-188) — a
+supported subclass seam, not a fork. Two code landmines while here: never use
+code `32000` (a jsonrpc.el sentinel meaning "no error" — it transmutes your
+error into a *result*, :352-355), and `-1` is the library's own local "Server
+died". Courtesy toward the wider ecosystem: also stay outside LSP's reserved
+`-32899..-32800` (RequestFailed `-32803`, ContentModified `-32801`,
+RequestCancelled `-32800`). The kit's `1001+` codes are clean on all counts.
+
 ## 4. `jsonrpc.el` learning ladder
 
 Concepts, in learning order (each maps to a manual section ✓):
 
 1. **The connection object** — `jsonrpc-process-connection`, wrapping an Emacs
    process (a `make-network-process` TCP stream works). You supply two
-   functions: a request dispatcher and a notification dispatcher — method name
-   in, handler out. Your fail-closed rule and your allowlist both live in
-   these two dispatchers.
+   functions — a request dispatcher and a notification dispatcher — and each
+   *is* the handler, not a router: called `(CONN METHOD PARAMS)` with the
+   method as an interned symbol and the params as a plist, it returns the
+   result directly or signals `jsonrpc-error` (:345-346, :366). Your
+   fail-closed rule and your allowlist both live in these two dispatchers —
+   and they must, because the defaults are `#'ignore`: an unhandled request
+   silently returns a success-shaped `null` (:344-346), which is fail-*open*.
+   Until the handshake succeeds, explicitly signal a typed error for every
+   method; hand-roll `-32601` for unknown ones (§3).
 2. **Sending** — `jsonrpc-notify` (fire-and-forget), `jsonrpc-request`
-   (blocks, `:timeout`, `:deferred` ✓ — deferred queues the request until the
-   connection signals readiness, useful pre-handshake), `jsonrpc-async-request`
-   (`:success-fn` / `:error-fn` / `:timeout-fn`).
+   (blocks; `:timeout`, default 10 s, :550-555; `:deferred` holds the send
+   until `jsonrpc-connection-ready-p` returns non-nil — the default method
+   always says ready, so deferral works only once you specialize it to mean
+   "handshake done", and pending sends are re-tried after each inbound
+   message: polled, not signalled, :158-167, :984-1004),
+   `jsonrpc-async-request` (`:success-fn` / `:error-fn` / `:timeout-fn`).
 3. **The events buffer** — every frame in/out, timestamped, human-readable.
    This replaces the old NDJSON "debug with netcat" story and is the single
    biggest quality-of-life win of renting.
@@ -159,9 +196,11 @@ first katas):
 
 1. **`edit.resync` as request** with the reseed as its response (recommended,
    see 2.4) vs. keeping the old notification + `edit.open` dance.
-2. **Envelope id lifetime** — `jsonrpc.el` manages ids per connection ✓;
-   your spec should state that outstanding requests die with the connection
-   (the old spec never did).
+2. **Envelope id lifetime** — `jsonrpc.el` manages ids per connection
+   (confirmed: :97-100, first id 1 at :968), and the library already makes
+   outstanding requests die with the connection — every pending continuation
+   receives error `-1 "Server died"` when the process ends (:760-785). Your
+   spec should still state the rule (the old spec never did).
 3. **Unsolicited errors** — with `error` dissolved into responses, does the
    companion ever need to report a fault outside any request? If yes, define
    a `log.error` notification; do not resurrect a bare error frame.

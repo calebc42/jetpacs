@@ -67,6 +67,8 @@ UI-state store ever learn of it after reconnect? LiveView answers "yes,
 automatically, per form, with an opt-out." Your rebuilt spec should answer the
 question deliberately — even if the answer is "typed-but-never-dispatched text
 is ephemeral by design." An open item for your §5/§6 equivalents.
+*(Resolved 2026-07-18: ebp amendment #16 — the welcome's `input_state`
+snapshot, absorb→push→replay.)*
 
 ---
 
@@ -94,7 +96,8 @@ asymmetry to fix while you are here: §9's unknown-key tolerance ("unknown keys
 must be ignored", SPEC.md:394-395) is written for **node** keys. Nothing in
 the SPEC says unknown keys on an **action object** are ignored — `confirm`
 (1.23.0) relied on that behavior as folklore, and take 1 would too. The rule
-should be written down; take 1 carries it.
+should be written down; take 1 carries it. *(Resolved 2026-07-18: ebp
+amendment #14 writes the tolerance rule plus the constraining-fields law.)*
 
 ---
 
@@ -337,6 +340,9 @@ that would smuggle a constraining field in through a cosmetic door.
 **Changelog line it needs:** `§4: ttl_s/stale_spec semantics written —
 disconnected-for-ttl_s surfaces render visibly stale, stale_spec replaces
 spec; presentation only, revision_seen remains the correctness boundary.`
+*(Adopted 2026-07-18: ebp amendment #15 — semantics as drafted, and the
+name-collision question (decision 7) resolved by renaming to
+`stale_after_s`.)*
 
 ---
 

@@ -84,28 +84,34 @@ within a build would recurse."
         ((and (consp err) (symbolp (car err))) (error-message-string err))
         (t (format "%s" err))))
 
-(defun jetpacs-async--settle (entry status value)
+(defun jetpacs-async--settle (key entry status value)
   "Set ENTRY to STATUS with VALUE and schedule the coalesced re-render.
-A completion for an entry already swept from the cache still schedules a
-push; it is harmless (the next build simply does not read the orphan)."
-  (setf (jetpacs-async--entry-status entry) status
-        (jetpacs-async--entry-value entry) value)
-  (jetpacs-async--schedule-push))
+No-op unless ENTRY is still the live cache entry for KEY *and* still
+pending (vui's async unmount guarantee): a completion for a swept entry
+must not push — on a full-tree-resend wire each ghost push costs a
+complete rebuild, reserialize, and radio wake — and only the first of
+competing resolve/reject calls wins."
+  (when (and (eq entry (gethash key jetpacs-async--cache))
+             (eq (jetpacs-async--entry-status entry) 'pending))
+    (setf (jetpacs-async--entry-status entry) status
+          (jetpacs-async--entry-value entry) value)
+    (jetpacs-async--schedule-push)))
 
-(defun jetpacs-async--start (entry loader)
-  "Start LOADER for ENTRY, catching a synchronous throw.
+(defun jetpacs-async--start (key entry loader)
+  "Start LOADER for KEY's ENTRY, catching a synchronous throw.
 LOADER is (lambda (resolve reject) ...): it calls RESOLVE with the value or
 REJECT with an error string, and may return a cleanup thunk stored as the
 entry's cancel."
-  (let ((resolve (lambda (value) (jetpacs-async--settle entry 'ready value)))
+  (let ((resolve (lambda (value) (jetpacs-async--settle key entry 'ready value)))
         (reject  (lambda (err)
-                   (jetpacs-async--settle entry 'error
+                   (jetpacs-async--settle key entry 'error
                                           (jetpacs-async--message err)))))
     (condition-case err
         (let ((cleanup (funcall loader resolve reject)))
           (when (functionp cleanup)
             (setf (jetpacs-async--entry-cancel entry) cleanup)))
-      (error (jetpacs-async--settle entry 'error (error-message-string err))))))
+      (error (jetpacs-async--settle key entry 'error
+                                    (error-message-string err))))))
 
 (defun jetpacs-async--read (entry)
   "The (STATUS . PAYLOAD) pair a caller reads from ENTRY."
@@ -136,7 +142,9 @@ push its completion scheduled), keeping one code path for sync and async
 sources alike.
 
 Eviction: a KEY not asked for in a given push is swept after that push, so
-a view that stops asking for data stops paying for it.  OWNER scopes the
+a view that stops asking for data stops paying for it.  A completion that
+arrives after its entry was swept is a no-op — no cache write, no push —
+as is a second resolve/reject after the first.  OWNER scopes the
 entry to an app for teardown (defaults to the current `with-jetpacs-owner');
 `jetpacs-app-unregister' drops every entry it owns.
 
@@ -160,7 +168,7 @@ Usage:
                    :gen jetpacs-async--generation
                    :owner (or owner (bound-and-true-p jetpacs-current-owner))))
       (puthash key entry jetpacs-async--cache)
-      (jetpacs-async--start entry loader)
+      (jetpacs-async--start key entry loader)
       '(pending))))
 
 ;; ─── Eviction ────────────────────────────────────────────────────────────────

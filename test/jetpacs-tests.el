@@ -229,6 +229,34 @@ The live-coding contract: a broken Tier 1 view costs its own screen."
     (should-not (jetpacs-shell--visible-views))
     (should-not (jetpacs-shell--active-view))))
 
+(ert-deftest jetpacs-shell-push-failure-requeues-snackbar ()
+  "A push that dies in `jetpacs-surface-push' must not eat the queued
+snackbar: it is requeued and rides the next successful push."
+  (let ((jetpacs-shell-views nil)
+        (jetpacs-shell--snackbar nil)
+        (jetpacs-shell--current-tab nil)
+        (jetpacs-shell--repush-timer nil)
+        (jetpacs-shell-view-filter-function nil)
+        (jetpacs-shell-after-push-hook nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        (snack 'unset) (fail t))
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+              ((symbol-function 'jetpacs-surface-push)
+               (lambda (&rest _) (when fail (error "wire down")))))
+      (jetpacs-shell-define-view "v"
+                                 :builder (lambda (s)
+                                            (setq snack s)
+                                            (jetpacs-text "x"))
+                                 :tab '(:icon "home" :label "V"))
+      (jetpacs-shell-notify "Saved")
+      (jetpacs-shell-push)                    ; surface-push errors
+      (should (equal jetpacs-shell--snackbar "Saved"))
+      ;; The requeued snackbar rides the next successful push — once.
+      (setq snack 'unset fail nil)
+      (jetpacs-shell-push)
+      (should (equal snack "Saved"))
+      (should-not jetpacs-shell--snackbar))))
+
 ;; ─── Transport ──────────────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-request-no-leak ()
@@ -1928,6 +1956,56 @@ running the loader's registered cancel thunk."
         (should-not (gethash '(mine) jetpacs-async--cache))
         (should cancelled)
         (should (gethash '(theirs) jetpacs-async--cache)))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-late-settle-after-sweep-is-inert ()
+  "A completion arriving after its entry was swept neither writes the cache
+nor schedules a push (vui's no-op-if-unmounted guarantee) — each ghost push
+would cost a full tree rebuild, reserialize, and radio wake."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((pushes 0) resolve)
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (lambda (&rest _) (cl-incf pushes))))
+          ;; Build 1 asks; the loader stays pending, escaping its resolve.
+          (jetpacs-async '(late) (lambda (res _rej) (setq resolve res) nil))
+          (jetpacs-async--after-push)       ; stamped current gen → survives
+          (jetpacs-async--after-push)       ; not asked again → swept
+          (should-not (gethash '(late) jetpacs-async--cache))
+          ;; The orphan completion is inert: no cache entry, no push.
+          (funcall resolve 42)
+          (should-not (gethash '(late) jetpacs-async--cache))
+          (should-not (timerp jetpacs-async--push-timer))
+          (should (= 0 pushes))
+          ;; A relaunched load under the same key is untouched by the
+          ;; stale completion: the fresh entry stays pending.
+          (jetpacs-async '(late) (lambda (_res _rej) nil))
+          (funcall resolve 42)
+          (should (equal '(pending) (jetpacs-async '(late) #'ignore)))
+          (should-not (timerp jetpacs-async--push-timer))))
+    (jetpacs-async-reset)))
+
+(ert-deftest jetpacs-async-double-settle-is-ignored ()
+  "Only the first resolve/reject wins; a later settle neither overwrites
+the cached result nor schedules another push."
+  (jetpacs-async-reset)
+  (unwind-protect
+      (let ((pushes 0) resolve reject)
+        (cl-letf (((symbol-function 'jetpacs-shell-push)
+                   (lambda (&rest _) (cl-incf pushes))))
+          (jetpacs-async '(d) (lambda (res rej)
+                                (setq resolve res reject rej)
+                                nil))
+          (funcall resolve 1)
+          (jetpacs-async--flush-push)
+          (should (= 1 pushes))
+          (should (equal '(ready . 1) (jetpacs-async '(d) #'ignore)))
+          ;; Late second settles: value stays, no push scheduled.
+          (funcall resolve 2)
+          (funcall reject "late failure")
+          (should-not (timerp jetpacs-async--push-timer))
+          (should (equal '(ready . 1) (jetpacs-async '(d) #'ignore)))
+          (should (= 1 pushes))))
     (jetpacs-async-reset)))
 
 ;; ─── Ergonomics: children-API + text keywords (#9, #10) ─────────────────────

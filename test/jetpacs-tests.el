@@ -54,6 +54,7 @@
 (require 'jetpacs-automations)
 (require 'jetpacs-app-store)
 (require 'jetpacs-org)
+(require 'jetpacs-demo)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
 
@@ -6051,6 +6052,83 @@ and the devtools recorder tallies surface.update frames per surface."
     (should (string-match-p "report-view" (buffer-string))))
   (kill-buffer "*jetpacs-devtools*")
   (jetpacs-devtools-reset))
+
+;; ─── Demo / onboarding ──────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-demo-setup-writes-files ()
+  "Setup writes both tour files, non-trivially sized, and is idempotent."
+  (let ((dir (make-temp-file "jetpacs-demo" t)))
+    (unwind-protect
+        (progn
+          (jetpacs-setup-demo dir)
+          (jetpacs-setup-demo dir)            ; overwrite must not error
+          (dolist (f '("walkthrough.org" "hello-app.el"))
+            (let ((path (expand-file-name f dir)))
+              (should (file-exists-p path))
+              (should (> (file-attribute-size (file-attributes path)) 500)))))
+      (delete-directory dir t))))
+
+(ert-deftest jetpacs-demo-welcome-gates-the-landing-tab ()
+  "The Start tab is the landing tab exactly while the tour is absent
+and not skipped; with the tour present (or skipped) the landing falls
+back to Files.  This is the case that needs `jetpacs-shell-current-tab'
+to honour :when — a retired welcome must never be the initial view of
+a push that excludes it."
+  (let ((jetpacs-shell--current-tab nil)
+        (dir (make-temp-file "jetpacs-demo" t)))
+    (unwind-protect
+        (progn
+          (let ((jetpacs-demo-directory (expand-file-name "absent" dir)))
+            (should (jetpacs-demo--welcome-p))
+            (should (equal (jetpacs-shell-current-tab) "welcome"))
+            (let ((jetpacs-demo-show-welcome nil))
+              (should-not (jetpacs-demo--welcome-p))
+              (should (equal (jetpacs-shell-current-tab) "files"))))
+          (let ((jetpacs-demo-directory dir))
+            (should-not (jetpacs-demo--welcome-p))
+            (should (equal (jetpacs-shell-current-tab) "files"))))
+      (delete-directory dir t)))
+  ;; The welcome screen's escape hatches are real registered actions.
+  (should (gethash "jetpacs.demo.setup" jetpacs-action-handlers))
+  (should (gethash "jetpacs.demo.skip" jetpacs-action-handlers)))
+
+(ert-deftest jetpacs-demo-tour-content-is-live ()
+  "The tour's instructions stay true of the code they describe: the
+load line names the file setup actually writes at the path the default
+directory actually is, the completion exercise completes, and the
+hello app parses whole with its documented teardown."
+  (let ((walkthrough (cdr (assoc "walkthrough.org" jetpacs-demo--files)))
+        (hello (cdr (assoc "hello-app.el" jetpacs-demo--files))))
+    ;; The welcome tab and the tour both tell the user to M-x this name.
+    (should (commandp 'jetpacs-setup-demo))
+    (should (string-search "jetpacs-setup-demo" walkthrough))
+    ;; The load line hardcodes the default directory and filename.
+    (should (equal jetpacs-demo-directory "~/jetpacs-demo/"))
+    (should (string-search "(load \"~/jetpacs-demo/hello-app.el\")" walkthrough))
+    (should (assoc "hello-app.el" jetpacs-demo--files))
+    ;; The completion exercise: typing "walk" in the walkthrough offers
+    ;; the word the file is full of.
+    (let* ((text (concat walkthrough "\nwalk"))
+           (result (jetpacs-complete-in-text "walkthrough.org" text (length text))))
+      (should result)
+      (should (equal (car result) "walk"))
+      (should (cl-find "walkthrough" (cdr result)
+                       :key (lambda (c) (alist-get 'label c))
+                       :test #'equal)))
+    ;; hello-app.el reads end to end (balanced, quoted correctly), wires
+    ;; its button to its handler, and documents its own teardown.
+    (let ((forms (let ((pos 0) acc)
+                   (condition-case nil
+                       (while t
+                         (let ((next (read-from-string hello pos)))
+                           (push (car next) acc)
+                           (setq pos (cdr next))))
+                     (end-of-file (nreverse acc))))))
+      (should (>= (length forms) 5))
+      (should (cl-find 'with-jetpacs-owner forms :key #'car-safe)))
+    (should (string-search "(jetpacs-defaction \"hello.tap\"" hello))
+    (should (string-search "(jetpacs-action \"hello.tap\")" hello))
+    (should (string-search "(jetpacs-app-unregister \"hello\")" hello))))
 
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

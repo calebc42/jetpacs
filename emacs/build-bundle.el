@@ -64,7 +64,8 @@
                      "core/jetpacs-sql.el"
                      "core/jetpacs-hosts.el"
                      "core/jetpacs-automations.el"
-                     "core/jetpacs-app-store.el"))
+                     "core/jetpacs-app-store.el"
+                     "core/jetpacs-demo.el"))
        (emit (lambda (out features summary files)
                (with-temp-file out
                  (insert (format ";;; %s --- %s -*- lexical-binding: t; -*-\n"

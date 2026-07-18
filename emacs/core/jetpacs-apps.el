@@ -73,11 +73,14 @@ of being isolated in a `Jetpacs' app."
 (defun jetpacs-apps--update-vanilla ()
   "Register or unregister the vanilla Jetpacs app based on settings."
   (if jetpacs-apps-show-vanilla-app
+      ;; "welcome" (the first-run Start tab, jetpacs-demo.el) stays after
+      ;; the landing tab in this list: `app.open' lands on the FIRST :tab
+      ;; view, and welcome retires once the tour exists.
       (jetpacs-defapp "jetpacs" :label "Jetpacs" :icon "rocket_launch"
-                      :views '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize")
+                      :views '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize" "welcome")
                       :order 900)
     ;; Unregister manually to avoid tearing down the core views entirely.
-    (dolist (v '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize"))
+    (dolist (v '("buffers" "messages" "tools" "files" "eval" "kill-ring" "automations" "customize" "welcome"))
       (jetpacs--unclaim "view" v))
     (jetpacs-apps-remove "jetpacs")))
 

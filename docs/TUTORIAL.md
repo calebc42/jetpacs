@@ -231,7 +231,9 @@ replaces by name.
 **Checkpoint.** What you have written so far is, shape for shape,
 [`emacs/apps/jetpacs-hello.el`](../emacs/apps/jetpacs-hello.el) — the
 repo's minimal example (~60 commented lines). Skim it now; it should
-read as review. The rest of the tutorial goes past it.
+read as review. (The on-device tour ships the same pattern as
+`~/jetpacs-demo/hello-app.el` — `M-x jetpacs-setup-demo` writes it, see
+`emacs/core/jetpacs-demo.el`.) The rest of the tutorial goes past it.
 
 ## 6. Input: sign the book
 

@@ -142,12 +142,14 @@ view, not the push."
   "Text queued by `jetpacs-shell-notify' for the next push, or nil.")
 
 (defun jetpacs-shell-current-tab ()
-  "The current tab name (the first included tab when none is set)."
+  "The current tab name (the first included tab when none is set).
+The fallback selects among `jetpacs-shell--visible-views' — honouring
+:when, not just the app filter — because a :when-gated tab (the
+first-run welcome tab) must not become the landing view of a push that
+excludes it."
   (or jetpacs-shell--current-tab
-      (car (cl-find-if (lambda (e)
-                         (and (plist-get (cdr e) :tab)
-                              (jetpacs-shell--view-filtered-p (car e))))
-                       jetpacs-shell-views))))
+      (car (cl-find-if (lambda (e) (plist-get (cdr e) :tab))
+                       (jetpacs-shell--visible-views)))))
 
 (defun jetpacs-shell-set-current-tab (name)
   "Switch to the registered bottom-bar tab NAME.
@@ -380,11 +382,13 @@ passes `jetpacs-shell-chrome-filter-function'."
 
 (defun jetpacs-shell-bottom-bar (selected)
   "The bottom bar of the included :tab views, with SELECTED highlighted.
-Honours the app filter, so each app shows its own tabs."
+Honours the app filter (each app shows its own tabs) and :when — a
+gated tab (the first-run welcome tab) must leave the bar in the same
+push that stops including its view."
   (jetpacs-bottom-bar
-   (cl-loop for (name . plist) in jetpacs-shell-views
+   (cl-loop for (name . plist) in (jetpacs-shell--visible-views)
             for tab = (plist-get plist :tab)
-            when (and tab (jetpacs-shell--view-filtered-p name))
+            when tab
             collect (jetpacs-nav-item (plist-get tab :icon)
                                    (plist-get tab :label)
                                    (jetpacs-shell-switch-view name)

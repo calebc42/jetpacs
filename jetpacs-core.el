@@ -18322,9 +18322,11 @@ connection returns; it reconnects by itself.
 
 The M-x button — the >_ in the top bar — is the most
 important control in the app.  Tap it and a search box opens
-over *every command this Emacs knows*.  Type a few letters
-and the list filters as you type; tap a result and it runs.
-Cancel, and nothing happens at all.
+over *every command this Emacs offers* (a short denylist of
+desktop-only noise — mouse and scroll commands and the like —
+stays hidden; the Eval tab can still reach anything).  Type a
+few letters and the list filters as you type; tap a result
+and it runs.  Cancel, and nothing happens at all.
 
 Try it right now:
 

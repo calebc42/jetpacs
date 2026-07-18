@@ -1171,7 +1171,7 @@ accordingly). An un-pushed slot shows as a grayed-out tile."
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
 (cl-defun jetpacs-toolbar-item (icon label &key snippet placement line
-                                on-tap long-press menu)
+                                on-tap long-press menu command)
   "One item in a data-driven editor toolbar (SPEC §9 \"Editor toolbars\").
 ICON names the chip glyph and LABEL is its short text.  Exactly one op
 per item: SNIPPET is text the companion inserts locally, with the closed
@@ -1180,11 +1180,16 @@ placeholder set ${selection} ${cursor} ${input:Prompt} ${date} ${time}
 \"promote\", \"demote\", \"move-up\", or \"move-down\"; ON-TAP is an
 ordinary action object dispatched to Emacs (the escape hatch); MENU is a
 list of sub-items (this constructor with nil ICON) shown as a dropdown —
-menus don't nest.  PLACEMENT refines SNIPPET: \"cursor\" (default),
-\"line-start\" (prefix the cursor's line, deduped), or \"block\" (own
-line\(s)).  LONG-PRESS is a secondary op — an item (nil ICON and LABEL)
-carrying one of SNIPPET/LINE/ON-TAP.  Pass the item list to
-`jetpacs-editor' :toolbar; `jetpacs-lint-spec' validates the vocabulary."
+menus don't nest; COMMAND names an Emacs command the companion runs in
+the editor's live sync session at the phone's point/region via
+`edit.command' (\"\" prompts a bridged M-x chooser) — DWIM commands like
+\"org-todo\" or \"fill-paragraph\"; it needs the editor's `:complete'
+bridge, and companions predating 1.26 render the chip as a no-op.
+PLACEMENT refines SNIPPET: \"cursor\" (default), \"line-start\" (prefix
+the cursor's line, deduped), or \"block\" (own line\(s)).  LONG-PRESS is
+a secondary op — an item (nil ICON and LABEL) carrying one of
+SNIPPET/LINE/ON-TAP/COMMAND.  Pass the item list to `jetpacs-editor'
+:toolbar; `jetpacs-lint-spec' validates the vocabulary."
   (jetpacs--node nil
               'icon icon
               'label label
@@ -1193,7 +1198,8 @@ carrying one of SNIPPET/LINE/ON-TAP.  Pass the item list to
               'line line
               'on_tap on-tap
               'long_press long-press
-              'menu (and menu (vconcat menu))))
+              'menu (and menu (vconcat menu))
+              'command command))
 
 (cl-defun jetpacs-editor (id value &key on-save read-only syntax line-numbers
                           complete chromeless publish-state toolbar)

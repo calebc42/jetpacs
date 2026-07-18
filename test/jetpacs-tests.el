@@ -1527,7 +1527,10 @@ the composer delete its own matcher."
      ;; 1.24.0 — :key completes the container coverage (SPEC §9).
      (jetpacs-column leaf :key "c1")
      (jetpacs-box (list leaf) :key "b1")
-     (jetpacs-surface (list leaf) :key "s1"))))
+     (jetpacs-surface (list leaf) :key "s1")
+     ;; 1.26.0 — the DWIM command op on toolbar items (SPEC §8 edit.command).
+     (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
+     (jetpacs-toolbar-item "bolt" "M-x" :command ""))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -4904,7 +4907,28 @@ Trigger and capability frames today; new wire frames add cases here."
      (list
       `((kind . "triggers.set")
         (payload . ((triggers . ,(jetpacs-triggers--specs))))))
-     (jetpacs-tests--device-cases))))
+     (jetpacs-tests--device-cases)
+     (jetpacs-tests--edit-apply-cases))))
+
+(defun jetpacs-tests--edit-apply-cases ()
+  "Both edit.apply shapes (SPEC §8), captured from the real DWIM sender.
+Text-changing: `upcase-region' over a selection bumps the seq and ships
+the splice.  Move-only: `mark-word' changes only point/region, seq
+unchanged.  Deterministic — fundamental-mode, no diagnostics/fontify."
+  (let ((jetpacs-sync-diagnostics nil)
+        (jetpacs-sync-fontify nil)
+        (file "golden.txt")
+        frames)
+    (cl-letf (((symbol-function 'jetpacs-send)
+               (lambda (kind payload &rest _)
+                 (push `((kind . ,kind) (payload . ,payload)) frames))))
+      (unwind-protect
+          (progn
+            (jetpacs-sync-open file 1 "hello world")
+            (jetpacs-sync-run-command file 1 0 "upcase-region" 5 0 5)
+            (jetpacs-sync-run-command file 1 1 "mark-word" 6 nil nil))
+        (jetpacs-sync-close file)))
+    (nreverse frames)))
 
 (defun jetpacs-tests--frame-lines ()
   (let ((i -1))

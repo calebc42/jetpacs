@@ -242,14 +242,16 @@ key name.  `build-contract.el' publishes this as `node_schema'.")
     ("reminders.set"    client    (reminders)             (owner))
     ("theme.set"        client    ()                      (dark colors syntax))
     ;; Editor sync & completion (SPEC §8).  The companion→client legs
-    ;; (edit.open/delta/caret/close/complete) are §5 actions riding
-    ;; `event.action', not frame kinds — only the client→companion legs
-    ;; appear here.
+    ;; (edit.open/delta/caret/close/complete/command) are §5 actions
+    ;; riding `event.action', not frame kinds — only the client→companion
+    ;; legs appear here.
     ("completions.show" client    (id request_id prefix candidates) ())
     ("diagnostics.show" client    (id session seq diags)  ())
     ("eldoc.show"       client    (id session text)       ())
     ("fontify.show"     client    (id session seq runs)   ())
     ("edit.resync"      client    (id session)            ())
+    ("edit.apply"       client    (id session seq cursor) (start del text len
+                                                           sel_start sel_end))
     ;; Device capabilities & triggers (SPEC §10–§11)
     ("capability.invoke" client   (cap)                   (args))
     ("capability.result" companion (ok)                   (result))
@@ -273,8 +275,11 @@ frame kinds.")
 (defconst jetpacs-lint--color-attrs '(color bg)
   "Attributes whose value must be a hex string or a theme token.")
 
-(defconst jetpacs-lint--toolbar-ops '(snippet line on_tap menu)
-  "The op fields of an editor toolbar item — exactly one per item (SPEC §9).")
+(defconst jetpacs-lint--toolbar-ops '(snippet line on_tap menu command)
+  "The op fields of an editor toolbar item — exactly one per item (SPEC §9).
+A `command' item runs an Emacs command in the editor's live sync session
+at the phone's point/region (needs the `:complete' bridge); companions
+predating 1.26 render the chip as a no-op, per the §9 unknown-op rule.")
 
 (defconst jetpacs-lint--toolbar-placements '("cursor" "line-start" "block")
   "Valid `placement' values on a toolbar snippet item.")
@@ -380,8 +385,8 @@ recursion, not here."
 
 (defun jetpacs-lint--check-toolbar-item (item path report &optional no-menu)
   "Validate toolbar-item vocabulary for ITEM at PATH via REPORT (SPEC §9).
-Checks the closed op set — exactly one of snippet/line/on_tap/menu —
-and the placement/line enums, recursing into `menu' sub-items and
+Checks the closed op set — exactly one of snippet/line/on_tap/menu/command
+— and the placement/line enums, recursing into `menu' sub-items and
 `long_press' with NO-MENU set (menus don't nest).  Action shape and
 scalar serializability are the generic walk's job, not repeated here."
   (if (not (jetpacs-lint--alist-p item))
@@ -402,6 +407,11 @@ scalar serializability are the generic walk's job, not repeated here."
       (when-let ((cell (assq 'line item)))
         (unless (member (cdr cell) jetpacs-lint--toolbar-line-ops)
           (funcall report path (format "invalid line op: %S" (cdr cell)))))
+      (when-let ((cell (assq 'command item)))
+        (unless (stringp (cdr cell))
+          (funcall report path
+                   (format "command must be a string (\"\" = M-x prompt): %S"
+                           (cdr cell)))))
       (when-let ((menu (cdr (assq 'menu item))))
         (when (jetpacs-lint--node-seq-p menu)
           (let ((i 0))

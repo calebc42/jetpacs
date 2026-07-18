@@ -28,15 +28,20 @@ class JetpacsEditSyncState {
     private val _fontify = MutableStateFlow<JSONObject?>(null)
     val fontify: StateFlow<JSONObject?> = _fontify.asStateFlow()
 
+    private val _apply = MutableStateFlow<JSONObject?>(null)
+    val apply: StateFlow<JSONObject?> = _apply.asStateFlow()
+
     fun showDiagnostics(payload: JSONObject) { _diagnostics.value = payload }
     fun requestResync(payload: JSONObject) { _resync.value = payload }
     fun showEldoc(payload: JSONObject) { _eldoc.value = payload }
     fun showFontify(payload: JSONObject) { _fontify.value = payload }
+    fun showApply(payload: JSONObject) { _apply.value = payload }
 
     fun clear() {
         _diagnostics.value = null
         _resync.value = null
         _eldoc.value = null
         _fontify.value = null
+        _apply.value = null
     }
 }

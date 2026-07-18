@@ -142,6 +142,10 @@ class JetpacsConnection(
                 JetpacsRuntime.editSyncState.requestResync(frame.payload)
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))
             }
+            Kind.EDIT_APPLY -> {
+                JetpacsRuntime.editSyncState.showApply(frame.payload)
+                send(Frame(kind = Kind.ACK, replyTo = frame.id))
+            }
             Kind.ELDOC_SHOW -> {
                 JetpacsRuntime.editSyncState.showEldoc(frame.payload)
                 send(Frame(kind = Kind.ACK, replyTo = frame.id))

@@ -28,8 +28,14 @@ import kotlin.random.Random
  *
  * Not thread-safe by design: one engine belongs to one editor composition and
  * is driven from its single debounced effect (plus a fire-and-forget close).
+ *
+ * [sender] defaults to the live socket ([sendEditAction]); unit tests inject
+ * a stub so engine state machinery is testable off-device.
  */
-internal class EditorSyncEngine(private val file: String) {
+internal class EditorSyncEngine(
+    private val file: String,
+    private val sender: (String, JSONObject) -> Boolean = ::sendEditAction,
+) {
     /** Phone-chosen session id; Emacs echoes it in resync/diagnostics frames. */
     val session: Int = Random.nextInt(1, Int.MAX_VALUE)
 
@@ -41,7 +47,7 @@ internal class EditorSyncEngine(private val file: String) {
 
     /** Ship the full text, resetting the session to seq 0. */
     fun open(text: String): Boolean {
-        val ok = sendEditAction("edit.open", JSONObject().apply {
+        val ok = sender("edit.open", JSONObject().apply {
             put("file", file)
             put("session", session)
             put("text", text)
@@ -55,7 +61,7 @@ internal class EditorSyncEngine(private val file: String) {
     fun update(text: String): Boolean {
         val old = lastSynced ?: return open(text)
         val s = splice(old, text) ?: return true
-        val ok = sendEditAction("edit.delta", JSONObject().apply {
+        val ok = sender("edit.delta", JSONObject().apply {
             put("file", file)
             put("session", session)
             put("seq", seq + 1)
@@ -81,7 +87,7 @@ internal class EditorSyncEngine(private val file: String) {
     fun requestCompletions(text: String, cursorUtf16: Int, requestId: Int): Boolean {
         if (lastSynced != text && !update(text)) return false
         val cursorCp = text.codePointCount(0, cursorUtf16.coerceIn(0, text.length))
-        return sendEditAction("edit.complete", JSONObject().apply {
+        return sender("edit.complete", JSONObject().apply {
             put("file", file)
             put("session", session)
             put("seq", seq)
@@ -91,19 +97,124 @@ internal class EditorSyncEngine(private val file: String) {
     }
 
     /**
-     * Report the caret position for eldoc. Best-effort: syncs first if the
-     * text moved, sends nothing when offline, and Emacs silently ignores a
-     * report that raced a delta — the next pause resends fresh state.
+     * Report the caret — and, when non-collapsed, the selection — for eldoc
+     * and Emacs's best-effort point/region record. Syncs first if the text
+     * moved, sends nothing when offline, and Emacs silently ignores a report
+     * that raced a delta — the next pause resends fresh state. Selection
+     * bounds are optional args (SPEC §8): absent when collapsed, so an
+     * Emacs predating them sees exactly the old frame.
      */
-    fun caret(text: String, cursorUtf16: Int): Boolean {
+    fun caret(
+        text: String,
+        cursorUtf16: Int,
+        selStartUtf16: Int = cursorUtf16,
+        selEndUtf16: Int = cursorUtf16,
+    ): Boolean {
         if (lastSynced != text && !update(text)) return false
         val cursorCp = text.codePointCount(0, cursorUtf16.coerceIn(0, text.length))
-        return sendEditAction("edit.caret", JSONObject().apply {
+        return sender("edit.caret", JSONObject().apply {
             put("file", file)
             put("session", session)
             put("seq", seq)
             put("cursor", cursorCp)
+            if (selStartUtf16 != selEndUtf16) {
+                put("sel_start", text.codePointCount(0, selStartUtf16.coerceIn(0, text.length)))
+                put("sel_end", text.codePointCount(0, selEndUtf16.coerceIn(0, text.length)))
+            }
         })
+    }
+
+    /**
+     * Run an Emacs command in the synced session at the phone's exact
+     * point/region (SPEC §8 `edit.command`). [name] is the command; null
+     * asks Emacs to prompt through its bridged M-x chooser. Same discipline
+     * as [requestCompletions]: sync the text first, then send coordinates
+     * against the proven seq. The result, if any, comes back as an
+     * `edit.apply` frame validated by [applyExternal].
+     */
+    fun command(
+        text: String,
+        cursorUtf16: Int,
+        selStartUtf16: Int,
+        selEndUtf16: Int,
+        name: String?,
+    ): Boolean {
+        if (lastSynced != text && !update(text)) return false
+        return sender("edit.command", JSONObject().apply {
+            put("file", file)
+            put("session", session)
+            put("seq", seq)
+            put("cursor", text.codePointCount(0, cursorUtf16.coerceIn(0, text.length)))
+            if (selStartUtf16 != selEndUtf16) {
+                put("sel_start", text.codePointCount(0, selStartUtf16.coerceIn(0, text.length)))
+                put("sel_end", text.codePointCount(0, selEndUtf16.coerceIn(0, text.length)))
+            }
+            if (name != null) put("command", name)
+        })
+    }
+
+    /**
+     * Validate an `edit.apply` payload against [currentText] and, on
+     * success, advance the engine and return the UTF-16 edit for the caller
+     * to apply to its TextFieldState in the same breath. Null = drop the
+     * frame (any of: wrong session, editor text has moved past [lastSynced],
+     * wrong seq, malformed splice, resulting-length mismatch) — safe by
+     * construction, because a drop leaves the seq streams disagreeing and
+     * the next delta round trips the ordinary resync recovery.
+     *
+     * Text-changing frames (splice keys present) must arrive at exactly
+     * seq+1 and bump [seq]/[lastSynced]; move-only frames must match the
+     * current seq and touch neither. Like every engine entry point, call
+     * from the editor's own effect chain — the engine is single-driver.
+     */
+    fun applyExternal(payload: JSONObject, currentText: String): ExternalEdit? {
+        if (payload.optInt("session") != session) return null
+        if (currentText != lastSynced) return null
+        val hasSplice = payload.has("start")
+        val seqIn = payload.optInt("seq", -1)
+        if (seqIn != if (hasSplice) seq + 1 else seq) return null
+        val cpTotal = currentText.codePointCount(0, currentText.length)
+        if (!hasSplice) {
+            val idx = CodePointIndex(currentText)
+            val caret = idx.toUtf16(payload.optInt("cursor").coerceIn(0, cpTotal))
+            val (anchor, end) = selectionUtf16(payload, currentText, cpTotal, caret)
+            return ExternalEdit(false, 0, 0, "", anchor, end)
+        }
+        val startCp = payload.optInt("start", -1)
+        val delCp = payload.optInt("del", -1)
+        val inserted = payload.optString("text")
+        if (startCp < 0 || delCp < 0 || startCp + delCp > cpTotal) return null
+        val idx = CodePointIndex(currentText)
+        val start16 = idx.toUtf16(startCp)
+        val end16 = idx.toUtf16(startCp + delCp)
+        val newText = buildString {
+            append(currentText, 0, start16)
+            append(inserted)
+            append(currentText, end16, currentText.length)
+        }
+        val newTotal = newText.codePointCount(0, newText.length)
+        if (payload.optInt("len", -1) != newTotal) return null
+        val newIdx = CodePointIndex(newText)
+        val caret = newIdx.toUtf16(payload.optInt("cursor").coerceIn(0, newTotal))
+        val (anchor, end) = selectionUtf16(payload, newText, newTotal, caret)
+        seq = seqIn
+        lastSynced = newText
+        return ExternalEdit(true, start16, end16 - start16, inserted, anchor, end)
+    }
+
+    /** (anchor, caret) in UTF-16 from a payload's optional selection keys. */
+    private fun selectionUtf16(
+        payload: JSONObject,
+        text: String,
+        cpTotal: Int,
+        caret: Int,
+    ): Pair<Int, Int> {
+        if (!payload.has("sel_start") || !payload.has("sel_end")) return caret to caret
+        val idx = CodePointIndex(text)
+        val a = idx.toUtf16(payload.optInt("sel_start").coerceIn(0, cpTotal))
+        val b = idx.toUtf16(payload.optInt("sel_end").coerceIn(0, cpTotal))
+        // The caret is one end; the anchor is the other, preserving direction.
+        return if (caret == a) b to caret else a to caret
     }
 
     /**
@@ -117,7 +228,7 @@ internal class EditorSyncEngine(private val file: String) {
 
     /** Tear down the Emacs-side session. Fire-and-forget. */
     fun close() {
-        sendEditAction("edit.close", JSONObject().apply {
+        sender("edit.close", JSONObject().apply {
             put("file", file)
             put("session", session)
         })
@@ -127,6 +238,22 @@ internal class EditorSyncEngine(private val file: String) {
 
 /** One text splice: replace [start, start+deleted) (UTF-16 units) with [inserted]. */
 internal data class Splice(val start: Int, val deleted: Int, val inserted: String)
+
+/**
+ * A validated server-authored edit (SPEC §8 `edit.apply`), converted to
+ * UTF-16 and ready to apply in one `TextFieldState.edit {}` block — one
+ * undo step. [hasSplice] false = move-only: position the caret/selection,
+ * touch no text. [selAnchor]/[selCaret] preserve selection direction
+ * (equal when collapsed); apply as `TextRange(selAnchor, selCaret)`.
+ */
+internal data class ExternalEdit(
+    val hasSplice: Boolean,
+    val start: Int,
+    val deleted: Int,
+    val inserted: String,
+    val selAnchor: Int,
+    val selCaret: Int,
+)
 
 /**
  * Minimal single-splice diff via common prefix/suffix. Any burst of edits

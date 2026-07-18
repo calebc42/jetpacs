@@ -23,6 +23,7 @@ object Kind {
     const val TOAST_SHOW = "toast.show"
     const val COMPLETIONS_SHOW = "completions.show"
     const val EDIT_RESYNC = "edit.resync"
+    const val EDIT_APPLY = "edit.apply"
     const val DIAGNOSTICS_SHOW = "diagnostics.show"
     const val ELDOC_SHOW = "eldoc.show"
     const val FONTIFY_SHOW = "fontify.show"

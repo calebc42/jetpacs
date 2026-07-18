@@ -4036,6 +4036,78 @@ Extends the `--'-internal rule into a machine-checked sweep of the surface."
               (should-not fired))))
       (delete-file tmp))))
 
+(ert-deftest jetpacs-files-save-snackbar-targets-editor ()
+  "A phone-side save shows its \"Saved NAME\" on the editor the user is
+looking at, not the Files tab behind it.  The \"edit\" view is :when-gated
+\(neither the active tab nor an overlay), so the default snackbar target is
+the active Files view — where the message would pop only later, when the
+user next lands there; `files.save' now targets \"edit\" explicitly.  The
+offline-queued replay case — editor already closed by the time the save
+runs — must not orphan the snackbar on a view that isn't sent: it falls
+back to the active view instead."
+  (let* ((dir (file-name-as-directory (make-temp-file "jetpacs-save" t)))
+         (file (expand-file-name "note.txt" dir))
+         (jetpacs-files-roots (list (cons "R" dir)))
+         (jetpacs-files-default-dir dir)
+         (jetpacs-files--file file)
+         (jetpacs-files-after-save-hook nil)
+         (jetpacs-shell-views nil)
+         (jetpacs-shell--current-tab "files")
+         (jetpacs-shell--snackbar nil)
+         (jetpacs-shell-after-push-hook nil)
+         (jetpacs--registration-owners (make-hash-table :test 'equal))
+         (jetpacs-devtools-enabled nil)
+         (user-init-file nil)
+         (handler (gethash "files.save" jetpacs-action-handlers))
+         (args `((file . ,file) (value . "hello")))
+         (expected (format "Saved %s" (file-name-nondirectory file)))
+         captured)
+    (unwind-protect
+        (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+                  ((symbol-function 'jetpacs-surface-push)
+                   (lambda (_surface spec &optional _ttl _stale current-view)
+                     (setq captured (list spec current-view)))))
+          ;; Two stand-in views in exactly the shell shape that mislands the
+          ;; snackbar: "files" is the active tab; "edit" is :when-gated on an
+          ;; open file.  Each builder echoes back the snackbar it was handed.
+          (jetpacs-shell-define-view "files"
+            :builder (lambda (snack) (list (cons 'snack snack)))
+            :tab '(:icon "folder" :label "Files") :order 40)
+          (jetpacs-shell-define-view "edit"
+            :builder (lambda (snack) (list (cons 'snack snack)))
+            :when (lambda () (and jetpacs-files--file t)) :order 100)
+          (should handler)
+          ;; Case 1 — editor open, save succeeds: feedback lands on "edit",
+          ;; the always-visible "files" spec is clean (assert it is actually
+          ;; present so `should-not' can't pass vacuously), navigation is not
+          ;; yanked (no current_view), and the queued snackbar is consumed.
+          (funcall handler args nil)
+          (let ((views (alist-get 'views (car captured))))
+            (should (assq 'files views))
+            (should (equal (alist-get 'snack (alist-get 'edit views)) expected))
+            (should-not (alist-get 'snack (alist-get 'files views)))
+            (should-not (cadr captured))
+            (should (equal (alist-get 'initial_view (car captured)) "files")))
+          (should-not jetpacs-shell--snackbar)
+          ;; Case 2 — editor open, save rejected: the rejection notice rides
+          ;; the same editor-targeting path, not the Files tab behind it.
+          (setq captured nil)
+          (funcall handler `((file . ,file) (value . 42)) nil)
+          (let ((views (alist-get 'views (car captured))))
+            (should (equal (alist-get 'snack (alist-get 'edit views)) "Save rejected"))
+            (should-not (alist-get 'snack (alist-get 'files views))))
+          ;; Case 3 — offline-queued replay after the editor closed: "edit"
+          ;; is no longer visible, so the snackbar must fall back to the active
+          ;; tab rather than vanish onto a view that isn't part of this push.
+          (setq jetpacs-files--file nil captured nil)
+          (funcall handler args nil)
+          (let ((views (alist-get 'views (car captured))))
+            (should-not (assq 'edit views))
+            (should (assq 'files views))
+            (should (equal (alist-get 'snack (alist-get 'files views)) expected)))
+          (should-not jetpacs-shell--snackbar))
+      (when (file-exists-p dir) (delete-directory dir t)))))
+
 (ert-deftest jetpacs-seam-set-current-tab ()
   "`jetpacs-shell-set-current-tab' routes a valid tab through push, rejects others."
   (let ((jetpacs-shell-views nil)

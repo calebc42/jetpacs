@@ -8470,12 +8470,19 @@ carry the registrations."
                                  (setq jetpacs-shell--repush-timer nil)
                                  (jetpacs-shell-push))))))
 
-(cl-defun jetpacs-shell-push (&optional tab &key switch-to)
+(cl-defun jetpacs-shell-push (&optional tab &key switch-to snack-view)
   "Push every registered view as one multi-view surface.
 TAB switches the logical tab before building.  SWITCH-TO additionally
 forces the companion onto that view (used when a push *is* the
 navigation, e.g. opening a detail); plain background refreshes never
-yank the user off whatever they're looking at."
+yank the user off whatever they're looking at.  SNACK-VIEW overrides
+which view a queued snackbar rides in on: feedback about a :when-gated
+screen the user is looking at (e.g. the editor) that is neither the
+active tab nor an overlay is otherwise not the default target and lands
+on the tab behind it.  Honoured only when it names a view actually
+included in this push — otherwise the default target holds, so an
+offline-queued save replaying after its editor closed never orphans
+\"Saved NAME\" on a view that isn't being sent."
   ;; Any explicit push satisfies a pending registry repush.
   (when (timerp jetpacs-shell--repush-timer)
     (cancel-timer jetpacs-shell--repush-timer)
@@ -8492,19 +8499,27 @@ yank the user off whatever they're looking at."
     (condition-case err
         (let* ((active (jetpacs-shell--active-view))
                (target (or switch-to tab))
-               ;; A navigation push lands the user on TARGET, so feedback
-               ;; (e.g. "Saved init.el") must attach there, not to the view
-               ;; they're leaving.
-               (snack-view (or target active))
+               (visible (jetpacs-shell--visible-views))
+               ;; Feedback attaches to SNACK-VIEW when that view is in this
+               ;; push (the :when-gated editor the user is looking at, which
+               ;; is neither the active tab nor an overlay); else to TARGET —
+               ;; a navigation push lands the user there, not on the view
+               ;; they're leaving — or the active view.  The visibility guard
+               ;; keeps an offline-replayed save whose editor has since
+               ;; closed from orphaning "Saved NAME" on a view that isn't in
+               ;; this push.
+               (snack-target (or (and snack-view (assoc snack-view visible)
+                                      snack-view)
+                                 target active))
                (views (mapcar
                        (lambda (entry)
                          (let ((name (car entry)))
                            (cons (intern name)
                                  (jetpacs-shell--build-view
                                   name (cdr entry)
-                                  (when (equal name snack-view)
+                                  (when (equal name snack-target)
                                     snackbar)))))
-                       (jetpacs-shell--visible-views))))
+                       visible)))
           (jetpacs-surface-push
            jetpacs-shell-surface-id
            `((views . ,views)
@@ -14824,7 +14839,14 @@ state (the same pattern as the capture form)."
           (error
            (jetpacs-shell-notify
             (format "Save failed: %s" (error-message-string err))))))))
-    (jetpacs-shell-push)))
+    ;; Save feedback belongs on the editor the user is looking at, not the
+    ;; Files tab behind it: the "edit" view is :when-gated (neither the
+    ;; active tab nor an overlay), so the default snackbar target would miss
+    ;; it and the message would surface later, on Files.  With the editor
+    ;; already closed — an offline-queued save replaying after the user left
+    ;; it — there is no "edit" view and the push falls back to the active
+    ;; view (`jetpacs-shell-push' guards SNACK-VIEW on visibility).
+    (jetpacs-shell-push nil :snack-view (and jetpacs-files--file "edit"))))
 
 (jetpacs-defaction "config.reload"
   ;; Retired: `load user-init-file' mid-session never applies cleanly

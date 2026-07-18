@@ -26,6 +26,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'jetpacs)
+(require 'jetpacs-commands)
 (require 'jetpacs-triggers)
 (require 'jetpacs-device)
 (require 'jetpacs-apps)
@@ -3294,6 +3295,31 @@ records the last-fired time."
   ;; Not connected: unsupported (nothing renders anywhere).
   (let ((jetpacs--session nil))
     (should-not (jetpacs-node-supported-p 'text))))
+
+(ert-deftest jetpacs-command-visible-p-filters ()
+  "The device M-x predicate: `commandp' baseline, list entries, property.
+Symbol entries match with `eq', string entries are name regexps, and the
+`jetpacs-unsupported' property suppresses regardless of the user list."
+  (let ((jetpacs-suppressed-commands '(forward-char "\\`mouse-")))
+    (should-not (jetpacs-command-visible-p 'jetpacs-tests--no-such-command))
+    (should (jetpacs-command-visible-p 'backward-char))
+    (should-not (jetpacs-command-visible-p 'forward-char))
+    (should-not (jetpacs-command-visible-p 'mouse-set-point)))
+  (let ((jetpacs-suppressed-commands nil))
+    (unwind-protect
+        (progn (put 'backward-char 'jetpacs-unsupported t)
+               (should-not (jetpacs-command-visible-p 'backward-char)))
+      (put 'backward-char 'jetpacs-unsupported nil))
+    (should (jetpacs-command-visible-p 'backward-char))))
+
+(ert-deftest jetpacs-suppressed-commands-defaults ()
+  "The seed list is well-formed and hides the bridge-hostile families
+\(host-suspending and event-requiring commands) without over-hiding."
+  (dolist (entry jetpacs-suppressed-commands)
+    (should (or (symbolp entry) (stringp entry))))
+  (should-not (jetpacs-command-visible-p 'suspend-emacs))
+  (should-not (jetpacs-command-visible-p 'mouse-set-point))
+  (should (jetpacs-command-visible-p 'execute-extended-command)))
 
 (ert-deftest jetpacs-api-version-bound ()
   "The API/protocol version constants exist for third-party compatibility checks."

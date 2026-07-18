@@ -6538,7 +6538,13 @@ Linted as written to disk with both files present, so the cross-file
 link between them resolves."
   (require 'org)
   (require 'org-lint)
-  (let ((dir (make-temp-file "jetpacs-demo-org" t)))
+  (require 'org-id)
+  (let* ((dir (make-temp-file "jetpacs-demo-org" t))
+         ;; org-lint's ID checker rebuilds and saves the org-id index;
+         ;; keep both in the temp dir — ~/.emacs.d may not exist (CI),
+         ;; and a test must not write into the real one.
+         (org-id-locations-file (expand-file-name "org-id-locations" dir))
+         (org-id-locations nil))
     (unwind-protect
         (progn
           (jetpacs-setup-demo dir)

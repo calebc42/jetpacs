@@ -29,7 +29,10 @@ import java.util.Calendar
  *  - `line` — a builtin line op (`promote`/`demote`/`move-up`/`move-down`);
  *  - `on_tap` — an ordinary action object, dispatched verbatim (the Emacs
  *    escape hatch);
- *  - `menu` — a dropdown of sub-items (label + one of the above).
+ *  - `menu` — a dropdown of sub-items (label + one of the above);
+ *  - `command` — an Emacs command run in the editor's live sync session at
+ *    the phone's point/region (SPEC §8 `edit.command`; `""` = bridged M-x).
+ *    Routed through [onCommand]; a null handler (no sync bridge) no-ops.
  *
  * `long_press` on an item is a secondary op of the same shapes. Unknown
  * placeholders insert literally and unknown `line` names no-op — never a
@@ -48,6 +51,7 @@ fun SduiToolbar(
     value: () -> TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     dispatch: (JSONObject) -> Unit,
+    onCommand: ((String?) -> Unit)? = null,
 ) {
     // An op whose snippet carries ${input:…} parks here while its dialog shows.
     var pendingInput by remember { mutableStateOf<JSONObject?>(null) }
@@ -64,6 +68,11 @@ fun SduiToolbar(
                 else onValueChange(
                     applySnippet(value(), snippet, op.optString("placement"), null)
                 )
+            // Emacs command at point/region (SPEC §8 edit.command); "" =
+            // the bridged M-x prompt. Null handler (editor without the
+            // sync bridge) no-ops — the §9 unknown-op rule.
+            op.has("command") ->
+                onCommand?.invoke(op.optString("command").takeIf { it.isNotEmpty() })
         }
     }
 

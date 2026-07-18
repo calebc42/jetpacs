@@ -293,6 +293,10 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
     val completeEnabled = node.optBoolean("complete", false) && !readOnly
     var completionReq by remember(id) { mutableStateOf(0) }
     val syncEngine = remember(id) { EditorSyncEngine(id) }
+    // A toolbar command tap parks here; the effect below ships it off the
+    // tap thread (the resync-effect pattern). The counter re-fires the
+    // effect for repeated taps of the same command.
+    var pendingCommand by remember(id) { mutableStateOf<Pair<Int, String?>?>(null) }
 
     // Emacs-pushed styling, parsed ONCE per push (off the main thread) and
     // pinned to the exact text it describes. [EditorStyles] applies a set
@@ -335,6 +339,28 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                 parseDiagnostics(p, id, syncEngine, text)
             }?.let { diagSet = it }
         }
+        // Server-authored edits (SPEC §8 edit.apply) — a DWIM command's
+        // result. Main thread: it mutates the field state. The engine's
+        // gates (session, seq, text identity, length) plus the IME
+        // composition guard make any stale frame a silent no-op, and a
+        // dropped frame converges through the ordinary resync round. One
+        // state.edit block = one undo step; the engine advanced its
+        // snapshot first, so the debounce collector's next update diffs
+        // to nothing — no echo.
+        val applyPayload by JetpacsRuntime.editSyncState.apply.collectAsState()
+        LaunchedEffect(applyPayload) {
+            val p = applyPayload ?: return@LaunchedEffect
+            if (p.optString("id") != id) return@LaunchedEffect
+            if (state.composition != null) return@LaunchedEffect
+            val ext = syncEngine.applyExternal(p, state.text.toString())
+                ?: return@LaunchedEffect
+            state.edit {
+                if (ext.hasSplice) {
+                    replace(ext.start, ext.start + ext.deleted, ext.inserted)
+                }
+                selection = TextRange(ext.selAnchor, ext.selCaret)
+            }
+        }
         // The debounced pipeline: delta first, then (token permitting) the
         // slim completion request, then the caret report for eldoc. All
         // ride one ordered socket, so Emacs always answers against the
@@ -364,9 +390,23 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
                     withContext(Dispatchers.IO) {
                         if (wantCompletion) syncEngine.requestCompletions(text, sel.start, req)
                         else if (textChanged) syncEngine.update(text)
-                        if (collapsed) syncEngine.caret(text, sel.start)
+                        // Selection rides the caret report (SPEC §8) so Emacs
+                        // can keep a best-effort point/region record; a drag
+                        // settles to one frame per pause, same cadence.
+                        syncEngine.caret(text, sel.end, sel.min, sel.max)
                     }
                 }
+        }
+        // Ship a parked toolbar command: sync the text first, then the
+        // frame with the caret and selection — Emacs runs it at exactly
+        // this point/region and answers with edit.apply (handled above).
+        LaunchedEffect(pendingCommand) {
+            val (_, name) = pendingCommand ?: return@LaunchedEffect
+            val text = state.text.toString()
+            val sel = state.selection
+            withContext(Dispatchers.IO) {
+                syncEngine.command(text, sel.end, sel.min, sel.max, name)
+            }
         }
         // Tear down the Emacs-side session on dispose. The shared push slots
         // (diagnostics/fontify/eldoc) are deliberately NOT cleared: every
@@ -636,7 +676,14 @@ internal fun SduiEditor(node: JSONObject, modifier: Modifier, dispatch: (JSONObj
         // as unknown widget nodes.
         if (!readOnly) when {
             toolbarItems != null ->
-                SduiToolbar(toolbarItems, readValue, applyValue, dispatch)
+                SduiToolbar(
+                    toolbarItems, readValue, applyValue, dispatch,
+                    // Command chips need the live sync bridge; without it
+                    // they no-op, the §9 unknown-op rule.
+                    onCommand = if (completeEnabled) { name ->
+                        pendingCommand = ((pendingCommand?.first ?: 0) + 1) to name
+                    } else null,
+                )
             toolbar.isNotEmpty() ->
                 JetpacsToolbars.Render(toolbar, readValue, applyValue)
         }

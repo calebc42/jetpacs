@@ -1,0 +1,465 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AndroidLayouts">
+    <shared>
+      <config />
+    </shared>
+    <layouts>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/drawable/ic_launcher_background.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/drawable/ic_launcher_foreground.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/drawable/ic_launcher_jetpacs_foreground.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/drawable/jetpacs_logo.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/drawable/jetpacs_outline_color.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher_jetpacs.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+      <layout url="file://$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml">
+        <config>
+          <theme>@style/Theme.Jetpacs</theme>
+        </config>
+      </layout>
+    </layouts>
+  </component>
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="NONE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="a1b78284-1f08-4766-9571-47a0ac013c85" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.gitattributes" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.github/workflows/ci.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitmodules" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/CONTRIBUTING.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/LICENSE" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/build.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/proguard-rules.pro" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/androidTest/java/com/calebc42/jetpacs/ExampleInstrumentedTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/AndroidManifest.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/calebc42/jetpacs/JetpacsSettings.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/calebc42/jetpacs/MainActivity.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/calebc42/jetpacs/Onboarding.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/calebc42/jetpacs/ui/theme/Color.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/calebc42/jetpacs/ui/theme/Theme.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/calebc42/jetpacs/ui/theme/Type.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/drawable/ic_launcher_background.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/drawable/ic_launcher_foreground.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/drawable/ic_launcher_jetpacs_foreground.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/drawable/jetpacs_logo.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/drawable/jetpacs_outline_color.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher_jetpacs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-anydpi/ic_launcher_jetpacs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-hdpi/ic_launcher.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-hdpi/ic_launcher_round.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-mdpi/ic_launcher.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-mdpi/ic_launcher_round.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-xhdpi/ic_launcher.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-xhdpi/ic_launcher_round.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-xxhdpi/ic_launcher.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/values-night-v31/themes.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/values-night/themes.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/values-v31/themes.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/values/colors.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/values/strings.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/values/themes.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/xml/backup_rules.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/res/xml/data_extraction_rules.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/test/java/com/calebc42/jetpacs/ConnectionStatusTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/test/java/com/calebc42/jetpacs/ExampleUnitTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/build.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy.ps1" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy.sh" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/API-STABILITY.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/ARCHITECTURE.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/AUDIT-architecture-vui-vulpea.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/AUDIT-termux-api-guidance.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/AUDIT-vui-dsl-guidance.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/BINDING.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/BUILDING-TIER1.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/CONTRIBUTING-NODES.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/DEMO-VIDEO-SCRIPT.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/FOLLOWUP-grocy-dogfood.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-binding-layer.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-conditions-and-dynamics.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-data-driven-toolbars.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-decouple-org-surfaces.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-dsl-ergonomics.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-easer-adoptions.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-ebp-extraction.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-grocy-hardening.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-next-primitives.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-org-extraction.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-phase-h-handoff.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-platform-hardening.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-primitive-completeness.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-renderer-reconciliation.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN-spec-freeze.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/ROADMAP.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/TUTORIAL.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/WIDGETS.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/demo-init.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/jetpacs-init.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/starter-init.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/ebp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/apps/jetpacs-hello.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/build-bundle.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/build-contract.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-app-store.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-apps.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-async.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-automations.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-buffer.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-comint.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-complete.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-config.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-customize.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-device.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-devtools.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-emacs-ui.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-files.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-hosts.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-hypertext.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-keymap.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-lint.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-minibuffer.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-modus.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-org.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-package-browser.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-project.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-results.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-sections.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-settings.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-shell.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-source.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-spec.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-sql.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-surfaces.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-sync.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-tablist.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-theme.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-tools.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-transient.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-triggers.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-widgets.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs-witheditor.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/emacs/core/jetpacs.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradle.properties" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradle/gradle-daemon-jvm.properties" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradle/libs.versions.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradle/wrapper/gradle-wrapper.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradle/wrapper/gradle-wrapper.properties" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradlew" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gradlew.bat" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs-core.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/build.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/consumer-rules.pro" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/AndroidManifest.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/ActionReceiver.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/ActionTrampolineActivity.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/BootReceiver.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/BridgeService.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/CalendarTriggers.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/DeviceCapabilities.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/EditorSync.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/EmacsWaker.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/Envelope.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/FrameCodec.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/IconMap.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsAuth.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsCompletionState.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsConnection.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsDatabase.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsDialogState.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsEditSyncState.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsLaunch.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsPieMenuState.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsRuntime.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsServer.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsToolbars.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsWidgetListService.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/JetpacsWidgetProvider.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/NotificationRenderer.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/RadialMenu.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/Reminders.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/ReorderableList.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiCanvas.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiChart.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiContentNodes.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiInputNodes.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiMonthGrid.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiRenderer.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiScaffold.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiTable.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiTabs.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SduiToolbar.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/StateSampler.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SurfaceManager.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SurfaceStore.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/SyntaxHighlight.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/ThemeBridge.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/TileSlots.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/ToolbarChip.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/TriggerHost.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/WidgetSlots.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/java/com/calebc42/jetpacs/WidgetViewSelectionActivity.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_meta_deadline.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_meta_event.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_meta_folder.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_meta_scheduled.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_todo_done.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_todo_open.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_widget_add.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_widget_arrow_drop_down.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/ic_widget_refresh.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/widget_background.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/widget_button_bg.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/widget_item_bg.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/drawable/widget_row_bg.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/layout/widget_jetpacs_agenda.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/layout/widget_jetpacs_agenda_divider.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/layout/widget_jetpacs_agenda_item.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values-night-v31/colors.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values-night/colors.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values-v31/colors.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values-v31/dimens.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values/colors.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values/dimens.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/values/strings.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/xml/jetpacs_custom_widget_info.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/main/res/xml/jetpacs_widget_info.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/CalendarBoundaryTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/FontifyShiftTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/LaunchTokenTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/NotifActionTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/OnFireInterpolationTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/RegexIcuPortabilityTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/SduiRendererHelpersTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/SduiRendererNodeTypesTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/SmsCallMatchTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/StateSamplerWhenTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/ThemeBaseTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/TimeWindowPredicateTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/TriggerParseValidationTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jetpacs/src/test/java/com/calebc42/jetpacs/WireGoldenConformanceTest.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/settings.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/core-load-test.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/fixtures/hypertext-basic.html" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/fixtures/hypertext-media.html" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/fixtures/hypertext-nested-table.html" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/jetpacs-primitives-test.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/jetpacs-tests.el" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/run-tests.sh" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="device_and_snapshot_combo_box_target[PhysicalDevice::serial=R3CR50KA60E]" />
+  <component name="ExternalProjectsData">
+    <projectState path="$PROJECT_DIR$">
+      <ProjectState />
+    </projectState>
+  </component>
+  <component name="ExternalProjectsManager">
+    <system id="GRADLE">
+      <state>
+        <projects_view>
+          <tree_state>
+            <expand>
+              <path>
+                <item name="" type="6a2764b6:ExternalProjectsStructure$RootNode" />
+                <item name="jetpacs" type="f1a62948:ProjectNode" />
+              </path>
+            </expand>
+            <select />
+          </tree_state>
+        </projects_view>
+      </state>
+    </system>
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Kotlin File" />
+        <option value="Kotlin Class" />
+        <option value="resourceFile" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="feat/conditions-and-dynamics" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GradleScriptDefinitionsStorage" workingDir="$PROJECT_DIR$" gradleHome="C:\Users\caleb\.gradle\wrapper\dists\gradle-9.3.1-bin\23ovyewtku6u96viwx3xl3oks\gradle-9.3.1" javaHome="C:\Program Files\Android\Android Studio1\jbr" gradleVersion="9.3.1" />
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="CurrentFile" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 1
+}</component>
+  <component name="ProjectId" id="3EyINNKkK3F4CnMYRgg273fJWLw" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Android App.app.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.cidr.known.project.marker": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.readMode.enableVisualFormatting": "true",
+    "cf.first.check.clang-format": "false",
+    "cidr.known.project.marker": "true",
+    "git-widget-placeholder": "jetpacs/slop-fork-liveview-harvest",
+    "ignore.virus.scanning.warn.message": "true",
+    "kotlin-language-version-configured": "true",
+    "settings.editor.selected.configurable": "com.android.studio.ml.bot.mainConfigurable"
+  }
+}]]></component>
+  <component name="RunManager">
+    <configuration name="app" type="AndroidRunConfigurationType" factoryName="Android App" activateToolWindowBeforeRun="false">
+      <module name="jetpacs.app" />
+      <option name="ANDROID_RUN_CONFIGURATION_SCHEMA_VERSION" value="1" />
+      <option name="DEPLOY" value="true" />
+      <option name="DEPLOY_APK_FROM_BUNDLE" value="false" />
+      <option name="DEPLOY_AS_INSTANT" value="false" />
+      <option name="ARTIFACT_NAME" value="" />
+      <option name="PM_INSTALL_OPTIONS" value="" />
+      <option name="ALL_USERS" value="false" />
+      <option name="ALWAYS_INSTALL_WITH_PM" value="false" />
+      <option name="ALLOW_ASSUME_VERIFIED" value="false" />
+      <option name="CLEAR_APP_STORAGE" value="false" />
+      <option name="DYNAMIC_FEATURES_DISABLED_LIST" value="" />
+      <option name="ACTIVITY_EXTRA_FLAGS" value="" />
+      <option name="MODE" value="default_activity" />
+      <option name="RESTORE_ENABLED" value="false" />
+      <option name="RESTORE_FILE" value="" />
+      <option name="RESTORE_FRESH_INSTALL_ONLY" value="false" />
+      <option name="CLEAR_LOGCAT" value="false" />
+      <option name="SHOW_LOGCAT_AUTOMATICALLY" value="false" />
+      <option name="TARGET_SELECTION_MODE" value="DEVICE_AND_SNAPSHOT_COMBO_BOX" />
+      <option name="DEBUGGER_TYPE" value="Auto" />
+      <Auto>
+        <option name="USE_JAVA_AWARE_DEBUGGER" value="false" />
+        <option name="SHOW_STATIC_VARS" value="true" />
+        <option name="WORKING_DIR" value="" />
+        <option name="TARGET_LOGGING_CHANNELS" value="lldb process:gdb-remote packets" />
+        <option name="SHOW_OPTIMIZED_WARNING" value="true" />
+        <option name="ATTACH_ON_WAIT_FOR_DEBUGGER" value="false" />
+        <option name="DEBUG_SANDBOX_SDK" value="false" />
+      </Auto>
+      <Hybrid>
+        <option name="USE_JAVA_AWARE_DEBUGGER" value="false" />
+        <option name="SHOW_STATIC_VARS" value="true" />
+        <option name="WORKING_DIR" value="" />
+        <option name="TARGET_LOGGING_CHANNELS" value="lldb process:gdb-remote packets" />
+        <option name="SHOW_OPTIMIZED_WARNING" value="true" />
+        <option name="ATTACH_ON_WAIT_FOR_DEBUGGER" value="false" />
+        <option name="DEBUG_SANDBOX_SDK" value="false" />
+      </Hybrid>
+      <Java>
+        <option name="ATTACH_ON_WAIT_FOR_DEBUGGER" value="false" />
+        <option name="DEBUG_SANDBOX_SDK" value="false" />
+      </Java>
+      <Native>
+        <option name="USE_JAVA_AWARE_DEBUGGER" value="false" />
+        <option name="SHOW_STATIC_VARS" value="true" />
+        <option name="WORKING_DIR" value="" />
+        <option name="TARGET_LOGGING_CHANNELS" value="lldb process:gdb-remote packets" />
+        <option name="SHOW_OPTIMIZED_WARNING" value="true" />
+        <option name="ATTACH_ON_WAIT_FOR_DEBUGGER" value="false" />
+        <option name="DEBUG_SANDBOX_SDK" value="false" />
+      </Native>
+      <Profilers>
+        <option name="ADVANCED_PROFILING_ENABLED" value="false" />
+        <option name="STARTUP_PROFILING_ENABLED" value="false" />
+        <option name="STARTUP_CPU_PROFILING_ENABLED" value="false" />
+        <option name="STARTUP_CPU_PROFILING_CONFIGURATION_NAME" value="Java/Kotlin Method Sample (legacy)" />
+        <option name="STARTUP_NATIVE_MEMORY_PROFILING_ENABLED" value="false" />
+        <option name="NATIVE_MEMORY_SAMPLE_RATE_BYTES" value="2048" />
+      </Profilers>
+      <option name="DEEP_LINK" value="" />
+      <option name="ACTIVITY" value="" />
+      <option name="ACTIVITY_CLASS" value="" />
+      <option name="SEARCH_ACTIVITY_IN_GLOBAL_SCOPE" value="false" />
+      <option name="SKIP_ACTIVITY_VALIDATION" value="false" />
+      <method v="2">
+        <option name="Android.Gradle.BeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="a1b78284-1f08-4766-9571-47a0ac013c85" name="Changes" comment="" />
+      <created>1781144341381</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1781144341381</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="play_dynamic_filters_status">
+    <option name="appIdToCheckInfo">
+      <map>
+        <entry key="com.calebc42.eabp">
+          <value>
+            <CheckInfo lastCheckTimestamp="1783647909325" />
+          </value>
+        </entry>
+        <entry key="com.calebc42.eabp.test">
+          <value>
+            <CheckInfo lastCheckTimestamp="1783647909333" />
+          </value>
+        </entry>
+        <entry key="com.calebc42.jetpacs">
+          <value>
+            <CheckInfo lastCheckTimestamp="1784331305037" />
+          </value>
+        </entry>
+        <entry key="com.calebc42.jetpacs.test">
+          <value>
+            <CheckInfo lastCheckTimestamp="1784331305032" />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

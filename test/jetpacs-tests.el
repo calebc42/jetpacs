@@ -6056,16 +6056,68 @@ and the devtools recorder tallies surface.update frames per surface."
 ;; ─── Demo / onboarding ──────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-demo-setup-writes-files ()
-  "Setup writes both tour files, non-trivially sized, and is idempotent."
+  "Setup writes every tour file, non-trivially sized, and is idempotent."
   (let ((dir (make-temp-file "jetpacs-demo" t)))
     (unwind-protect
         (progn
           (jetpacs-setup-demo dir)
           (jetpacs-setup-demo dir)            ; overwrite must not error
-          (dolist (f '("walkthrough.org" "hello-app.el"))
+          (dolist (f '("walkthrough.org" "org-basics.org" "hello-app.el"))
             (let ((path (expand-file-name f dir)))
               (should (file-exists-p path))
               (should (> (file-attribute-size (file-attributes path)) 500)))))
+      (delete-directory dir t))))
+
+(ert-deftest jetpacs-demo-dates-land-relative-to-today ()
+  "The tour's authored dates shift as one block onto the run day:
+repeaters and times ride along, day names are recomputed, and a zero
+shift is byte-identical.  End to end, the org course's anchor-day item
+is scheduled today whatever day the suite runs."
+  (should (equal (jetpacs-demo--shift-dates
+                  (concat "SCHEDULED: <2026-07-18 Sat +1w>\n"
+                          "CLOSED: [2026-07-17 Fri 21:04]")
+                  3)
+                 (concat "SCHEDULED: <2026-07-21 Tue +1w>\n"
+                         "CLOSED: [2026-07-20 Mon 21:04]")))
+  (should (equal (jetpacs-demo--shift-dates "<2026-07-20 Mon>" 0)
+                 "<2026-07-20 Mon>"))
+  (let ((dir (make-temp-file "jetpacs-demo-dates" t)))
+    (unwind-protect
+        (progn
+          (jetpacs-setup-demo dir)
+          (let ((today (let ((system-time-locale "C"))
+                         (format-time-string "%Y-%m-%d %a")))
+                (basics (with-temp-buffer
+                          (insert-file-contents
+                           (expand-file-name "org-basics.org" dir))
+                          (buffer-string))))
+            (should (string-search (format "SCHEDULED: <%s +1w>" today)
+                                   basics))))
+      (delete-directory dir t))))
+
+(ert-deftest jetpacs-demo-org-files-are-valid-org ()
+  "The tour's org files parse as org, lint clean, and are substantial.
+Linted as written to disk with both files present, so the cross-file
+link between them resolves."
+  (require 'org)
+  (require 'org-lint)
+  (let ((dir (make-temp-file "jetpacs-demo-org" t)))
+    (unwind-protect
+        (progn
+          (jetpacs-setup-demo dir)
+          (dolist (f '("walkthrough.org" "org-basics.org"))
+            (with-current-buffer
+                (find-file-noselect (expand-file-name f dir))
+              (org-mode)
+              (let ((tree (org-element-parse-buffer)))
+                (should tree)
+                ;; A comprehensive tour, not a stub: both files are
+                ;; chaptered documents.
+                (should (>= (length (org-element-map tree 'headline
+                                      #'identity))
+                            15)))
+              (should-not (org-lint))
+              (kill-buffer))))
       (delete-directory dir t))))
 
 (ert-deftest jetpacs-demo-welcome-gates-the-landing-tab ()
@@ -6106,6 +6158,10 @@ hello app parses whole with its documented teardown."
     (should (equal jetpacs-demo-directory "~/jetpacs-demo/"))
     (should (string-search "(load \"~/jetpacs-demo/hello-app.el\")" walkthrough))
     (should (assoc "hello-app.el" jetpacs-demo--files))
+    ;; The two org files reference each other by their real names.
+    (should (string-search "org-basics.org" walkthrough))
+    (should (string-search "file:walkthrough.org"
+                           (cdr (assoc "org-basics.org" jetpacs-demo--files))))
     ;; The completion exercise: typing "walk" in the walkthrough offers
     ;; the word the file is full of.
     (let* ((text (concat walkthrough "\nwalk"))

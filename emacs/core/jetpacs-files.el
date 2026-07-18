@@ -100,13 +100,31 @@ Apps set their per-file-type editor state here (e.g. reader-first).")
   "Hook run with FILE after a phone-triggered save succeeds.
 Apps whose views memoise data derived from files drop caches here.")
 
-(defvar jetpacs-files-editor-toolbar-function #'ignore
+(defun jetpacs-files-dwim-toolbar (file)
+  "A mode-aware DWIM toolbar for FILE (the default toolbar function).
+Chips run real Emacs commands in the live sync session at the phone's
+point/region (SPEC §8 `edit.command'), so they ride the editor's
+`:complete' bridge — without it (or on a pre-1.26 companion) they
+render inert, never wrong.  Org files add TODO cycling and scheduling;
+every file gets fill/comment DWIM and a bridged M-x scoped to the
+editor."
+  (append
+   (when (string-suffix-p ".org" file t)
+     (list (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
+           (jetpacs-toolbar-item "schedule" "Sched" :command "org-schedule")))
+   (list
+    (jetpacs-toolbar-item "notes" "Fill" :command "fill-paragraph")
+    (jetpacs-toolbar-item "code" ";;" :command "comment-dwim")
+    (jetpacs-toolbar-item "bolt" "M-x" :command ""))))
+
+(defvar jetpacs-files-editor-toolbar-function #'jetpacs-files-dwim-toolbar
   "Function of FILE returning the editor toolbar to request, or nil.
 Either a list of `jetpacs-toolbar-item's the companion interprets as data
 \(SPEC §9 \"Editor toolbars\", the default path) or a string naming a
 host-registered native toolbar.  Apps point this at their file-type
 mapping so the toolbar choice ships in the editor spec instead of being
-inferred client-side.")
+inferred client-side.  Defaults to `jetpacs-files-dwim-toolbar'; set to
+`ignore' for no toolbar.")
 
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 

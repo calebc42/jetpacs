@@ -399,15 +399,23 @@ Built on the [form registry](#) (`jetpacs-form`); no new wire type.
   `jetpacs-ui-state` via debounced `state.changed`, for button-driven
   forms.
 - **`(jetpacs-toolbar-item ICON LABEL &key snippet placement line
-  on-tap long-press menu)`** — one keyboard-toolbar chip, passed as a
-  list to `:toolbar`. Exactly **one op** per item: `:snippet` (local
-  insertion; placeholders `${selection}` `${cursor}` `${input:Prompt}`
-  `${date}` `${time}`; `:placement` `cursor`/`line-start`/`block`),
-  `:line` (`promote`/`demote`/`move-up`/`move-down`), `:on-tap` (an
-  ordinary action — the Emacs escape hatch), or `:menu` (sub-items;
-  menus don't nest). `:long-press` adds a secondary op.
-  `jetpacs-lint-spec` enforces the vocabulary; full semantics in
-  [SPEC §9 "Editor toolbars"](https://github.com/calebc42/ebp/blob/main/SPEC.md#editor-toolbars).
+  on-tap long-press menu command)`** — one keyboard-toolbar chip,
+  passed as a list to `:toolbar`. Exactly **one op** per item:
+  `:snippet` (local insertion; placeholders `${selection}` `${cursor}`
+  `${input:Prompt}` `${date}` `${time}`; `:placement`
+  `cursor`/`line-start`/`block`), `:line`
+  (`promote`/`demote`/`move-up`/`move-down`), `:on-tap` (an ordinary
+  action — the Emacs escape hatch), `:menu` (sub-items; menus don't
+  nest), or `:command` (an Emacs command run in the editor's live sync
+  session at the phone's point/region — DWIM: `"org-todo"`,
+  `"fill-paragraph"`, `"comment-dwim"`; `""` prompts a bridged M-x
+  chooser; needs the editor's `:complete` bridge, and companions
+  predating 1.26 render the chip as a no-op). `:long-press` adds a
+  secondary op. `jetpacs-lint-spec` enforces the vocabulary; full
+  semantics in
+  [SPEC §9 "Editor toolbars"](https://github.com/calebc42/ebp/blob/main/SPEC.md#editor-toolbars)
+  and [SPEC §8](https://github.com/calebc42/ebp/blob/main/SPEC.md#8-editor-sync-sub-protocol-optional)
+  (`edit.command`/`edit.apply`).
 
 ## Visualization — the ladder
 

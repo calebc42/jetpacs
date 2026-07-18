@@ -15,7 +15,7 @@
 
 ;; Author: calebch42 <calebch42@gmail.com>
 ;; Maintainer: calebch42 <calebch42@gmail.com>
-;; Version: 1.24.0
+;; Version: 1.26.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; Keywords: comm, tools
 ;; URL: https://github.com/calebc42/jetpacs
@@ -71,7 +71,7 @@ This is the wire/vocabulary version — the envelope `v' and the SPEC's
 version number.  Bump it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.24.0"
+(defconst jetpacs-api-version "1.26.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -3155,7 +3155,7 @@ accordingly). An un-pushed slot shows as a grayed-out tile."
 ;; ─── Scaffold ────────────────────────────────────────────────────────────────
 
 (cl-defun jetpacs-toolbar-item (icon label &key snippet placement line
-                                on-tap long-press menu)
+                                on-tap long-press menu command)
   "One item in a data-driven editor toolbar (SPEC §9 \"Editor toolbars\").
 ICON names the chip glyph and LABEL is its short text.  Exactly one op
 per item: SNIPPET is text the companion inserts locally, with the closed
@@ -3164,11 +3164,16 @@ placeholder set ${selection} ${cursor} ${input:Prompt} ${date} ${time}
 \"promote\", \"demote\", \"move-up\", or \"move-down\"; ON-TAP is an
 ordinary action object dispatched to Emacs (the escape hatch); MENU is a
 list of sub-items (this constructor with nil ICON) shown as a dropdown —
-menus don't nest.  PLACEMENT refines SNIPPET: \"cursor\" (default),
-\"line-start\" (prefix the cursor's line, deduped), or \"block\" (own
-line\(s)).  LONG-PRESS is a secondary op — an item (nil ICON and LABEL)
-carrying one of SNIPPET/LINE/ON-TAP.  Pass the item list to
-`jetpacs-editor' :toolbar; `jetpacs-lint-spec' validates the vocabulary."
+menus don't nest; COMMAND names an Emacs command the companion runs in
+the editor's live sync session at the phone's point/region via
+`edit.command' (\"\" prompts a bridged M-x chooser) — DWIM commands like
+\"org-todo\" or \"fill-paragraph\"; it needs the editor's `:complete'
+bridge, and companions predating 1.26 render the chip as a no-op.
+PLACEMENT refines SNIPPET: \"cursor\" (default), \"line-start\" (prefix
+the cursor's line, deduped), or \"block\" (own line\(s)).  LONG-PRESS is
+a secondary op — an item (nil ICON and LABEL) carrying one of
+SNIPPET/LINE/ON-TAP/COMMAND.  Pass the item list to `jetpacs-editor'
+:toolbar; `jetpacs-lint-spec' validates the vocabulary."
   (jetpacs--node nil
               'icon icon
               'label label
@@ -3177,7 +3182,8 @@ carrying one of SNIPPET/LINE/ON-TAP.  Pass the item list to
               'line line
               'on_tap on-tap
               'long_press long-press
-              'menu (and menu (vconcat menu))))
+              'menu (and menu (vconcat menu))
+              'command command))
 
 (cl-defun jetpacs-editor (id value &key on-save read-only syntax line-numbers
                           complete chromeless publish-state toolbar)
@@ -3537,14 +3543,16 @@ key name.  `build-contract.el' publishes this as `node_schema'.")
     ("reminders.set"    client    (reminders)             (owner))
     ("theme.set"        client    ()                      (dark colors syntax))
     ;; Editor sync & completion (SPEC §8).  The companion→client legs
-    ;; (edit.open/delta/caret/close/complete) are §5 actions riding
-    ;; `event.action', not frame kinds — only the client→companion legs
-    ;; appear here.
+    ;; (edit.open/delta/caret/close/complete/command) are §5 actions
+    ;; riding `event.action', not frame kinds — only the client→companion
+    ;; legs appear here.
     ("completions.show" client    (id request_id prefix candidates) ())
     ("diagnostics.show" client    (id session seq diags)  ())
     ("eldoc.show"       client    (id session text)       ())
     ("fontify.show"     client    (id session seq runs)   ())
     ("edit.resync"      client    (id session)            ())
+    ("edit.apply"       client    (id session seq cursor) (start del text len
+                                                           sel_start sel_end))
     ;; Device capabilities & triggers (SPEC §10–§11)
     ("capability.invoke" client   (cap)                   (args))
     ("capability.result" companion (ok)                   (result))
@@ -3568,8 +3576,11 @@ frame kinds.")
 (defconst jetpacs-lint--color-attrs '(color bg)
   "Attributes whose value must be a hex string or a theme token.")
 
-(defconst jetpacs-lint--toolbar-ops '(snippet line on_tap menu)
-  "The op fields of an editor toolbar item — exactly one per item (SPEC §9).")
+(defconst jetpacs-lint--toolbar-ops '(snippet line on_tap menu command)
+  "The op fields of an editor toolbar item — exactly one per item (SPEC §9).
+A `command' item runs an Emacs command in the editor's live sync session
+at the phone's point/region (needs the `:complete' bridge); companions
+predating 1.26 render the chip as a no-op, per the §9 unknown-op rule.")
 
 (defconst jetpacs-lint--toolbar-placements '("cursor" "line-start" "block")
   "Valid `placement' values on a toolbar snippet item.")
@@ -3675,8 +3686,8 @@ recursion, not here."
 
 (defun jetpacs-lint--check-toolbar-item (item path report &optional no-menu)
   "Validate toolbar-item vocabulary for ITEM at PATH via REPORT (SPEC §9).
-Checks the closed op set — exactly one of snippet/line/on_tap/menu —
-and the placement/line enums, recursing into `menu' sub-items and
+Checks the closed op set — exactly one of snippet/line/on_tap/menu/command
+— and the placement/line enums, recursing into `menu' sub-items and
 `long_press' with NO-MENU set (menus don't nest).  Action shape and
 scalar serializability are the generic walk's job, not repeated here."
   (if (not (jetpacs-lint--alist-p item))
@@ -3697,6 +3708,11 @@ scalar serializability are the generic walk's job, not repeated here."
       (when-let ((cell (assq 'line item)))
         (unless (member (cdr cell) jetpacs-lint--toolbar-line-ops)
           (funcall report path (format "invalid line op: %S" (cdr cell)))))
+      (when-let ((cell (assq 'command item)))
+        (unless (stringp (cdr cell))
+          (funcall report path
+                   (format "command must be a string (\"\" = M-x prompt): %S"
+                           (cdr cell)))))
       (when-let ((menu (cdr (assq 'menu item))))
         (when (jetpacs-lint--node-seq-p menu)
           (let ((i 0))
@@ -7252,16 +7268,23 @@ would, so Customize notices the modification (state turns EDITED)."
          (widget-field-value-set w new))
        t))))
 
-(defun jetpacs-buffer-call-shimmed (cmd)
+(defun jetpacs-buffer-call-shimmed (cmd &optional on-error)
   "Run command CMD with window-display and input-event shims; return (BUF . POS).
 The buffer-display functions are neutered so nothing pops a desktop window
 and the user's Emacs layout is untouched (`save-window-excursion'), and the
 triggering input event is cleared so event-driven goto commands
 \(`compile-goto-error', the eww/Info/help follow commands) navigate to
-point rather than to a stale pending event.  Returns the buffer made
-current and the point reached after CMD runs; errors are swallowed and
-report wherever point already is.  Call with the origin buffer current and
-point already placed on the target."
+point rather than to a stale pending event.  `this-command' is bound to
+CMD and `last-command' to a sentinel: without a command loop both are
+whatever the last desktop interaction left (or nil in batch), so a
+repeat-style command (`mark-word', `kill-line' appending) would
+spuriously detect \"same command again\" and extend from stale state.
+Returns the buffer made current and the point reached after CMD runs;
+errors are swallowed and report wherever point already is — unless
+ON-ERROR is a function, which is then called with the error so surfaces
+that must not fail silently (the editor's DWIM path) can toast it.
+Call with the origin buffer current and point already placed on the
+target."
   (let (dest-buf dest-pos)
     (save-window-excursion
       (cl-letf (((symbol-function 'pop-to-buffer)
@@ -7272,11 +7295,13 @@ point already placed on the target."
                  (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
                 ((symbol-function 'switch-to-buffer-other-window)
                  (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
-        (condition-case nil
+        (condition-case err
             (let ((last-input-event nil)
-                  (last-nonmenu-event nil))
+                  (last-nonmenu-event nil)
+                  (this-command cmd)
+                  (last-command 'jetpacs-buffer-call-shimmed))
               (call-interactively cmd))
-          (error nil))
+          (error (when on-error (funcall on-error err)) nil))
         (setq dest-buf (current-buffer) dest-pos (point))))
     (cons dest-buf dest-pos)))
 
@@ -12183,9 +12208,11 @@ which is more reliable than simulating keystrokes through the transient's
 ;; each completion request, the companion keeps a per-file *session shadow
 ;; buffer* here continuously current via incremental deltas:
 ;;
-;;   edit.open  {file session text}                  seed / reseed (seq 0)
-;;   edit.delta {file session seq start del text len} one splice
-;;   edit.close {file session}                        editor gone
+;;   edit.open    {file session text}                  seed / reseed (seq 0)
+;;   edit.delta   {file session seq start del text len} one splice
+;;   edit.caret   {file session seq cursor sel_start? sel_end?} point/region report
+;;   edit.command {file session seq cursor sel_start? sel_end? command?} run a command
+;;   edit.close   {file session}                        editor gone
 ;;
 ;; Offsets and lengths are in Unicode code points, which are exactly Emacs
 ;; buffer characters — the phone converts from its UTF-16 indices, so this
@@ -12199,7 +12226,13 @@ which is more reliable than simulating keystrokes through the transient's
 ;;   * slim completion — jetpacs-complete.el completes at a bare cursor offset
 ;;   * diagnostics — flymake runs in the shadow and changed diagnostics are
 ;;     pushed as `diagnostics.show' frames (squiggles on the phone)
-;; Eldoc and eglot-managed shadows are the planned next passengers.
+;;   * DWIM commands — `edit.command' runs any Emacs command at the phone's
+;;     point/region; a resulting text change goes back as one seq-stamped
+;;     `edit.apply' splice, which the phone applies only against the exact
+;;     text it was computed from (else it drops it and the ordinary resync
+;;     round converges).  The seq stream is two-writer here: the client
+;;     bumps on apply, the phone verifies +1 — a race with typing loses
+;;     the command's result, never corrupts text.
 
 ;;; Code:
 
@@ -12265,6 +12298,15 @@ Everything else uses the hidden in-memory shadow (elisp and org never
 need a language server; their in-process backends are better)."
   :type '(repeat symbol) :group 'jetpacs)
 
+(defcustom jetpacs-sync-command-predicate #'commandp
+  "Predicate gating which commands `edit.command' may run.
+Called with the interned command symbol; nil refuses (the phone gets a
+toast).  The default admits any interactive command — the same posture
+as the M-x surface, over the same authenticated socket.  Point it at an
+allowlist membership test to harden a deployment, or to fence off a
+command that misbehaves headless (raw `read-event' loops)."
+  :type 'function :group 'jetpacs)
+
 (defvar jetpacs-sync-shadow-setup-hook nil
   "Hook run in each freshly created shadow buffer, after its major mode.
 Shadows are initialized with `delay-mode-hooks', so ordinary mode hooks
@@ -12285,7 +12327,12 @@ Runs for both the session shadows here and the v1 completion shadows.")
   "Map of file -> session plist.
 Keys: :session (phone-chosen id), :seq (last applied delta), :stale
 \(mismatch seen; swallow deltas until re-open), :collect-timer,
-:last-diags (last pushed diagnostics, or the symbol `unset').")
+:last-diags (last pushed diagnostics, or the symbol `unset'),
+:point / :sel-start / :sel-end (last caret report, 0-based code
+points; selection keys nil when collapsed).  The caret fields are
+best-effort — they trail the phone by the caret debounce — so flows
+that need exact coordinates (`edit.command') carry them in the frame
+instead of reading these.")
 
 (defun jetpacs-sync--buffer-name (file)
   (format " *jetpacs-sync: %s*" file))
@@ -12583,21 +12630,34 @@ touches the buffer, only strings already handed to it."
 (jetpacs-defaction "edit.caret"
   ;; Best-effort by design: a mismatched session/seq (the caret raced a
   ;; delta) just yields nothing — the delta path owns resync, and the
-  ;; next caret report lands on fresh state anyway.
+  ;; next caret report lands on fresh state anyway.  A matched report
+  ;; persists point and selection into the session plist (still only
+  ;; best-effort context: it trails the phone by the caret debounce);
+  ;; eldoc runs only for a collapsed caret — a selection drag is not a
+  ;; request for documentation.
   (lambda (args _)
-    (when jetpacs-sync-eldoc
-      (let ((file (alist-get 'file args))
-            (session (alist-get 'session args))
-            (seq (alist-get 'seq args))
-            (cursor (alist-get 'cursor args)))
-        (when (and (stringp file) (numberp session)
-                   (numberp seq) (numberp cursor))
-          (when-let ((buf (jetpacs-sync-session-buffer file session seq)))
-            (with-current-buffer buf
-              (save-excursion
-                (goto-char (min (1+ (max 0 (truncate cursor)))
-                                (point-max)))
-                (jetpacs-sync--run-eldoc file session)))))))))
+    (let ((file (alist-get 'file args))
+          (session (alist-get 'session args))
+          (seq (alist-get 'seq args))
+          (cursor (alist-get 'cursor args))
+          (sel-start (alist-get 'sel_start args))
+          (sel-end (alist-get 'sel_end args)))
+      (when (and (stringp file) (numberp session)
+                 (numberp seq) (numberp cursor))
+        (when-let ((buf (jetpacs-sync-session-buffer file session seq)))
+          (let ((sel (and (numberp sel-start) (numberp sel-end)
+                          (/= sel-start sel-end))))
+            (let ((st (jetpacs-sync-session file)))
+              (setq st (plist-put st :point (truncate cursor)))
+              (setq st (plist-put st :sel-start (and sel (truncate sel-start))))
+              (setq st (plist-put st :sel-end (and sel (truncate sel-end))))
+              (puthash file st jetpacs-sync--sessions))
+            (when (and jetpacs-sync-eldoc (not sel))
+              (with-current-buffer buf
+                (save-excursion
+                  (goto-char (min (1+ (max 0 (truncate cursor)))
+                                  (point-max)))
+                  (jetpacs-sync--run-eldoc file session))))))))))
 
 ;; ─── In-process elisp flymake backend ────────────────────────────────────────
 ;;
@@ -12858,6 +12918,159 @@ language server warm for the next open."
   (when-let ((buf (get-buffer (jetpacs-sync--buffer-name file))))
     (kill-buffer buf)))
 
+;; ─── DWIM commands ───────────────────────────────────────────────────────────
+;;
+;; The reverse direction of the delta stream.  The phone carries its
+;; point and selection in the `edit.command' frame (explicitly — the
+;; persisted caret trails the debounce), the command runs in the session
+;; buffer with real point/mark, and a resulting text change goes back as
+;; ONE `edit.apply' splice stamped with the bumped seq.  The phone
+;; applies it only against the exact text it was computed from; any
+;; mismatch (the user typed during the round-trip) drops the apply and
+;; the ordinary resync round converges — the command's result is lost,
+;; the text is never corrupted.
+
+(defun jetpacs-sync--splice (old new)
+  "Minimal single splice turning string OLD into NEW, or nil when equal.
+Returns (START DEL INSERTED): replace DEL code points of OLD at 0-based
+START with INSERTED.  Mirror of the companion's splice() — but Emacs
+characters are code points already, so no surrogate arithmetic."
+  (unless (equal old new)
+    (let* ((lo (length old))
+           (ln (length new))
+           (maxp (min lo ln))
+           (p 0))
+      (while (and (< p maxp) (eq (aref old p) (aref new p)))
+        (setq p (1+ p)))
+      (let ((s 0) (maxs (- maxp p)))
+        (while (and (< s maxs)
+                    (eq (aref old (- lo s 1)) (aref new (- ln s 1))))
+          (setq s (1+ s)))
+        (list p (- lo p s) (substring new p (- ln s)))))))
+
+(defun jetpacs-sync--place-region (cursor sel-start sel-end)
+  "Set point and mark in the current buffer from phone coordinates.
+CURSOR is the caret; when SEL-START/SEL-END describe a non-collapsed
+selection the mark goes to whichever end the caret is not on, and the
+mark activates so `use-region-p' answers yes.  All 0-based code points."
+  (goto-char (min (1+ (max 0 (truncate cursor))) (point-max)))
+  (if (and (numberp sel-start) (numberp sel-end)
+           (/= (truncate sel-start) (truncate sel-end)))
+      (let ((other (if (= (truncate cursor) (truncate sel-start))
+                       sel-end sel-start)))
+        (set-mark (min (1+ (max 0 (truncate other))) (point-max)))
+        (activate-mark))
+    (deactivate-mark)))
+
+(defun jetpacs-sync-run-command (file session seq command cursor sel-start sel-end)
+  "Run COMMAND in FILE's session buffer at the phone's point/region.
+COMMAND is a command name string; nil or empty prompts with a bridged
+`completing-read' over `commandp' — M-x scoped to the editor.  The gate
+is the slim-completion one: SESSION and SEQ must match the live sync
+state exactly, else one resync round and nothing runs.  See the section
+comment for how results travel back."
+  (let ((buf (jetpacs-sync-session-buffer file session seq)))
+    (if (not buf)
+        (jetpacs-sync-request-resync file session)
+      (let* ((name (if (and (stringp command) (not (string-empty-p command)))
+                       command
+                     (completing-read "M-x " obarray #'commandp t)))
+             (cmd (intern-soft name)))
+        (if (not (and cmd (funcall jetpacs-sync-command-predicate cmd)))
+            (jetpacs-send "toast.show"
+                          `((text . ,(format "Not a command: %s" name))))
+          (let (before dest)
+            (with-current-buffer buf
+              (setq before (buffer-substring-no-properties
+                            (point-min) (point-max)))
+              ;; `transient-mark-mode' stays let-bound across the command
+              ;; so region-aware commands see an active region regardless
+              ;; of the host config; `deactivate-mark' post-processing is
+              ;; ours to do — `call-interactively' has no command loop.
+              (let ((transient-mark-mode t)
+                    (deactivate-mark nil))
+                (jetpacs-sync--place-region cursor sel-start sel-end)
+                (setq dest (jetpacs-buffer-call-shimmed
+                            cmd
+                            (lambda (err)
+                              (jetpacs-send
+                               "toast.show"
+                               `((text . ,(format "%s: %s" name
+                                                  (error-message-string err))))))))
+                (when deactivate-mark (deactivate-mark))))
+            (jetpacs-sync--emit-apply file session seq buf before
+                                      cursor sel-start sel-end)
+            (when (and (consp dest) (buffer-live-p (car dest))
+                       (not (eq (car dest) buf)))
+              (jetpacs-send "toast.show"
+                            `((text . ,(format "%s → %s (on desktop)" name
+                                               (buffer-name (car dest)))))))))))))
+
+(defun jetpacs-sync--emit-apply (file session seq buf before
+                                      cursor sel-start sel-end)
+  "Diff BUF against BEFORE and push the result as an `edit.apply' frame.
+Re-gates on the live session first: a command that pumped the event loop
+\(async prompts, `sit-for') may have raced an inbound delta, and emitting
+against moved state would violate the seq contract — skip instead; the
+phone-side text check would have dropped the frame anyway.  Text changed
+→ splice frame with the seq bumped FIRST, then diagnostics/fontify are
+re-armed so their stamps carry the new seq.  Only point/region moved →
+move-only frame, seq unchanged.  Nothing changed → nothing sent."
+  (let ((st (jetpacs-sync-session file)))
+    (when (and st
+               (equal session (plist-get st :session))
+               (equal seq (plist-get st :seq))
+               (buffer-live-p buf))
+      (with-current-buffer buf
+        (let* ((after (buffer-substring-no-properties (point-min) (point-max)))
+               (splice (jetpacs-sync--splice before after))
+               (new-point (1- (point)))
+               (region (and mark-active (mark t)
+                            (/= (mark t) (point))
+                            (cons (1- (min (point) (mark t)))
+                                  (1- (max (point) (mark t))))))
+               (sel-keys (when region
+                           `((sel_start . ,(car region))
+                             (sel_end . ,(cdr region))))))
+          (cond
+           (splice
+            (let ((new-seq (1+ (plist-get st :seq))))
+              (puthash file (plist-put st :seq new-seq) jetpacs-sync--sessions)
+              (jetpacs-send "edit.apply"
+                            `((id . ,file)
+                              (session . ,session)
+                              (seq . ,new-seq)
+                              (cursor . ,new-point)
+                              (start . ,(nth 0 splice))
+                              (del . ,(nth 1 splice))
+                              (text . ,(nth 2 splice))
+                              (len . ,(length after))
+                              ,@sel-keys))
+              (jetpacs-sync--arm-diagnostics file)
+              (jetpacs-sync--push-fontify file)))
+           ((or (/= new-point (truncate cursor))
+                (not (equal region
+                            (and (numberp sel-start) (numberp sel-end)
+                                 (/= (truncate sel-start) (truncate sel-end))
+                                 (cons (min (truncate sel-start)
+                                            (truncate sel-end))
+                                       (max (truncate sel-start)
+                                            (truncate sel-end)))))))
+            (jetpacs-send "edit.apply"
+                          `((id . ,file)
+                            (session . ,session)
+                            (seq . ,(plist-get st :seq))
+                            (cursor . ,new-point)
+                            ,@sel-keys))))
+          ;; Either way the phone's caret is now where we put it — keep
+          ;; the best-effort session record coherent with it.
+          (let ((st2 (jetpacs-sync-session file)))
+            (when st2
+              (setq st2 (plist-put st2 :point new-point))
+              (setq st2 (plist-put st2 :sel-start (car-safe region)))
+              (setq st2 (plist-put st2 :sel-end (cdr-safe region)))
+              (puthash file st2 jetpacs-sync--sessions))))))))
+
 ;; ─── Actions ─────────────────────────────────────────────────────────────────
 
 (jetpacs-defaction "edit.open"
@@ -12895,6 +13108,20 @@ language server warm for the next open."
     (let ((file (alist-get 'file args)))
       (when (stringp file)
         (jetpacs-sync-close file)))))
+
+(jetpacs-defaction "edit.command"
+  (lambda (args _)
+    (let ((file (alist-get 'file args))
+          (session (alist-get 'session args))
+          (seq (alist-get 'seq args))
+          (cursor (alist-get 'cursor args)))
+      (when (and (stringp file) (numberp session)
+                 (numberp seq) (numberp cursor))
+        (jetpacs-sync-run-command file session seq
+                                  (alist-get 'command args)
+                                  cursor
+                                  (alist-get 'sel_start args)
+                                  (alist-get 'sel_end args))))))
 
 (provide 'jetpacs-sync)
 ;;; jetpacs-sync.el ends here
@@ -13765,13 +13992,31 @@ Apps set their per-file-type editor state here (e.g. reader-first).")
   "Hook run with FILE after a phone-triggered save succeeds.
 Apps whose views memoise data derived from files drop caches here.")
 
-(defvar jetpacs-files-editor-toolbar-function #'ignore
+(defun jetpacs-files-dwim-toolbar (file)
+  "A mode-aware DWIM toolbar for FILE (the default toolbar function).
+Chips run real Emacs commands in the live sync session at the phone's
+point/region (SPEC §8 `edit.command'), so they ride the editor's
+`:complete' bridge — without it (or on a pre-1.26 companion) they
+render inert, never wrong.  Org files add TODO cycling and scheduling;
+every file gets fill/comment DWIM and a bridged M-x scoped to the
+editor."
+  (append
+   (when (string-suffix-p ".org" file t)
+     (list (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
+           (jetpacs-toolbar-item "schedule" "Sched" :command "org-schedule")))
+   (list
+    (jetpacs-toolbar-item "notes" "Fill" :command "fill-paragraph")
+    (jetpacs-toolbar-item "code" ";;" :command "comment-dwim")
+    (jetpacs-toolbar-item "bolt" "M-x" :command ""))))
+
+(defvar jetpacs-files-editor-toolbar-function #'jetpacs-files-dwim-toolbar
   "Function of FILE returning the editor toolbar to request, or nil.
 Either a list of `jetpacs-toolbar-item's the companion interprets as data
 \(SPEC §9 \"Editor toolbars\", the default path) or a string naming a
 host-registered native toolbar.  Apps point this at their file-type
 mapping so the toolbar choice ships in the editor spec instead of being
-inferred client-side.")
+inferred client-side.  Defaults to `jetpacs-files-dwim-toolbar'; set to
+`ignore' for no toolbar.")
 
 ;; ─── Browser view (dired under the hood) ─────────────────────────────────────
 

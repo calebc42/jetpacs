@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # This file rides the slop-fork line; its branches live under slop-fork/.
+    branches: ["slop-fork/**"]
   pull_request:
 
 concurrency:

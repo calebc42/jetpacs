@@ -581,7 +581,7 @@ would, so Customize notices the modification (state turns EDITED)."
          (widget-field-value-set w new))
        t))))
 
-(defun jetpacs-buffer-call-shimmed (cmd)
+(defun jetpacs-buffer-call-shimmed (cmd &optional on-error)
   "Run command CMD with window-display and input-event shims; return (BUF . POS).
 The buffer-display functions are neutered so nothing pops a desktop window
 and the user's Emacs layout is untouched (`save-window-excursion'), and the
@@ -589,8 +589,10 @@ triggering input event is cleared so event-driven goto commands
 \(`compile-goto-error', the eww/Info/help follow commands) navigate to
 point rather than to a stale pending event.  Returns the buffer made
 current and the point reached after CMD runs; errors are swallowed and
-report wherever point already is.  Call with the origin buffer current and
-point already placed on the target."
+report wherever point already is — unless ON-ERROR is a function, which
+is then called with the error so surfaces that must not fail silently
+\(the editor's DWIM path) can toast it.  Call with the origin buffer
+current and point already placed on the target."
   (let (dest-buf dest-pos)
     (save-window-excursion
       (cl-letf (((symbol-function 'pop-to-buffer)
@@ -601,11 +603,11 @@ point already placed on the target."
                  (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer)))
                 ((symbol-function 'switch-to-buffer-other-window)
                  (lambda (b &rest _) (set-buffer (get-buffer b)) (current-buffer))))
-        (condition-case nil
+        (condition-case err
             (let ((last-input-event nil)
                   (last-nonmenu-event nil))
               (call-interactively cmd))
-          (error nil))
+          (error (when on-error (funcall on-error err)) nil))
         (setq dest-buf (current-buffer) dest-pos (point))))
     (cons dest-buf dest-pos)))
 

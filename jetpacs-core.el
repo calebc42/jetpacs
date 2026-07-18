@@ -18504,9 +18504,9 @@ Exercises, right here in this list:
 - [ ] Tap Save, and watch the header flip from \"● modified\"
       back to \"saved\"
 
-Saving also reports back — a confirmation message pops up
-over the Files screen; those bottom-of-screen messages are
-called snackbars.  Emacs mirrors its own short status lines
+Saving also reports back — a \"Saved walkthrough.org\"
+message pops up at the bottom of this very screen; those
+messages are called snackbars.  Emacs mirrors its own short status lines
 to your phone too, as toasts — the brief notes Android
 floats near the bottom.  When something seems silent, the
 Messages screen in the menu holds the recent log (the last

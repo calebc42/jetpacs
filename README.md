@@ -265,6 +265,21 @@ Emacs auto-connects on startup (`after-init-hook`), so if the app was
 already running when Emacs launched you may already be connected — check
 with `M-x jetpacs-ping`. The dashboard should now appear on the phone.
 
+### 4. Take the tour
+
+On a fresh install the phone lands on a **Start** tab that points at the
+M-x button (the terminal icon in every tab's top bar) and prompts you to
+run `jetpacs-setup-demo` from it. The command writes a three-file guided
+tour into `~/jetpacs-demo/` on the device and opens it in the editor:
+`walkthrough.org`, a chaptered tour of every screen (M-x, Buffers, Files,
+the editor, Eval, Tools, Project, Databases, both Settings screens,
+themes, packages, apps) written for Emacs newcomers; `org-basics.org`, an
+org-mode crash course pitched at Obsidian/Logseq switchers that
+demonstrates every feature in its own text; and `hello-app.el`, a
+complete beginner-commented Tier-1 app to load, tap, edit, and reload.
+The Start tab retires once the tour exists; rerunning the command resets
+all three files to pristine.
+
 > **v0 is local-only.** The loopback socket assumes Emacs and the
 > companion run on the same device (Emacs via the Android Emacs port, or
 > an emulator sharing the host loopback).

@@ -68,6 +68,7 @@ live transients, where a bounded set of human-written labels fits a pie.
 | `jetpacs-tools.el` | tools hub: bookmarks, kill ring, shell, processes, timers — entry points over the tablist/comint substrates |
 | `jetpacs-hosts.el` | remote hosts hub: TRAMP endpoints (explicit + ssh-config discovered) as cards — Files/Shell/Services/Disconnect over the existing substrates, connection state read (never probed), `tramp-connection-timeout` clamped |
 | `jetpacs-automations.el` | management view over the `jetpacs-triggers.el` registry: enable switch, wire summary, last-fired, "Fire now" |
+| `jetpacs-demo.el` | onboarding: the first-run Start tab (teaches the M-x button, retires once the tour exists) + `jetpacs-setup-demo`, which writes the guided tour (`walkthrough.org` — the whole app, screen by screen; `org-basics.org` — org for Obsidian/Logseq switchers; `hello-app.el` — a live Tier 1 to edit and reload) into `~/jetpacs-demo/` and opens it |
 
 The core is org-free by contract; `test/core-load-test.el` loads only
 this directory and fails if an app feature or org itself sneaks in.

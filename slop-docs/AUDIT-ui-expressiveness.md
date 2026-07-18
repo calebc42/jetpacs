@@ -16,6 +16,17 @@ registry, all governed by amendment #14's classification — styling keys are
 cosmetic and safely additive; the flagged exceptions (`enabled`, date clamps,
 `lazy_row` as a new node type) are named where they occur.
 
+**Adoption status (2026-07-18, same day).** The owner adopted the
+*structural core*: buckets 2, 3, and 5 (wire side) plus the normative enum
+documentation landed as ebp amendment **#17**, and `enabled` shipped **with**
+its bespoke `can_disable` welcome channel as amendment **#18** — the first
+constraining key under the §5 growth rule, superseding this doc's
+defer-recommendation for it (the must-not-transfer row stands for shipping it
+*without* a channel). Buckets 4 (text granularity), 6 (component knobs), 7
+(animation), and 8 (`lazy_row`, sticky) remain open proposals. Amendment
+numbers cite the `spec/liveview-gap-amendments` lineage and may renumber at
+the cross-branch merge.
+
 ---
 
 # ebp UI-Expressiveness Gap Analysis: Proposal Buckets

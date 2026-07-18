@@ -802,7 +802,14 @@ state (the same pattern as the capture form)."
           (error
            (jetpacs-shell-notify
             (format "Save failed: %s" (error-message-string err))))))))
-    (jetpacs-shell-push)))
+    ;; Save feedback belongs on the editor the user is looking at, not the
+    ;; Files tab behind it: the "edit" view is :when-gated (neither the
+    ;; active tab nor an overlay), so the default snackbar target would miss
+    ;; it and the message would surface later, on Files.  With the editor
+    ;; already closed — an offline-queued save replaying after the user left
+    ;; it — there is no "edit" view and the push falls back to the active
+    ;; view (`jetpacs-shell-push' guards SNACK-VIEW on visibility).
+    (jetpacs-shell-push nil :snack-view (and jetpacs-files--file "edit"))))
 
 (jetpacs-defaction "config.reload"
   ;; Retired: `load user-init-file' mid-session never applies cleanly

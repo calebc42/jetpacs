@@ -139,7 +139,10 @@ Chrome: `jetpacs-scaffold` `jetpacs-top-bar` `jetpacs-bottom-bar` `jetpacs-nav-i
 `jetpacs-drawer` `jetpacs-drawer-item` `jetpacs-fab` `jetpacs-snackbar-action`.
 (`nav-item`/`drawer-item`/`icon`/`icon-button` take `:badge`;
 `text-input` takes `:keyboard`; `jetpacs-send-dialog` takes an optional
-STYLE / `jetpacs-dialog-style`.)
+STYLE / `jetpacs-dialog-style`. Since 1.25.0, `text-input` takes
+`:autofocus` and `:clear-on-submit`, and `jetpacs-editor` takes
+`:autofocus` and `:on-enter` — the fluid-editing batch, SPEC amendment
+#14.)
 
 Actions: `jetpacs-action` `jetpacs-clipboard-action`; since 1.23.0,
 `jetpacs-action-with-arg` (bake a typed value into a template action's

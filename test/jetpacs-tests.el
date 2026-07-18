@@ -1558,6 +1558,12 @@ the composer delete its own matcher."
      (jetpacs-column leaf :key "c1")
      (jetpacs-box (list leaf) :key "b1")
      (jetpacs-surface (list leaf) :key "s1")
+     ;; 1.25.0 — fluid editing: server-driven focus, in-place clear, and
+     ;; Enter-as-dispatch (§5 flush-before-dispatch adds no node shape).
+     (jetpacs-text-input "q1" :hint "Add to today" :on-submit act
+                      :autofocus t :clear-on-submit t)
+     (jetpacs-editor "seq-edit-b1-g2.org" "* block" :on-enter act
+                  :chromeless t :complete t :publish-state t :autofocus t)
      ;; 1.26.0 — the DWIM command op on toolbar items (SPEC §8 edit.command).
      (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
      (jetpacs-toolbar-item "bolt" "M-x" :command ""))))
@@ -1578,6 +1584,27 @@ Only run this after an INTENTIONAL wire-format change; review the diff."
   (with-temp-file jetpacs-tests--golden-file
     (insert (string-join (jetpacs-tests--widget-lines) "\n") "\n"))
   (message "Wrote %s" jetpacs-tests--golden-file))
+
+(ert-deftest jetpacs-nil-children-dropped ()
+  "Row/column/flow-row drop nil children (the WIDGETS.md contract).
+Regression: a conditional child that evaluated to nil rode the wire as
+an empty object and — worse — reclassified the whole child list so the
+lint collector dropped every sibling's text from visible-text."
+  (should (= 2 (length (alist-get 'children
+                                  (jetpacs-row (jetpacs-text "a") nil
+                                            (jetpacs-text "b"))))))
+  (should (= 1 (length (alist-get 'children
+                                  (jetpacs-column nil (jetpacs-text "a"))))))
+  (should (= 1 (length (alist-get 'children
+                                  (jetpacs-flow-row (jetpacs-text "a") nil)))))
+  ;; Hand-built tree: a stray nil must not hide sibling text either.
+  (let ((spec `((t . "row")
+                (children . (,(jetpacs-text "seen")
+                             nil
+                             ,(jetpacs-rich-text
+                               (list (jetpacs-span "spanned"))))))))
+    (should (member "seen" (jetpacs-test-visible-text spec)))
+    (should (member "spanned" (jetpacs-test-visible-text spec)))))
 
 (ert-deftest jetpacs-widgets-wire-format ()
   "Every constructor's wire format matches the committed golden snapshot."

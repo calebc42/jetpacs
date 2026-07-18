@@ -49,7 +49,7 @@ is almost always a typo; a Tier 1 deliberately targeting an extended
 companion gates on `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys
-  '(on_tap on_change on_submit on_save on_pick on_reorder on_refresh
+  '(on_tap on_change on_submit on_save on_enter on_pick on_reorder on_refresh
     nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger
     on_day_tap on_month_change on_point_tap on_button)
   "Node keys whose value is an embedded action object (SPEC §9).")
@@ -180,10 +180,12 @@ child's stable reconciliation identity — preferred over the child's
     ("text_input"      (id)                 (value hint label on_submit
                                              single_line min_lines max_lines
                                              monospace syntax password keyboard
+                                             autofocus clear_on_submit
                                              padding))
-    ("editor"          (id)                 (value on_save read_only syntax
-                                             line_numbers complete chromeless
-                                             publish_state toolbar))
+    ("editor"          (id)                 (value on_save on_enter read_only
+                                             syntax line_numbers complete
+                                             chromeless publish_state autofocus
+                                             toolbar))
     ("checkbox"        (id)                 (checked label on_change padding))
     ("switch"          (id)                 (checked label on_change padding))
     ("enum_list"       (id options)         (value multi_select allow_add
@@ -313,11 +315,17 @@ predating 1.26 render the chip as a no-op, per the §9 unknown-op rule.")
   "Non-nil when X is a non-empty list or vector whose elements are all alists.
 This is how children, spans, items, rows, and cells are distinguished
 from a single nested node and from plain scalar sequences (a vector of
-strings like table `aligns' is not a node sequence)."
+strings like table `aligns' is not a node sequence).  A stray nil
+element is tolerated (constructors drop nils, but hand-built trees may
+carry one) so one hole can't silently reclassify a whole child list as
+a malformed alist and drop its subtree from traversal."
   (let ((elts (cond ((vectorp x) (append x nil))
                     ((proper-list-p x) x)
                     (t 'bad))))
-    (and (listp elts) elts (cl-every #'jetpacs-lint--alist-p elts))))
+    (and (listp elts)
+         (cl-some #'identity elts)
+         (cl-every (lambda (e) (or (null e) (jetpacs-lint--alist-p e)))
+                   elts))))
 
 (defun jetpacs-lint--serializable-scalar-p (val)
   "Non-nil when VAL is a JSON-serializable scalar.

@@ -441,8 +441,15 @@ yank the user off whatever they're looking at."
                      (jetpacs-shell--visible-views))))
         (jetpacs-surface-push
          jetpacs-shell-surface-id
+         ;; initial_view is the companion's back-stack ROOT (its
+         ;; BackHandler resets the stack whenever the active view equals
+         ;; it), so it must be the current tab — never a firing overlay.
+         ;; Overlay pushes used to put the overlay here, which reset the
+         ;; stack to one entry and made the system back gesture close
+         ;; the app from any overlay (the detail view).  Feedback still
+         ;; follows the overlay via SNACK-VIEW above.
          `((views . ,views)
-           (initial_view . ,active))
+           (initial_view . ,(jetpacs-shell-current-tab)))
          nil nil
          ;; Force the companion onto a view only when this push *is* a
          ;; navigation — see SWITCH-TO above.

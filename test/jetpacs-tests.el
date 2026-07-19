@@ -222,6 +222,32 @@ The live-coding contract: a broken Tier 1 view costs its own screen."
     (should-not (jetpacs-shell--visible-views))
     (should-not (jetpacs-shell--active-view))))
 
+(ert-deftest jetpacs-shell-push-initial-view-is-tab-not-overlay ()
+  "The pushed initial_view stays the current tab while an overlay fires.
+initial_view anchors the companion's back stack (its BackHandler resets
+the stack whenever the active view equals it) — an overlay there made
+the system back gesture close the app from the detail view."
+  (let ((jetpacs-shell-views
+         (list (cons "home"
+                     (list :builder (lambda (_) (jetpacs-text "home" 'body))
+                           :tab '(:icon "home" :label "Home")
+                           :order 1))
+               (cons "overlay-view"
+                     (list :builder (lambda (_) (jetpacs-text "detail" 'body))
+                           :when (lambda () t)
+                           :overlay (lambda () t)
+                           :order 2))))
+        (jetpacs-shell--current-tab "home")
+        (jetpacs-shell-view-filter-function nil)
+        pushed forced)
+    (cl-letf (((symbol-function 'jetpacs-surface-push)
+               (lambda (_id spec &optional _a _b target)
+                 (setq pushed spec forced target))))
+      (jetpacs-shell-push nil :switch-to "overlay-view"))
+    (should (equal (jetpacs-shell--active-view) "overlay-view"))
+    (should (equal (alist-get 'initial_view pushed) "home"))
+    (should (equal forced "overlay-view"))))
+
 ;; ─── Transport ──────────────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-request-no-leak ()

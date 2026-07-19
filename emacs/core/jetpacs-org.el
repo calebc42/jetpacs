@@ -33,6 +33,7 @@
 (require 'org-capture)
 (require 'org-element)
 (require 'org-footnote)
+(require 'org-habit)
 (require 'org-id)
 (require 'org-table)
 (require 'cl-lib)
@@ -135,6 +136,12 @@ REF is an alist as built by `jetpacs-org-heading-ref'. Resolution tries:
         (file (alist-get 'file ref))
         (pos (alist-get 'pos ref))
         (headline (alist-get 'headline ref)))
+    ;; A whole-valued `pos' can return from the wire as a float (org.json
+    ;; emits the trailing .0 — the same case `jetpacs--confirm-normalize'
+    ;; guards); coerce so the trusted-position fast-path below survives the
+    ;; round trip instead of falling through to the headline search (which
+    ;; would resolve the wrong heading among duplicate titles).
+    (when (numberp pos) (setq pos (truncate pos)))
     (or
      (and (stringp id) (not (string-empty-p id))
           (ignore-errors (org-id-find id 'marker)))
@@ -311,6 +318,7 @@ Signals `user-error' on unsupported terms."
      (jetpacs-org--planning-match-spec (funcall get 'planning "SCHEDULED") args))
     (`(deadline . ,args)
      (jetpacs-org--planning-match-spec (funcall get 'planning "DEADLINE") args))
+    (`(habit) (and (funcall get 'habit) t))
     (_ (user-error "Query term %S needs the org-ql package installed" tree))))
 
 (defun jetpacs-org--point-get (what &rest args)
@@ -325,6 +333,10 @@ Signals `user-error' on unsupported terms."
     ('level (org-current-level))
     ('property (org-entry-get (point) (car args)))
     ('planning (org-entry-get (point) (car args)))
+    ;; `org-is-habit-p' tests only the STYLE=habit property (whether the
+    ;; SCHEDULED repeater is valid is enforced later, by
+    ;; `org-habit-parse-todo').
+    ('habit (org-is-habit-p))
     ('regexp-match
      ;; The point haystack is the entry's body up to the next heading.
      (let ((end (save-excursion (outline-next-heading) (point)))
@@ -359,6 +371,10 @@ Signals `user-error' on unsupported terms."
                             (vulpea-note-deadline note)
                           (vulpea-note-scheduled note))))
                  (and (stringp s) s)))
+    ;; STYLE=habit off the index — the same property `org-is-habit-p'
+    ;; tests at point.
+    ('habit (equal "habit"
+                   (cdr (assoc-string "STYLE" (vulpea-note-properties note) t))))
     ('regexp-match
      ;; The index haystack is title + properties — the body is not
      ;; indexed.  SEMANTIC DIFFERENCE from the point accessor, by design.
@@ -385,7 +401,7 @@ on terms outside `jetpacs-org-note-query-terms' — check
 
 (defconst jetpacs-org-note-query-terms
   '(and or not todo done tags priority heading regexp property level
-        scheduled deadline)
+        scheduled deadline habit)
   "org-ql head symbols the built-in grammar evaluates off the note index.")
 
 (defun jetpacs-org-note-query-supported-p (tree)
@@ -497,9 +513,22 @@ route anything else through org-ql over the source file instead."
     (org-entry-put (point) prop value)))
 
 (defun jetpacs-org-toggle-todo (ref namespace &optional state)
-  "Set the TODO state at REF to STATE, or toggle if nil."
+  "Set the TODO state at REF to STATE, or toggle if nil.
+Flushes org's state/repeat log note inline.  `org-todo' queues that note
+onto `post-command-hook' (via `org-add-log-setup'), which never fires
+here: a phone action runs inside the socket process filter, not the
+command loop.  Left deferred, the \"State DONE ... [ts]\" LOGBOOK line is
+never written — so `org-habit-done-dates' (which reads only that line)
+would never see a habit completion, and the pending note could later pop
+*Org Note* on a shared interactive Emacs.  `save-window-excursion'
+contains the buffer switches `org-add-log-note' makes; the `time'/`state'
+note stores immediately and needs no input."
   (jetpacs-org-with-mutation ref namespace
-    (org-todo state)))
+    (org-todo state)
+    (when (bound-and-true-p org-log-setup)
+      (save-window-excursion
+        (let ((this-command org-log-note-this-command))
+          (org-add-log-note))))))
 
 (defun jetpacs-org-set-planning (ref namespace which date-str)
   "Set the WHICH planning stamp at REF to DATE-STR.
@@ -1633,6 +1662,207 @@ their taps to the footnote dialog via the Tier-0 span-action seam."
                        label
                        (org-with-wide-buffer
                         (line-number-at-pos (nth 1 def)))))))))))))
+
+;; ─── Habits (org-habit) ───────────────────────────────────────────────────────
+;;
+;; org-habit is a built-in org module: a repeating TODO with `:STYLE: habit`
+;; and a SCHEDULED repeater (.+2d / ++1w / .+1m) grows a consistency graph —
+;; a per-day colored strip showing done/missed/ready/overdue days.  On the
+;; desktop the graph lives in the agenda; the phone has no agenda view, so
+;; this ships a small dedicated "Habits" satellite view instead, listing every
+;; habit with its graph and a one-tap Done.
+;;
+;; The compute is org-habit's own, called standalone (no agenda run):
+;; `org-habit-build-graph' returns a propertized string, one char per day,
+;; each carrying the org-habit face for that day's state.  We resolve each
+;; face's background through the same `jetpacs-buffer--color-hex' the buffer
+;; renderer uses — so user face customization flows through untouched — and
+;; draw the strip as one `jetpacs-canvas' of filled rects.  No new protocol
+;; node; `jetpacs-org-habit-graph' and `jetpacs-org-habit-strip' are public so
+;; a real agenda (or Glasspane) can reuse them wherever a habit is shown.
+
+;; `jetpacs-files-open' is already declared in the footnote section above.
+
+(defcustom jetpacs-org-habit-preceding-days 21
+  "Days of history shown in a phone habit consistency strip.
+With `jetpacs-org-habit-following-days' this sets the cell count; the
+default 21+today+7 = 29 cells fits a phone width at the strip's cell
+size.  Independent of org's own `org-habit-preceding-days' (which tunes
+the desktop agenda)."
+  :type 'integer :group 'jetpacs)
+
+(defcustom jetpacs-org-habit-following-days 7
+  "Days of upcoming schedule shown in a phone habit consistency strip.
+See `jetpacs-org-habit-preceding-days'."
+  :type 'integer :group 'jetpacs)
+
+(defun jetpacs-org--habit-face-hex (face)
+  "The background of habit-graph FACE as \"#RRGGBB\", or nil.
+FACE is a face symbol (or a cons whose car is one, org-habit's shape);
+resolved through the buffer renderer's color machinery, so a user's
+`org-habit-*-face' customization is honored."
+  (let ((sym (if (consp face) (car face) face)))
+    (and (facep sym)
+         (jetpacs-buffer--color-hex
+          (face-attribute sym :background nil t)))))
+
+(defun jetpacs-org-habit-graph (&optional pom)
+  "The consistency graph of the habit at POM (point default) as a cell list.
+Each cell is a plist (:glyph CHAR :color HEX) for one day, oldest first,
+spanning `jetpacs-org-habit-preceding-days' before today through
+`jetpacs-org-habit-following-days' after.  Returns nil when POM is not a
+habit — including a `:STYLE: habit' heading whose SCHEDULED has no valid
+repeater, which `org-is-habit-p' accepts but `org-habit-parse-todo'
+rejects (signals); that case is caught and yields nil, never an error.
+Reuses org-habit's own `org-habit-build-graph' verbatim — the
+back-projection, the past-day fade, and the repeater semantics
+\(.+/++/+) are all org's, not reimplemented here."
+  (org-with-point-at (or pom (point))
+    (when (org-is-habit-p)
+      (ignore-errors
+        (let* ((habit (org-habit-parse-todo))
+               (now (current-time))
+               (graph (org-habit-build-graph
+                       habit
+                       (time-subtract now (days-to-time
+                                           jetpacs-org-habit-preceding-days))
+                       now
+                       (time-add now (days-to-time
+                                      jetpacs-org-habit-following-days)))))
+          (cl-loop for i below (length graph)
+                   collect (list :glyph (aref graph i)
+                                 :color (jetpacs-org--habit-face-hex
+                                         (get-text-property i 'face graph)))))))))
+
+(cl-defun jetpacs-org-habit-strip (cells &key (cell-width 6) (height 12) (gap 2))
+  "A `jetpacs-canvas' consistency strip from CELLS (see `jetpacs-org-habit-graph').
+One filled CELL-WIDTH×HEIGHT rect per colored day, GAP apart; days with
+no resolved color leave a bare slot.  The whole strip is a single node,
+so a long history serializes and pans as one image rather than N boxes."
+  (let* ((n (length cells))
+         (width (max 1 (- (* n (+ cell-width gap)) gap))))
+    (jetpacs-canvas
+     width height
+     (delq nil
+           (cl-loop for c in cells for i from 0
+                    for col = (plist-get c :color)
+                    when col
+                    collect (jetpacs-draw-rect (* i (+ cell-width gap)) 0
+                                               cell-width height
+                                               :color col :fill t :radius 2))))))
+
+(defun jetpacs-org--habit-item ()
+  "Collect the Habits-view data for the habit at point, or nil if unparseable.
+Point is on the heading (an `org-map-entries' visit).  A `:STYLE: habit'
+heading with a broken/absent SCHEDULED repeater passes `org-is-habit-p'
+but makes `org-habit-parse-todo' signal — return nil for it so one
+malformed habit is skipped, not fatal to the whole scan."
+  (save-excursion
+    (ignore-errors
+      (let* ((habit (org-habit-parse-todo))
+             (done-today (and (member (org-today)
+                                      (org-habit-done-dates habit))
+                              t)))
+        (list (cons 'ref (jetpacs-org-heading-ref))
+              (cons 'title (or (nth 4 (org-heading-components)) "Untitled"))
+              (cons 'todo (org-get-todo-state))
+              (cons 'file (buffer-file-name))
+              (cons 'done-today done-today)
+              (cons 'cells (jetpacs-org-habit-graph (point))))))))
+
+(defun jetpacs-org--habits ()
+  "Every parseable habit across the agenda files, as Habits-view item alists.
+Memoised under the `habits' namespace (busted by the mtime/date cache
+key and by `org.habit.done').  Malformed habits are skipped."
+  (jetpacs-org-with-cache 'habits "all"
+    (let (items)
+      (org-map-entries
+       (lambda () (when (org-is-habit-p)
+                    (when-let ((item (jetpacs-org--habit-item)))
+                      (push item items))))
+       nil 'agenda)
+      (nreverse items))))
+
+(defun jetpacs-org--habit-card (item)
+  "A card for habit ITEM: title, consistency strip, and a one-tap Done.
+A habit already done today shows a check instead of the button; the
+whole card opens the file in the editor."
+  (let ((ref (alist-get 'ref item))
+        (title (alist-get 'title item))
+        (cells (alist-get 'cells item))
+        (todo (alist-get 'todo item))
+        (done-today (alist-get 'done-today item)))
+    (jetpacs-card
+     (list
+      (jetpacs-row
+       (jetpacs-box
+        (list (apply #'jetpacs-column
+                     (delq nil
+                           (list (jetpacs-text title 'label)
+                                 (jetpacs-spacer :height 4)
+                                 (jetpacs-org-habit-strip cells)
+                                 (and todo (jetpacs-text todo 'caption))))))
+        :weight 1)
+       (if done-today
+           (jetpacs-text "Done ✓" 'caption)
+         (jetpacs-button "Done"
+                         (jetpacs-action "org.habit.done" :args ref
+                                         :when-offline "queue")
+                         :variant "tonal"))))
+     :on-tap (jetpacs-action "org.habit.open" :args ref :when-offline "drop"))))
+
+(defun jetpacs-org--habits-body ()
+  (let ((habits (condition-case nil (jetpacs-org--habits) (error nil))))
+    (apply #'jetpacs-lazy-column
+           (if habits
+               (mapcar #'jetpacs-org--habit-card habits)
+             (list (jetpacs-empty-state
+                    :icon "repeat" :title "No habits"
+                    :caption "Add :STYLE: habit to a repeating TODO (SCHEDULED with a .+1d-style repeater) and it appears here."))))))
+
+(defun jetpacs-org--habits-view (snackbar)
+  (jetpacs-shell-nav-view "Habits" (jetpacs-org--habits-body) :snackbar snackbar))
+
+(jetpacs-shell-define-view "org-habits"
+                           :builder #'jetpacs-org--habits-view :order 86)
+
+;; Everyday nav, like the stock Databases entry — a daily destination, not
+;; a setting.
+(jetpacs-shell-add-drawer-item
+ 36 (lambda ()
+      (jetpacs-drawer-item "repeat" "Habits"
+                           (jetpacs-shell-switch-view "org-habits"))))
+
+(jetpacs-defaction "org.habits.show"
+  (lambda (_ _)
+    (jetpacs-shell-push nil :switch-to "org-habits")))
+
+(jetpacs-defaction "org.habit.done"
+  ;; ARGS is the heading ref itself.  `org-todo' \"DONE\" on a repeating
+  ;; habit is org's own repeat: it advances SCHEDULED by the repeater and
+  ;; resets the state to TODO.  `jetpacs-org-toggle-todo' also flushes the
+  ;; deferred \"State DONE\" log note (see its docstring) — that line is
+  ;; what `org-habit-done-dates' counts, so the strip recounts and the
+  ;; button flips to \"Done ✓\" on the next push (the mutation busts the
+  ;; `habits' memo).
+  (lambda (args _)
+    (condition-case err
+        (progn
+          (jetpacs-org-toggle-todo args 'habits "DONE")
+          (jetpacs-shell-notify "Marked done — habit advanced"))
+      (error (jetpacs-shell-notify
+              (format "Couldn't mark done: %s" (error-message-string err)))))
+    (jetpacs-shell-push)))
+
+(jetpacs-defaction "org.habit.open"
+  ;; ARGS is the heading ref; open its file in the phone editor (no
+  ;; cursor-seek yet, same limitation as the footnote Edit jump).
+  (lambda (args _)
+    (let ((file (alist-get 'file args)))
+      (if (and file (fboundp 'jetpacs-files-open) (jetpacs-files-open file))
+          (jetpacs-shell-notify (format "Opened %s"
+                                        (file-name-nondirectory file)))
+        (jetpacs-shell-notify "That file isn't editable from the phone")))))
 
 (provide 'jetpacs-org)
 ;;; jetpacs-org.el ends here

@@ -7163,5 +7163,154 @@ A stale position notifies instead of striking arbitrary text."
         (should-not opened)
         (should (string-search "No definition" notified))))))
 
+;; ─── Habits (org-habit) ──────────────────────────────────────────────────────
+
+(defmacro jetpacs-tests--with-habit-file (var &rest body)
+  "Bind VAR to an org buffer with a habit + a plain todo, agenda-scoped.
+A fresh org cache isolates the memoised habit query between tests; the
+habit is done on two recent days so its graph carries real state."
+  (declare (indent 1))
+  `(let* ((d0 (format-time-string "%Y-%m-%d"
+                                  (time-subtract nil (days-to-time 6))))
+          (d1 (format-time-string "%Y-%m-%d"
+                                  (time-subtract nil (days-to-time 2))))
+          (sched (format-time-string "%Y-%m-%d" (time-subtract nil (days-to-time 2))))
+          (jetpacs-org--cache (make-hash-table :test 'equal)))
+     (jetpacs-tests--with-org-file ,var
+         (concat "* TODO Water plants\n"
+                 "  SCHEDULED: <" sched " .+2d>\n"
+                 "  :PROPERTIES:\n  :STYLE: habit\n  :END:\n"
+                 "  - State \"DONE\"       from \"TODO\"       [" d0 "]\n"
+                 "  - State \"DONE\"       from \"TODO\"       [" d1 "]\n"
+                 "* TODO Not a habit\n  SCHEDULED: <" sched ">\n")
+       (let ((org-agenda-files (list (buffer-file-name ,var))))
+         ,@body))))
+
+(ert-deftest jetpacs-org-habit-query-predicate ()
+  "The (habit) grammar term matches a habit heading only, at point and
+off the note index, and is a supported note-query term."
+  (jetpacs-tests--with-habit-file buf
+    (goto-char (point-min))
+    (should (jetpacs-org-entry-matches-p '(habit)))          ; the habit
+    (goto-char (point-min))
+    (search-forward "Not a habit")
+    (org-back-to-heading t)
+    (should-not (jetpacs-org-entry-matches-p '(habit))))     ; plain todo
+  ;; Note-index arm: STYLE=habit approximation, and it is query-supported.
+  (should (memq 'habit jetpacs-org-note-query-terms))
+  (should (jetpacs-org-note-query-supported-p '(and (habit) (todo "TODO"))))
+  (cl-letf (((symbol-function 'vulpea-note-properties)
+             (lambda (n) n)))
+    (should (jetpacs-org-note-matches-p '(habit) '(("STYLE" . "habit"))))
+    (should-not (jetpacs-org-note-matches-p '(habit) '(("STYLE" . "task"))))))
+
+(ert-deftest jetpacs-org-habit-graph-and-strip ()
+  "The graph helper returns per-day colored cells reusing org-habit's
+compute; the strip is one canvas of filled rects that lints clean."
+  (jetpacs-tests--with-habit-file buf
+    (goto-char (point-min))
+    (let ((cells (jetpacs-org-habit-graph)))
+      ;; preceding(21) + today + following(7) = 29 day cells.
+      (should (= 29 (length cells)))
+      ;; Real state resolved to hex on the done/scheduled days.
+      (should (cl-some (lambda (c) (plist-get c :color)) cells))
+      (should (cl-every (lambda (c)
+                          (let ((col (plist-get c :color)))
+                            (or (null col)
+                                (string-match-p "\\`#[0-9A-Fa-f]\\{6\\}\\'" col))))
+                        cells))
+      ;; A non-habit heading yields no graph.
+      (search-forward "Not a habit") (org-back-to-heading t)
+      (should-not (jetpacs-org-habit-graph))
+      ;; The strip: one canvas, one rect op per colored cell, lints clean.
+      (let* ((strip (jetpacs-org-habit-strip cells))
+             (json (jetpacs-render-to-json strip))
+             (ncolored (length (cl-remove-if-not
+                                (lambda (c) (plist-get c :color)) cells))))
+        (should (equal "canvas" (alist-get 't json)))
+        (should (= ncolored (length (alist-get 'ops json))))
+        (should-not (jetpacs-lint-spec strip))))))
+
+(ert-deftest jetpacs-org-habits-view ()
+  "The Habits view lists habits with a strip and a Done action, skips
+non-habits, lints clean, and shows an empty state when there are none."
+  (jetpacs-tests--with-habit-file buf
+    (let ((body (jetpacs-org--habits-body)))
+      (should-not (jetpacs-lint-spec body))
+      (let ((json (json-serialize (jetpacs-tests--canon body)
+                                  :null-object :null :false-object :false)))
+        (should (string-search "Water plants" json))
+        (should-not (string-search "Not a habit" json))
+        (should (string-search "\"canvas\"" json))
+        (should (string-search "org.habit.done" json))
+        (should (string-search "org.habit.open" json))))
+    ;; The view and its drawer entry are registered.
+    (should (assoc "org-habits" jetpacs-shell-views))
+    (should (gethash "org.habits.show" jetpacs-action-handlers)))
+  ;; No habits anywhere → the empty state, still lint-clean.
+  (let ((jetpacs-org--cache (make-hash-table :test 'equal))
+        (org-agenda-files nil))
+    (let ((body (jetpacs-org--habits-body)))
+      (should-not (jetpacs-lint-spec body))
+      (should (string-search "No habits"
+                             (json-serialize (jetpacs-tests--canon body)
+                                             :null-object :null :false-object :false))))))
+
+(ert-deftest jetpacs-org-habit-done-advances ()
+  "org.habit.done marks the habit done: org's repeater advances SCHEDULED,
+resets the state to TODO, stamps LAST_REPEAT, and — crucially — records
+the completion in the LOGBOOK so `org-habit-done-dates' counts today.
+The deferred \"State DONE\" note must be flushed inline (the action runs
+in the socket filter, where post-command-hook never fires)."
+  (jetpacs-tests--with-habit-file buf
+    (goto-char (point-min))
+    (let ((ref (jetpacs-org-heading-ref))
+          (before (org-entry-get (point) "SCHEDULED")))
+      (cl-letf (((symbol-function 'jetpacs-shell-push)
+                 (cl-function (lambda (&optional _tab &key _switch-to))))
+                ((symbol-function 'jetpacs-shell-notify) #'ignore)
+                ;; Keep the deferred save inert in batch.
+                ((symbol-function 'run-with-idle-timer) (lambda (&rest _) nil)))
+        (jetpacs--on-action `((action . "org.habit.done")
+                           (args . ,ref)) nil)
+        (goto-char (point-min))
+        (org-back-to-heading t)
+        ;; The repeater reset the state and advanced the schedule.
+        (should (equal "TODO" (org-get-todo-state)))
+        (should (org-entry-get (point) "LAST_REPEAT"))
+        (should-not (equal before (org-entry-get (point) "SCHEDULED")))
+        ;; The completion was actually LOGGED — no stale pending note, and
+        ;; the habit now counts today as done (the strip would flip to ✓).
+        (should-not (bound-and-true-p org-log-setup))
+        (should (string-match-p "State \"DONE\"" (buffer-string)))
+        (should (member (org-today)
+                        (org-habit-done-dates (org-habit-parse-todo))))))))
+
+(ert-deftest jetpacs-org-habit-malformed-is-skipped ()
+  "A :STYLE: habit heading with a broken/absent SCHEDULED repeater —
+which `org-is-habit-p' accepts but `org-habit-parse-todo' rejects — is
+skipped, never erroring the graph helper or blanking the whole view."
+  (let ((jetpacs-org--cache (make-hash-table :test 'equal)))
+    (jetpacs-tests--with-org-file buf
+        (concat "* TODO Real habit\n"
+                "  SCHEDULED: <2026-07-20 Mon .+2d>\n"
+                "  :PROPERTIES:\n  :STYLE: habit\n  :END:\n"
+                "* TODO Broken habit\n"
+                "  SCHEDULED: <2026-07-20 Mon>\n"          ; no repeater
+                "  :PROPERTIES:\n  :STYLE: habit\n  :END:\n")
+      (let ((org-agenda-files (list (buffer-file-name buf))))
+        ;; The public helper returns nil (not a signal) on the broken one.
+        (goto-char (point-min))
+        (search-forward "Broken habit") (org-back-to-heading t)
+        (should (org-is-habit-p))                 ; org considers it a habit
+        (should-not (jetpacs-org-habit-graph))    ; …but no graph, no error
+        ;; The view still lists the good habit — one bad one doesn't blank it.
+        (let ((json (json-serialize (jetpacs-tests--canon
+                                     (jetpacs-org--habits-body))
+                                    :null-object :null :false-object :false)))
+          (should (string-search "Real habit" json))
+          (should (string-search "\"canvas\"" json))
+          (should-not (string-search "No habits" json)))))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

@@ -7094,6 +7094,50 @@ footnotes show their inline definition and offer no Edit."
         (should notified)
         (should pushed)))))
 
+(ert-deftest jetpacs-org-checkbox-toggle ()
+  "Item checkboxes render tappable, toggle in place (cookies included),
+and only the bracket itself carries the action — never the item text.
+A stale position notifies instead of striking arbitrary text."
+  (jetpacs-tests--with-org-file buf
+      "* Todo [0/2]\n- [ ] first task\n- [X] second task\n"
+    (should (string-search "org.checkbox.toggle"
+                           (jetpacs-tests--org-render-json buf)))
+    (goto-char (point-min))
+    (search-forward "- [ ]")
+    (let ((cb (- (point) 3))          ; the "[" of the first checkbox
+          (name (buffer-name buf)))
+      ;; Routing: the bracket yes; the heading and the item text no.
+      (let ((act (jetpacs-org--span-action cb name)))
+        (should act)
+        (should (equal "org.checkbox.toggle" (alist-get 'action act))))
+      (should-not (jetpacs-org--span-action (point-min) name))
+      (goto-char (point-min))
+      (search-forward "first")
+      (should-not (jetpacs-org--span-action (match-beginning 0) name))
+      (cl-letf (((symbol-function 'jetpacs-shell-push)
+                 (cl-function (lambda (&optional _tab &key _switch-to))))
+                ;; Keep the idle save inert in batch.
+                ((symbol-function 'run-with-idle-timer)
+                 (lambda (&rest _) nil)))
+        ;; Toggle on: the box checks and the heading cookie recounts.
+        (jetpacs--on-action `((action . "org.checkbox.toggle")
+                           (args . ((buffer . ,name) (pos . ,cb)))) nil)
+        (should (string-search "- [X] first task" (buffer-string)))
+        (should (string-search "[2/2]" (buffer-string)))
+        ;; Toggle off again.
+        (jetpacs--on-action `((action . "org.checkbox.toggle")
+                           (args . ((buffer . ,name) (pos . ,cb)))) nil)
+        (should (string-search "- [ ] first task" (buffer-string)))
+        (should (string-search "[1/2]" (buffer-string)))
+        ;; Stale position: notify, mutate nothing.
+        (let ((before (buffer-string)) (notified nil))
+          (cl-letf (((symbol-function 'jetpacs-shell-notify)
+                     (lambda (msg &rest _) (setq notified msg))))
+            (jetpacs--on-action `((action . "org.checkbox.toggle")
+                               (args . ((buffer . ,name) (pos . 1)))) nil)
+            (should (equal before (buffer-string)))
+            (should (string-search "checkbox" notified))))))))
+
 (ert-deftest jetpacs-org-footnote-edit-opens-editor ()
   "Edit opens the file in the phone editor and names the definition line."
   (jetpacs-tests--with-org-file buf

@@ -1198,10 +1198,14 @@ returns nil, leaving the builder open."
 ;;                          preview toolchain and shipped as an image
 ;;   #+CAPTION: …         → a caption line under its upgraded element
 ;;
-;; Everything else — footnotes, citations, inline math, drawers, list
-;; markers, src blocks — renders exactly as the user's font-lock shows
-;; it.  If anything in the upgrade pass fails, the buffer falls back to
-;; the pure Tier-0 render: this skin can subtract nothing.
+;; Two inline objects route their taps through the Tier-0 span-action
+;; seam instead of upgrading in place: footnote references open the
+;; footnote dialog, and item checkboxes toggle (`org.checkbox.toggle',
+;; statistics cookies included).  Everything else — citations, inline
+;; math, drawers, list markers, src blocks — renders exactly as the
+;; user's font-lock shows it.  If anything in the upgrade pass fails,
+;; the buffer falls back to the pure Tier-0 render: this skin can
+;; subtract nothing.
 
 (defcustom jetpacs-org-render-latex-images t
   "When non-nil, org LaTeX environments render as preview images.
@@ -1436,18 +1440,41 @@ Tier 0 already drops them, and upgrading would leak hidden content."
                         out))))))))
     (sort (nreverse out) (lambda (a b) (< (car a) (car b))))))
 
+(defun jetpacs-org--checkbox-at (pos)
+  "The (BEG . END) bounds of the item checkbox POS sits inside, or nil.
+A cheap char pre-filter guards the org-list predicate (the span seam
+consults this per run); the predicate's match data then yields the
+exact bracket bounds, so only a tap on the checkbox itself — not the
+item's text — counts."
+  (and (eq (char-after pos) ?\[)
+       (memq (char-after (1+ pos)) '(?\s ?- ?X))
+       (eq (char-after (+ pos 2)) ?\])
+       (save-excursion
+         (goto-char pos)
+         (and (org-at-item-checkbox-p)
+              (let ((beg (match-beginning 1))
+                    (end (match-end 1)))
+                (and beg (>= pos beg) (< pos end)
+                     (cons beg end)))))))
+
 (defun jetpacs-org--span-action (pos buffer-name)
-  "Span tap routing for the org skin: footnote references open a dialog.
-Everything else returns nil and keeps the generic Tier-0 behavior
-\(links still open through `jetpacs.buffer.act').  A cheap regexp
-pre-filter guards the org-element context check, so ordinary runs pay
-regexp cost only."
+  "Span tap routing for the org skin.
+Footnote references open their dialog; item checkboxes toggle (queued
+offline, like every other mutation).  Everything else returns nil and
+keeps the generic Tier-0 behavior (links still open through
+`jetpacs.buffer.act').  Cheap pre-filters guard both checks, so
+ordinary runs pay regexp cost at most."
   (save-excursion
     (goto-char pos)
-    (when (and (org-in-regexp org-footnote-re)
-               (save-match-data (org-footnote-at-reference-p)))
+    (cond
+     ((and (org-in-regexp org-footnote-re)
+           (save-match-data (org-footnote-at-reference-p)))
       (jetpacs-action "org.footnote.show"
-                      :args `((buffer . ,buffer-name) (pos . ,pos))))))
+                      :args `((buffer . ,buffer-name) (pos . ,pos))
+                      :when-offline "drop"))
+     ((jetpacs-org--checkbox-at pos)
+      (jetpacs-action "org.checkbox.toggle"
+                      :args `((buffer . ,buffer-name) (pos . ,pos)))))))
 
 (defun jetpacs-org-render (buffer)
   "Tier-1 render skin for org BUFFER: the Tier-0 line render, upgraded.
@@ -1540,6 +1567,32 @@ their taps to the footnote dialog via the Tier-0 span-action seam."
                               (jetpacs-button "Close"
                                               (jetpacs-action "dialog.dismiss")
                                               :variant "text")))))))))))))
+
+(jetpacs-defaction "org.checkbox.toggle"
+  ;; Position-addressed like `jetpacs.buffer.fold': the tap carries the
+  ;; buffer and the checkbox's render-time position, and the handler
+  ;; re-verifies the position is still a checkbox before mutating, so a
+  ;; stale surface can never strike arbitrary text.  Statistics cookies
+  ;; ([1/3], [50%]) update through `org-toggle-checkbox' itself; the org
+  ;; query memos drop, a file-backed buffer schedules its idle save, and
+  ;; the showing surface re-pushes.
+  (lambda (args _)
+    (let ((buf (get-buffer (or (alist-get 'buffer args) "")))
+          (pos (alist-get 'pos args)))
+      (if (not (and buf (numberp pos)))
+          (jetpacs-shell-notify "That checkbox is gone — refreshing")
+        (with-current-buffer buf
+          (org-with-wide-buffer
+           (goto-char (min (max (point-min) (truncate pos)) (point-max)))
+           (if (not (jetpacs-org--checkbox-at (point)))
+               (jetpacs-shell-notify "That checkbox moved — refreshing")
+             (org-toggle-checkbox)
+             (jetpacs-org-cache-invalidate)
+             (when (buffer-file-name)
+               (jetpacs-org-defer-save))))))
+      (if (functionp jetpacs-buffer-refresh-function)
+          (funcall jetpacs-buffer-refresh-function)
+        (jetpacs-shell-push)))))
 
 (jetpacs-defaction "org.footnote.show"
   (lambda (args _)

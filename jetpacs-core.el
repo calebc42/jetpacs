@@ -6399,10 +6399,20 @@ symbol branch already inherits via `face-attribute')."
   '(bold semi-bold semibold extra-bold extrabold ultra-bold ultrabold heavy black)
   "Weight symbols treated as bold.")
 
+(defcustom jetpacs-buffer-code-faces
+  '(org-verbatim org-code markdown-inline-code-face markdown-code-face)
+  "Faces whose runs render with the span `code' chrome on the device.
+Face attributes carry no \"this is code\" bit, so inline-code faces are
+named here explicitly; a run styled with any of them gets the client's
+inline-code treatment (monospace on a tinted chip) on top of whatever
+colors the face resolves to."
+  :type '(repeat face) :group 'jetpacs)
+
 (defun jetpacs-buffer--span-style (face)
-  "Return a plist (:bold :italic :underline :strike :color :bg) for FACE.
+  "Return a plist (:bold :italic :underline :strike :code :color :bg) for FACE.
 COLOR/:bg are included only when they resolve and differ from the default
-foreground/background, so ordinary text carries neither.  Returns nil for
+foreground/background, so ordinary text carries neither.  :code is set
+when FACE names a member of `jetpacs-buffer-code-faces'.  Returns nil for
 an unstyled run."
   (condition-case nil
       (let* ((refs (jetpacs-buffer--face-refs face))
@@ -6421,11 +6431,27 @@ an unstyled run."
          (when (memq slant '(italic oblique)) '(:italic t))
          (when underline '(:underline t))
          (when strike '(:strike t))
+         (when (cl-some (lambda (r)
+                          (and (symbolp r) (memq r jetpacs-buffer-code-faces)))
+                        refs)
+           '(:code t))
          (when (and hex (not (equal hex jetpacs-buffer--default-fg-hex)))
            (list :color hex))
          (when (and bghex (not (equal bghex jetpacs-buffer--default-bg-hex)))
            (list :bg bghex))))
     (error nil)))
+
+(defun jetpacs-buffer--raise-baseline (disp)
+  "\"super\"/\"sub\" from a `(raise …)' display spec in DISP, else nil.
+Org's pretty sub/superscripts (and anything else using a raise spec)
+carry their shift here; the span `baseline' attribute reproduces it."
+  (let ((r (cond
+            ((eq (car-safe disp) 'raise) (cadr disp))
+            ((consp disp)
+             (cl-some (lambda (d) (and (eq (car-safe d) 'raise) (cadr d)))
+                      disp)))))
+    (cond ((and (numberp r) (> r 0)) "super")
+          ((and (numberp r) (< r 0)) "sub"))))
 
 ;; ─── Interactivity ─────────────────────────────────────────────────────────
 
@@ -6568,7 +6594,9 @@ magit's \"fringe\" and \"o\" placeholders) render nothing."
                    (t (substring-no-properties str i next))))
              (face (or (get-text-property i 'face str)
                        (get-text-property i 'font-lock-face str)))
-             (style (jetpacs-buffer--span-style face)))
+             (baseline (jetpacs-buffer--raise-baseline disp))
+             (style (append (jetpacs-buffer--span-style face)
+                            (when baseline (list :baseline baseline)))))
         (when raw
           (let ((exp (jetpacs-buffer--expand-tabs raw c)))
             (setq c (cdr exp))
@@ -6628,7 +6656,9 @@ at the start of each actionable property run."
               (let* ((disp (get-char-property pos 'display))
                      (face (or (get-char-property pos 'face)
                                (get-char-property pos 'font-lock-face)))
-                     (style (jetpacs-buffer--span-style face))
+                     (baseline (jetpacs-buffer--raise-baseline disp))
+                     (style (append (jetpacs-buffer--span-style face)
+                                    (when baseline (list :baseline baseline))))
                      (act (when (jetpacs-buffer--actionable-p pos)
                             (jetpacs-action "jetpacs.buffer.act"
                                          :args `((buffer . ,buffer-name)
@@ -13521,12 +13551,14 @@ render."
 ;; This is the core engine for third-party Tier-1 apps (like Glasspane)
 ;; or declarative runtimes (like jetpacs-crud.el) to read and query org data.
 ;;
-;; It also carries the one org-opinionated stock screen: the capture
+;; It also carries the org-opinionated stock surfaces: the capture
 ;; template builder (Settings → Capture Templates), which manages
-;; `org-capture-templates' from the phone — see the "Capture template
-;; management" section at the bottom.  That section is why this module
-;; sits after the shell/settings machinery in the bundle order; the
-;; extraction layer above it stays UI-free.
+;; `org-capture-templates' from the phone, and the Tier-1 org buffer
+;; render skin (dividers, native tables, inline images, LaTeX preview
+;; images over the faithful Tier-0 line render) — see the sections at
+;; the bottom.  Those sections are why this module sits after the
+;; shell/settings machinery in the bundle order; the extraction layer
+;; above them stays UI-free.
 ;;
 ;; The query grammar is interpreted ONCE (`jetpacs-org--matches-p') over a
 ;; pluggable data accessor: `jetpacs-org-entry-matches-p' reads the org
@@ -13540,7 +13572,9 @@ render."
 (require 'org)
 (require 'org-agenda)
 (require 'org-capture)
+(require 'org-element)
 (require 'org-id)
+(require 'org-table)
 (require 'cl-lib)
 (require 'subr-x)
 (require 'jetpacs)
@@ -13548,6 +13582,8 @@ render."
 (require 'jetpacs-surfaces)
 (require 'jetpacs-shell)
 (require 'jetpacs-settings)
+(require 'jetpacs-buffer)     ; the Tier-0 line renderer the org skin rides
+(require 'jetpacs-hypertext)  ; the content-addressed image cache
 
 ;; The vulpea note index is an optional engine (installed app-side or by
 ;; the composer's dependency bootstrap); these are compile-time stubs only.
@@ -14683,6 +14719,300 @@ returns nil, leaving the builder open."
                            :weight 1)
               (jetpacs-icon "chevron_right")))
        :on-tap (jetpacs-action "org.templates.show" :when-offline "drop"))))
+
+;; ─── Org buffer render skin (Tier 1) ──────────────────────────────────────────
+;;
+;; The org analogue of the shr substrate: a Tier-1 skin registered for
+;; org-mode buffers.  Deliberately flat and unopinionated — the body IS
+;; the Tier-0 faithful line render (faces, folding affordances, tappable
+;; links, line numbers, the line cap), and only elements that have a
+;; native SDUI node are upgraded in place:
+;;
+;;   -----                → a real divider
+;;   | org | tables |     → the native table node (header rows and rules
+;;                          kept; table.el tables and #+TBLFM stay text)
+;;   [[file:img.png]]     → an image node, for paragraphs that are just
+;;                          one image link (http(s) images too — the
+;;                          device fetches those itself)
+;;   \begin{…}…\end{…}    → the formula rendered through org's own LaTeX
+;;                          preview toolchain and shipped as an image
+;;   #+CAPTION: …         → a caption line under its upgraded element
+;;
+;; Everything else — footnotes, citations, inline math, drawers, list
+;; markers, src blocks — renders exactly as the user's font-lock shows
+;; it.  If anything in the upgrade pass fails, the buffer falls back to
+;; the pure Tier-0 render: this skin can subtract nothing.
+
+(defcustom jetpacs-org-render-latex-images t
+  "When non-nil, org LaTeX environments render as preview images.
+Uses org's own preview pipeline (`org-preview-latex-default-process',
+`org-format-latex-options' — scale and colors included), so what the
+phone shows is what \\[org-latex-preview] would show.  With no TeX
+toolchain installed the environment silently stays styled text."
+  :type 'boolean :group 'jetpacs)
+
+(defvar jetpacs-org--latex-memo (make-hash-table :test 'equal)
+  "FRAGMENT|PROCESS -> (PATH . WIDTH-PX) memo for rendered formulas.
+`fail' marks a fragment whose render errored, so a missing toolchain
+costs one attempt per formula per session, not one per push.")
+
+(defun jetpacs-org--png-size (data)
+  "(WIDTH . HEIGHT) in pixels from PNG DATA (a unibyte string), or nil."
+  (when (and (stringp data) (> (length data) 24)
+             (string-prefix-p "\x89PNG" data))
+    (cl-flet ((u32 (o) (+ (* (aref data o) 16777216)
+                          (* (aref data (+ o 1)) 65536)
+                          (* (aref data (+ o 2)) 256)
+                          (aref data (+ o 3)))))
+      (cons (u32 16) (u32 20)))))
+
+(defun jetpacs-org--svg-width (data)
+  "Approximate device width for SVG DATA from its width=\"…pt\" attribute.
+1.94 px/pt matches the 140 dpi org renders headless PNGs at, so both
+output formats land at a consistent size."
+  (when (and (stringp data)
+             (string-match "width=[\"']\\([0-9.]+\\)pt[\"']" data))
+    (round (* 1.94 (string-to-number (match-string 1 data))))))
+
+(defun jetpacs-org--latex-safe-options ()
+  "`org-format-latex-options', with colors a headless Emacs can resolve.
+org's preview pipeline resolves the symbol `default' through the
+default face, whose colors are \"unspecified\" in a batch or daemon
+session; `color-values' then returns nil and the render dies on a
+format error.  Substitute concrete values only in that case — an
+explicit user color (hex or named, both resolve everywhere) is
+honored untouched."
+  (let ((opts (copy-sequence org-format-latex-options)))
+    (cl-flet ((unresolvable-p (c) (not (and (stringp c) (color-values c)))))
+      (when (and (eq (plist-get opts :foreground) 'default)
+                 (unresolvable-p (face-attribute 'default :foreground nil)))
+        (setq opts (plist-put opts :foreground "Black")))
+      (when (and (eq (plist-get opts :background) 'default)
+                 (unresolvable-p (face-attribute 'default :background nil)))
+        (setq opts (plist-put opts :background "Transparent"))))
+    opts))
+
+(defun jetpacs-org--latex-image (fragment)
+  "Render LaTeX FRAGMENT via org's preview toolchain; (URL . WIDTH-PX) or nil.
+The image lands in the hypertext content cache (write-once, swept by
+size), and the result is memoised per session — including failures, so
+a machine without LaTeX doesn't re-run a doomed compile on every push.
+WIDTH-PX is the pixel width for PNG output (nil for SVG)."
+  (when (and jetpacs-org-render-latex-images
+             (fboundp 'org-create-formula-image))
+    (let* ((key (format "%s|%s|%S" fragment
+                        org-preview-latex-default-process
+                        org-format-latex-options))
+           (hit (gethash key jetpacs-org--latex-memo)))
+      (cond
+       ((eq hit 'fail) nil)
+       ((and (consp hit) (file-readable-p (car hit)))
+        (cons (concat "file://" (car hit)) (cdr hit)))
+       (t
+        (let ((result
+               (condition-case nil
+                   (with-timeout (15)
+                     (let* ((process org-preview-latex-default-process)
+                            (ext (or (plist-get
+                                      (cdr (assq process
+                                                 org-preview-latex-process-alist))
+                                      :image-output-type)
+                                     "png"))
+                            (tmp (make-temp-file "jetpacs-latex" nil
+                                                 (concat "." ext))))
+                       (unwind-protect
+                           (progn
+                             (org-create-formula-image
+                              fragment tmp (jetpacs-org--latex-safe-options)
+                              (current-buffer) process)
+                             (let* ((data (with-temp-buffer
+                                            (set-buffer-multibyte nil)
+                                            (insert-file-contents-literally tmp)
+                                            (buffer-string)))
+                                    (path (and (> (length data) 0)
+                                               (jetpacs-hypertext--image-cache-put
+                                                data (intern ext)))))
+                               (and path
+                                    (cons path
+                                          (or (car (jetpacs-org--png-size data))
+                                              (jetpacs-org--svg-width data))))))
+                         (ignore-errors (delete-file tmp)))))
+                 (error nil))))
+          (puthash key (or result 'fail) jetpacs-org--latex-memo)
+          (when result
+            (cons (concat "file://" (car result)) (cdr result)))))))))
+
+(defun jetpacs-org--latex-node (el)
+  "An image node for latex-environment EL, or nil when it can't render.
+The rendered width ships as dp (px≈dp matches the 140 dpi render to
+the phone's text size) so a small formula doesn't stretch to fill the
+screen, capped at 340dp so a full-line environment (equation numbers
+push the bounding box to the text width) still fits a phone."
+  (when-let ((img (jetpacs-org--latex-image
+                   (org-element-property :value el))))
+    (jetpacs-image (car img)
+                   :width (and (cdr img) (min (cdr img) 340))
+                   :content-description "LaTeX formula")))
+
+(defun jetpacs-org--visual-end (el)
+  "EL's end position excluding trailing blank lines.
+Tier 0 keeps blank lines' vertical space, so an upgrade must not
+swallow the blanks org-element folds into an element's :end."
+  (save-excursion
+    (goto-char (org-element-property :end el))
+    (skip-chars-backward " \t\n")
+    (min (point-max) (line-beginning-position 2))))
+
+(defun jetpacs-org--element-caption (el)
+  "The raw #+CAPTION text from EL's affiliated keyword lines, or nil."
+  (when (org-element-property :caption el)
+    (save-excursion
+      (goto-char (org-element-property :begin el))
+      (let ((case-fold-search t))
+        (when (re-search-forward
+               "^[ \t]*#\\+caption\\(?:\\[.*?\\]\\)?:[ \t]*\\(.*\\)$"
+               (org-element-property :post-affiliated el) t)
+          (let ((cap (string-trim (match-string-no-properties 1))))
+            (unless (string-empty-p cap) cap)))))))
+
+(defun jetpacs-org--table-node (el)
+  "A native table node for org table element EL, or nil for table.el syntax.
+Rows come from `org-table-to-lisp'; hlines become rules, and the rows
+above the first hline render as the header group (org's own header
+convention).  The #+TBLFM line sits outside :contents-end and stays
+Tier-0 text."
+  (when (eq (org-element-property :type el) 'org)
+    (let* ((lisp (org-table-to-lisp
+                  (buffer-substring-no-properties
+                   (org-element-property :contents-begin el)
+                   (org-element-property :contents-end el))))
+           (has-header (and (memq 'hline lisp)
+                            (not (eq (car lisp) 'hline))))
+           (seen-hline nil))
+      (when lisp
+        (jetpacs-table
+         (mapcar (lambda (row)
+                   (if (eq row 'hline)
+                       (progn (setq seen-hline t) (jetpacs-table-rule))
+                     (jetpacs-table-row
+                      (mapcar (lambda (cell)
+                                (jetpacs-table-cell (list (jetpacs-span cell))))
+                              row)
+                      :header (and has-header (not seen-hline)))))
+                 lisp))))))
+
+(defconst jetpacs-org--image-link-line-re
+  (concat "[ \t]*\\[\\[\\(?:file:\\)?\\([^][]+\\."
+          "\\(?:png\\|jpe?g\\|gif\\|webp\\|svg\\|bmp\\)\\)\\]"
+          "\\(?:\\[\\([^][]*\\)\\]\\)?\\][ \t]*$")
+  "A line that is exactly one image link, description optional.")
+
+(defun jetpacs-org--image-node (el)
+  "An image node when paragraph EL is a single standalone image link.
+Local paths must be readable (relative ones resolve against the
+buffer's file); http(s) URLs pass through — the device fetches those
+itself.  Anything else returns nil and the paragraph stays text."
+  (save-excursion
+    (goto-char (org-element-property :post-affiliated el))
+    (when (and (looking-at jetpacs-org--image-link-line-re)
+               ;; The link line must BE the whole paragraph.
+               (>= (line-beginning-position 2) (jetpacs-org--visual-end el)))
+      (let* ((path (match-string-no-properties 1))
+             (desc (match-string-no-properties 2))
+             (url (cond
+                   ((string-match-p "\\`https?://" path) path)
+                   (t (let ((abs (expand-file-name
+                                  path
+                                  (if buffer-file-name
+                                      (file-name-directory buffer-file-name)
+                                    default-directory))))
+                        (and (file-readable-p abs)
+                             (concat "file://" abs)))))))
+        (when url
+          (jetpacs-image url
+                         :content-description
+                         (or (and desc (not (string-empty-p desc)) desc)
+                             (file-name-nondirectory path))))))))
+
+(defun jetpacs-org--upgrades ()
+  "Upgrade blocks for the current org buffer: a sorted (BEG END NODES) list.
+Each block replaces [BEG, END) of the Tier-0 line render with native
+NODES.  Elements inside folded (invisible) regions are left alone —
+Tier 0 already drops them, and upgrading would leak hidden content."
+  (let (out)
+    (org-element-map (org-element-parse-buffer 'element)
+        '(horizontal-rule table latex-environment paragraph)
+      (lambda (el)
+        (let ((beg (org-element-property :begin el)))
+          (unless (let ((iv (get-char-property beg 'invisible)))
+                    (and iv (invisible-p iv)))
+            (pcase-let
+                ((`(,node . ,end)
+                  (pcase (org-element-type el)
+                    ('horizontal-rule
+                     (cons (jetpacs-divider) (jetpacs-org--visual-end el)))
+                    ('table
+                     (when-let ((n (jetpacs-org--table-node el)))
+                       (cons n (org-element-property :contents-end el))))
+                    ('latex-environment
+                     (when-let ((n (jetpacs-org--latex-node el)))
+                       (cons n (jetpacs-org--visual-end el))))
+                    ('paragraph
+                     (when-let ((n (jetpacs-org--image-node el)))
+                       (cons n (jetpacs-org--visual-end el)))))))
+              (when node
+                (let ((caption (jetpacs-org--element-caption el)))
+                  ;; With a caption the affiliated lines fold into the
+                  ;; upgrade (the caption re-emerges under the node);
+                  ;; without one they stay Tier-0 meta text.
+                  (push (list (if caption
+                                  beg
+                                (org-element-property :post-affiliated el))
+                              end
+                              (delq nil
+                                    (list node
+                                          (when caption
+                                            (jetpacs-text caption 'caption)))))
+                        out))))))))
+    (sort (nreverse out) (lambda (a b) (< (car a) (car b))))))
+
+(defun jetpacs-org-render (buffer)
+  "Tier-1 render skin for org BUFFER: the Tier-0 line render, upgraded.
+See the section comment above for exactly what upgrades; everything
+else is the untouched Tier-0 output, and any error in the upgrade scan
+degrades to the pure Tier-0 render."
+  (with-current-buffer buffer
+    (let* ((name (buffer-name))
+           (upgrades (condition-case nil
+                         (jetpacs-org--upgrades)
+                       (error nil)))
+           (budget jetpacs-buffer-max-lines)
+           (pos (point-min))
+           out)
+      (dolist (up upgrades)
+        (pcase-let ((`(,beg ,end ,nodes) up))
+          (when (and (> budget 0) (>= beg pos))
+            (when (> beg pos)
+              (let* ((jetpacs-buffer-max-lines budget)
+                     (chunk (jetpacs-buffer-render-region name pos beg)))
+                (setq out (nconc out chunk)
+                      budget (- budget (length chunk)))))
+            (when (> budget 0)
+              (setq out (nconc out nodes)
+                    budget (- budget (length nodes))))
+            (setq pos end))))
+      (when (and (> budget 0) (< pos (point-max)))
+        (let ((jetpacs-buffer-max-lines budget))
+          (setq out (nconc out (jetpacs-buffer-render-region
+                                name pos (point-max))))))
+      (when (<= budget 0)
+        (setq out (nconc out (list (jetpacs-text
+                                    (format "… truncated at %d lines"
+                                            jetpacs-buffer-max-lines)
+                                    'caption)))))
+      out)))
+
+(jetpacs-render-buffer-register 'org-mode #'jetpacs-org-render)
 
 (provide 'jetpacs-org)
 ;;; jetpacs-org.el ends here

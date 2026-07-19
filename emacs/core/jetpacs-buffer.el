@@ -126,10 +126,20 @@ symbol branch already inherits via `face-attribute')."
   '(bold semi-bold semibold extra-bold extrabold ultra-bold ultrabold heavy black)
   "Weight symbols treated as bold.")
 
+(defcustom jetpacs-buffer-code-faces
+  '(org-verbatim org-code markdown-inline-code-face markdown-code-face)
+  "Faces whose runs render with the span `code' chrome on the device.
+Face attributes carry no \"this is code\" bit, so inline-code faces are
+named here explicitly; a run styled with any of them gets the client's
+inline-code treatment (monospace on a tinted chip) on top of whatever
+colors the face resolves to."
+  :type '(repeat face) :group 'jetpacs)
+
 (defun jetpacs-buffer--span-style (face)
-  "Return a plist (:bold :italic :underline :strike :color :bg) for FACE.
+  "Return a plist (:bold :italic :underline :strike :code :color :bg) for FACE.
 COLOR/:bg are included only when they resolve and differ from the default
-foreground/background, so ordinary text carries neither.  Returns nil for
+foreground/background, so ordinary text carries neither.  :code is set
+when FACE names a member of `jetpacs-buffer-code-faces'.  Returns nil for
 an unstyled run."
   (condition-case nil
       (let* ((refs (jetpacs-buffer--face-refs face))
@@ -148,11 +158,27 @@ an unstyled run."
          (when (memq slant '(italic oblique)) '(:italic t))
          (when underline '(:underline t))
          (when strike '(:strike t))
+         (when (cl-some (lambda (r)
+                          (and (symbolp r) (memq r jetpacs-buffer-code-faces)))
+                        refs)
+           '(:code t))
          (when (and hex (not (equal hex jetpacs-buffer--default-fg-hex)))
            (list :color hex))
          (when (and bghex (not (equal bghex jetpacs-buffer--default-bg-hex)))
            (list :bg bghex))))
     (error nil)))
+
+(defun jetpacs-buffer--raise-baseline (disp)
+  "\"super\"/\"sub\" from a `(raise …)' display spec in DISP, else nil.
+Org's pretty sub/superscripts (and anything else using a raise spec)
+carry their shift here; the span `baseline' attribute reproduces it."
+  (let ((r (cond
+            ((eq (car-safe disp) 'raise) (cadr disp))
+            ((consp disp)
+             (cl-some (lambda (d) (and (eq (car-safe d) 'raise) (cadr d)))
+                      disp)))))
+    (cond ((and (numberp r) (> r 0)) "super")
+          ((and (numberp r) (< r 0)) "sub"))))
 
 ;; ─── Interactivity ─────────────────────────────────────────────────────────
 
@@ -295,7 +321,9 @@ magit's \"fringe\" and \"o\" placeholders) render nothing."
                    (t (substring-no-properties str i next))))
              (face (or (get-text-property i 'face str)
                        (get-text-property i 'font-lock-face str)))
-             (style (jetpacs-buffer--span-style face)))
+             (baseline (jetpacs-buffer--raise-baseline disp))
+             (style (append (jetpacs-buffer--span-style face)
+                            (when baseline (list :baseline baseline)))))
         (when raw
           (let ((exp (jetpacs-buffer--expand-tabs raw c)))
             (setq c (cdr exp))
@@ -355,7 +383,9 @@ at the start of each actionable property run."
               (let* ((disp (get-char-property pos 'display))
                      (face (or (get-char-property pos 'face)
                                (get-char-property pos 'font-lock-face)))
-                     (style (jetpacs-buffer--span-style face))
+                     (baseline (jetpacs-buffer--raise-baseline disp))
+                     (style (append (jetpacs-buffer--span-style face)
+                                    (when baseline (list :baseline baseline))))
                      (act (when (jetpacs-buffer--actionable-p pos)
                             (jetpacs-action "jetpacs.buffer.act"
                                          :args `((buffer . ,buffer-name)

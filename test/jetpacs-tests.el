@@ -6855,5 +6855,126 @@ persistence/push/notify (the last notify lands in `notified')."
         (should (string-search "org.templates.delete" json))
         (should (string-search "org.templates.new" json))))))
 
+;; ─── Org buffer render skin ──────────────────────────────────────────────────
+
+(defun jetpacs-tests--org-render-json (buffer)
+  "Render org BUFFER through the Tier-1 skin; canonical JSON of the nodes."
+  (json-serialize (jetpacs-tests--canon
+                   (apply #'jetpacs-column (jetpacs-org-render buffer)))
+                  :null-object :null :false-object :false))
+
+(ert-deftest jetpacs-buffer-code-and-baseline-spans ()
+  "Inline-code faces emit the span code chrome; raise display specs emit
+baseline shifts.  Both are Tier-0 span fixes, face/display-driven."
+  (should (memq :code (jetpacs-buffer--span-style 'org-verbatim)))
+  (should (memq :code (jetpacs-buffer--span-style '(org-code default))))
+  (should-not (memq :code (jetpacs-buffer--span-style 'bold)))
+  (should (equal "super" (jetpacs-buffer--raise-baseline '(raise 0.3))))
+  (should (equal "sub" (jetpacs-buffer--raise-baseline
+                        '((raise -0.25) (height 0.8)))))
+  (should-not (jetpacs-buffer--raise-baseline '(height 0.8)))
+  ;; End to end through the line renderer.
+  (with-temp-buffer
+    (insert "plain code sup\n")
+    (put-text-property 7 11 'face 'org-verbatim)
+    (put-text-property 12 15 'display '(raise 0.4))
+    (let ((json (json-serialize
+                 (jetpacs-tests--canon
+                  (apply #'jetpacs-column
+                         (jetpacs-buffer--render-region
+                          (point-min) (point-max) (buffer-name)))))))
+      (should (string-search "\"code\":true" json))
+      (should (string-search "\"baseline\":\"super\"" json)))))
+
+(ert-deftest jetpacs-org-render-upgrades ()
+  "The org skin upgrades hrules, tables (+caption), and standalone image
+links in place, and leaves everything else as Tier-0 text."
+  (let ((png (make-temp-file "jetpacs-chart" nil ".png" "fake-png-bytes")))
+    (unwind-protect
+        (jetpacs-tests--with-org-file buf
+            (concat "* Heading\n"
+                    "Some body text.\n"
+                    "\n"
+                    "-----\n"
+                    "\n"
+                    "#+NAME: tbl\n"
+                    "#+CAPTION: Quarterly numbers\n"
+                    "| Name | Qty |\n"
+                    "|------+-----|\n"
+                    "| Foo  | 42  |\n"
+                    "#+TBLFM: $2=42\n"
+                    "\n"
+                    "[[file:" png "][The chart]]\n"
+                    "\n"
+                    "Inline [[file:missing-inline.png]] stays text.\n")
+          (let ((json (jetpacs-tests--org-render-json buf)))
+            ;; hrule → divider; the dashes are gone.
+            (should (string-search "\"divider\"" json))
+            (should-not (string-search "-----" json))
+            ;; table → native node with header row, cells, caption below;
+            ;; the raw pipe rows are gone but #+TBLFM stays text.
+            (should (string-search "\"table\"" json))
+            (should (string-search "\"header\":true" json))
+            (should (string-search "Foo" json))
+            (should (string-search "Quarterly numbers" json))
+            (should-not (string-search "#+CAPTION" json))
+            (should-not (string-search "| Foo" json))
+            (should (string-search "TBLFM" json))
+            ;; standalone image link → image node with the description;
+            ;; the inline link's paragraph stays text.
+            (should (string-search (concat "file://" png) json))
+            (should (string-search "The chart" json))
+            (should (string-search "stays text" json))
+            ;; ordinary text and the heading are untouched Tier-0 output.
+            (should (string-search "Some body text." json))
+            (should (string-search "Heading" json)))
+          ;; The whole upgraded surface lints clean.
+          (should-not (jetpacs-lint-spec
+                       (apply #'jetpacs-column (jetpacs-org-render buf)))))
+      (ignore-errors (delete-file png)))))
+
+(ert-deftest jetpacs-org-render-latex-environment ()
+  "LaTeX environments become images when the toolchain renders; a failed
+render leaves the environment as styled text; failures are memoised."
+  (jetpacs-tests--with-org-file buf
+      "Before.\n\\begin{equation}\nx^2\n\\end{equation}\nAfter.\n"
+    ;; Toolchain present: the environment is replaced by its image.
+    (cl-letf (((symbol-function 'jetpacs-org--latex-image)
+               (lambda (_frag) (cons "file://formula.png" 120))))
+      (let ((json (jetpacs-tests--org-render-json buf)))
+        (should (string-search "file://formula.png" json))
+        (should (string-search "\"width\":120" json))
+        (should-not (string-search "begin{equation}" json))
+        (should (string-search "Before." json))
+        (should (string-search "After." json))))
+    ;; No toolchain: the environment stays visible as text.
+    (cl-letf (((symbol-function 'jetpacs-org--latex-image)
+               (lambda (_frag) nil)))
+      (should (string-search "begin{equation}"
+                             (jetpacs-tests--org-render-json buf)))))
+  ;; A failing compile is memoised as `fail' — one attempt per session.
+  (let ((jetpacs-org--latex-memo (make-hash-table :test 'equal))
+        (jetpacs-org-render-latex-images t)
+        (calls 0))
+    (cl-letf (((symbol-function 'org-create-formula-image)
+               (lambda (&rest _) (cl-incf calls) (error "no latex"))))
+      (with-temp-buffer
+        (should-not (jetpacs-org--latex-image "\\begin{x}\\end{x}"))
+        (should-not (jetpacs-org--latex-image "\\begin{x}\\end{x}"))
+        (should (= 1 calls))))))
+
+(ert-deftest jetpacs-org-render-registered-and-safe ()
+  "org-mode dispatches through the skin, and a broken upgrade scan
+degrades to the pure Tier-0 render instead of failing the push."
+  (should (eq (alist-get 'org-mode jetpacs-render-buffer-functions)
+              #'jetpacs-org-render))
+  (jetpacs-tests--with-org-file buf "* H\nBody.\n-----\n"
+    (cl-letf (((symbol-function 'jetpacs-org--upgrades)
+               (lambda () (error "scan broke"))))
+      (let ((json (jetpacs-tests--org-render-json buf)))
+        ;; Tier-0 fallback: the hrule stays literal text, content survives.
+        (should (string-search "-----" json))
+        (should (string-search "Body." json))))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

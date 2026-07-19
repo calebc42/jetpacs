@@ -113,6 +113,11 @@ editor."
      (list (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
            (jetpacs-toolbar-item "schedule" "Sched" :command "org-schedule")))
    (list
+    ;; Undo/redo on the live buffer — fat-finger recovery on a phone.
+    ;; `undo-only'/`undo-redo' are the direction-stable pair (unlike bare
+    ;; `undo', which flips direction on repeat), so each tap moves one way.
+    (jetpacs-toolbar-item "undo" "Undo" :command "undo-only")
+    (jetpacs-toolbar-item "redo" "Redo" :command "undo-redo")
     (jetpacs-toolbar-item "notes" "Fill" :command "fill-paragraph")
     (jetpacs-toolbar-item "code" ";;" :command "comment-dwim")
     (jetpacs-toolbar-item "bolt" "M-x" :command ""))))

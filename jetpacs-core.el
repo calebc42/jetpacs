@@ -15068,11 +15068,12 @@ item's text — counts."
 
 (defun jetpacs-org--span-action (pos buffer-name)
   "Span tap routing for the org skin.
-Footnote references open their dialog; item checkboxes toggle (queued
-offline, like every other mutation).  Everything else returns nil and
+Footnote references open their dialog; item checkboxes toggle; tapping a
+heading (but not a link inside it) opens the header action sheet — the
+organice-style tap-a-header affordance.  Everything else returns nil and
 keeps the generic Tier-0 behavior (links still open through
-`jetpacs.buffer.act').  Cheap pre-filters guard both checks, so
-ordinary runs pay regexp cost at most."
+`jetpacs.buffer.act').  Cheap pre-filters guard each check, so ordinary
+runs pay regexp cost at most."
   (save-excursion
     (goto-char pos)
     (cond
@@ -15083,7 +15084,13 @@ ordinary runs pay regexp cost at most."
                       :when-offline "drop"))
      ((jetpacs-org--checkbox-at pos)
       (jetpacs-action "org.checkbox.toggle"
-                      :args `((buffer . ,buffer-name) (pos . ,pos)))))))
+                      :args `((buffer . ,buffer-name) (pos . ,pos))))
+     ((and (org-at-heading-p)
+           ;; A link in the headline keeps its own tap (org-open-at-point).
+           (not (org-in-regexp org-link-any-re)))
+      (jetpacs-action "org.header.actions"
+                      :args `((buffer . ,buffer-name) (pos . ,pos))
+                      :when-offline "drop")))))
 
 (defun jetpacs-org-render (buffer)
   "Tier-1 render skin for org BUFFER: the Tier-0 line render, upgraded.
@@ -15121,6 +15128,16 @@ their taps to the footnote dialog via the Tier-0 span-action seam."
                                     (format "… truncated at %d lines"
                                             jetpacs-buffer-max-lines)
                                     'caption)))))
+      ;; A narrowed buffer (the header sheet's "Narrow to subtree") shows
+      ;; only the subtree; prepend a widen affordance so the focus is
+      ;; reversible without leaving the view.
+      (when (buffer-narrowed-p)
+        (setq out (cons (jetpacs-button "⤢ Widen"
+                                        (jetpacs-action "org.header.widen"
+                                                        :args `((buffer . ,name))
+                                                        :when-offline "drop")
+                                        :variant "tonal")
+                        out)))
       out)))
 
 (jetpacs-render-buffer-register 'org-mode #'jetpacs-org-render)
@@ -15444,6 +15461,374 @@ whole card opens the file in the editor."
                                         (file-name-nondirectory file)))
         (jetpacs-shell-notify "That file isn't editable from the phone")))))
 
+;; ─── Header action sheet + narrow/widen (organice-style) ──────────────────────
+;;
+;; Tapping a heading in the rendered org buffer opens a bottom sheet of
+;; actions for that heading — the discoverable counterpart to the swipe
+;; reveal.  Every action rides an existing `jetpacs-org' mutation helper and
+;; addresses the heading by its ref (id/pos/headline), so it survives edits
+;; between render and tap.  Schedule/Deadline hand off to the timestamp
+;; editor below.
+
+(defun jetpacs-org--header-ref-at (buffer-name pos)
+  "The heading ref at POS in BUFFER-NAME, or nil if POS isn't on a heading."
+  (let ((buf (get-buffer (or buffer-name ""))))
+    (when (and buf (numberp pos))
+      (with-current-buffer buf
+        (org-with-wide-buffer
+         (goto-char (min (max (point-min) (truncate pos)) (point-max)))
+         (when (ignore-errors (org-back-to-heading t) t)
+           (jetpacs-org-heading-ref)))))))
+
+(defun jetpacs-org--sheet-item (icon label action)
+  "A tappable row for the header action sheet."
+  (jetpacs-list-item :leading (jetpacs-icon icon) :title label :on-tap action))
+
+(defun jetpacs-org--header-sheet (ref)
+  "The bottom-sheet spec of actions for heading REF."
+  (jetpacs-column
+   (jetpacs-text (or (alist-get 'headline ref) "Heading") 'title)
+   (jetpacs-org--sheet-item
+    "radio_button_checked" "Cycle TODO"
+    (jetpacs-action "org.header.todo" :args ref :when-offline "queue"))
+   (jetpacs-org--sheet-item
+    "schedule" "Schedule…"
+    (jetpacs-action "org.header.plan"
+                    :args (append ref '((which . "SCHEDULED"))) :when-offline "drop"))
+   (jetpacs-org--sheet-item
+    "event" "Deadline…"
+    (jetpacs-action "org.header.plan"
+                    :args (append ref '((which . "DEADLINE"))) :when-offline "drop"))
+   (jetpacs-org--sheet-item
+    "unfold_less" "Narrow to subtree"
+    (jetpacs-action "org.header.narrow" :args ref :when-offline "drop"))
+   (jetpacs-org--sheet-item
+    "content_copy" "Duplicate"
+    (jetpacs-action "org.header.duplicate" :args ref :when-offline "queue"))
+   (jetpacs-org--sheet-item
+    "archive" "Archive"
+    (jetpacs-action "org.header.archive" :args ref :when-offline "queue"))
+   (jetpacs-button "Cancel" (jetpacs-action "dialog.dismiss") :variant "text")))
+
+(defmacro jetpacs-org--header-mutation (args &rest body)
+  "Run BODY at the heading resolved from ARGS, dismiss the sheet, re-push.
+Errors land in a snackbar; the sheet is always dismissed."
+  (declare (indent 1))
+  `(progn
+     (jetpacs-dismiss-dialog)
+     (condition-case err
+         (let ((marker (jetpacs-org-resolve-ref ,args)))
+           (with-current-buffer (marker-buffer marker)
+             (org-with-wide-buffer
+              (goto-char marker)
+              ,@body
+              (jetpacs-org-cache-invalidate)
+              (when (buffer-file-name) (jetpacs-org-defer-save)))))
+       (error (jetpacs-shell-notify (error-message-string err))))
+     (jetpacs-shell-push)))
+
+(progn
+  (jetpacs-defaction "org.header.actions"
+    (lambda (args _)
+      (let ((ref (jetpacs-org--header-ref-at (alist-get 'buffer args)
+                                             (alist-get 'pos args))))
+        (if ref
+            (jetpacs-send-dialog (jetpacs-org--header-sheet ref) "sheet")
+          (jetpacs-shell-notify "No heading there")
+          (jetpacs-shell-push)))))
+
+  (jetpacs-defaction "org.header.todo"
+    (lambda (args _)
+      ;; `org-todo' logs via post-command-hook, which never fires in the
+      ;; socket filter — reuse the flush already in toggle-todo instead of a
+      ;; raw org-todo in the mutation macro.
+      (jetpacs-dismiss-dialog)
+      (condition-case err (jetpacs-org-toggle-todo args 'org nil)
+        (error (jetpacs-shell-notify (error-message-string err))))
+      (jetpacs-shell-push)))
+
+  (jetpacs-defaction "org.header.narrow"
+    ;; NOT via `jetpacs-org--header-mutation': its `org-with-wide-buffer'
+    ;; restores the prior restriction and would immediately undo the narrow.
+    ;; Widen persistently, move to the heading, then narrow to its subtree.
+    (lambda (args _)
+      (jetpacs-dismiss-dialog)
+      (condition-case err
+          (let ((marker (jetpacs-org-resolve-ref args)))
+            (with-current-buffer (marker-buffer marker)
+              (widen)
+              (goto-char marker)
+              (org-narrow-to-subtree)))
+        (error (jetpacs-shell-notify (error-message-string err))))
+      (jetpacs-shell-push)))
+
+  (jetpacs-defaction "org.header.widen"
+    (lambda (args _)
+      (let ((buf (get-buffer (or (alist-get 'buffer args) ""))))
+        (when buf (with-current-buffer buf (widen))))
+      (jetpacs-shell-push)))
+
+  (jetpacs-defaction "org.header.duplicate"
+    (lambda (args _)
+      (jetpacs-org--header-mutation args
+        (org-back-to-heading t)
+        (let* ((beg (point))
+               (end (save-excursion (org-end-of-subtree t t) (point)))
+               (text (buffer-substring-no-properties beg end)))
+          (goto-char end)
+          (unless (bolp) (insert "\n"))
+          (let ((copy-beg (point)))
+            (insert text)
+            ;; Strip :ID:s from the copy so it doesn't share org-id identity
+            ;; with the original (a duplicated ID breaks `org-id-find').
+            (save-restriction
+              (narrow-to-region copy-beg (point))
+              (org-map-entries
+               (lambda () (org-entry-delete (point) "ID")))))))))
+
+  (jetpacs-defaction "org.header.archive"
+    (lambda (args _)
+      (jetpacs-org--header-mutation args
+        (org-back-to-heading t)
+        (org-archive-subtree)))))
+
+;; ─── Repeater / delay timestamp editor ────────────────────────────────────────
+;;
+;; A live editor (gated satellite view, like the capture-template builder) for
+;; an org planning stamp: date + time via the native pickers, plus repeaters
+;; (+/++/.+) and delays (-/--) that `org-add-planning-info' silently drops.
+;; The write is two-step — set the date through org, then inject the
+;; repeater/delay cookie into the written stamp — the one path that survives
+;; (verified: `org-get-repeat' reads it back).
+
+(defvar jetpacs-org--ts-ref nil
+  "The heading ref whose planning stamp the timestamp editor is editing.")
+
+(defvar jetpacs-org--ts-which nil
+  "\"SCHEDULED\" or \"DEADLINE\" — which stamp the timestamp editor edits.")
+
+(defun jetpacs-org--ts-seed (stamp)
+  "Seed the ts-* editor state from planning STAMP (with brackets), or defaults.
+An absent/unparseable stamp seeds today's date and empty repeater/delay."
+  (jetpacs-ui-state-clear "ts-")
+  (jetpacs-ui-state-put "ts-rep-type" "none")
+  (jetpacs-ui-state-put "ts-rep-unit" "d")
+  (jetpacs-ui-state-put "ts-delay-type" "none")
+  (jetpacs-ui-state-put "ts-delay-unit" "d")
+  (jetpacs-ui-state-put "ts-date" (format-time-string "%Y-%m-%d"))
+  (when (and (stringp stamp)
+             (string-match "\\`[<[]\\(.*\\)[]>]\\'" stamp))
+    (let ((inner (match-string 1 stamp)))
+      (when (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" inner)
+        (jetpacs-ui-state-put "ts-date" (match-string 1 inner)))
+      (when (string-match "\\([0-9]\\{1,2\\}:[0-9]\\{2\\}\\)" inner)
+        (jetpacs-ui-state-put "ts-time" (match-string 1 inner)))
+      ;; Repeater: `.+' / `++' / `+' then N then unit (order matters).
+      (when (string-match "\\(\\.\\+\\|\\+\\+\\|\\+\\)\\([0-9]+\\)\\([dwmy]\\)" inner)
+        (jetpacs-ui-state-put "ts-rep-type" (match-string 1 inner))
+        (jetpacs-ui-state-put "ts-rep-value" (match-string 2 inner))
+        (jetpacs-ui-state-put "ts-rep-unit" (match-string 3 inner)))
+      ;; Delay: `--' / `-' then N then unit (the date's own hyphens never
+      ;; match — they aren't followed by a d/w/m/y unit).
+      (when (string-match "\\(--\\|-\\)\\([0-9]+\\)\\([dwmy]\\)" inner)
+        (jetpacs-ui-state-put "ts-delay-type" (match-string 1 inner))
+        (jetpacs-ui-state-put "ts-delay-value" (match-string 2 inner))
+        (jetpacs-ui-state-put "ts-delay-unit" (match-string 3 inner))))))
+
+(defun jetpacs-org--ts-datetime ()
+  "The \"YYYY-MM-DD [HH:MM]\" part from ts-* state, or nil without a date."
+  (let ((date (car (jetpacs-ui-state-list "ts-date")))
+        (time (car (jetpacs-ui-state-list "ts-time"))))
+    (and (stringp date) (not (string-empty-p date))
+         (concat date (and (stringp time) (not (string-empty-p time))
+                           (concat " " time))))))
+
+(defun jetpacs-org--ts-cookie ()
+  "The repeater/delay suffix (e.g. \".+2d -1d\") from ts-* state, or \"\"."
+  (let ((rt (car (jetpacs-ui-state-list "ts-rep-type")))
+        (rv (jetpacs-ui-state "ts-rep-value"))
+        (ru (or (car (jetpacs-ui-state-list "ts-rep-unit")) "d"))
+        (dt (car (jetpacs-ui-state-list "ts-delay-type")))
+        (dv (jetpacs-ui-state "ts-delay-value"))
+        (du (or (car (jetpacs-ui-state-list "ts-delay-unit")) "d"))
+        parts)
+    (when (and rt (not (member rt '("none" "" nil)))
+               (stringp rv) (not (string-empty-p (string-trim rv))))
+      (push (concat rt (string-trim rv) ru) parts))
+    (when (and dt (not (member dt '("none" "" nil)))
+               (stringp dv) (not (string-empty-p (string-trim dv))))
+      (push (concat dt (string-trim dv) du) parts))
+    (string-join (nreverse parts) " ")))
+
+(defun jetpacs-org--ts-preview ()
+  "The composed org stamp for the editor's live preview, or nil."
+  (let ((dt (jetpacs-org--ts-datetime)) (cookie (jetpacs-org--ts-cookie)))
+    (and dt (format "<%s%s>" dt (if (string-empty-p cookie) ""
+                                  (concat " " cookie))))))
+
+(defun jetpacs-org--set-planning-cookie (ref which datetime cookie)
+  "Set WHICH planning at REF to DATETIME plus repeater/delay COOKIE.
+DATETIME is \"YYYY-MM-DD [HH:MM]\"; COOKIE is \".+2d\"-style (may be empty).
+Two-step because `org-add-planning-info' drops the cookie: set the date,
+then inject the cookie into the written stamp bracket."
+  (let ((type (pcase (upcase which)
+                ("SCHEDULED" 'scheduled) ("DEADLINE" 'deadline)
+                (_ (user-error "Bad planning type: %s" which)))))
+    (jetpacs-org-with-mutation ref 'org
+      (org-add-planning-info type datetime)
+      (when (and cookie (not (string-empty-p (string-trim cookie))))
+        (save-excursion
+          (org-back-to-heading t)
+          (let ((end (save-excursion (outline-next-heading) (point))))
+            (when (re-search-forward
+                   (concat (upcase which) ":[ \t]*\\(<[^>]+>\\)") end t)
+              (let ((stamp (match-string 1)))
+                (replace-match (concat (substring stamp 0 -1) " "
+                                       (string-trim cookie) ">")
+                               t t nil 1)))))))))
+
+(defun jetpacs-org--ts-close ()
+  "Leave the timestamp editor, clearing its state; the overlay gate drops."
+  (setq jetpacs-org--ts-ref nil jetpacs-org--ts-which nil)
+  (jetpacs-ui-state-clear "ts-")
+  (jetpacs-shell-push))
+
+(defconst jetpacs-org--ts-rep-labels
+  '(("none" . "None") ("+" . "+ every") ("++" . "++ from today")
+    (".+" . ".+ from done"))
+  "Repeater-type option -> chip label.")
+
+(defun jetpacs-org--ts-body ()
+  "The timestamp editor's live body."
+  (let* ((date (or (car (jetpacs-ui-state-list "ts-date")) ""))
+         (time (or (car (jetpacs-ui-state-list "ts-time")) ""))
+         (rep-type (or (car (jetpacs-ui-state-list "ts-rep-type")) "none"))
+         (rep-val (or (jetpacs-ui-state "ts-rep-value") ""))
+         (rep-unit (or (car (jetpacs-ui-state-list "ts-rep-unit")) "d"))
+         (delay-type (or (car (jetpacs-ui-state-list "ts-delay-type")) "none"))
+         (delay-val (or (jetpacs-ui-state "ts-delay-value") ""))
+         (delay-unit (or (car (jetpacs-ui-state-list "ts-delay-unit")) "d"))
+         (upd (lambda (field) (jetpacs-action "org.timestamp.update"
+                                              :args `((field . ,field))))))
+    (jetpacs-lazy-column
+     (jetpacs-card
+      (list
+       (jetpacs-row
+        (jetpacs-box
+         (list (jetpacs-date-button (if (string-empty-p date) "Pick date" date)
+                                    (funcall upd "date")
+                                    :value (and (not (string-empty-p date)) date)))
+         :weight 1)
+        (jetpacs-time-button (if (string-empty-p time) "Time" time)
+                             (funcall upd "time")
+                             :value (and (not (string-empty-p time)) time))))
+      :padding 16)
+     (jetpacs-collapsible
+      "ts-rep-sec" (jetpacs-text "Repeat" 'body)
+      (list
+       (jetpacs-enum-list "ts-rep-type"
+                          (mapcar #'car jetpacs-org--ts-rep-labels)
+                          :value rep-type :on-change (funcall upd "rep-type"))
+       (jetpacs-row
+        (jetpacs-box (list (jetpacs-text-input "ts-rep-value" :value rep-val
+                                            :label "Every N" :keyboard "number"
+                                            :single-line t
+                                            :on-submit (funcall upd "rep-value")))
+                     :weight 1)
+        (jetpacs-enum-list "ts-rep-unit" '("d" "w" "m" "y")
+                           :value rep-unit :on-change (funcall upd "rep-unit")))
+       (jetpacs-text "+ every N · ++ next from today · .+ next from completion"
+                     'caption))
+      :collapsed (equal rep-type "none"))
+     (jetpacs-collapsible
+      "ts-delay-sec" (jetpacs-text "Delay (warn early)" 'body)
+      (list
+       (jetpacs-enum-list "ts-delay-type" '("none" "-" "--")
+                          :value delay-type :on-change (funcall upd "delay-type"))
+       (jetpacs-row
+        (jetpacs-box (list (jetpacs-text-input "ts-delay-value" :value delay-val
+                                            :label "N" :keyboard "number"
+                                            :single-line t
+                                            :on-submit (funcall upd "delay-value")))
+                     :weight 1)
+        (jetpacs-enum-list "ts-delay-unit" '("d" "w" "m" "y")
+                           :value delay-unit :on-change (funcall upd "delay-unit"))))
+      :collapsed (equal delay-type "none"))
+     (jetpacs-text (concat "Preview: " (or (jetpacs-org--ts-preview) "—")) 'caption)
+     (jetpacs-row
+      (jetpacs-button "Clear" (jetpacs-action "org.timestamp.clear") :variant "text")
+      (jetpacs-spacer :weight 1)
+      (jetpacs-button "Cancel" (jetpacs-action "org.timestamp.cancel") :variant "text")
+      (jetpacs-spacer :width 8)
+      (jetpacs-button "Save" (jetpacs-action "org.timestamp.save"))))))
+
+(defun jetpacs-org--ts-view (snackbar)
+  (jetpacs-shell-nav-view
+   (format "%s timestamp"
+           (capitalize (downcase (or jetpacs-org--ts-which "Set"))))
+   (jetpacs-org--ts-body)
+   :nav-action (jetpacs-action "org.timestamp.cancel")
+   :snackbar snackbar))
+
+(jetpacs-shell-define-view "org-timestamp-edit"
+                           :builder #'jetpacs-org--ts-view
+                           :when (lambda () (and jetpacs-org--ts-ref t))
+                           :overlay (lambda () (and jetpacs-org--ts-ref t))
+                           :order 113)
+
+(progn
+  (jetpacs-defaction "org.header.plan"
+    ;; ARGS is the ref plus `which'.  Open the timestamp editor seeded from
+    ;; the heading's current planning stamp.
+    (lambda (args _)
+      (jetpacs-dismiss-dialog)
+      (let* ((which (alist-get 'which args))
+             (marker (ignore-errors (jetpacs-org-resolve-ref args)))
+             (stamp (and marker
+                         (with-current-buffer (marker-buffer marker)
+                           (org-with-wide-buffer
+                            (goto-char marker)
+                            (org-entry-get (point) (upcase which)))))))
+        (setq jetpacs-org--ts-ref args jetpacs-org--ts-which which)
+        (jetpacs-org--ts-seed stamp)
+        (jetpacs-shell-push nil :switch-to "org-timestamp-edit"))))
+
+  (jetpacs-defaction "org.timestamp.update"
+    (lambda (args _)
+      (let ((field (alist-get 'field args)))
+        (when field
+          (jetpacs-ui-state-put (concat "ts-" field) (alist-get 'value args))))
+      (jetpacs-shell-push)))
+
+  (jetpacs-defaction "org.timestamp.save"
+    (lambda (_ _)
+      (condition-case err
+          (progn
+            (jetpacs-org--set-planning-cookie
+             jetpacs-org--ts-ref jetpacs-org--ts-which
+             (jetpacs-org--ts-datetime) (jetpacs-org--ts-cookie))
+            (jetpacs-shell-notify
+             (format "%s set" (capitalize (downcase jetpacs-org--ts-which))))
+            (jetpacs-org--ts-close))
+        (error (jetpacs-shell-notify (error-message-string err))
+               (jetpacs-shell-push)))))
+
+  (jetpacs-defaction "org.timestamp.clear"
+    (lambda (_ _)
+      (condition-case err
+          (progn
+            (jetpacs-org-set-planning jetpacs-org--ts-ref 'org
+                                      jetpacs-org--ts-which nil)
+            (jetpacs-shell-notify
+             (format "%s cleared"
+                     (capitalize (downcase jetpacs-org--ts-which)))))
+        (error (jetpacs-shell-notify (error-message-string err))))
+      (jetpacs-org--ts-close)))
+
+  (jetpacs-defaction "org.timestamp.cancel"
+    (lambda (_ _)
+      (jetpacs-org--ts-close))))
+
 (provide 'jetpacs-org)
 ;;; jetpacs-org.el ends here
 
@@ -15566,6 +15951,11 @@ editor."
      (list (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
            (jetpacs-toolbar-item "schedule" "Sched" :command "org-schedule")))
    (list
+    ;; Undo/redo on the live buffer — fat-finger recovery on a phone.
+    ;; `undo-only'/`undo-redo' are the direction-stable pair (unlike bare
+    ;; `undo', which flips direction on repeat), so each tap moves one way.
+    (jetpacs-toolbar-item "undo" "Undo" :command "undo-only")
+    (jetpacs-toolbar-item "redo" "Redo" :command "undo-redo")
     (jetpacs-toolbar-item "notes" "Fill" :command "fill-paragraph")
     (jetpacs-toolbar-item "code" ";;" :command "comment-dwim")
     (jetpacs-toolbar-item "bolt" "M-x" :command ""))))

@@ -7113,11 +7113,14 @@ A stale position notifies instead of striking arbitrary text."
     (search-forward "- [ ]")
     (let ((cb (- (point) 3))          ; the "[" of the first checkbox
           (name (buffer-name buf)))
-      ;; Routing: the bracket yes; the heading and the item text no.
+      ;; Routing: the bracket → checkbox; the heading → header actions;
+      ;; the item's text → nothing (kept generic).
       (let ((act (jetpacs-org--span-action cb name)))
         (should act)
         (should (equal "org.checkbox.toggle" (alist-get 'action act))))
-      (should-not (jetpacs-org--span-action (point-min) name))
+      (should (equal "org.header.actions"
+                     (alist-get 'action
+                                (jetpacs-org--span-action (point-min) name))))
       (goto-char (point-min))
       (search-forward "first")
       (should-not (jetpacs-org--span-action (match-beginning 0) name))
@@ -7363,6 +7366,112 @@ the client's builtin allowlist."
                (on_tap . ((builtin . "share.send"))))))   ; missing text
     ;; Registered as a builtin (drives the contract + client dispatch).
     (should (assoc "share.send" jetpacs-lint-action-builtins))))
+
+;; ─── organice adoptions: header sheet, undo/redo, timestamp editor ──────────
+
+(ert-deftest jetpacs-editor-undo-redo-toolbar ()
+  "The editor DWIM toolbar offers direction-stable undo/redo via edit.command."
+  (let ((json (json-serialize
+               (jetpacs-tests--canon (vconcat (jetpacs-files-dwim-toolbar "notes.org")))
+               :null-object :null :false-object :false)))
+    (should (string-search "undo-only" json))
+    (should (string-search "undo-redo" json))))
+
+(ert-deftest jetpacs-org-header-sheet ()
+  "Tapping a heading routes to org.header.actions; the sheet lists the
+mutations and lints clean; a non-heading line routes nothing."
+  (jetpacs-tests--with-org-file buf "* TODO Task\nbody line\n"
+    (goto-char (point-min))
+    (should (equal "org.header.actions"
+                   (alist-get 'action
+                              (jetpacs-org--span-action (point) (buffer-name)))))
+    (goto-char (point-min)) (forward-line 1)
+    (should-not (jetpacs-org--span-action (point) (buffer-name)))
+    (let* ((ref (progn (goto-char (point-min)) (jetpacs-org-heading-ref)))
+           (sheet (jetpacs-org--header-sheet ref)))
+      (should-not (jetpacs-lint-spec sheet))
+      (let ((j (json-serialize (jetpacs-tests--canon sheet)
+                               :null-object :null :false-object :false)))
+        (dolist (a '("org.header.todo" "org.header.plan" "org.header.narrow"
+                     "org.header.duplicate" "org.header.archive"))
+          (should (string-search a j)))))))
+
+(ert-deftest jetpacs-org-header-mutations ()
+  "narrow/widen change the restriction; duplicate copies the subtree;
+cycle-TODO advances the keyword."
+  (jetpacs-tests--with-org-file buf
+      "* TODO One\n:PROPERTIES:\n:ID: keep-me-unique\n:END:\naaa\n* Two\nbbb\n"
+    (cl-letf (((symbol-function 'jetpacs-shell-push)
+               (cl-function (lambda (&optional _ &key _switch-to))))
+              ((symbol-function 'jetpacs-dismiss-dialog) #'ignore)
+              ((symbol-function 'jetpacs-shell-notify) #'ignore)
+              ((symbol-function 'run-with-idle-timer) (lambda (&rest _) nil)))
+      (goto-char (point-min))
+      (let ((ref (jetpacs-org-heading-ref)))
+        (jetpacs--on-action `((action . "org.header.narrow") (args . ,ref)) nil)
+        (should (buffer-narrowed-p))
+        (jetpacs--on-action `((action . "org.header.widen")
+                           (args . ((buffer . ,(buffer-name))))) nil)
+        (should-not (buffer-narrowed-p))
+        (jetpacs--on-action `((action . "org.header.duplicate") (args . ,ref)) nil)
+        (should (= 3 (count-matches "^\\* " (point-min) (point-max))))
+        ;; The copy does NOT inherit the original's :ID: (org-id identity).
+        (should (= 1 (count-matches "keep-me-unique" (point-min) (point-max))))
+        ;; cycle TODO on the first heading: TODO -> DONE.
+        (jetpacs--on-action `((action . "org.header.todo") (args . ,ref)) nil)
+        (goto-char (point-min))
+        (should (equal "DONE" (org-get-todo-state)))))))
+
+(ert-deftest jetpacs-org-timestamp-compose-and-parse ()
+  "The timestamp editor composes datetime/cookie/preview and round-trips a
+stamp through seed."
+  (let ((jetpacs--ui-state (make-hash-table :test 'equal)))
+    (jetpacs-org--ts-seed "<2026-07-20 Mon 09:30 .+2d -1d>")
+    (should (equal "2026-07-20" (car (jetpacs-ui-state-list "ts-date"))))
+    (should (equal "09:30" (car (jetpacs-ui-state-list "ts-time"))))
+    (should (equal ".+" (car (jetpacs-ui-state-list "ts-rep-type"))))
+    (should (equal "2" (jetpacs-ui-state "ts-rep-value")))
+    (should (equal "-" (car (jetpacs-ui-state-list "ts-delay-type"))))
+    (should (equal "1" (jetpacs-ui-state "ts-delay-value")))
+    (should (equal "2026-07-20 09:30" (jetpacs-org--ts-datetime)))
+    (should (equal ".+2d -1d" (jetpacs-org--ts-cookie)))
+    (should (equal "<2026-07-20 09:30 .+2d -1d>" (jetpacs-org--ts-preview))))
+  ;; Empty seed defaults to today with no repeater/delay.
+  (let ((jetpacs--ui-state (make-hash-table :test 'equal)))
+    (jetpacs-org--ts-seed nil)
+    (should (car (jetpacs-ui-state-list "ts-date")))
+    (should (equal "none" (car (jetpacs-ui-state-list "ts-rep-type"))))
+    (should (string-empty-p (jetpacs-org--ts-cookie)))))
+
+(ert-deftest jetpacs-org-timestamp-save-writes-repeater ()
+  "org.timestamp.save writes a scheduled stamp WITH the repeater org
+otherwise strips (org-get-repeat reads it back); the body lints; clear removes."
+  (jetpacs-tests--with-org-file buf "* TODO Task\n"
+    (cl-letf (((symbol-function 'jetpacs-shell-push)
+               (cl-function (lambda (&optional _ &key _switch-to))))
+              ((symbol-function 'jetpacs-shell-notify) #'ignore)
+              ((symbol-function 'run-with-idle-timer) (lambda (&rest _) nil)))
+      (let ((jetpacs--ui-state (make-hash-table :test 'equal))
+            (jetpacs-org--ts-ref (progn (goto-char (point-min))
+                                       (jetpacs-org-heading-ref)))
+            (jetpacs-org--ts-which "SCHEDULED"))
+        (jetpacs-org--ts-seed nil)
+        (jetpacs-ui-state-put "ts-date" "2026-07-20")
+        (jetpacs-ui-state-put "ts-rep-type" ".+")
+        (jetpacs-ui-state-put "ts-rep-value" "2")
+        (jetpacs-ui-state-put "ts-rep-unit" "d")
+        (should-not (jetpacs-lint-spec (jetpacs-org--ts-body)))
+        (jetpacs--on-action '((action . "org.timestamp.save")) nil)
+        (goto-char (point-min))
+        (should (equal ".+2d" (org-get-repeat)))
+        (should (string-match-p "2026-07-20" (org-entry-get (point) "SCHEDULED")))
+        (should-not jetpacs-org--ts-ref)          ; editor closed on save
+        ;; Clear removes the stamp.
+        (setq jetpacs-org--ts-ref (jetpacs-org-heading-ref)
+              jetpacs-org--ts-which "SCHEDULED")
+        (jetpacs--on-action '((action . "org.timestamp.clear")) nil)
+        (goto-char (point-min))
+        (should-not (org-entry-get (point) "SCHEDULED"))))))
 
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

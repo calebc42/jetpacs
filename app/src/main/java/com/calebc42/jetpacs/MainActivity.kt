@@ -206,6 +206,25 @@ private fun BridgeScreen() {
                     Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                 }
             }
+            "share.send" -> {
+                // The outbound counterpart of the inbound `share.text`
+                // capture: hand `text` (with an optional `title` subject) to
+                // the system share sheet. Companion-local — works with Emacs
+                // offline, no round-trip.
+                val text = action.optString("text")
+                val title = action.optString("title")
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    if (title.isNotEmpty()) putExtra(Intent.EXTRA_SUBJECT, title)
+                }
+                val chooser = Intent.createChooser(send, title.ifEmpty { null }).apply {
+                    // Defensive: a non-Activity context (application) needs
+                    // its own task to launch the chooser.
+                    if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
+            }
             else -> context.sendBroadcast(actionIntent(context, action, dashboardRecord?.revision ?: 0))
         }
     }

@@ -1566,7 +1566,14 @@ the composer delete its own matcher."
                   :chromeless t :complete t :publish-state t :autofocus t)
      ;; 1.26.0 — the DWIM command op on toolbar items (SPEC §8 edit.command).
      (jetpacs-toolbar-item "check" "TODO" :command "org-todo")
-     (jetpacs-toolbar-item "bolt" "M-x" :command ""))))
+     (jetpacs-toolbar-item "bolt" "M-x" :command "")
+     ;; organice adoptions — per-side header swipe + system share sheet.
+     ;; Appended (not inserted) so existing golden indices stay stable.
+     (jetpacs-collapsible "cid2" leaf (list leaf)
+                       :swipe-start (jetpacs-swipe-action "check" "Done" act)
+                       :swipe-end (jetpacs-swipe-action "schedule" "Today" act
+                                                     :color "#2E7D32"))
+     (jetpacs-share-action "shared text" :title "Subject"))))
 
 (defun jetpacs-tests--widget-lines ()
   (let ((i -1))
@@ -7311,6 +7318,51 @@ skipped, never erroring the graph helper or blanking the whole view."
           (should (string-search "Real habit" json))
           (should (string-search "\"canvas\"" json))
           (should-not (string-search "No habits" json)))))))
+
+;; ─── organice adoptions: header swipe + share sheet ─────────────────────────
+
+(ert-deftest jetpacs-collapsible-per-side-swipe ()
+  "A collapsible carries per-side swipe like a card: swipe_start/swipe_end
+each an icon/label/on_trigger spec, lint-clean; legacy on_swipe still works."
+  (let* ((act (jetpacs-action "heading.todo-set"))
+         (c (jetpacs-collapsible
+             "h" (jetpacs-text "Task" 'body) (list (jetpacs-text "body" 'body))
+             :swipe-start (jetpacs-swipe-action "check" "Done" act :color "#2E7D32")
+             :swipe-end (jetpacs-swipe-action "schedule" "Today" act))))
+    (should-not (jetpacs-lint-spec c))
+    (let ((ss (alist-get 'swipe_start c))
+          (se (alist-get 'swipe_end c)))
+      (should (equal "check" (alist-get 'icon ss)))
+      (should (equal "Done" (alist-get 'label ss)))
+      (should (equal "#2E7D32" (alist-get 'color ss)))
+      (should (equal "heading.todo-set"
+                     (alist-get 'action (alist-get 'on_trigger ss))))
+      (should (equal "schedule" (alist-get 'icon se))))
+    ;; Legacy single-action on_swipe is untouched.
+    (let ((legacy (jetpacs-collapsible "h2" (jetpacs-text "T" 'body) nil
+                                    :on-swipe act)))
+      (should-not (jetpacs-lint-spec legacy))
+      (should (alist-get 'on_swipe legacy))
+      (should-not (alist-get 'swipe_start legacy)))))
+
+(ert-deftest jetpacs-share-send-builtin ()
+  "jetpacs-share-action is the share.send companion builtin, alongside
+clipboard.copy: {builtin, text, title?}, lint-clean, in the contract and
+the client's builtin allowlist."
+  (let ((s (jetpacs-share-action "hello" :title "Note")))
+    (should (equal "share.send" (alist-get 'builtin s)))
+    (should (equal "hello" (alist-get 'text s)))
+    (should (equal "Note" (alist-get 'title s)))
+    ;; title omitted when nil.
+    (should-not (assq 'title (jetpacs-share-action "hi")))
+    ;; Lints clean embedded as an action, and requires `text'.
+    (should-not (jetpacs-lint-spec
+                 `((t . "button") (label . "Share") (on_tap . ,s))))
+    (should (jetpacs-lint-spec
+             `((t . "button") (label . "Share")
+               (on_tap . ((builtin . "share.send"))))))   ; missing text
+    ;; Registered as a builtin (drives the contract + client dispatch).
+    (should (assoc "share.send" jetpacs-lint-action-builtins))))
 
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

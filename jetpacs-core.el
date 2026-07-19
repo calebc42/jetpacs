@@ -1933,20 +1933,29 @@ selected child."
               'on_change on-change
               'id id))
 
-(cl-defun jetpacs-collapsible (id header children &key collapsed on-long-tap on-swipe)
+(cl-defun jetpacs-collapsible (id header children &key collapsed on-long-tap
+                                  on-swipe swipe-start swipe-end)
   "A fold/expand section. ID keys the (client-side) fold state.
 HEADER is the always-visible node shown next to the chevron; CHILDREN
 (a list of nodes) are revealed when expanded. COLLAPSED non-nil starts
 folded. Folding happens entirely on-device — no action round-trip.
 ON-LONG-TAP, when non-nil, is an action dispatched on long-press of
-the header (used by the org reader to open the heading detail view)."
+the header (used by the org reader to open the heading detail view).
+SWIPE-START / SWIPE-END are `jetpacs-swipe-action' specs revealed by
+dragging the HEADER from that side (the same per-side reveal as
+`jetpacs-card' — icon/label on a colored background, a full swipe fires
+the action and the header springs back).  They win over the legacy
+single-action ON-SWIPE; both degrade to no gesture on old companions,
+so a swipe must also be reachable by tap/long-tap or menu."
   (jetpacs--node "collapsible"
               'id id
               'header header
               'children (vconcat children)
               'collapsed (and collapsed t)
               'on_long_tap on-long-tap
-              'on_swipe on-swipe))
+              'on_swipe on-swipe
+              'swipe_start swipe-start
+              'swipe_end swipe-end))
 
 (cl-defun jetpacs-reorderable-list (items &key on-reorder)
   "A drag-reorderable list of ITEMS.
@@ -2092,6 +2101,14 @@ keyed by action name + args — the companion never echoes `confirm'
 Handled entirely on-device (like the `view.switch' builtin) — no
 round-trip to Emacs, works offline."
   (jetpacs--node nil 'builtin "clipboard.copy" 'text text))
+
+(cl-defun jetpacs-share-action (text &key title)
+  "A companion-local action that opens the system share sheet with TEXT.
+Handled entirely on-device (like `clipboard.copy') — the companion
+fires an Android ACTION_SEND chooser, so it works with Emacs offline.
+TITLE, when non-nil, seeds the share sheet's subject/title.  The
+outbound counterpart of the inbound `share.text' capture."
+  (jetpacs--node nil 'builtin "share.send" 'text text 'title title))
 
 (defun jetpacs-native-settings-action ()
   "Open native Jetpacs settings, even while Emacs is offline."
@@ -2991,6 +3008,7 @@ literal by the companion — almost always a typo worth a warning.")
 (defconst jetpacs-lint-action-builtins
   '(("view.switch" view)
     ("clipboard.copy" text)
+    ("share.send" text)
     ("jetpacs.settings.open"))
   "Companion-local builtins → the payload keys each requires (SPEC §5).
 Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
@@ -3026,7 +3044,8 @@ child's stable reconciliation identity — preferred over the child's
     ("card"            (children)           (on_tap on_swipe swipe_start
                                              swipe_end padding weight width
                                              height fill_fraction border))
-    ("collapsible"     (id header children) (collapsed on_long_tap on_swipe))
+    ("collapsible"     (id header children) (collapsed on_long_tap on_swipe
+                                             swipe_start swipe_end))
     ("reorderable_list" (items)             (on_reorder))
     ("table"           (rows)               (aligns on_add_row on_add_col
                                              padding))

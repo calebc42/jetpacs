@@ -66,6 +66,29 @@ vim's hybrid style).  Configurable from the phone's Settings view."
 The host shell sets this to re-push whatever surface is showing the buffer.
 Kept as a seam so this module never depends on a specific UI layer.")
 
+(defvar jetpacs-buffer-span-action-function nil
+  "When non-nil, a function (POS BUFFER-NAME) -> action alist, or nil.
+Consulted at the start of every span run before the generic actionable
+check; a non-nil result becomes that run's tap action instead of the
+default `jetpacs.buffer.act' dispatch.  Tier-1 skins let-bind this
+around delegated region renders to route taps on mode-specific objects
+\(an org footnote reference, say) to their own actions.  A signaling
+function counts as nil — a broken skin routing must not cost the
+render.")
+
+(defun jetpacs-buffer--span-action (pos buffer-name)
+  "The tap action for the run starting at POS, or nil.
+The skin override wins; otherwise an actionable region gets the generic
+`jetpacs.buffer.act' dispatch."
+  (or (and jetpacs-buffer-span-action-function
+           (condition-case nil
+               (funcall jetpacs-buffer-span-action-function pos buffer-name)
+             (error nil)))
+      (when (jetpacs-buffer--actionable-p pos)
+        (jetpacs-action "jetpacs.buffer.act"
+                     :args `((buffer . ,buffer-name)
+                             (pos . ,pos))))))
+
 (defvar jetpacs-buffer--default-fg-hex nil
   "Hex of the default face foreground, bound for the duration of a render.
 Spans whose foreground matches this are emitted without a color so the
@@ -386,10 +409,7 @@ at the start of each actionable property run."
                      (baseline (jetpacs-buffer--raise-baseline disp))
                      (style (append (jetpacs-buffer--span-style face)
                                     (when baseline (list :baseline baseline))))
-                     (act (when (jetpacs-buffer--actionable-p pos)
-                            (jetpacs-action "jetpacs.buffer.act"
-                                         :args `((buffer . ,buffer-name)
-                                                 (pos . ,pos)))))
+                     (act (jetpacs-buffer--span-action pos buffer-name))
                      text)
                 (cond
                  ((stringp disp)

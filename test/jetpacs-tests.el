@@ -6976,5 +6976,148 @@ degrades to the pure Tier-0 render instead of failing the push."
         (should (string-search "-----" json))
         (should (string-search "Body." json))))))
 
+;; ─── Span-action seam, HTML open-rendered, footnote dialog ──────────────────
+
+(ert-deftest jetpacs-buffer-span-action-seam ()
+  "A skin-bound span-action function overrides the run's tap action;
+a signaling one counts as nil and never costs the render."
+  (with-temp-buffer
+    (insert "hello world\n")
+    (let ((jetpacs-buffer-span-action-function
+           (lambda (pos _name)
+             (jetpacs-action "custom.tap" :args `((p . ,pos))))))
+      (should (string-search
+               "custom.tap"
+               (json-serialize
+                (jetpacs-tests--canon
+                 (apply #'jetpacs-column
+                        (jetpacs-buffer--render-region
+                         (point-min) (point-max) (buffer-name))))))))
+    (let ((jetpacs-buffer-span-action-function
+           (lambda (&rest _) (error "boom"))))
+      (let ((json (json-serialize
+                   (jetpacs-tests--canon
+                    (apply #'jetpacs-column
+                           (jetpacs-buffer--render-region
+                            (point-min) (point-max) (buffer-name)))))))
+        (should (string-search "hello world" json))
+        (should-not (string-search "custom.tap" json))))))
+
+(ert-deftest jetpacs-files-open-rendered ()
+  "HTML files carry the open-rendered affordance (card and editor bar),
+and the action guards the root allowlist before handing eww the file."
+  (let* ((dir (make-temp-file "jetpacs-html" t))
+         (html (expand-file-name "page.html" dir))
+         (outside (make-temp-file "jetpacs-outside" nil ".html" "<p>x</p>")))
+    (unwind-protect
+        (progn
+          (with-temp-file html (insert "<p>hi</p>"))
+          ;; Card affordance: html gets it, plain text doesn't.
+          (let ((json (json-serialize (jetpacs-tests--canon
+                                       (jetpacs-files--card-for html)))))
+            (should (string-search "files.open-rendered" json))
+            (should (string-search "Open rendered" json)))
+          (with-temp-file (expand-file-name "notes.txt" dir) (insert "x"))
+          (should-not
+           (string-search "files.open-rendered"
+                          (json-serialize
+                           (jetpacs-tests--canon
+                            (jetpacs-files--card-for
+                             (expand-file-name "notes.txt" dir))))))
+          ;; Editor top-bar hook mirrors the card affordance.
+          (should (jetpacs-files--html-editor-actions html))
+          (should-not (jetpacs-files--html-editor-actions "/x/notes.org"))
+          ;; The action: inside the roots it lands in the buffer viewer;
+          ;; outside it refuses with a snackbar.
+          (let ((jetpacs-files-roots `(("tmp" . ,dir)))
+                (viewed nil) (notified nil))
+            (cl-letf (((symbol-function 'jetpacs-shell-view-buffer-of)
+                       (lambda (_fn) (setq viewed t)))
+                      ((symbol-function 'jetpacs-shell-notify)
+                       (lambda (msg &rest _) (setq notified msg))))
+              (jetpacs--on-action `((action . "files.open-rendered")
+                                 (args . ((file . ,html)))) nil)
+              (should viewed)
+              (setq viewed nil)
+              (jetpacs--on-action `((action . "files.open-rendered")
+                                 (args . ((file . ,outside)))) nil)
+              (should-not viewed)
+              (should notified))))
+      (ignore-errors (delete-directory dir t))
+      (ignore-errors (delete-file outside)))))
+
+(ert-deftest jetpacs-org-footnote-dialog ()
+  "Footnote references render tappable (org.footnote.show), and the
+dialog carries the definition with Copy / Edit / Close; inline
+footnotes show their inline definition and offer no Edit."
+  (jetpacs-tests--with-org-file buf
+      (concat "Para one[fn:1] and an inline[fn:: right here] note.\n"
+              "\n"
+              "[fn:1] The looked-up definition.\n")
+    ;; The reference span routes to the dialog action.
+    (should (string-search "org.footnote.show"
+                           (jetpacs-tests--org-render-json buf)))
+    ;; Labeled reference: definition looked up, all three actions.
+    (goto-char (point-min))
+    (search-forward "[fn:1]")
+    (let ((spec (jetpacs-org--footnote-dialog (buffer-name buf)
+                                              (match-beginning 0))))
+      (should spec)
+      (let ((json (json-serialize (jetpacs-tests--canon spec)
+                                  :null-object :null :false-object :false)))
+        (should (string-search "Footnote [fn:1]" json))
+        (should (string-search "The looked-up definition." json))
+        (should (string-search "clipboard.copy" json))
+        (should (string-search "org.footnote.edit" json))
+        (should (string-search "dialog.dismiss" json))))
+    ;; Inline reference: its own text, no Edit (nothing to jump to).
+    (goto-char (point-min))
+    (search-forward "[fn:: right")
+    (let* ((spec (jetpacs-org--footnote-dialog (buffer-name buf)
+                                               (match-beginning 0)))
+           (json (json-serialize (jetpacs-tests--canon spec)
+                                 :null-object :null :false-object :false)))
+      (should (string-search "right here" json))
+      (should-not (string-search "org.footnote.edit" json)))
+    ;; A position with no footnote shows the gone-notify path.
+    (let ((notified nil) (pushed nil))
+      (cl-letf (((symbol-function 'jetpacs-shell-notify)
+                 (lambda (msg &rest _) (setq notified msg)))
+                ((symbol-function 'jetpacs-shell-push)
+                 (cl-function (lambda (&optional _t &key _switch-to)
+                                (setq pushed t))))
+                ((symbol-function 'jetpacs-send-dialog)
+                 (lambda (&rest _) (error "must not open"))))
+        (jetpacs--on-action `((action . "org.footnote.show")
+                           (args . ((buffer . ,(buffer-name buf))
+                                    (pos . 1)))) nil)
+        (should notified)
+        (should pushed)))))
+
+(ert-deftest jetpacs-org-footnote-edit-opens-editor ()
+  "Edit opens the file in the phone editor and names the definition line."
+  (jetpacs-tests--with-org-file buf
+      "Ref[fn:1] here.\n\n[fn:1] Down here.\n"
+    (let ((opened nil) (notified nil))
+      (cl-letf (((symbol-function 'jetpacs-files-open)
+                 (lambda (file) (setq opened file) file))
+                ((symbol-function 'jetpacs-shell-notify)
+                 (lambda (msg &rest _) (setq notified msg)))
+                ((symbol-function 'jetpacs-dismiss-dialog) #'ignore)
+                ((symbol-function 'jetpacs-shell-push)
+                 (cl-function (lambda (&optional _t &key _switch-to)))))
+        (jetpacs--on-action `((action . "org.footnote.edit")
+                           (args . ((buffer . ,(buffer-name buf))
+                                    (label . "1")))) nil)
+        (should (equal opened (buffer-file-name buf)))
+        (should (string-search "line 3" notified))
+        ;; Unknown label: no editor jump, a clear message instead.
+        (setq opened nil)
+        (jetpacs--on-action `((action . "org.footnote.edit")
+                           (args . ((buffer . ,(buffer-name buf))
+                                    (label . "nope")))) nil)
+        (should-not opened)
+        (should (string-search "No definition" notified))))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

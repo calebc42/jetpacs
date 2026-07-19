@@ -32,6 +32,7 @@
 (require 'org-agenda)
 (require 'org-capture)
 (require 'org-element)
+(require 'org-footnote)
 (require 'org-id)
 (require 'org-table)
 (require 'cl-lib)
@@ -1435,13 +1436,28 @@ Tier 0 already drops them, and upgrading would leak hidden content."
                         out))))))))
     (sort (nreverse out) (lambda (a b) (< (car a) (car b))))))
 
+(defun jetpacs-org--span-action (pos buffer-name)
+  "Span tap routing for the org skin: footnote references open a dialog.
+Everything else returns nil and keeps the generic Tier-0 behavior
+\(links still open through `jetpacs.buffer.act').  A cheap regexp
+pre-filter guards the org-element context check, so ordinary runs pay
+regexp cost only."
+  (save-excursion
+    (goto-char pos)
+    (when (and (org-in-regexp org-footnote-re)
+               (save-match-data (org-footnote-at-reference-p)))
+      (jetpacs-action "org.footnote.show"
+                      :args `((buffer . ,buffer-name) (pos . ,pos))))))
+
 (defun jetpacs-org-render (buffer)
   "Tier-1 render skin for org BUFFER: the Tier-0 line render, upgraded.
 See the section comment above for exactly what upgrades; everything
 else is the untouched Tier-0 output, and any error in the upgrade scan
-degrades to the pure Tier-0 render."
+degrades to the pure Tier-0 render.  Footnote-reference spans route
+their taps to the footnote dialog via the Tier-0 span-action seam."
   (with-current-buffer buffer
-    (let* ((name (buffer-name))
+    (let* ((jetpacs-buffer-span-action-function #'jetpacs-org--span-action)
+           (name (buffer-name))
            (upgrades (condition-case nil
                          (jetpacs-org--upgrades)
                        (error nil)))
@@ -1472,6 +1488,98 @@ degrades to the pure Tier-0 render."
       out)))
 
 (jetpacs-render-buffer-register 'org-mode #'jetpacs-org-render)
+
+;; ── Footnote dialog
+;;
+;; Tapping a footnote reference opens a dialog (Glasspane styles dialogs
+;; as bottom sheets) carrying the definition and its actions: Copy puts
+;; the definition on the device clipboard (companion-local, works
+;; offline), Edit opens the file in the phone editor and names the
+;; definition's line.  A dialog needs no new protocol node — a popover
+;; node can upgrade this later behind `jetpacs-node-or' without touching
+;; the action.
+
+(declare-function jetpacs-files-open "jetpacs-files" (file))
+
+(defun jetpacs-org--footnote-dialog (buffer-name pos)
+  "The footnote dialog spec for the reference at POS in BUFFER-NAME, or nil."
+  (let ((buf (get-buffer (or buffer-name ""))))
+    (when (and buf (numberp pos))
+      (with-current-buffer buf
+        (org-with-wide-buffer
+         (goto-char (min (max (point-min) (truncate pos)) (point-max)))
+         (when-let ((ref (org-footnote-at-reference-p)))
+           (pcase-let ((`(,label ,_beg ,_end ,inline-def) ref))
+             (let* ((def (or inline-def
+                             (and label
+                                  (nth 3 (org-footnote-get-definition label)))))
+                    (def (and (stringp def) (string-trim def)))
+                    (have-def (and def (not (string-empty-p def)))))
+               (jetpacs-column
+                (jetpacs-text (if label (format "Footnote [fn:%s]" label)
+                                "Inline footnote")
+                              'title)
+                (jetpacs-text (if have-def def "No definition found.") 'body)
+                (apply #'jetpacs-row
+                       (delq nil
+                             (list
+                              (jetpacs-spacer :weight 1)
+                              (when have-def
+                                (jetpacs-button "Copy"
+                                                (jetpacs-clipboard-action def)
+                                                :variant "text"))
+                              (when (and label (not inline-def)
+                                         (buffer-file-name))
+                                (jetpacs-button
+                                 "Edit"
+                                 (jetpacs-action "org.footnote.edit"
+                                                 :args `((buffer . ,buffer-name)
+                                                         (label . ,label))
+                                                 :when-offline "drop")
+                                 :variant "text"))
+                              (jetpacs-button "Close"
+                                              (jetpacs-action "dialog.dismiss")
+                                              :variant "text")))))))))))))
+
+(jetpacs-defaction "org.footnote.show"
+  (lambda (args _)
+    (let ((spec (jetpacs-org--footnote-dialog (alist-get 'buffer args)
+                                              (alist-get 'pos args))))
+      (if spec
+          (jetpacs-send-dialog spec)
+        (jetpacs-shell-notify "That footnote is gone — refreshing")
+        (jetpacs-shell-push)))))
+
+(jetpacs-defaction "org.footnote.edit"
+  ;; Jump to the definition: open the file in the phone editor and name
+  ;; the line — the editor node has no cursor-seek yet, so the line
+  ;; number in the snackbar is the navigation aid.
+  (lambda (args _)
+    (let ((buf (get-buffer (or (alist-get 'buffer args) "")))
+          (label (alist-get 'label args)))
+      (jetpacs-dismiss-dialog)
+      (if (not (and buf (stringp label)))
+          (progn (jetpacs-shell-notify "That footnote is gone — refreshing")
+                 (jetpacs-shell-push))
+        (with-current-buffer buf
+          (let ((def (org-footnote-get-definition label))
+                (file (buffer-file-name)))
+            (cond
+             ((null def)
+              (jetpacs-shell-notify
+               (format "No definition found for [fn:%s]" label))
+              (jetpacs-shell-push))
+             ((not (and file (fboundp 'jetpacs-files-open)
+                        (jetpacs-files-open file)))
+              (jetpacs-shell-notify
+               "That file isn't editable from the phone")
+              (jetpacs-shell-push))
+             (t
+              (jetpacs-shell-notify
+               (format "Definition of [fn:%s] is at line %d"
+                       label
+                       (org-with-wide-buffer
+                        (line-number-at-pos (nth 1 def)))))))))))))
 
 (provide 'jetpacs-org)
 ;;; jetpacs-org.el ends here

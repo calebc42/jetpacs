@@ -238,14 +238,36 @@ handler runs one specific, root-guarded operation — never arbitrary dispatch."
        :on-tap (jetpacs-action "files.cd" :args `((dir . ,path))))
     (let ((size (or (file-attribute-size (file-attributes path)) 0)))
       (jetpacs-card
-       (list (jetpacs-row
-              (jetpacs-icon "description")
-              (jetpacs-box (list (jetpacs-column
-                               (jetpacs-text (file-name-nondirectory path) 'body)
-                               (jetpacs-text (file-size-human-readable size) 'caption)))
-                        :weight 1)
-              (jetpacs-files--entry-menu path)))
+       (list (apply #'jetpacs-row
+                    (delq nil
+                          (list
+                           (jetpacs-icon "description")
+                           (jetpacs-box (list (jetpacs-column
+                                            (jetpacs-text (file-name-nondirectory path) 'body)
+                                            (jetpacs-text (file-size-human-readable size) 'caption)))
+                                     :weight 1)
+                           (jetpacs-files--rendered-button path)
+                           (jetpacs-files--entry-menu path)))))
        :on-tap (jetpacs-action "files.open" :args `((file . ,path)))))))
+
+(defun jetpacs-files--rendered-button (path)
+  "The \"open rendered\" affordance for an HTML PATH, else nil.
+Rides the eww → hypertext path: shr renders the document and the
+hypertext skin ships it as native nodes (headings, tables, images)."
+  (when (string-match-p "\\.x?html?\\'" (downcase path))
+    (jetpacs-icon-button "language"
+                      (jetpacs-action "files.open-rendered"
+                                   :args `((file . ,path))
+                                   :when-offline "drop")
+                      :content-description "Open rendered")))
+
+(defun jetpacs-files--html-editor-actions (file)
+  "Editor top-bar hook: \"open rendered\" while an HTML FILE is open."
+  (when-let ((btn (jetpacs-files--rendered-button file)))
+    (list btn)))
+
+(add-hook 'jetpacs-files-editor-actions-functions
+          #'jetpacs-files--html-editor-actions)
 
 (defun jetpacs-files--dired-cards (buffer)
   "Dired skin: render dired BUFFER as a list of file/dir cards.
@@ -609,6 +631,22 @@ view, and returns that path."
 (jetpacs-defaction "files.open"
   (lambda (args _)
     (jetpacs-files-open (alist-get 'file args))))
+
+(jetpacs-defaction "files.open-rendered"
+  ;; The eww → hypertext path: shr renders the HTML file and the
+  ;; hypertext skin ships it as native nodes.  Same root allowlist as
+  ;; files.open; a missing libxml or a broken document lands in the
+  ;; snackbar via `jetpacs-shell-view-buffer-of' instead of dying.
+  (lambda (args _)
+    (let ((file (alist-get 'file args)))
+      (if (not (and (stringp file)
+                    (file-readable-p file)
+                    (jetpacs-files--within-root-p file)))
+          (jetpacs-shell-notify "Can't open that file")
+        (jetpacs-shell-view-buffer-of
+         (lambda ()
+           (eww-open-file file)
+           (or (get-buffer "*eww*") (current-buffer))))))))
 
 (jetpacs-defaction "files.grep"
   ;; The query arrives through the bridged minibuffer (this runs inside an

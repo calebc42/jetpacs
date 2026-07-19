@@ -145,8 +145,7 @@ Three regions, on every main screen:
   - Project — a dashboard for a folder of work (ch. 10)
   - Databases — SQL sessions (ch. 11)
   - Tools — bookmarks, clipboard history, a shell… (ch. 9)
-  - Jetpacs Settings — the Android app's own settings
-  - Emacs Settings — settings that live in Emacs (ch. 12)
+  - Settings — one screen: Jetpacs, Emacs, and each app (ch. 12)
   - Refresh data — re-fetch everything from Emacs
 
 Two habits worth forming: main tabs refresh when you pull
@@ -394,17 +393,20 @@ sql-connection-alist.
 The menu has *two* settings entries, and the difference
 matters:
 
-- *Jetpacs Settings* — the Android app's own screen:
-  permissions, notifications, pairing, offline data.  Works
-  even while Emacs is off.
-- *Emacs Settings* — settings that live in Emacs, rendered
-  as a phone screen.  Changes are saved into the connected
-  Emacs's own configuration file (custom.el) — the same
-  mechanism desktop Emacs uses, not an app-private store.
+*Settings* is one screen.  At the top sits *Companion theme*
+— what this app looks like — because it spans both worlds.
+Below it, one entry per place settings live: *Jetpacs*
+first, *Emacs* second, then each app you've installed.
 
-On the Emacs side you'll find the *Bridge* section — most
-notably *Companion theme*, which decides what this app looks
-like:
+- *Jetpacs* — the Android app's own settings: permissions,
+  notifications, pairing, offline data, dialog style, and
+  the app/system knobs.  Works even while Emacs is off.
+- *Emacs* — settings that live in Emacs, rendered as a phone
+  screen.  Changes are saved into the connected Emacs's own
+  configuration file (custom.el) — the same mechanism
+  desktop Emacs uses, not an app-private store.
+
+*Companion theme* decides what this app looks like:
 
 - Default — the app's own scheme, Emacs purple.
 - Material — colors derived from your wallpaper (Android
@@ -412,9 +414,10 @@ like:
 - Emacs — mirror the theme of Emacs itself; the app then
   recolors live every time Emacs changes theme.
 
-(Alongside it: *Dialog style* — how Emacs's questions render
-— *Auto-reconnect*, and a read-only build-features row, a
-quick health check of what this Emacs can do.)
+(Under *Jetpacs*: *Dialog style* — how Emacs's questions
+render.  Under *Emacs*: *Auto-reconnect* and a read-only
+build-features row, a quick health check of what this Emacs
+can do.)
 
 Below the sections sit four doorway cards:
 
@@ -433,14 +436,15 @@ Below the sections sit four doorway cards:
   change the phone experience — but this is the same
   system desktop Emacs users live in.
 - *Modus Themes* — pick the theme *of Emacs* (not of the
-  app — that is Companion theme above).  The modus family
+  app — that is Companion theme, at the top of Settings).
+  The modus family
   ships inside Emacs: carefully designed, high-contrast
   themes, light (\"operandi\") and dark (\"vivendi\"), with
   style switches to taste.  The \"Mirror on phone\" chip
   connects the two worlds: pick a theme, mirror it, and
   the whole app dresses to match your Emacs.
 
-- [ ] Try it: Emacs Settings → Modus Themes → pick one →
+- [ ] Try it: Settings → Emacs → Modus Themes → pick one →
       Mirror on phone.  Change your mind freely — it
       re-mirrors on every switch.
 
@@ -486,7 +490,7 @@ extend Emacs itself.)
 Screens are not the limit, either: apps can post
 notifications, set exact-time reminders, pin launcher
 shortcuts, and fill Quick Settings tiles — that is what the
-permission rows in Jetpacs Settings are about.
+permission rows in Settings → Jetpacs are about.
 
 The flagship app is *Glasspane*, which turns org files into
 a full notes app — foldable outlines, agenda, capture,
@@ -544,10 +548,9 @@ When you get curious:
 | a command line           | menu → Tools → Shell           |
 | reach my other machines  | menu → Tools → Remote hosts    |
 | work on a repo           | menu → Project                 |
-| change the app's look    | Emacs Settings → Companion     |
-|                          | theme (under Bridge)           |
-| change Emacs's theme     | Emacs Settings → Modus Themes  |
-| install Emacs add-ons    | Emacs Settings → Packages      |
+| change the app's look    | Settings → Companion theme     |
+| change Emacs's theme     | Settings → Emacs → Modus Themes|
+| install Emacs add-ons    | Settings → Emacs → Packages    |
 | install Jetpacs apps     | menu → Manage apps             |
 | reset this tour          | M-x jetpacs-setup-demo         |
 | retire this tour         | delete jetpacs-demo in Files,  |

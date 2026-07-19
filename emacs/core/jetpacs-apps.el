@@ -351,9 +351,13 @@ on another app's views."
               (jetpacs-shell-push))))))))
 
 (with-eval-after-load 'jetpacs-settings
+  ;; The Jetpacs (app) settings surface: dialog presentation and the app/
+  ;; system knobs.  Rendered on the "settings-jetpacs" sub-screen (see
+  ;; `jetpacs-settings-jetpacs-body'); Dialog style moved here from Bridge.
   (jetpacs-settings-register-section
-   "Jetpacs System"
-   '((jetpacs-apps-show-vanilla-app :label "Show Jetpacs in App drawer"))))
+   "Jetpacs"
+   '((jetpacs-dialog-style :label "Dialog style")
+     (jetpacs-apps-show-vanilla-app :label "Show Jetpacs in App drawer"))))
 
 (jetpacs-apps--update-vanilla)
 

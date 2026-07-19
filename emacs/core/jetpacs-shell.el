@@ -680,20 +680,74 @@ Safe on any hook: extra arguments are ignored."
 
 (declare-function jetpacs-settings-sections "jetpacs-settings")
 (declare-function jetpacs-settings-register-section "jetpacs-settings")
+(declare-function jetpacs-settings-item "jetpacs-settings")
+(declare-function jetpacs-settings-jetpacs-body "jetpacs-settings")
+(declare-function jetpacs-settings-emacs-body "jetpacs-settings")
 
 (defun jetpacs-shell-settings-body ()
   "Every registered settings section and satellite link, as one body.
-The stock \"settings\" view renders exactly this.  It is a WHOLE
-scrollable body (one lazy column): an app replacing the view either
-uses it as its entire body, or — when it has controls of its own —
-splices `jetpacs-settings-sections' into its own lazy column instead.
-Never nest this node inside another scroll container."
+Kept for apps that splice the whole shared screen; the stock Settings
+view is now the hub in `jetpacs-shell--settings-view'.  A WHOLE
+scrollable body (one lazy column) — never nest inside another scroll."
   (apply #'jetpacs-lazy-column (jetpacs-settings-sections)))
 
+(defun jetpacs-shell--settings-card (icon label subtitle view)
+  "A settings-hub entry: tapping it switches to sub-screen VIEW."
+  (jetpacs-list-item :leading (jetpacs-icon icon) :title label :subtitle subtitle
+                  :trailing (jetpacs-icon "chevron_right")
+                  :on-tap (jetpacs-shell-switch-view view)))
+
+(defun jetpacs-shell--settings-app-cards ()
+  "A hub card per additional loaded app that registered a \"<id>.settings\".
+The core Jetpacs base app is skipped — its settings are the fixed
+\"Jetpacs\" card — so this yields the Tier-1 apps (Glasspane, …)."
+  (delq nil
+        (mapcar
+         (lambda (e)
+           (let* ((id (car e)) (plist (cdr e))
+                  (view (concat id ".settings")))
+             (when (and (not (equal id (bound-and-true-p jetpacs-apps-default-app)))
+                        (assoc view jetpacs-shell-views))
+               (jetpacs-shell--settings-card
+                (or (plist-get plist :icon) "apps")
+                (or (plist-get plist :label) (capitalize id))
+                "App settings" view))))
+         (bound-and-true-p jetpacs-apps--registry))))
+
 (defun jetpacs-shell--settings-view (snackbar)
-  "The stock settings screen (see `jetpacs-shell-settings-body')."
-  (jetpacs-shell-nav-view "Emacs Settings" (jetpacs-shell-settings-body)
-                       :snackbar snackbar))
+  "The Settings hub: the Companion theme, then a per-app settings entry list
+\(Jetpacs first, Emacs second, then each loaded app)."
+  (jetpacs-shell-nav-view
+   "Settings"
+   (apply
+    #'jetpacs-lazy-column
+    (append
+     (list
+      (jetpacs-section-header "Appearance")
+      (jetpacs-text
+       "How the companion app looks — it applies whether you're using Jetpacs or an Emacs app."
+       'caption)
+      (jetpacs-settings-item 'jetpacs-theme-mode :label "Companion theme")
+      (jetpacs-divider)
+      (jetpacs-section-header "Settings")
+      (jetpacs-shell--settings-card
+       "smartphone" "Jetpacs" "App, dialogs, and system" "settings-jetpacs")
+      (jetpacs-shell--settings-card
+       "tune" "Emacs" "Packages, themes, Customize, and more" "settings-emacs"))
+     (jetpacs-shell--settings-app-cards)))
+   :snackbar snackbar))
+
+(defun jetpacs-shell--jetpacs-settings-view (snackbar)
+  "The Jetpacs (app) settings sub-screen."
+  (jetpacs-shell-nav-view
+   "Jetpacs" (apply #'jetpacs-lazy-column (jetpacs-settings-jetpacs-body))
+   :snackbar snackbar))
+
+(defun jetpacs-shell--emacs-settings-view (snackbar)
+  "The Emacs settings sub-screen."
+  (jetpacs-shell-nav-view
+   "Emacs" (apply #'jetpacs-lazy-column (jetpacs-settings-emacs-body))
+   :snackbar snackbar))
 
 (defun jetpacs-shell--build-features-row ()
   "The Emacs build-feature matrix as a read-only settings row.
@@ -710,29 +764,32 @@ it doesn't.  Informational only — nothing is settable here."
     'caption)))
 
 (with-eval-after-load 'jetpacs-settings
-  ;; The foundation's own knobs, so the stock screen is never empty and
-  ;; the theme mirror / dialog style are discoverable without docs.
-  ;; Entries degrade per-symbol: a setup that never loads a module shows
-  ;; "not loaded yet" for its knob instead of losing the section.
+  ;; The foundation's own knobs, grouped for the settings hub.  Companion
+  ;; theme is its own "Appearance" group so the hub can surface it directly
+  ;; (it sets the app's look and pertains to both Jetpacs and Emacs); Dialog
+  ;; style + the app/system knobs live under the Jetpacs surface (registered
+  ;; in jetpacs-apps.el); Bridge keeps the connection-level knobs.  Entries
+  ;; degrade per-symbol: a module that never loads shows "not loaded yet"
+  ;; for its knob instead of losing the section.
+  (jetpacs-settings-register-section
+   "Appearance"
+   '((jetpacs-theme-mode :label "Companion theme")))
   (jetpacs-settings-register-section
    "Bridge"
-   '((jetpacs-theme-mode :label "Companion theme")
-     (jetpacs-dialog-style :label "Dialog style")
-     (jetpacs-reconnect :label "Auto-reconnect")
+   '((jetpacs-reconnect :label "Auto-reconnect")
      (jetpacs-build-features :render jetpacs-shell--build-features-row)))
   (jetpacs-shell-define-view "settings" :builder #'jetpacs-shell--settings-view)
-  ;; Two explicit settings domains. Jetpacs Settings is companion-local and
-  ;; always works offline; Emacs Settings resolves through the current Tier 1
-  ;; so its own defcustom-backed preferences remain part of that screen.
+  (jetpacs-shell-define-view "settings-jetpacs"
+                          :builder #'jetpacs-shell--jetpacs-settings-view)
+  (jetpacs-shell-define-view "settings-emacs"
+                          :builder #'jetpacs-shell--emacs-settings-view)
+  ;; ONE Settings destination — the hub, which lists the per-app settings
+  ;; screens (Jetpacs, Emacs, then each loaded app).  The native Android
+  ;; settings and every offline-reachable knob live under the Jetpacs entry.
   (jetpacs-shell-add-drawer-item
    59 (lambda ()
-        (jetpacs-drawer-item "settings" "Jetpacs Settings"
-                          (jetpacs-native-settings-action))))
-  (jetpacs-shell-add-drawer-item
-   60 (lambda ()
-        (jetpacs-drawer-item "tune" "Emacs Settings"
-                          (jetpacs-shell-switch-view
-                           (jetpacs-shell-resolve-view "settings"))))))
+        (jetpacs-drawer-item "settings" "Settings"
+                          (jetpacs-shell-switch-view "settings")))))
 
 ;; ─── Lifecycle pushes ────────────────────────────────────────────────────────
 

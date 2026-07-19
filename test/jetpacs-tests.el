@@ -6033,27 +6033,41 @@ takes every other view down with it."
 ;; ─── Stock settings screen ──────────────────────────────────────────────────
 
 (ert-deftest jetpacs-shell-stock-settings-screen ()
-  "The foundation separates native Jetpacs and Emacs settings."
+  "ONE Settings hub fans out to per-surface sub-screens: Companion theme at
+the hub, Dialog style + system under Jetpacs, the Emacs defcustoms and
+satellites under Emacs — no companion-theme/dialog-style left on Emacs."
   (should (assoc "settings" jetpacs-shell-views))
+  (should (assoc "settings-jetpacs" jetpacs-shell-views))
+  (should (assoc "settings-emacs" jetpacs-shell-views))
+  (should (assoc "Appearance" jetpacs-settings-registry))
   (should (assoc "Bridge" jetpacs-settings-registry))
-  ;; Both settings domains are first-class drawer destinations.
+  (should (assoc "Jetpacs" jetpacs-settings-registry))
+  ;; Exactly one "Settings" drawer destination; the old split labels are gone.
   (let ((items (delq nil (mapcar (lambda (e) (funcall (cadr e)))
                                  jetpacs-shell-drawer-items))))
     (should (= 1 (cl-count-if
-                  (lambda (item) (equal (alist-get 'label item) "Jetpacs Settings"))
+                  (lambda (item) (equal (alist-get 'label item) "Settings"))
                   items)))
-    (should (= 1 (cl-count-if
-                  (lambda (item) (equal (alist-get 'label item) "Emacs Settings"))
+    (should (= 0 (cl-count-if
+                  (lambda (item) (member (alist-get 'label item)
+                                         '("Jetpacs Settings" "Emacs Settings")))
                   items))))
-  ;; The stock body renders native Jetpacs settings separately from every
-  ;; Emacs-owned defcustom and satellite destination.
-  (let ((body (prin1-to-string (jetpacs-shell-settings-body))))
-    (should (string-search "Jetpacs Settings" body))
-    (should (string-search "jetpacs.settings.open" body))
-    (should (string-search "Emacs Settings" body))
-    (should (string-search "setting/jetpacs-theme-mode" body))
-    (should (string-search "setting/jetpacs-dialog-style" body))
-    (should (string-search "setting/jetpacs-reconnect" body))))
+  ;; The hub surfaces Companion theme and links to the two sub-screens.
+  (let ((hub (prin1-to-string (jetpacs-shell--settings-view nil))))
+    (should (string-search "setting/jetpacs-theme-mode" hub))
+    (should (string-search "settings-jetpacs" hub))
+    (should (string-search "settings-emacs" hub)))
+  ;; Jetpacs surface: native Android access + Dialog style + the system knob.
+  (let ((j (prin1-to-string (jetpacs-shell--jetpacs-settings-view nil))))
+    (should (string-search "jetpacs.settings.open" j))
+    (should (string-search "setting/jetpacs-dialog-style" j))
+    (should (string-search "setting/jetpacs-apps-show-vanilla-app" j)))
+  ;; Emacs surface: connection knobs, but NOT the relocated companion
+  ;; theme / dialog style.
+  (let ((e (prin1-to-string (jetpacs-shell--emacs-settings-view nil))))
+    (should (string-search "setting/jetpacs-reconnect" e))
+    (should-not (string-search "jetpacs-theme-mode" e))
+    (should-not (string-search "jetpacs-dialog-style" e))))
 
 (ert-deftest jetpacs-shell-settings-view-replaceable ()
   "An app's own \"settings\" registration replaces the stock view in place."

@@ -448,6 +448,58 @@ Sections and links attributed to an app (registered under
                                        (mapcar #'jetpacs-settings--item entries)))
                (mapcar (lambda (e) (funcall (cadr e))) emacs-links))))))
 
+;; ─── Split bodies for the settings hub (Jetpacs / Emacs surfaces) ─────────────
+;;
+;; The one Settings screen is a hub of per-surface entries.  These builders
+;; carve the shared registry/links into the Jetpacs (app) surface and the
+;; Emacs surface; Companion theme is surfaced at the hub itself.  Membership
+;; is by group TITLE so an item stays wire-set-gated (the gate is by symbol)
+;; wherever it renders.
+
+(defconst jetpacs-settings-jetpacs-group-titles '("Jetpacs")
+  "Registry group titles that render on the Jetpacs (app) settings surface.")
+
+(defconst jetpacs-settings-hub-group-titles '("Appearance")
+  "Registry group titles surfaced at the settings hub, not the Emacs surface.")
+
+(defun jetpacs-settings--group-nodes (title)
+  "Header + item nodes for registry group TITLE, owner-filtered, or nil."
+  (let ((entries (cdr (assoc title jetpacs-settings-registry))))
+    (when (and entries
+               (jetpacs-settings--owner-visible-p
+                (and (fboundp 'jetpacs--owner-of)
+                     (jetpacs--owner-of "settings" title))))
+      (cons (jetpacs-section-header title)
+            (mapcar #'jetpacs-settings--item entries)))))
+
+(defun jetpacs-settings-jetpacs-body ()
+  "The Jetpacs (app) settings surface: native Android access + Jetpacs knobs.
+Native links stay first so Android configuration is reachable offline."
+  (append
+   (mapcar (lambda (e) (funcall (cadr e)))
+           (cl-remove-if-not (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+                             jetpacs-settings-native-links))
+   (cl-loop for title in jetpacs-settings-jetpacs-group-titles
+            for nodes = (jetpacs-settings--group-nodes title)
+            when nodes append nodes)))
+
+(defun jetpacs-settings-emacs-body ()
+  "The Emacs settings surface: every registry group except the hub/Jetpacs
+ones, then the satellite links (Packages, Customize, Modus Themes, …)."
+  (let ((relocated (append jetpacs-settings-jetpacs-group-titles
+                           jetpacs-settings-hub-group-titles)))
+    (append
+     (cl-loop for (title . entries) in jetpacs-settings-registry
+              unless (member title relocated)
+              when (jetpacs-settings--owner-visible-p
+                    (and (fboundp 'jetpacs--owner-of)
+                         (jetpacs--owner-of "settings" title)))
+              append (cons (jetpacs-section-header title)
+                           (mapcar #'jetpacs-settings--item entries)))
+     (mapcar (lambda (e) (funcall (cadr e)))
+             (cl-remove-if-not (lambda (e) (jetpacs-settings--owner-visible-p (cddr e)))
+                               jetpacs-settings-links)))))
+
 ;; ─── Actions and state handlers ──────────────────────────────────────────────
 
 (jetpacs-defaction "settings.set"

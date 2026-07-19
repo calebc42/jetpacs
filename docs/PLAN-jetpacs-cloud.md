@@ -130,7 +130,7 @@ must land green with zero golden churn before `cloud/` begins.
   `button`, `section_header`, `lazy_column`, `divider`); revision guard;
   spec cache in localStorage rendered **before** connecting (design
   principle #1: Emacs gone is the default state, not an error);
-  unknown node types degrade per §9. Exit: `app:dashboard` renders;
+  unknown node types degrade per §11. Exit: `app:dashboard` renders;
   reload shows it offline.
 - **Rung 2 — events + queue.** `on_tap` → `event.action`
   `{surface, revision_seen, action, args}`; `when_offline`
@@ -150,7 +150,7 @@ must land green with zero golden churn before `cloud/` begins.
   validate against the contract). Node-runnable so CI can carry it
   later. Exit: the third implementation is held to the same truth.
 
-Then, and only then: the SPEC-2 §1 transport row + §8 decision 7 get
+Then, and only then: the SPEC-2 §1 transport row + §16 decision 7 get
 written from evidence, and SPEC-CHANGES logs it with this plan and the
 kit as sources.
 
@@ -173,5 +173,5 @@ kit as sources.
 
 1. The transport seam in jetpacs.el (tiny, green, zero golden churn).
 2. `cloud/` rung 0 → 4, in order; each rung a commit.
-3. Spec text (SPEC-2 §1 row, §8 decision 7 resolved, SPEC-CHANGES row)
+3. Spec text (SPEC-2 §1 row, §16 decision 7 resolved, SPEC-CHANGES row)
    written from the working prototype.

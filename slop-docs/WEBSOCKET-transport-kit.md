@@ -106,7 +106,7 @@ reasoning).
 Not the manifesto: one new row in SPEC-2 §1's transport line
 (`loopback TCP (v0) → Unix domain socket (1.0 target) | WebSocket
 (browser-companion profile)`), one short paragraph per §3 above in the
-transport section, and a new §8 owner decision: *"7. Whether the
+transport section, and a new §16 owner decision: *"7. Whether the
 browser-companion WS profile ships as spec text or waits for a working
 extension companion (this kit is the quarry either way)."* The overload
 section needs zero changes — that is the layer stack paying out again.

@@ -10,29 +10,29 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
- * Conformance leg A of the Spec 1.0 kit (PLAN-spec-freeze S2): the Kotlin
- * side replays the committed golden corpus against `ebp/contract.json`
- * (contract_format 3, in the ebp protocol submodule) — the same artifact
- * the ERT suite generates and validates — so the frozen contract is
+ * Conformance leg A of the spec kit, on the EBP 2 wire: the Kotlin side
+ * replays the committed golden corpus against `ebp/contract.json`
+ * (contract_format 5, in the ebp protocol submodule) — the same artifact
+ * the ERT suite generates and validates — so the contract is
  * machine-checked by two independent implementations.
  *
  * Legs:
- *  - `ebp/goldens/frames.golden`: every line parses via [Frame.fromJson],
- *    defaults to protocol v1, names a schema-registered kind sent in the
- *    client direction, and its payload keys satisfy the kind's
- *    required/optional sets; the envelope round-trips through compact
- *    single-line NDJSON.
+ *  - `ebp/goldens/frames.golden`: every line parses via [Rpc.parse] into
+ *    a request or notification, names a `methods`-registered method sent
+ *    in the client direction, matches its registered request/notification
+ *    class (requests carry ids, notifications never), and its params keys
+ *    satisfy the method's required/optional sets; each message
+ *    round-trips through [ContentLengthFrameCodec].
  *  - `ebp/goldens/widgets.golden` and `hypertext.golden`: every typed node
  *    validates against `node_schema` (type known, required keys present,
  *    no key outside the schema) and every embedded action against the
  *    discriminated `action_schema`.
- *  - [NdjsonFrameCodec] re-reads the whole corpus as one byte stream,
- *    tolerating blank keep-alive lines.
  *  - Seeded corruptions fail, so the validators demonstrably bite.
  *
  * Deliberately no `main/` changes: this test consumes only public wire
- * types ([Frame], [NdjsonFrameCodec], [SDUI_NODE_TYPES]) plus repo files,
- * discovered with the directory-walk idiom of [SduiRendererNodeTypesTest].
+ * types ([Rpc], [Method], [ContentLengthFrameCodec], [SDUI_NODE_TYPES])
+ * plus repo files, discovered with the directory-walk idiom of
+ * [SduiRendererNodeTypesTest].
  */
 class WireGoldenConformanceTest {
 
@@ -58,14 +58,15 @@ class WireGoldenConformanceTest {
         JSONObject(repoFile("ebp/contract.json").readText())
     }
 
-    // ── Schema accessors over contract.json (format 3) ───────────────────
+    // ── Schema accessors over contract.json (format 5) ───────────────────
 
     private fun names(arr: JSONArray): Set<String> =
         (0 until arr.length()).map { arr.getString(it) }.toSet()
 
     private val nodeTypes: Set<String> by lazy { names(contract.getJSONArray("node_types")) }
     private val nodeSchema: JSONObject by lazy { contract.getJSONObject("node_schema") }
-    private val kindSchema: JSONObject by lazy { contract.getJSONObject("kind_schema") }
+    private val methods: JSONObject by lazy { contract.getJSONObject("methods") }
+    private val errorCodes: JSONObject by lazy { contract.getJSONObject("error_codes") }
     private val actionHookKeys: Set<String> by lazy { names(contract.getJSONArray("action_hook_keys")) }
     private val actionSchema: JSONObject by lazy { contract.getJSONObject("action_schema") }
     private val commonNodeKeys: Set<String> by lazy {
@@ -156,25 +157,26 @@ class WireGoldenConformanceTest {
         }
     }
 
-    /** Validate a frame's payload keys against the kind schema. */
-    private fun validatePayload(kind: String, payload: JSONObject, problems: MutableList<String>) {
-        val entry = kindSchema.optJSONObject(kind)
+    /** Validate a message's params keys against the method table. */
+    private fun validateParams(method: String, params: JSONObject, problems: MutableList<String>) {
+        val entry = methods.optJSONObject(method)
         if (entry == null) {
-            problems += "unknown frame kind `$kind`"
+            problems += "unknown method `$method`"
             return
         }
-        if (entry.optString("payload") == "node") {
-            validateNode(payload, kind, problems)
+        if (entry.optString("params") == "node") {
+            validateNode(params, method, problems)
             return
         }
-        val required = names(entry.getJSONArray("required"))
-        val optional = names(entry.getJSONArray("optional"))
+        val row = entry.getJSONObject("params")
+        val required = names(row.getJSONArray("required"))
+        val optional = names(row.getJSONArray("optional"))
         for (req in required) {
-            if (!payload.has(req)) problems += "$kind: missing required `$req`"
+            if (!params.has(req)) problems += "$method: missing required `$req`"
         }
-        for (key in payload.keys()) {
+        for (key in params.keys()) {
             if (key !in required && key !in optional) {
-                problems += "$kind: unknown payload key `$key`"
+                problems += "$method: unknown params key `$key`"
             }
         }
     }
@@ -182,62 +184,87 @@ class WireGoldenConformanceTest {
     // ── The contract artifact itself ─────────────────────────────────────
 
     @Test
-    fun contractIsFormatThreeAndCoherent() {
-        assertEquals(3, contract.getInt("contract_format"))
+    fun contractIsFormatFiveAndCoherent() {
+        assertEquals(5, contract.getInt("contract_format"))
         assertEquals(JETPACS_PROTOCOL_VERSION, contract.getInt("protocol_version"))
         assertTrue(contract.getString("spec_version").isNotEmpty())
         // The third mirror leg: the published node vocabulary is exactly the
         // renderer's (elisp already pins lint = golden = SDUI_NODE_TYPES).
         assertEquals(SDUI_NODE_TYPES.toSortedSet(), nodeTypes.toSortedSet())
-        // Every Kind constant the companion compiles against is registered.
-        val kinds = kindSchema.keys().asSequence().toSet()
-        for (k in listOf(
-                Kind.SESSION_HELLO, Kind.SESSION_WELCOME, Kind.AUTH_CHALLENGE,
-                Kind.AUTH_RESPONSE, Kind.ACK, Kind.ERROR, Kind.PING, Kind.PONG,
-                Kind.STATE_CHANGED, Kind.DIALOG_SHOW, Kind.DIALOG_DISMISS,
-                Kind.PIE_MENU_SHOW, Kind.PIE_MENU_DISMISS, Kind.TOAST_SHOW,
-                Kind.COMPLETIONS_SHOW, Kind.EDIT_RESYNC, Kind.DIAGNOSTICS_SHOW,
-                Kind.ELDOC_SHOW, Kind.FONTIFY_SHOW, Kind.CAPABILITY_INVOKE,
-                Kind.CAPABILITY_RESULT, Kind.THEME_SET, Kind.TRIGGERS_SET,
+        // Every Method constant the companion compiles against is registered,
+        // and its request/notification class matches the companion's own
+        // dispatch sets.
+        val registered = methods.keys().asSequence().toSet()
+        val all = Method.REQUESTS + Method.CLIENT_NOTIFICATIONS + Method.COMPANION_SENDS
+        for (m in all) {
+            assertTrue("Method `$m` missing from contract methods", m in registered)
+            val declaredType = methods.getJSONObject(m).getString("type")
+            val expected = if (m in Method.REQUESTS) "request" else "notification"
+            assertEquals("Method `$m` class drifted", expected, declaredType)
+        }
+        // Every request method declares a result schema; notifications none.
+        for (m in registered) {
+            val entry = methods.getJSONObject(m)
+            assertEquals("`$m` result presence vs type",
+                entry.getString("type") == "request", entry.has("result"))
+        }
+        // The error-code vocabulary covers every code the companion emits.
+        for (code in listOf(
+                EbpError.PARSE, EbpError.INVALID_REQUEST, EbpError.METHOD_NOT_FOUND,
+                EbpError.CAP_UNSUPPORTED, EbpError.CAP_PERMISSION, EbpError.CAP_FAILED,
+                EbpError.TRIGGERS_REJECTED, EbpError.NOT_AUTHENTICATED,
+                EbpError.SPEC_INVALID, EbpError.PROTO_VERSION, EbpError.AUTH_FAILED,
+                EbpError.REQUEST_CANCELLED, EbpError.FRAME_TOO_LARGE, EbpError.OVERLOADED,
         )) {
-            assertTrue("Kind `$k` missing from kind_schema", k in kinds)
+            assertTrue("error code $code missing from error_codes",
+                errorCodes.has(code.toString()))
         }
     }
 
     // ── frames.golden ────────────────────────────────────────────────────
 
     @Test
-    fun framesGoldenConformsToKindSchema() {
+    fun framesGoldenConformsToMethodSchema() {
         val lines = goldenLines("ebp/goldens/frames.golden")
         assertTrue(lines.isNotEmpty())
         for (line in lines) {
-            val frame = Frame.fromJson(JSONObject(line))
-            assertEquals(JETPACS_PROTOCOL_VERSION, frame.v) // defaulted: golden pins payloads
-            assertTrue(frame.kind.isNotEmpty())
-            val entry = kindSchema.optJSONObject(frame.kind)
-            assertTrue("kind `${frame.kind}` not in schema", entry != null)
-            // The frame corpus is client-emitted (elisp is the sender).
+            val msg = Rpc.parse(line)
+            val (method, params, hasId) = when (msg) {
+                is RpcRequest -> Triple(msg.method, msg.params, true)
+                is RpcNotification -> Triple(msg.method, msg.params, false)
+                else -> { assertTrue("$line -> not a request/notification", false); return }
+            }
+            val entry = methods.optJSONObject(method)
+            assertTrue("method `$method` not in contract", entry != null)
+            // The frame corpus is client-emitted (elisp is the sender)…
             assertTrue(entry!!.getString("direction") in setOf("client", "both"))
+            // …and each line's id-ness matches its registered class.
+            assertEquals("$line -> id vs class",
+                entry.getString("type") == "request", hasId)
             val problems = mutableListOf<String>()
-            validatePayload(frame.kind, frame.payload, problems)
+            validateParams(method, params, problems)
             assertEquals("$line -> $problems", emptyList<String>(), problems)
         }
     }
 
     @Test
-    fun framesGoldenRoundTripsStably() {
+    fun framesGoldenRoundTripsThroughCodec() {
         for (line in goldenLines("ebp/goldens/frames.golden")) {
             val obj = JSONObject(line)
-            val sent = Frame(kind = obj.getString("kind"), payload = obj.getJSONObject("payload"))
-            val wire = sent.toString()
-            assertTrue("NDJSON frame must be single-line", '\n' !in wire)
-            val received = Frame.fromJson(JSONObject(wire))
-            assertEquals(sent.kind, received.kind)
-            assertEquals(sent.id, received.id)
-            assertEquals(sent.v, received.v)
-            assertEquals(null, received.replyTo)
-            assertEquals("payload drifted through the wire round-trip",
-                canonical(sent.payload), canonical(received.payload))
+            val out = ByteArrayOutputStream()
+            ContentLengthFrameCodec(ByteArrayInputStream(ByteArray(0)), out).write(obj)
+            val wire = out.toByteArray()
+            val header = String(wire.takeWhile { it != '{'.code.toByte() }.toByteArray())
+            assertTrue("missing Content-Length header", header.startsWith("Content-Length: "))
+            val received = ContentLengthFrameCodec(ByteArrayInputStream(wire), ByteArrayOutputStream()).read()
+            val (method, params) = when (received) {
+                is RpcRequest -> received.method to received.params
+                is RpcNotification -> received.method to received.params
+                else -> { assertTrue("did not round-trip: $received", false); return }
+            }
+            assertEquals(obj.getString("method"), method)
+            assertEquals("params drifted through the wire round-trip",
+                canonical(obj.getJSONObject("params")), canonical(params))
         }
     }
 
@@ -273,49 +300,43 @@ class WireGoldenConformanceTest {
         assertTrue(nodes > 8)
     }
 
-    // ── NdjsonFrameCodec corpus replay ───────────────────────────────────
+    // ── ContentLengthFrameCodec corpus replay ────────────────────────────
 
     @Test
-    fun codecRereadsGoldenCorpusAsByteStream() {
-        val frames = goldenLines("ebp/goldens/frames.golden").map {
-            val obj = JSONObject(it)
-            Frame(kind = obj.getString("kind"), payload = obj.getJSONObject("payload"))
-        }
-        // Interleave blank keep-alive lines: the codec must skip them.
-        val stream = frames.joinToString("\n\n", postfix = "\n") { it.toString() }
-        val codec = NdjsonFrameCodec(
-            ByteArrayInputStream(stream.toByteArray(Charsets.UTF_8)),
-            ByteArrayOutputStream(),
-        )
-        val read = generateSequence { codec.read() }.toList()
-        assertEquals(frames.size, read.size)
-        for ((sent, received) in frames.zip(read)) {
-            assertEquals(sent.kind, received.kind)
-            assertEquals(canonical(sent.payload), canonical(received.payload))
-        }
-        // And the write side emits exactly one line per frame.
+    fun codecReplaysGoldenCorpusAsOneByteStream() {
+        val messages = goldenLines("ebp/goldens/frames.golden").map { JSONObject(it) }
         val out = ByteArrayOutputStream()
-        val writer = NdjsonFrameCodec(ByteArrayInputStream(ByteArray(0)), out)
-        frames.forEach(writer::write)
-        val written = out.toString(Charsets.UTF_8.name()).trim().lines()
-        assertEquals(frames.size, written.size)
+        val writer = ContentLengthFrameCodec(ByteArrayInputStream(ByteArray(0)), out)
+        messages.forEach(writer::write)
+        val reader = ContentLengthFrameCodec(
+            ByteArrayInputStream(out.toByteArray()), ByteArrayOutputStream())
+        val read = generateSequence { reader.read() }.toList()
+        assertEquals(messages.size, read.size)
+        for ((sent, received) in messages.zip(read)) {
+            val params = when (received) {
+                is RpcRequest -> received.params
+                is RpcNotification -> received.params
+                else -> { assertTrue("unexpected: $received", false); return }
+            }
+            assertEquals(canonical(sent.getJSONObject("params")), canonical(params))
+        }
     }
 
     // ── Seeded corruptions: the validators bite ──────────────────────────
 
     @Test
     fun seededCorruptionsFail() {
-        // A renamed required payload key on a real golden line.
+        // A renamed required params key on a real golden line.
         val line = JSONObject(goldenLines("ebp/goldens/frames.golden").first())
-        val payload = line.getJSONObject("payload")
-        payload.put("triggerz", payload.remove("triggers"))
+        val params = line.getJSONObject("params")
+        params.put("triggerz", params.remove("triggers"))
         val p1 = mutableListOf<String>()
-        validatePayload(line.getString("kind"), payload, p1)
+        validateParams(line.getString("method"), params, p1)
         assertTrue(p1.isNotEmpty())
 
-        // An unknown frame kind.
+        // An unknown method.
         val p2 = mutableListOf<String>()
-        validatePayload("flisbo.kind", JSONObject(), p2)
+        validateParams("flisbo.method", JSONObject(), p2)
         assertTrue(p2.isNotEmpty())
 
         // An unknown node type, a missing required key, an unknown node key.
@@ -333,5 +354,13 @@ class WireGoldenConformanceTest {
         val p6 = mutableListOf<String>()
         validateAction(JSONObject("""{"action":"a.b","builtin":"clipboard.copy"}"""), "seed", p6)
         assertTrue(p6.isNotEmpty())
+
+        // The envelope parser refuses batches, junk, and versionless frames.
+        assertTrue(Rpc.parse("[]") is RpcMalformed)
+        assertTrue(Rpc.parse("not json") is RpcMalformed)
+        assertTrue(Rpc.parse("""{"method":"x.y","params":{}}""") is RpcMalformed)
+        assertTrue(
+            Rpc.parse("""{"jsonrpc":"2.0","id":true,"method":"x.y","params":{}}""")
+                is RpcMalformed)
     }
 }

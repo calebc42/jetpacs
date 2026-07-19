@@ -850,16 +850,21 @@ the buffer alive (it may be the user's, and it keeps the server warm)."
                  "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")))
 
 (ert-deftest jetpacs-auth-handshake-round-trip ()
-  "Challenge → response → proof, both directions, plus the failure modes."
+  "Challenge (the hello's response) → auth request → proof, both ways.
+Under EBP 2 the challenge arrives as `session.hello's result and the
+auth answer goes out as an `auth.response' request; the MAC and proof
+constructions carry from v1 §3 unchanged."
   (let ((jetpacs-auth-token "ABCD-EFGH-JKMN-PQRS")
         (jetpacs--auth-server-nonce nil)
         (jetpacs--auth-client-nonce nil)
         (sent nil))
-    (cl-letf (((symbol-function 'jetpacs-send)
-               (lambda (kind payload &rest _)
-                 (push (cons kind payload) sent))))
-      ;; The challenge produces a response with the right MAC.
-      (jetpacs--on-auth-challenge '((nonce . "deadbeef")))
+    (cl-letf (((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (cons method params) sent)
+                 1)))
+      ;; The hello's result produces an auth.response request with the
+      ;; right MAC.
+      (jetpacs--on-hello-reply '((nonce . "deadbeef")) nil)
       (let* ((resp (cdr (assoc "auth.response" sent)))
              (cnonce (alist-get 'nonce resp)))
         (should resp)
@@ -875,20 +880,121 @@ the buffer alive (it may be the user's, and it keeps the server warm)."
                         (format "ebp1:server:%s:deadbeef" cnonce))))))
         ;; …a wrong or missing proof is refused (fail closed)…
         (should-not (jetpacs--auth-verify-welcome '((server_proof . "bogus"))))
-        (should-not (jetpacs--auth-verify-welcome '((protocol . 1))))))
+        (should-not (jetpacs--auth-verify-welcome '((protocol . 2))))))
     ;; …and with no token configured, the legacy path still passes.
     (let ((jetpacs-auth-token nil))
-      (should (jetpacs--auth-verify-welcome '((protocol . 1)))))))
+      (should (jetpacs--auth-verify-welcome '((protocol . 2)))))))
 
 (ert-deftest jetpacs-auth-challenge-without-token-stays-silent ()
-  "Unpaired Emacs answers a challenge with guidance, never a frame."
+  "Unpaired Emacs answers the challenge with guidance, never a frame.
+The companion stays fail-closed (drops everything pre-proof), so the
+unpaired UX is a *Messages* hint, exactly as in v1."
   (let ((jetpacs-auth-token nil)
         (sent nil))
-    (cl-letf (((symbol-function 'jetpacs-send)
-               (lambda (kind payload &rest _)
-                 (push (cons kind payload) sent))))
-      (jetpacs--on-auth-challenge '((nonce . "deadbeef")))
+    (cl-letf (((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (cons method params) sent)
+                 1)))
+      (jetpacs--on-hello-reply '((nonce . "deadbeef")) nil)
       (should-not sent))))
+
+(ert-deftest jetpacs-hello-refusal-surfaces-error ()
+  "A typed hello refusal (1202 proto-version) never advances to auth."
+  (let ((jetpacs-auth-token "ABCD-EFGH-JKMN-PQRS")
+        (sent nil))
+    (cl-letf (((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (cons method params) sent)
+                 1)))
+      (jetpacs--on-hello-reply
+       nil '((code . 1202) (message . "companion speaks v2")
+             (data . ((kind . "proto-version")))))
+      (should-not sent))))
+
+;; ─── Outbound conflation & the lag gauge (SPEC-2 §5) ─────────────────────────
+
+(defmacro jetpacs-tests--with-conflation (&rest body)
+  "Run BODY with fresh conflation state and a captured wire.
+Binds SENT (the jetpacs-send capture list, newest first) and FLUSH-FN
+\(the timer callback captured from `run-at-time', or nil)."
+  (declare (indent 0))
+  `(let ((jetpacs-surfaces--outbox (make-hash-table :test 'equal))
+         (jetpacs-surfaces--outbox-timer nil)
+         (jetpacs-surfaces--sent-revisions (make-hash-table :test 'equal))
+         (jetpacs-surfaces--lag-streak 0)
+         (jetpacs-surfaces--conflated 0)
+         (sent nil)
+         (flush-fn nil))
+     (ignore sent flush-fn)
+     (cl-letf (((symbol-function 'jetpacs-send)
+                (lambda (method &optional params)
+                  (push (cons method params) sent)
+                  t))
+               ((symbol-function 'run-at-time)
+                (lambda (_delay _repeat fn &rest _)
+                  (setq flush-fn fn)
+                  'fake-timer)))
+       ,@body)))
+
+(ert-deftest jetpacs-surface-conflation-direct-when-caught-up ()
+  "With no measured lag, updates send synchronously — the v1 path — and
+the sent-revision gauge records what left."
+  (jetpacs-tests--with-conflation
+    (jetpacs-surface-update "app:x" 7 '((t . "text") (text . "hi")))
+    (should (= (length sent) 1))
+    (should (equal (caar sent) "surface.update"))
+    (should (= (gethash "app:x" jetpacs-surfaces--sent-revisions) 7))
+    (should-not flush-fn)))
+
+(ert-deftest jetpacs-surface-conflation-coalesces-under-lag ()
+  "Under lag, a burst per surface collapses to the newest frame only —
+the §5 sender rule: at most one queued update per surface."
+  (jetpacs-tests--with-conflation
+    (setq jetpacs-surfaces--lag-streak 3)
+    (jetpacs-surface-update "app:x" 8 '((t . "text") (text . "a")))
+    (jetpacs-surface-update "app:x" 9 '((t . "text") (text . "b")))
+    (jetpacs-surface-update "app:y" 4 '((t . "text") (text . "c")))
+    (should-not sent)                     ; queued, not sent
+    (should (functionp flush-fn))
+    (funcall flush-fn)                    ; the timer fires
+    (should (= (length sent) 2))          ; one per surface
+    (let ((x (seq-find (lambda (c) (equal (alist-get 'surface (cdr c)) "app:x"))
+                       sent)))
+      (should (= (alist-get 'revision (cdr x)) 9)))   ; newest won
+    (should (= jetpacs-surfaces--conflated 1))
+    (should (= (gethash "app:x" jetpacs-surfaces--sent-revisions) 9))))
+
+(ert-deftest jetpacs-surface-remove-drops-queued-update ()
+  "A remove supersedes its surface's queued update: flushing the pair out
+of order must not resurrect the surface."
+  (jetpacs-tests--with-conflation
+    (setq jetpacs-surfaces--lag-streak 2)
+    (jetpacs-surface-update "app:x" 5 '((t . "text") (text . "doomed")))
+    (jetpacs-surface-remove "app:x")
+    (should (equal (caar sent) "surface.remove"))
+    (funcall flush-fn)
+    ;; The queued update never sent; only the remove crossed the wire.
+    (should (= (length sent) 1))))
+
+(ert-deftest jetpacs-surface-lag-gauge ()
+  "revision_seen trailing what we sent stretches the window; catching up
+snaps it back; unknown surfaces and offline replays (-1) are ignored."
+  (jetpacs-tests--with-conflation
+    (puthash "app:x" 10 jetpacs-surfaces--sent-revisions)
+    ;; Trailing by ≥2: streak grows, window stretches.
+    (jetpacs-surfaces--note-lag '((surface . "app:x") (revision_seen . 8)))
+    (should (= jetpacs-surfaces--lag-streak 1))
+    (jetpacs-surfaces--note-lag '((surface . "app:x") (revision_seen . 7)))
+    (should (= jetpacs-surfaces--lag-streak 2))
+    (should (> (jetpacs-surfaces--flush-delay) 0))
+    ;; A replayed offline event (-1) and an untracked surface change nothing.
+    (jetpacs-surfaces--note-lag '((surface . "app:x") (revision_seen . -1)))
+    (jetpacs-surfaces--note-lag '((surface . "app:gone") (revision_seen . 3)))
+    (should (= jetpacs-surfaces--lag-streak 2))
+    ;; Caught up (trailing ≤1): the gauge snaps back to direct sends.
+    (jetpacs-surfaces--note-lag '((surface . "app:x") (revision_seen . 10)))
+    (should (= jetpacs-surfaces--lag-streak 0))
+    (should (= (jetpacs-surfaces--flush-delay) 0))))
 
 ;; ─── Demo files ─────────────────────────────────────────────────────────────
 
@@ -2933,9 +3039,10 @@ Register-time pushes are debounced (a burst is one frame);
         (jetpacs-triggers--push-timer nil)
         (sent nil))
     (cl-letf (((symbol-function 'jetpacs-connected-p) (lambda () t))
-              ((symbol-function 'jetpacs-send)
-               (lambda (kind payload &rest _)
-                 (push (cons kind payload) sent))))
+              ((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (cons method params) sent)
+                 1)))
       (jetpacs-trigger-register "t2" :type "screen" :params '((state . "off")))
       (jetpacs-trigger-register "t1" :type "power"
                              :params '((state . "connected"))
@@ -2989,9 +3096,10 @@ against both the static batch-1 catalog and a welcome-reported one."
         (jetpacs-triggers--push-timer nil)
         (sent nil))
     (cl-letf (((symbol-function 'jetpacs-connected-p) (lambda () t))
-              ((symbol-function 'jetpacs-send)
-               (lambda (kind payload &rest _)
-                 (push (cons kind payload) sent))))
+              ((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (cons method params) sent)
+                 1)))
       (jetpacs-trigger-register "ok" :type "power")
       (jetpacs-trigger-register "too-new" :type "wifi.ssid")
       ;; The fallback catalog governs: wifi.ssid stays home.
@@ -3186,21 +3294,22 @@ arm the trigger ungated (SPEC §11's normative client rule)."
                    (on_fire . [((notify . ((title . "${data.level}"))))]))))))
 
 (ert-deftest jetpacs-triggers-fire-dispatch ()
-  "An inbound trigger.fired event.action reaches the per-id handler."
+  "An inbound trigger.fired event.action reaches the per-id handler.
+Drives the real decoder with a JSON-RPC notification frame."
   (let ((jetpacs-triggers--table (make-hash-table :test 'equal))
         (fired nil))
     ;; Disconnected in batch, so register never sends.
     (jetpacs-trigger-register "charge" :type "power"
                            :handler (lambda (data args)
                                       (setq fired (list data args))))
-    (jetpacs--handle-line
+    (jetpacs--handle-frame
      (json-serialize
-      '((v . 1) (id . "m-test-1") (reply_to . :null)
-        (kind . "event.action")
-        (payload . ((action . "trigger.fired")
-                    (args . ((id . "charge") (type . "power")
-                             (data . ((state . "connected")))
-                             (at_ms . 1751700000000))))))
+      '((jsonrpc . "2.0")
+        (method . "event.action")
+        (params . ((action . "trigger.fired")
+                   (args . ((id . "charge") (type . "power")
+                            (data . ((state . "connected")))
+                            (at_ms . 1751700000000))))))
       :null-object :null :false-object :false))
     (should fired)
     (should (equal (alist-get 'state (car fired)) "connected"))
@@ -3208,13 +3317,13 @@ arm the trigger ungated (SPEC §11's normative client rule)."
     (should (equal (alist-get 'at_ms (cadr fired)) 1751700000000))
     ;; A fire for an id not in the set is dropped, never signalled.
     (setq fired nil)
-    (jetpacs--handle-line
+    (jetpacs--handle-frame
      (json-serialize
-      '((v . 1) (id . "m-test-2") (reply_to . :null)
-        (kind . "event.action")
-        (payload . ((action . "trigger.fired")
-                    (args . ((id . "gone") (type . "power")
-                             (data . :null) (at_ms . 1))))))
+      '((jsonrpc . "2.0")
+        (method . "event.action")
+        (params . ((action . "trigger.fired")
+                   (args . ((id . "gone") (type . "power")
+                            (data . :null) (at_ms . 1))))))
       :null-object :null :false-object :false))
     (should-not fired)))
 
@@ -3372,29 +3481,29 @@ constant promises (hardening Task 24) — they cannot drift."
       (should (equal (match-string 1) jetpacs-api-version)))))
 
 (ert-deftest jetpacs-spec-header-version-coherent ()
-  "ebp/SPEC.md's status block is machine-readably coherent (freeze S0):
-the header's wire-protocol version equals `jetpacs-protocol-version', the
-spec version's major is that same wire version, and the amendment log the
-header's policy names exists.  The full spec-version string is pinned here
-so a status flip (1.0-rc -> 1.0) is an intentional, reviewed change —
-same philosophy as the contract.json byte-pin."
-  (let ((f (expand-file-name "../ebp/SPEC.md" jetpacs-tests--dir)))
+  "ebp/SPEC-2.md's status block is machine-readably coherent:
+the spec version's major equals `jetpacs-protocol-version' (the wire
+version), and the full spec-version string is pinned here so a status
+flip (2.0-draft -> 2.0) is an intentional, reviewed change — same
+philosophy as the contract.json byte-pin.  The v1 line (SPEC.md, its
+amendment log) must still exist beside it: SPEC-2 §6 incorporates it by
+reference."
+  (let ((f (expand-file-name "../ebp/SPEC-2.md" jetpacs-tests--dir)))
     (with-temp-buffer
       (insert-file-contents f)
       (goto-char (point-min))
       (should (re-search-forward
-               "^Spec: \\*\\*\\([0-9]+\\)\\.\\([0-9]+\\)\\(-rc\\)?\\*\\*" nil t))
+               "^Spec: \\*\\*\\([0-9]+\\)\\.\\([0-9]+\\)\\(-rc\\|-draft\\)?\\*\\*" nil t))
       (let ((major (string-to-number (match-string 1)))
             (full (concat (match-string 1) "." (match-string 2)
                           (or (match-string 3) ""))))
-        (should (equal full "1.0-rc"))
+        (should (equal full "2.0-draft"))
         (should (= major jetpacs-protocol-version)))
-      (should (re-search-forward "Wire protocol: \\*\\*`v: \\([0-9]+\\)`\\*\\*" nil t))
-      (should (= (string-to-number (match-string 1)) jetpacs-protocol-version))
-      (goto-char (point-min))
-      (should (re-search-forward "\\[SPEC-CHANGES\\.md\\](SPEC-CHANGES\\.md)" nil t))
-      (should (file-exists-p
-               (expand-file-name "../ebp/SPEC-CHANGES.md" jetpacs-tests--dir))))))
+      (should (re-search-forward "Protocol: \\*\\*\\([0-9]+\\)\\*\\*" nil t))
+      (should (= (string-to-number (match-string 1)) jetpacs-protocol-version)))
+    (should (file-exists-p (expand-file-name "../ebp/SPEC.md" jetpacs-tests--dir)))
+    (should (file-exists-p
+             (expand-file-name "../ebp/SPEC-CHANGES.md" jetpacs-tests--dir)))))
 
 ;; ─── Build-feature probe (Phase H / Task 23) ─────────────────────────────────
 
@@ -3415,11 +3524,13 @@ mirrors membership, accepting strings too."
 
 (ert-deftest jetpacs-hello-carries-build-features ()
   "session.hello reports the build matrix as the additive `features' field
-\(SPEC §3): a vector of feature-name strings beside client and wants."
+\(SPEC §3): a vector of feature-name strings beside client and wants.
+The hello is a request under EBP 2 — its response is the challenge."
   (let (sent)
-    (cl-letf (((symbol-function 'jetpacs-send)
-               (lambda (kind &optional payload &rest _)
-                 (push (cons kind payload) sent))))
+    (cl-letf (((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (cons method params) sent)
+                 1)))
       (jetpacs--send-hello))
     (let* ((hello (assoc "session.hello" sent))
            (features (alist-get 'features (cdr hello))))
@@ -3427,9 +3538,10 @@ mirrors membership, accepting strings too."
       (should (vectorp features))
       (should (equal (append features nil)
                      (mapcar #'symbol-name jetpacs-build-features)))
-      ;; The pre-existing payload fields are intact beside it.
+      ;; The pre-existing params fields are intact beside it.
       (should (alist-get 'client (cdr hello)))
-      (should (alist-get 'wants (cdr hello))))))
+      (should (alist-get 'wants (cdr hello)))
+      (should (equal (alist-get 'protocol (cdr hello)) 2)))))
 
 (ert-deftest jetpacs-settings-render-row-read-only ()
   "A :render registry entry renders via its builder and stays read-only:
@@ -3662,15 +3774,26 @@ warnings — so the authored schema exactly covers the golden corpus."
     (should (> checked 8))))
 
 (ert-deftest jetpacs-lint-frames-golden-validates ()
-  "Every frames.golden line's kind and payload validate against the kind
-schema — the elisp half of the conformance kit's frame leg."
+  "Every frames.golden line validates against the method schema —
+the elisp half of the conformance kit's frame leg.  Each line is a full
+JSON-RPC message: the envelope invariants (version tag, id XOR
+notification per the schema's class column) are checked here too."
   (let ((lines (jetpacs-tests--golden-json-lines
                 jetpacs-tests--frames-golden-file)))
     (should lines)
     (dolist (l lines)
-      (let ((kind (alist-get 'kind l)))
-        (should (stringp kind))
-        (should-not (jetpacs-lint-payload kind (alist-get 'payload l)))))))
+      (let* ((method (alist-get 'method l))
+             (id (alist-get 'id l))
+             (row (assoc method jetpacs-lint-kind-schema)))
+        (should (stringp method))
+        (should (equal (alist-get 'jsonrpc l) "2.0"))
+        (should row)
+        ;; The class column governs the id: requests carry one,
+        ;; notifications never do.
+        (if (eq (nth 2 row) 'request)
+            (should (numberp id))
+          (should-not id))
+        (should-not (jetpacs-lint-payload method (alist-get 'params l)))))))
 
 (ert-deftest jetpacs-lint-payload-negative ()
   "The kind schema bites: unknown kind, missing required key, unknown key,
@@ -3700,13 +3823,13 @@ and a seeded corruption of a real golden line all report problems."
   ;; Seeded corruption of a real golden line fails.
   (let* ((line (car (jetpacs-tests--golden-json-lines
                      jetpacs-tests--frames-golden-file)))
-         (kind (alist-get 'kind line))
-         (payload (mapcar (lambda (kv)
-                            (if (eq (car kv) 'triggers)
-                                (cons 'triggerz (cdr kv))
-                              kv))
-                          (alist-get 'payload line))))
-    (should (jetpacs-lint-payload kind payload))))
+         (method (alist-get 'method line))
+         (params (mapcar (lambda (kv)
+                           (if (eq (car kv) 'triggers)
+                               (cons 'triggerz (cdr kv))
+                             kv))
+                         (alist-get 'params line))))
+    (should (jetpacs-lint-payload method params))))
 
 (defun jetpacs-tests--envelope-kinds ()
   "The Kind strings declared in Envelope.kt (the Kotlin source)."
@@ -4600,48 +4723,164 @@ must be guarded — the wire is fire-and-forget."
       (jetpacs--raw-send "{}"))))          ; a signal here fails the test
 
 (ert-deftest jetpacs-capability-invoke-roundtrip ()
-  "capability.invoke correlates its reply and normalizes ok vs typed error."
-  (let ((jetpacs--pending (make-hash-table :test 'equal))
+  "capability.invoke correlates its response and normalizes result vs error.
+The wire round-trip in miniature: the outbound frame is a JSON-RPC
+request, the success response's result reaches the callback with OK
+non-nil, and a typed error (numeric code + data.kind) is normalized to
+the v1 payload shape (`code' = the kind string, `detail' = the message)
+so Tier 1 consumers never see the envelope swap."
+  (let ((jetpacs--pending (make-hash-table :test 'eql))
         (jetpacs--process 'fake)
+        (jetpacs--rpc-id 0)
         (sent nil)
         (result nil))
     (cl-letf (((symbol-function 'process-live-p)
                (lambda (p) (eq p 'fake)))
               ((symbol-function 'jetpacs--raw-send)
-               (lambda (line) (push line sent))))
-      ;; Success path: capability.result {ok: true} resolves with OK non-nil.
+               (lambda (bytes) (push bytes sent) t)))
+      ;; Success path: the response's result resolves with OK non-nil.
       (let ((id (jetpacs-capability-invoke
                  "settings.open" '((panel . "wifi"))
                  (lambda (ok payload) (setq result (list ok payload))))))
         (should (= (length sent) 1))
-        (let* ((frame (json-parse-string (car sent)
-                                         :object-type 'alist :array-type 'list
-                                         :null-object :null :false-object :false))
-               (payload (alist-get 'payload frame)))
-          (should (equal (alist-get 'kind frame) "capability.invoke"))
-          (should (equal (alist-get 'cap payload) "settings.open"))
-          (should (equal (alist-get 'panel (alist-get 'args payload)) "wifi")))
-        (jetpacs--handle-line
+        (should (integerp id))
+        ;; The outbound frame is Content-Length framed; parse the body.
+        (let* ((wire (car sent))
+               (split (string-search "\r\n\r\n" wire))
+               (header (substring wire 0 split))
+               (body (decode-coding-string (substring wire (+ split 4)) 'utf-8))
+               (msg (json-parse-string body
+                                       :object-type 'alist :array-type 'list
+                                       :null-object :null :false-object :false))
+               (params (alist-get 'params msg)))
+          (should (string-match "Content-Length: \\([0-9]+\\)" header))
+          (should (= (string-to-number (match-string 1 header))
+                     (string-bytes (encode-coding-string body 'utf-8))))
+          (should (equal (alist-get 'jsonrpc msg) "2.0"))
+          (should (equal (alist-get 'method msg) "capability.invoke"))
+          (should (equal (alist-get 'id msg) id))
+          (should (equal (alist-get 'cap params) "settings.open"))
+          (should (equal (alist-get 'panel (alist-get 'args params)) "wifi")))
+        (jetpacs--handle-frame
          (json-serialize
-          `((v . 1) (id . "m-r-1") (reply_to . ,id)
-            (kind . "capability.result") (payload . ((ok . t))))
+          `((jsonrpc . "2.0") (id . ,id)
+            (result . ((result . ((opened . t))))))
           :null-object :null :false-object :false))
-        (should (equal (car result) t)))
-      ;; Error path: a typed error frame resolves with OK nil and the code.
+        (should (equal (car result) t))
+        (should (eq t (alist-get 'opened (alist-get 'result (cadr result))))))
+      ;; Error path: a typed error resolves with OK nil, the readable
+      ;; kind as `code', and the message as `detail'.
       (setq result nil)
       (let ((id (jetpacs-capability-invoke
                  "flashlight" nil
                  (lambda (ok payload) (setq result (list ok payload))))))
-        (jetpacs--handle-line
+        (jetpacs--handle-frame
          (json-serialize
-          `((v . 1) (id . "m-r-2") (reply_to . ,id)
-            (kind . "error")
-            (payload . ((code . "cap-unsupported")
-                        (detail . "unknown capability 'flashlight'"))))
+          `((jsonrpc . "2.0") (id . ,id)
+            (error . ((code . 1001)
+                      (message . "unknown capability 'flashlight'")
+                      (data . ((kind . "cap-unsupported"))))))
           :null-object :null :false-object :false))
         (should result)
         (should-not (car result))
-        (should (equal (alist-get 'code (cadr result)) "cap-unsupported"))))))
+        (should (equal (alist-get 'code (cadr result)) "cap-unsupported"))
+        (should (equal (alist-get 'detail (cadr result))
+                       "unknown capability 'flashlight'")))
+      ;; Remedy path: cap-permission's perm/settings ride alongside.
+      (setq result nil)
+      (let ((id (jetpacs-capability-invoke
+                 "dnd.set" '((mode . "on"))
+                 (lambda (ok payload) (setq result (list ok payload))))))
+        (jetpacs--handle-frame
+         (json-serialize
+          `((jsonrpc . "2.0") (id . ,id)
+            (error . ((code . 1002)
+                      (message . "permission required")
+                      (data . ((kind . "cap-permission")
+                               (perm . "notification_policy")
+                               (settings . ((panel . "dnd"))))))))
+          :null-object :null :false-object :false))
+        (should-not (car result))
+        (should (equal (alist-get 'code (cadr result)) "cap-permission"))
+        (should (equal (alist-get 'perm (cadr result)) "notification_policy"))
+        (should (equal (alist-get 'panel (alist-get 'settings (cadr result)))
+                       "dnd"))))))
+
+(ert-deftest jetpacs-pending-die-with-connection ()
+  "An outstanding request is concluded by connection death — never silence.
+SPEC-2 §2.3: the caller receives a local `code' -1 error."
+  (let ((jetpacs--pending (make-hash-table :test 'eql))
+        (jetpacs--process 'fake)
+        (jetpacs--rpc-id 0)
+        (answered nil))
+    (cl-letf (((symbol-function 'process-live-p) (lambda (p) (eq p 'fake)))
+              ((symbol-function 'jetpacs--raw-send) (lambda (_bytes) t)))
+      (jetpacs-request "capability.invoke" '((cap . "vibrate"))
+                    (lambda (result err) (setq answered (list result err))))
+      (should (= (hash-table-count jetpacs--pending) 1))
+      (jetpacs--fail-pending "connection closed")
+      (should answered)
+      (should-not (car answered))
+      (should (equal (alist-get 'code (cadr answered)) -1))
+      (should (= (hash-table-count jetpacs--pending) 0)))))
+
+(ert-deftest jetpacs-inbound-request-refusals ()
+  "The fail-closed dispatcher duties (SPEC-2 §2.3), Emacs side:
+an unknown inbound request is answered -32601; a wrong-direction one
+-32600; neither is silence, neither is fail-open success."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'jetpacs--raw-send)
+               (lambda (bytes) (push bytes sent) t))
+              ((symbol-function 'jetpacs--encode-frame)
+               ;; Bypass framing so `sent' holds readable JSON.
+               (lambda (msg) (json-serialize msg :null-object :null
+                                             :false-object :false))))
+      (jetpacs--handle-frame
+       (json-serialize '((jsonrpc . "2.0") (id . 7) (method . "flisbo.method")
+                         (params . ()))
+                       :null-object :null :false-object :false))
+      (let ((msg (json-parse-string (car sent)
+                                    :object-type 'alist :array-type 'list
+                                    :null-object :null :false-object :false)))
+        (should (equal (alist-get 'id msg) 7))
+        (should (= (alist-get 'code (alist-get 'error msg)) -32601)))
+      (setq sent nil)
+      ;; surface.update travels client → companion; as an inbound request
+      ;; it is a direction violation, refused -32600.
+      (jetpacs--handle-frame
+       (json-serialize '((jsonrpc . "2.0") (id . 8) (method . "surface.update")
+                         (params . ((surface . "app:x"))))
+                       :null-object :null :false-object :false))
+      (let ((msg (json-parse-string (car sent)
+                                    :object-type 'alist :array-type 'list
+                                    :null-object :null :false-object :false)))
+        (should (equal (alist-get 'id msg) 8))
+        (should (= (alist-get 'code (alist-get 'error msg)) -32600))))))
+
+(ert-deftest jetpacs-oversized-inbound-frame-skipped ()
+  "The receiver-side frame cap: an oversized body is skipped byte-exactly,
+the connection lives, and the next frame still dispatches."
+  (let ((jetpacs--buffer "")
+        (jetpacs--skip-remaining 0)
+        (jetpacs-max-frame-bytes 64)
+        (handled nil)
+        (logged nil))
+    (cl-letf (((symbol-function 'jetpacs--handle-frame)
+               (lambda (text) (push text handled)))
+              ;; The 1400 report rides jetpacs-send; capture it.
+              ((symbol-function 'jetpacs-send)
+               (lambda (method params) (push (cons method params) logged) t)))
+      (let* ((big (make-string 100 ?x))
+             (next "{\"jsonrpc\":\"2.0\",\"method\":\"event.action\",\"params\":{}}")
+             (wire (concat (format "Content-Length: %d\r\n\r\n" (length big)) big
+                           (format "Content-Length: %d\r\n\r\n" (length next)) next)))
+        ;; Deliver in two chunks to exercise the skip-across-reads path.
+        (jetpacs--filter nil (substring wire 0 40))
+        (jetpacs--filter nil (substring wire 40))
+        (should (= (length handled) 1))
+        (should (string-match-p "event.action" (car handled)))
+        (should (equal (caar logged) "log.error"))
+        (should (= jetpacs--skip-remaining 0))))))
 
 (ert-deftest jetpacs-device-apps-list-parses-result ()
   "apps.list results become the (LABEL . PACKAGE) alist pickers want."
@@ -5043,17 +5282,16 @@ base is absent."
   (expand-file-name "../ebp/goldens/frames.golden" jetpacs-tests--dir))
 
 (defun jetpacs-tests--device-cases ()
-  "One `capability.invoke' payload per `jetpacs-device-*' wrapper.
+  "One `capability.invoke' params object per `jetpacs-device-*' wrapper.
 Captures what each thin defun hands the funnel — the SPEC §10 arg
 shapes — without touching the wire."
   (let (calls)
     (cl-letf (((symbol-function 'jetpacs-device--invoke)
                (lambda (cap args &optional _callback)
-                 (push `((kind . "capability.invoke")
-                         (payload
-                          . ((cap . ,cap)
-                             (args . ,(or args (make-hash-table
-                                                :test 'equal))))))
+                 (push `("capability.invoke"
+                         . ((cap . ,cap)
+                            (args . ,(or args (make-hash-table
+                                               :test 'equal)))))
                        calls))))
       (jetpacs-device-intent :action "android.intent.action.VIEW"
                           :data "https://example.com")
@@ -5116,8 +5354,7 @@ Trigger and capability frames today; new wire frames add cases here."
                            :params '((state . "off")))
     (append
      (list
-      `((kind . "triggers.set")
-        (payload . ((triggers . ,(jetpacs-triggers--specs))))))
+      `("triggers.set" . ((triggers . ,(jetpacs-triggers--specs)))))
      (jetpacs-tests--device-cases)
      (jetpacs-tests--edit-apply-cases))))
 
@@ -5131,8 +5368,8 @@ unchanged.  Deterministic — fundamental-mode, no diagnostics/fontify."
         (file "golden.txt")
         frames)
     (cl-letf (((symbol-function 'jetpacs-send)
-               (lambda (kind payload &rest _)
-                 (push `((kind . ,kind) (payload . ,payload)) frames))))
+               (lambda (method &optional params &rest _)
+                 (push (cons method params) frames))))
       (unwind-protect
           (progn
             (jetpacs-sync-open file 1 "hello world")
@@ -5141,14 +5378,28 @@ unchanged.  Deterministic — fundamental-mode, no diagnostics/fontify."
         (jetpacs-sync-close file)))
     (nreverse frames)))
 
+(defun jetpacs-tests--frame-message (method params id)
+  "Wrap METHOD/PARAMS as the JSON-RPC message the wire carries.
+Requests (per `jetpacs-lint-kind-schema's class column) carry ID;
+notifications never do — the golden pins the classification."
+  (let ((request-p (eq (nth 2 (assoc method jetpacs-lint-kind-schema))
+                       'request)))
+    (append '((jsonrpc . "2.0"))
+            (when request-p `((id . ,id)))
+            `((method . ,method)
+              (params . ,(or params (make-hash-table :test 'equal)))))))
+
 (defun jetpacs-tests--frame-lines ()
-  (let ((i -1))
+  (let ((i -1) (id 0))
     (mapcar (lambda (c)
               (setq i (1+ i))
               (format "%02d %s" i
-                      (json-serialize (jetpacs-tests--canon c)
-                                      :null-object :null
-                                      :false-object :false)))
+                      (json-serialize
+                       (jetpacs-tests--canon
+                        (jetpacs-tests--frame-message
+                         (car c) (cdr c) (cl-incf id)))
+                       :null-object :null
+                       :false-object :false)))
             (jetpacs-tests--frame-cases))))
 
 (defun jetpacs-tests-regen-frame-golden ()
@@ -6151,8 +6402,10 @@ something actually staged."
   "Owner-scoped when the capability is granted; a plain global set when a lone
 app; warn-and-arm-nothing when owner-unaware and a second app is present."
   (let (sent)
-    (cl-letf (((symbol-function 'jetpacs-send)
-               (lambda (&rest args) (push args sent) t)))
+    (cl-letf (((symbol-function 'jetpacs-request)
+               (lambda (method params _callback)
+                 (push (list method params) sent)
+                 1)))
       ;; 1. Granted `reminders.owner' -> scoped send carrying the owner.
       (cl-letf (((symbol-function 'jetpacs-granted-p)
                  (lambda (cap) (equal cap "reminders.owner"))))
@@ -6459,14 +6712,14 @@ in 1.24.0)."
   (should (= 0 jetpacs-devtools--frame-count)))
 
 (ert-deftest jetpacs-devtools-frame-observer-wired ()
-  "`jetpacs-send' reports (KIND PAYLOAD BYTES) through the observer,
+  "`jetpacs-send' reports (METHOD PARAMS BYTES) through the observer,
 and the devtools recorder tallies surface.update frames per surface."
   (jetpacs-devtools-reset)
   (let (seen)
     (let ((jetpacs--frame-observer
-           (lambda (kind payload bytes) (setq seen (list kind payload bytes)))))
-      (jetpacs-send "ping" nil))
-    (should (equal (nth 0 seen) "ping"))
+           (lambda (method params bytes) (setq seen (list method params bytes)))))
+      (jetpacs-send "toast.show" '((text . "hi"))))
+    (should (equal (nth 0 seen) "toast.show"))
     (should (> (nth 2 seen) 0)))
   (jetpacs-devtools--observe-frame "surface.update" '((surface . "app:x")) 123)
   (jetpacs-devtools--observe-frame "surface.update" '((surface . "app:x")) 200)

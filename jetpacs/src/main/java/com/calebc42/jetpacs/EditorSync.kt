@@ -549,5 +549,5 @@ internal fun sendEditAction(action: String, args: JSONObject): Boolean {
         put("fields", JSONObject.NULL)
         put("queued_at", JSONObject.NULL)
     }
-    return conn.send(Frame(kind = "event.action", payload = payload))
+    return conn.notify(Method.EVENT_ACTION, payload)
 }

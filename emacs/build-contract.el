@@ -7,8 +7,9 @@
 ;; `ebp/contract.json' (the ebp protocol submodule — the published,
 ;; pinnable contract repo) publishes the *static* wire vocabulary a Kotlin renderer
 ;; or the composer editor validates emissions against — node types, the authored
-;; per-node key schema and frame-kind schema (contract_format 3, Spec 1.0-rc),
-;; action-hook keys, the offline policies, the toolbar vocabulary, and a
+;; per-node key schema and JSON-RPC method table with error codes
+;; (contract_format 5, Spec 2.0-draft), action-hook keys, the offline
+;; policies, the toolbar vocabulary, and a
 ;; discriminated action schema, plus the api/protocol/spec versions.  It is
 ;; STATIC AND AUTHORED ONLY: the node/kind schemas are the hand-reviewed
 ;; `jetpacs-lint.el' tables, never inferred from golden examples, and there are
@@ -30,24 +31,29 @@
 (require 'jetpacs-lint)
 (require 'jetpacs-source)
 
-(defconst jetpacs-contract-format 3
+(defconst jetpacs-contract-format 5
   "Schema version of `contract.json' itself — bump on a contract-shape change.
 Format 2 (Spec 1.0-rc freeze, S1) adds `spec_version', `node_schema',
 and `kind_schema'.  Format 3 (the ebp extraction) renames `api_version'
 to `reference_api_version': the field describes the elisp reference
 implementation's Tier-1 surface, not the wire — informational only, so
-the contract repo reads as implementation-neutral.")
+the contract repo reads as implementation-neutral.  Format 5 (the
+JSON-RPC envelope swap, SPEC-2; 4 was claimed by the deferred v1
+error_codes amendment) replaces `kind_schema' with `methods' — each
+carrying `direction', `type' (request/notification), `params', and for
+requests `result' — and lands `error_codes' (codes + `data.kind'
+vocabulary).  Drafted by the slop line; reshape freely (SPEC-2 §8.5).")
 
 (defun jetpacs-contract--spec-version ()
-  "The spec version declared in ebp/SPEC.md's status block (\"1.0-rc\").
-SPEC.md is the single source of truth for this number; the ERT test
+  "The spec version declared in ebp/SPEC-2.md's status block (\"2.0-draft\").
+SPEC-2.md is the single source of truth for this number; the ERT test
 `jetpacs-spec-header-version-coherent' keeps the header machine-readable."
   (with-temp-buffer
-    (insert-file-contents (expand-file-name "ebp/SPEC.md" jetpacs-contract--root))
+    (insert-file-contents (expand-file-name "ebp/SPEC-2.md" jetpacs-contract--root))
     (goto-char (point-min))
     (unless (re-search-forward
-             "^Spec: \\*\\*\\([0-9]+\\.[0-9]+\\(?:-rc\\)?\\)\\*\\*" nil t)
-      (error "ebp/SPEC.md header carries no parseable Spec: version"))
+             "^Spec: \\*\\*\\([0-9]+\\.[0-9]+\\(?:-rc\\|-draft\\)?\\)\\*\\*" nil t)
+      (error "ebp/SPEC-2.md header carries no parseable Spec: version"))
     (match-string 1)))
 
 (defun jetpacs-contract--node-schema ()
@@ -63,20 +69,39 @@ The \"*\" row is the keys legal on any node (post-construction riders)."
                          (cons "optional" (jetpacs-contract--names (nth 2 row))))))
            jetpacs-lint-node-schema)))
 
-(defun jetpacs-contract--kind-schema ()
-  "The frame-kind schema as contract objects.
-`direction' is the sender (client = Emacs, companion, or both); a kind
-whose payload is a §9 node tree carries `payload: \"node\"' instead of
-key lists."
+(defun jetpacs-contract--methods ()
+  "The JSON-RPC method table as contract objects (format 5).
+`direction' is the sender (client = Emacs, companion, or both);
+`type' is the SPEC-2 §4 classification (request / notification).
+Params of a §9 node tree carry `params: \"node\"' instead of key lists;
+a request also carries its `result' schema from
+`jetpacs-lint-result-schema'."
+  (mapcar
+   (lambda (row)
+     (let* ((method (nth 0 row))
+            (request-p (eq (nth 2 row) 'request))
+            (result (and request-p (assoc method jetpacs-lint-result-schema))))
+       (cons method
+             (append
+              (list (cons "direction" (symbol-name (nth 1 row)))
+                    (cons "type" (if request-p "request" "notification"))
+                    (cons "params"
+                          (if (eq (nth 3 row) 'node) "node"
+                            (list (cons "required" (jetpacs-contract--names (nth 3 row)))
+                                  (cons "optional" (jetpacs-contract--names (nth 4 row)))))))
+              (when result
+                (list (cons "result"
+                            (list (cons "required" (jetpacs-contract--names (nth 1 result)))
+                                  (cons "optional" (jetpacs-contract--names (nth 2 result)))))))))))
+   jetpacs-lint-kind-schema))
+
+(defun jetpacs-contract--error-codes ()
+  "The error-code vocabulary as contract objects (SPEC-2 §2.4)."
   (mapcar (lambda (row)
-            (cons (nth 0 row)
-                  (if (eq (nth 2 row) 'node)
-                      (list (cons "direction" (symbol-name (nth 1 row)))
-                            (cons "payload" "node"))
-                    (list (cons "direction" (symbol-name (nth 1 row)))
-                          (cons "required" (jetpacs-contract--names (nth 2 row)))
-                          (cons "optional" (jetpacs-contract--names (nth 3 row)))))))
-          jetpacs-lint-kind-schema))
+            (cons (number-to-string (nth 0 row))
+                  (list (cons "kind" (nth 1 row))
+                        (cons "context" (nth 2 row)))))
+          jetpacs-lint-error-codes))
 
 (defun jetpacs-contract--names (syms)
   "SYMS as a JSON array (vector) of their names."
@@ -96,8 +121,8 @@ builtin mapped to its required payload."
         (cons (car entry)
               (list (cons "required"
                           (vconcat (cons "builtin"
-                                         (mapcar #'symbol-name (cdr entry)))))
-                    (cons "optional" []))))
+                                         (mapcar #'symbol-name (nth 1 entry)))))
+                    (cons "optional" (jetpacs-contract--names (nth 2 entry))))))
       jetpacs-lint-action-builtins))))
 
 (defun jetpacs-contract ()
@@ -112,7 +137,8 @@ builtin mapped to its required payload."
    (cons "spec_version"     (jetpacs-contract--spec-version))
    (cons "node_types"       (vconcat jetpacs-lint-node-types))
    (cons "node_schema"      (jetpacs-contract--node-schema))
-   (cons "kind_schema"      (jetpacs-contract--kind-schema))
+   (cons "methods"          (jetpacs-contract--methods))
+   (cons "error_codes"      (jetpacs-contract--error-codes))
    (cons "action_hook_keys" (jetpacs-contract--names jetpacs-lint--action-keys))
    (cons "action_fields"    (jetpacs-contract--names jetpacs-lint-action-fields))
    (cons "offline_policies" (vconcat jetpacs-lint--when-offline-values))

@@ -2,7 +2,7 @@
 
 ;; Author: calebch42 <calebch42@gmail.com>
 ;; Maintainer: calebch42 <calebch42@gmail.com>
-;; Version: 1.27.0
+;; Version: 2.0.0
 ;; Package-Requires: ((emacs "30.1"))
 ;; Keywords: comm, tools
 ;; URL: https://github.com/calebc42/jetpacs
@@ -25,10 +25,18 @@
 ;; framing, the session handshake, and a generic send/request layer that the
 ;; surface/capability/trigger code (later phases) builds on.
 ;;
-;; v0 framing is newline-delimited JSON over a loopback TCP socket, which the
-;; spec blesses for prototyping. The 1.0 target is a Unix domain socket
-;; (:family 'local) in a shared-signature dir; only `jetpacs--make-process'
-;; changes for that. Everything above the process stays the same.
+;; EBP 2 (SPEC-2): the message shape is JSON-RPC 2.0 — requests carry an
+;; `id' and are answered exactly once (result XOR error), notifications
+;; carry no `id' and are never answered — framed as
+;; `Content-Length: N\r\n\r\n{json}' over a loopback TCP socket. The 1.0
+;; transport target is a Unix domain socket (:family 'local) in a
+;; shared-signature dir; only `jetpacs--make-process' changes for that.
+;; Everything above the process stays the same.
+;;
+;; Payload representation is unchanged from v1 on purpose: params and
+;; results are alists with `:null'/`:false' sentinels, so the ~40 consumer
+;; modules above this file never see the envelope swap — the layer-stack
+;; promise, kept.
 ;;
 ;; Requires Emacs 28+ for the C-level `json-serialize' / `json-parse-string'
 ;; (well-defined null/false handling) and `string-search'.
@@ -52,13 +60,23 @@ Note: this is NOT the old simple-httpd port (8080). The companion now
 listens; Emacs dials in here."
   :type 'integer :group 'jetpacs)
 
-(defcustom jetpacs-protocol-version 1
+(defcustom jetpacs-protocol-version 2
   "Jetpacs protocol version this client speaks.
-This is the wire/vocabulary version — the envelope `v' and the SPEC's
-version number.  Bump it only on a wire-breaking change."
+This is the wire/vocabulary version — offered in `session.hello' and the
+SPEC's version number.  v2 is the JSON-RPC 2.0 envelope (SPEC-2).  Bump
+it only on a wire-breaking change."
   :type 'integer :group 'jetpacs)
 
-(defconst jetpacs-api-version "1.27.0"
+(defcustom jetpacs-max-frame-bytes (* 4 1024 1024)
+  "The frame cap (SPEC-2 §2.2), in body bytes.
+Enforced on both halves: an outbound frame over the cap is refused
+locally (dropped with a log — prefer a missing update to an oversized
+frame); an inbound body over the cap is discarded byte-exactly without
+ever being buffered or parsed, refused with `1400 frame-too-large' on
+the log.error channel, and the connection lives."
+  :type 'integer :group 'jetpacs)
+
+(defconst jetpacs-api-version "2.0.0"
   "Semver of the Tier 1 elisp API surface (constructors + seams).
 Independent of `jetpacs-protocol-version' (the wire).  A third-party Tier 1
 requires the core and checks this: minor bumps are additive and safe,
@@ -94,13 +112,26 @@ are refused with guidance in *Messages*."
   "Our nonce for the in-flight auth round, or nil.")
 
 (defvar jetpacs--buffer ""
-  "Accumulates partial inbound NDJSON bytes between filter calls.")
+  "Accumulates partial inbound frame bytes (unibyte) between filter calls.")
 
-(defvar jetpacs--id-counter 0
-  "Monotonic source for sender-unique message ids.")
+(defvar jetpacs--skip-remaining 0
+  "Bytes of an oversized inbound body still to discard.
+Non-zero puts the filter in skip mode: the receiver-side half of the
+frame cap (SPEC-2 §2.2) — the body is dropped as it streams, never
+accumulated, never parsed.")
 
-(defvar jetpacs--pending (make-hash-table :test 'equal)
-  "Map of outstanding request id -> reply callback.")
+(defvar jetpacs--skip-total 0
+  "Announced size of the oversized inbound frame being skipped.")
+
+(defvar jetpacs--rpc-id 0
+  "Monotonic per-connection source of request ids (SPEC-2 §2.3).
+Reset on every connect; ids and their outstanding requests die with the
+connection.")
+
+(defvar jetpacs--pending (make-hash-table :test 'eql)
+  "Map of outstanding request id -> callback called with (RESULT ERR).
+Every entry is concluded exactly once: by the response, or by a local
+`code' -1 error when the connection dies — never silence.")
 
 (defvar jetpacs--session nil
   "Alist of negotiated session info after `session.welcome', or nil.")
@@ -133,67 +164,105 @@ the error is the app's to fix, so it must not be swallowed."
      ;; member's return value may end the session's bring-up.
      nil)))
 
-;; ─── Envelope ────────────────────────────────────────────────────────────────
+;; ─── Envelope (JSON-RPC 2.0 over Content-Length frames, SPEC-2 §2) ──────────
 
-(defun jetpacs--next-id ()
-  "Return a fresh sender-unique message id."
-  (format "m-%x-%04x" (cl-incf jetpacs--id-counter) (random #x10000)))
+(defun jetpacs--encode-frame (message)
+  "Encode MESSAGE (a JSON-RPC alist) as one framed unibyte string.
+Returns nil when the body exceeds `jetpacs-max-frame-bytes' — the
+sender-side half of the frame cap: refuse locally, never send."
+  (let ((body (encode-coding-string
+               (json-serialize message :null-object :null :false-object :false)
+               'utf-8 t)))
+    (if (> (length body) jetpacs-max-frame-bytes)
+        (progn
+          (message "Jetpacs: refusing oversized outbound frame (%d bytes > %d); dropped"
+                   (length body) jetpacs-max-frame-bytes)
+          nil)
+      (concat (encode-coding-string
+               (format "Content-Length: %d\r\n\r\n" (length body)) 'ascii t)
+              body))))
 
-(defun jetpacs--encode (kind payload &optional reply-to id)
-  "Encode one Jetpacs frame to a compact JSON string.
-PAYLOAD is an alist (or nil for an empty object). REPLY-TO is the id this
-frame answers, or nil for a top-level message."
-  (json-serialize
-   `((v . ,jetpacs-protocol-version)
-     (id . ,(or id (jetpacs--next-id)))
-     (reply_to . ,(or reply-to :null))
-     (kind . ,kind)
-     (payload . ,(or payload (make-hash-table :test 'equal))))
-   :null-object :null
-   :false-object :false))
-
-(defun jetpacs--raw-send (line)
-  "Write LINE plus a newline to the companion if connected.
+(defun jetpacs--raw-send (bytes)
+  "Write framed BYTES to the companion if connected.
 Never signals: the liveness check races the async connect and its
 failure sentinel (the process can die between the check and the write),
-and a send must degrade to a dropped frame — the wire is fire-and-forget,
-so no caller is prepared for an error out of a send."
+and a send must degrade to a dropped frame — no caller is prepared for
+an error out of a send.  Returns non-nil only when written."
   (if (and jetpacs--process (process-live-p jetpacs--process))
       (condition-case err
-          (process-send-string jetpacs--process (concat line "\n"))
+          (progn (process-send-string jetpacs--process bytes) t)
         (error (message "Jetpacs: send failed; dropping frame (%s)"
-                        (error-message-string err))))
-    (message "Jetpacs: not connected; dropping frame")))
+                        (error-message-string err))
+               nil))
+    (message "Jetpacs: not connected; dropping frame")
+    nil))
 
 (defvar jetpacs--frame-observer nil
-  "When non-nil, a function called with (KIND PAYLOAD BYTES) after each
-fire-and-forget frame is encoded — including frames dropped while
-disconnected, since what it measures is the traffic the client
-*generates*.  BYTES is the encoded frame's size (internal
-representation, utf-8-equivalent).  Installed by jetpacs-devtools;
-nil costs one test per send.")
+  "When non-nil, a function called with (METHOD PARAMS BYTES) after each
+notification is encoded — including frames dropped while disconnected,
+since what it measures is the traffic the client *generates*.  BYTES is
+the framed size on the wire (header + UTF-8 body).  Installed by
+jetpacs-devtools; nil costs one test per send.")
 
-(defun jetpacs-send (kind &optional payload reply-to)
-  "Send a fire-and-forget frame. Returns its message id."
-  (let* ((id (jetpacs--next-id))
-         (line (jetpacs--encode kind payload reply-to id)))
-    (jetpacs--raw-send line)
-    (when jetpacs--frame-observer
-      (funcall jetpacs--frame-observer kind payload (string-bytes line)))
-    id))
+(defun jetpacs-send (method &optional params)
+  "Send a fire-and-forget JSON-RPC notification (SPEC-2 §2.1).
+PARAMS is an alist (or nil for an empty object).  A notification
+carries no id and is never answered.  Returns non-nil only when the
+frame was actually written — refused-oversize and disconnected sends
+return nil."
+  (let ((bytes (jetpacs--encode-frame
+                `((jsonrpc . "2.0")
+                  (method . ,method)
+                  (params . ,(or params (make-hash-table :test 'equal)))))))
+    (when bytes
+      (when jetpacs--frame-observer
+        (funcall jetpacs--frame-observer method params (length bytes)))
+      (jetpacs--raw-send bytes))))
 
-(defun jetpacs-request (kind payload callback)
-  "Send a frame and call CALLBACK with the reply frame's payload alist.
-Correlation is by `reply_to' matching this frame's id.  When
-disconnected the frame is dropped and CALLBACK is never registered —
-otherwise every dropped request would leak a pending-table entry."
-  (let ((id (jetpacs--next-id)))
-    (if (and jetpacs--process (process-live-p jetpacs--process))
-        (progn
-          (puthash id callback jetpacs--pending)
-          (jetpacs--raw-send (jetpacs--encode kind payload nil id)))
-      (message "Jetpacs: not connected; dropping request %s" kind))
-    id))
+(defun jetpacs-request (method params callback)
+  "Send a JSON-RPC request; CALLBACK is called once with (RESULT ERR).
+Exactly one outcome: on success ERR is nil and RESULT is the response's
+result alist — which may itself be nil for an empty result, meaning
+\"success, nothing to say\", never failure (SPEC-2 §2.1).  On failure
+RESULT is nil and ERR is the error alist (`code', `message', optional
+`data').  When the connection dies with the request outstanding,
+CALLBACK receives a local ERR with `code' -1 — an answer, never silence
+\(SPEC-2 §2.3).  When already disconnected the frame is dropped and
+CALLBACK is never registered — otherwise every dropped request would
+leak a pending-table entry.  Returns the request id, or nil when
+dropped."
+  (if (not (and jetpacs--process (process-live-p jetpacs--process)))
+      (progn (message "Jetpacs: not connected; dropping request %s" method)
+             nil)
+    (let* ((id (cl-incf jetpacs--rpc-id))
+           (bytes (jetpacs--encode-frame
+                   `((jsonrpc . "2.0")
+                     (id . ,id)
+                     (method . ,method)
+                     (params . ,(or params (make-hash-table :test 'equal)))))))
+      (when bytes
+        (puthash id callback jetpacs--pending)
+        (jetpacs--raw-send bytes)
+        id))))
+
+(defun jetpacs--respond (id result)
+  "Answer inbound request ID with RESULT (nil = empty result)."
+  (let ((bytes (jetpacs--encode-frame
+                `((jsonrpc . "2.0")
+                  (id . ,id)
+                  (result . ,(or result (make-hash-table :test 'equal)))))))
+    (when bytes (jetpacs--raw-send bytes))))
+
+(defun jetpacs--respond-error (id code msg &optional data)
+  "Answer inbound request ID with a typed error (SPEC-2 §2.4).
+ID may be :null when the offending frame's id was undetectable."
+  (let ((bytes (jetpacs--encode-frame
+                `((jsonrpc . "2.0")
+                  (id . ,id)
+                  (error . ((code . ,code)
+                            (message . ,msg)
+                            ,@(when data `((data . ,data)))))))))
+    (when bytes (jetpacs--raw-send bytes))))
 
 (defcustom jetpacs-dialog-style nil
   "Default presentation for companion dialogs (SPEC §7).
@@ -256,10 +325,15 @@ welcome is accepted (the legacy path — the companion won't send one anyway)."
                                (random most-positive-fixnum)
                                (float-time) (emacs-pid) (current-time-string))))
 
-(defun jetpacs--on-auth-challenge (payload)
-  "Answer the companion's pairing challenge from PAYLOAD."
-  (let ((snonce (alist-get 'nonce payload)))
+(defun jetpacs--on-hello-reply (result err)
+  "Handle `session.hello's response — the challenge (SPEC-2 §3).
+The challenge arriving as the hello's own response makes the handshake
+ordering structural: there is no frame to receive out of order."
+  (let ((snonce (and (null err) (alist-get 'nonce result))))
     (cond
+     (err
+      (message "Jetpacs: hello refused [%s]: %s"
+               (alist-get 'code err) (alist-get 'message err)))
      ((not (stringp snonce))
       (message "Jetpacs: malformed auth challenge"))
      ((not (jetpacs--paired-p))
@@ -269,12 +343,21 @@ welcome is accepted (the legacy path — the companion won't send one anyway)."
      (t
       (setq jetpacs--auth-server-nonce snonce
             jetpacs--auth-client-nonce (jetpacs--auth-nonce))
-      (jetpacs-send "auth.response"
-                 `((nonce . ,jetpacs--auth-client-nonce)
-                   (mac . ,(jetpacs--hmac-sha256-hex
-                            jetpacs-auth-token
-                            (format "ebp1:client:%s:%s"
-                                    snonce jetpacs--auth-client-nonce)))))))))
+      (jetpacs-request
+       "auth.response"
+       `((nonce . ,jetpacs--auth-client-nonce)
+         (mac . ,(jetpacs--hmac-sha256-hex
+                  jetpacs-auth-token
+                  (format "ebp1:client:%s:%s"
+                          snonce jetpacs--auth-client-nonce))))
+       #'jetpacs--on-welcome-reply)))))
+
+(defun jetpacs--on-welcome-reply (result err)
+  "Handle `auth.response's response — the welcome, or a typed refusal."
+  (if err
+      (message "Jetpacs: pairing refused [%s]: %s"
+               (alist-get 'code err) (alist-get 'message err))
+    (jetpacs--on-welcome result)))
 
 (defun jetpacs--auth-verify-welcome (payload)
   "Non-nil when PAYLOAD's server_proof matches our challenge state.
@@ -294,81 +377,190 @@ the port — is refused.  With no token configured, any welcome passes
 ;; ─── Inbound framing & dispatch ──────────────────────────────────────────────
 
 (defun jetpacs--filter (_proc chunk)
-  "Accumulate CHUNK and handle every complete newline-terminated frame.
-Partial frames stay buffered until the rest arrives."
+  "Accumulate CHUNK and handle every complete Content-Length frame.
+CHUNK arrives unibyte (binary process coding); a body is decoded as
+UTF-8 only once complete.  An oversized body is discarded byte-exactly
+as it streams — never accumulated, never parsed — and refused with
+`1400 frame-too-large' on log.error: the receiver-side half of the
+frame cap (SPEC-2 §2.2)."
   (setq jetpacs--buffer (concat jetpacs--buffer chunk))
-  (let (pos)
-    (while (setq pos (string-search "\n" jetpacs--buffer))
-      (let ((line (substring jetpacs--buffer 0 pos)))
-        (setq jetpacs--buffer (substring jetpacs--buffer (1+ pos)))
-        (unless (string-empty-p (string-trim line))
-          (jetpacs--handle-line line))))))
+  (catch 'jetpacs--need-more
+    (while t
+      ;; Skip mode: swallow an oversized body without buffering it.
+      (when (> jetpacs--skip-remaining 0)
+        (let ((n (min jetpacs--skip-remaining (length jetpacs--buffer))))
+          (setq jetpacs--buffer (substring jetpacs--buffer n)
+                jetpacs--skip-remaining (- jetpacs--skip-remaining n)))
+        (when (> jetpacs--skip-remaining 0)
+          (throw 'jetpacs--need-more nil))
+        (message "Jetpacs: skipped oversized inbound frame (%d bytes > %d)"
+                 jetpacs--skip-total jetpacs-max-frame-bytes)
+        (jetpacs-send "log.error"
+                      `((code . 1400)
+                        (message . "frame skipped unread")
+                        (data . ((kind . "frame-too-large")
+                                 (bytes . ,jetpacs--skip-total)
+                                 (max . ,jetpacs-max-frame-bytes))))))
+      (let ((header-end (string-search "\r\n\r\n" jetpacs--buffer)))
+        (unless header-end (throw 'jetpacs--need-more nil))
+        (let* ((header (substring jetpacs--buffer 0 header-end))
+               (case-fold-search t)
+               (len (and (string-match
+                          "^content-length:[ \t]*\\([0-9]+\\)" header)
+                         (string-to-number (match-string 1 header))))
+               (body-start (+ header-end 4)))
+          (cond
+           ;; A header section without Content-Length is a framing desync:
+           ;; there is no way to find the next frame. Fail closed.
+           ((null len)
+            (message "Jetpacs: frame header without Content-Length; disconnecting")
+            (when jetpacs--process (delete-process jetpacs--process))
+            (throw 'jetpacs--need-more nil))
+           ((> len jetpacs-max-frame-bytes)
+            (setq jetpacs--skip-total len
+                  jetpacs--skip-remaining len
+                  jetpacs--buffer (substring jetpacs--buffer body-start)))
+           ((< (- (length jetpacs--buffer) body-start) len)
+            (throw 'jetpacs--need-more nil))
+           (t
+            (let ((body (substring jetpacs--buffer body-start
+                                   (+ body-start len))))
+              (setq jetpacs--buffer
+                    (substring jetpacs--buffer (+ body-start len)))
+              (jetpacs--handle-frame
+               (decode-coding-string body 'utf-8))))))))))
 
-(defun jetpacs--handle-line (line)
-  "Parse one JSON LINE into a frame and route it."
+(defun jetpacs--handle-frame (text)
+  "Parse one JSON-RPC message TEXT and route it (SPEC-2 §2.3)."
   (condition-case err
-      (let* ((frame (json-parse-string
-                     line
-                     :object-type 'alist :array-type 'list
-                     :null-object :null :false-object :false))
-             (kind (alist-get 'kind frame))
-             (reply-to (alist-get 'reply_to frame))
-             (payload (alist-get 'payload frame)))
-        ;; Resolve any waiting request first.
-        (when (and reply-to (not (eq reply-to :null)))
-          (when-let ((cb (gethash reply-to jetpacs--pending)))
-            (remhash reply-to jetpacs--pending)
-            (funcall cb payload)))
-        (jetpacs--dispatch kind payload frame))
+      (let ((msg (json-parse-string
+                  text
+                  :object-type 'alist :array-type 'list
+                  :null-object :null :false-object :false)))
+        (let ((id (alist-get 'id msg))
+              (method (alist-get 'method msg))
+              (jsonrpc (alist-get 'jsonrpc msg)))
+          (cond
+           ;; Batch arrays are prohibited (§2.2); a non-object or
+           ;; version-less frame is not JSON-RPC. Log and drop.
+           ((not (equal jsonrpc "2.0"))
+            (message "Jetpacs: dropping non-JSON-RPC frame"))
+           ;; An error answered at an unidentifiable id (id null).
+           ((and (eq id :null) (alist-get 'error msg))
+            (let ((e (alist-get 'error msg)))
+              (message "Jetpacs: peer refused an unidentifiable frame [%s]: %s"
+                       (alist-get 'code e) (alist-get 'message e))))
+           ;; A response: conclude the outstanding request.
+           ((and id (not method))
+            (let ((cb (gethash id jetpacs--pending)))
+              (if (not cb)
+                  (message "Jetpacs: response for unknown request id %s" id)
+                (remhash id jetpacs--pending)
+                (funcall cb
+                         (let ((r (alist-get 'result msg)))
+                           (if (eq r :null) nil r))
+                         (alist-get 'error msg)))))
+           ;; An inbound request: answered exactly once, result XOR error.
+           ((and id method)
+            (jetpacs--dispatch-request id method (alist-get 'params msg)))
+           ;; A notification: never answered.
+           (method
+            (jetpacs--dispatch-notification method (alist-get 'params msg)))
+           (t (message "Jetpacs: unclassifiable frame dropped")))))
     (error (message "Jetpacs: bad frame: %s" (error-message-string err)))))
 
+(defconst jetpacs--client-sent-methods
+  '("session.hello" "auth.response" "capability.invoke" "queue.replay"
+    "triggers.set" "reminders.set" "surface.update" "surface.remove"
+    "dialog.show" "dialog.dismiss" "pie_menu.show" "pie_menu.dismiss"
+    "toast.show" "theme.set" "completions.show" "diagnostics.show"
+    "eldoc.show" "fontify.show" "edit.resync" "edit.apply")
+  "Methods only Emacs sends.
+Receiving one is a §2.3 direction violation: a protocol error for a
+request, a logged drop for a notification.")
+
 (defvar jetpacs--kind-handlers (make-hash-table :test 'equal)
-  "Map of frame kind (string) -> handler called with (PAYLOAD FRAME).
+  "Map of method (string) -> notification handler called with (PARAMS MSG).
 Extension point for the layers above the transport (surfaces, queue,
-capabilities): they register here instead of patching `jetpacs--dispatch'.")
+capabilities): they register here instead of patching the dispatcher.")
 
-(defun jetpacs-register-handler (kind fn)
-  "Register FN as the handler for inbound frames of KIND.
-FN is called with two arguments, the frame's PAYLOAD alist and the full
-FRAME alist. A later registration for the same KIND replaces the earlier
-one. Built-in kinds (session.welcome, ping/pong, ack, error) are handled
-by the transport itself and cannot be overridden here."
-  (puthash kind fn jetpacs--kind-handlers))
+(defvar jetpacs--request-handlers (make-hash-table :test 'equal)
+  "Map of method (string) -> inbound-request handler called with (PARAMS).
+The handler returns the result alist (nil = empty result) or signals to
+produce a -32603.  Empty in the first cut — the seam exists for the §8
+promotions — but the refusal duties below are live regardless: stock
+fail-open dispatch is exactly the bug SPEC-2 §2.3 exists to kill.")
 
-(defun jetpacs--dispatch (kind payload frame)
-  "Route a frame by KIND: built-ins first, then registered handlers."
-  (pcase kind
-    ("auth.challenge" (jetpacs--on-auth-challenge payload))
-    ("session.welcome" (jetpacs--on-welcome payload))
-    ("ping" (jetpacs-send "pong" nil (alist-get 'id frame)))
-    ("pong" nil)
-    ;; Bare acks (e.g. to fire-and-forget surface.updates) are expected
-    ;; noise; anything that wanted the ack used `jetpacs-request'.
-    ("ack" nil)
-    ;; Reply-only kind: consumed by the pending map above (SPEC §10).
-    ("capability.result" nil)
-    ("queue.drained"
-     (message "Jetpacs: replay complete (%s delivered, %s expired)"
-              (or (alist-get 'delivered payload) 0)
-              (or (alist-get 'expired payload) 0))
-     (jetpacs--run-session-hook 'jetpacs-queue-drained-hook payload))
-    ("error"
-     (message "Jetpacs error [%s]: %s"
-              (alist-get 'code payload) (alist-get 'detail payload)))
+(defun jetpacs-register-handler (method fn)
+  "Register FN as the handler for inbound notifications of METHOD.
+FN is called with two arguments, the notification's PARAMS alist and
+the full message alist.  A later registration for the same METHOD
+replaces the earlier one.  Envelope-level traffic (responses, log.error,
+rpc.cancel) is handled by the transport itself and cannot be overridden
+here."
+  (puthash method fn jetpacs--kind-handlers))
+
+(defun jetpacs--dispatch-request (id method params)
+  "Answer inbound request ID/METHOD exactly once (SPEC-2 §2.3)."
+  (let ((handler (gethash method jetpacs--request-handlers)))
+    (cond
+     ((member method jetpacs--client-sent-methods)
+      (jetpacs--respond-error id -32600
+                              (format "'%s' travels client → companion" method)
+                              '((kind . "wrong-direction"))))
+     ((null handler)
+      ;; Unknown method → -32601, hand-rolled and explicit: the connection
+      ;; lives (forward compat), but the request is never left dangling
+      ;; and never answered with fail-open success.
+      (jetpacs--respond-error id -32601
+                              (format "unknown method '%s'" method)
+                              '((kind . "method-not-found"))))
+     (t
+      (condition-case err
+          (jetpacs--respond id (funcall handler params))
+        (error (jetpacs--respond-error id -32603 (error-message-string err)
+                                       '((kind . "internal")))))))))
+
+(defun jetpacs--dispatch-notification (method params)
+  "Route an inbound notification: built-ins, then registered handlers."
+  (pcase method
+    ;; The unsolicited-fault channel (§2.3): an error object minus the id.
+    ("log.error"
+     (message "Jetpacs companion fault [%s]: %s"
+              (alist-get 'code params) (alist-get 'message params)))
+    ;; Nothing cancellable Emacs-side in the first cut.
+    ("rpc.cancel" nil)
     (_
-     (if-let ((fn (gethash kind jetpacs--kind-handlers)))
-         (condition-case err
-             (funcall fn payload frame)
-           (error (message "Jetpacs: handler for %s failed: %s"
-                           kind (error-message-string err))))
-       (message "Jetpacs: unhandled kind %s" kind)))))
+     (cond
+      ((member method jetpacs--client-sent-methods)
+       (message "Jetpacs: dropped wrong-direction method %s" method))
+      ((gethash method jetpacs--kind-handlers)
+       (condition-case err
+           (funcall (gethash method jetpacs--kind-handlers)
+                    params `((method . ,method) (params . ,params)))
+         (error (message "Jetpacs: handler for %s failed: %s"
+                         method (error-message-string err)))))
+      ;; Unknown notification: logged and dropped, connection lives —
+      ;; the forward-compat rule, notification half.
+      (t (message "Jetpacs: unhandled method %s" method))))))
 
 (defvar jetpacs-queue-drained-hook nil
-  "Hook run with the `queue.drained' payload after a replay completes.
+  "Hook run with the replay's drain summary after a replay completes.
 Replayed events may have mutated org state; UI layers re-push here.")
 
+(defun jetpacs--on-queue-drained (result err)
+  "Conclude a `queue.replay' request with its drain summary RESULT.
+v1's `queue.drained' frame dissolved into this response."
+  (if err
+      (message "Jetpacs: replay failed [%s]: %s"
+               (alist-get 'code err) (alist-get 'message err))
+    (message "Jetpacs: replay complete (%s delivered, %s expired)"
+             (or (alist-get 'delivered result) 0)
+             (or (alist-get 'expired result) 0))
+    (jetpacs--run-session-hook 'jetpacs-queue-drained-hook result)))
+
 (defun jetpacs--on-welcome (payload)
-  "Record the negotiated session from a `session.welcome' PAYLOAD.
+  "Record the negotiated session from the welcome PAYLOAD (§3).
 Refuses the session outright when the server's pairing proof is missing
 or wrong — nothing is trusted from an unproven peer."
   (if (not (jetpacs--auth-verify-welcome payload))
@@ -388,7 +580,7 @@ or wrong — nothing is trusted from an unproven peer."
       ;; been absorbed and initial surfaces pushed, so replayed events land
       ;; on a coherent state.
       (when (> queued 0)
-        (jetpacs-send "queue.replay")))))
+        (jetpacs-request "queue.replay" nil #'jetpacs--on-queue-drained)))))
 
 ;; ─── Session queries & device capabilities (SPEC §10) ────────────────────────
 
@@ -486,18 +678,30 @@ gracefully, not for enforcement."
 (defun jetpacs-capability-invoke (cap &optional args callback)
   "Invoke device capability CAP (a string) with plain-data alist ARGS.
 CALLBACK, when non-nil, receives (OK PAYLOAD): OK is non-nil iff the
-invoke succeeded; PAYLOAD is the `capability.result' payload on
-success, or the error payload (`code', `detail', and for
-cap-permission possibly `perm' / `settings') on failure.  When
-disconnected the frame is dropped like any other request."
+invoke succeeded.  On success PAYLOAD is the result alist (a `result'
+key when the capability returned data).  On failure PAYLOAD is shaped
+like v1's error payload — `code' holds the readable kind string from
+the error's `data.kind', `detail' the message, and for cap-permission
+`perm' / `settings' ride alongside — so Tier 1 callers are untouched by
+the envelope swap.  When disconnected the frame is dropped like any
+other request."
   (jetpacs-request "capability.invoke"
                 `((cap . ,cap)
                   (args . ,(or args (make-hash-table :test 'equal))))
-                (lambda (payload)
+                (lambda (result err)
                   (when callback
-                    (funcall callback
-                             (eq t (alist-get 'ok payload))
-                             payload)))))
+                    (if (null err)
+                        (funcall callback t result)
+                      (let* ((data (alist-get 'data err))
+                             (perm (alist-get 'perm data))
+                             (settings (alist-get 'settings data)))
+                        (funcall callback nil
+                                 (append
+                                  `((code . ,(or (alist-get 'kind data)
+                                                 (alist-get 'code err)))
+                                    (detail . ,(alist-get 'message err)))
+                                  (when perm `((perm . ,perm)))
+                                  (when settings `((settings . ,settings)))))))))))
 
 ;; ─── Connection lifecycle ────────────────────────────────────────────────────
 
@@ -544,6 +748,22 @@ reconnect (with backoff) is what makes the bridge feel always-on."
       ;; surface through the sentinel, which reschedules too.
       (error (jetpacs--schedule-reconnect)))))
 
+(defun jetpacs--fail-pending (why)
+  "Conclude every outstanding request with a local error — never silence.
+The -1 code is local by construction (SPEC-2 §2.4 reserves it off the
+wire); callbacks see `((code . -1) …)' exactly once, per §2.3's
+requests-die-with-the-connection rule."
+  (let ((pending jetpacs--pending))
+    (setq jetpacs--pending (make-hash-table :test 'eql))
+    (maphash (lambda (_id cb)
+               (condition-case err
+                   (funcall cb nil `((code . -1)
+                                     (message . ,why)
+                                     (data . ((kind . "connection-dead")))))
+                 (error (message "Jetpacs: pending callback failed: %s"
+                                 (error-message-string err)))))
+             pending)))
+
 (defun jetpacs--sentinel (_proc event)
   "React to connection EVENTs. Sends the hello once the socket opens."
   (cond
@@ -558,24 +778,29 @@ reconnect (with backoff) is what makes the bridge feel always-on."
     (message "Jetpacs: disconnected (%s)" (string-trim event))
     (setq jetpacs--process nil
           jetpacs--buffer ""
+          jetpacs--skip-remaining 0
           jetpacs--session nil
           jetpacs--auth-server-nonce nil
           jetpacs--auth-client-nonce nil)
-    (clrhash jetpacs--pending)
+    (jetpacs--fail-pending "connection closed")
     (jetpacs--schedule-reconnect))))
 
 (defun jetpacs--send-hello ()
-  "Open the session per the spec handshake."
-  (jetpacs-send
+  "Open the session: the first of §3's two request/response pairs.
+The challenge is the hello's response; see `jetpacs--on-hello-reply'."
+  (jetpacs-request
    "session.hello"
    `((protocol . ,jetpacs-protocol-version)
      (client   . ,(format "emacs/%s jetpacs.el/%s" emacs-version jetpacs-api-version))
      (features . ,(vconcat (mapcar #'symbol-name jetpacs-build-features)))
-     (wants    . ,(vconcat jetpacs-wants)))))
+     (wants    . ,(vconcat jetpacs-wants)))
+   #'jetpacs--on-hello-reply))
 
 (defun jetpacs--make-process ()
-  "Create the network process. v0 = loopback TCP.
-For 1.0, replace host/service/family with:
+  "Create the network process. v0 transport = loopback TCP.
+Binary coding: the Content-Length framing is byte-accurate, so the
+filter must see raw bytes and decode UTF-8 itself per frame.  For 1.0,
+replace host/service/family with:
   :family \\='local :service \"/path/to/jetpacs.sock\"
 and nothing else here changes."
   (make-network-process
@@ -583,7 +808,7 @@ and nothing else here changes."
    :host jetpacs-host
    :service jetpacs-port
    :family 'ipv4
-   :coding 'utf-8-unix
+   :coding 'binary
    :nowait t                 ; async connect; sentinel fires "open" on success
    :filter #'jetpacs--filter
    :sentinel #'jetpacs--sentinel))
@@ -606,9 +831,10 @@ the first frame is served.  See `jetpacs--install-invariants'.")
   (jetpacs--cancel-reconnect)
   (when (and jetpacs--process (process-live-p jetpacs--process))
     (delete-process jetpacs--process))
-  (setq jetpacs--buffer "" jetpacs--session nil
+  (setq jetpacs--buffer "" jetpacs--skip-remaining 0 jetpacs--rpc-id 0
+        jetpacs--session nil
         jetpacs--auth-server-nonce nil jetpacs--auth-client-nonce nil)
-  (clrhash jetpacs--pending)
+  (jetpacs--fail-pending "reconnecting")
   (condition-case err
       (setq jetpacs--process (jetpacs--make-process))
     (error (message "Jetpacs: connect failed: %s" (error-message-string err))
@@ -626,11 +852,9 @@ the first frame is served.  See `jetpacs--install-invariants'.")
   "Non-nil once the socket is live AND the handshake has completed."
   (and jetpacs--process (process-live-p jetpacs--process) jetpacs--session t))
 
-(defun jetpacs-ping ()
-  "Debug helper: round-trip a ping/pong with the companion."
-  (interactive)
-  (jetpacs-request "ping" nil
-                (lambda (_payload) (message "Jetpacs: pong received"))))
+;; v1's ping/pong dropped without replacement (SPEC-2 §4): no written
+;; semantics existed. Liveness, if ever needed, is a self-correlating
+;; request; `jetpacs-connected-p' answers the question people asked of it.
 
 ;; Auto-connect: at init when loaded from init.el; when the library is
 ;; loaded (or reloaded) later, `after-init-hook' has already run and would

@@ -114,13 +114,114 @@ notification's action buttons (SPEC §9)."
     `((meta . ,(or meta (make-hash-table :test 'equal)))
       (children . ,(vconcat body)))))
 
-;; ─── Surface senders ─────────────────────────────────────────────────────────
+;; ─── Surface senders & outbound conflation (SPEC-2 §5) ──────────────────────
+
+;; Snapshots are latest-wins traffic: a newer frame makes older ones
+;; worthless, officially (the revision guard). The sender-side rule is
+;; therefore "at most one queued update per surface — coalesce to
+;; latest". While the phone keeps up there is no queue at all: updates
+;; write straight to the socket, exactly as v1 did, and the tests that
+;; stub `jetpacs-send' see synchronous sends. The queue exists only under
+;; measured lag — `revision_seen' on inbound events trailing what we last
+;; pushed (§5 rule 5, the free lag gauge) — when pushes start coalescing
+;; into a stretched window until the gauge recovers.
+
+(defcustom jetpacs-surface-conflate-max-delay 2.0
+  "Ceiling, in seconds, for the coalescing window under lag.
+The window is 0 while the companion keeps up (every push sends
+immediately); each consecutive lagging event stretches it by 0.25 s up
+to this ceiling, and any caught-up event snaps it back to 0."
+  :type 'number :group 'jetpacs)
+
+(defvar jetpacs-surfaces--outbox (make-hash-table :test 'equal)
+  "Surface id -> latest queued `surface.update' params.
+The coalesce-to-latest slot: a second update for a queued surface
+replaces the first, which is never sent.")
+
+(defvar jetpacs-surfaces--outbox-timer nil
+  "Pending flush timer for `jetpacs-surfaces--outbox', or nil.")
+
+(defvar jetpacs-surfaces--sent-revisions (make-hash-table :test 'equal)
+  "Surface id -> revision of the last update actually written.
+The sender half of the §5 lag gauge; compared against inbound
+`revision_seen'.")
+
+(defvar jetpacs-surfaces--lag-streak 0
+  "Consecutive inbound events whose `revision_seen' trailed by ≥2.")
+
+(defvar jetpacs-surfaces--conflated 0
+  "Updates superseded in the outbox and never sent (telemetry).")
+
+(defun jetpacs-surfaces--flush-delay ()
+  "Current coalescing window in seconds — 0 unless the phone is behind."
+  (if (zerop jetpacs-surfaces--lag-streak) 0
+    (min jetpacs-surface-conflate-max-delay
+         (* 0.25 jetpacs-surfaces--lag-streak))))
+
+(defun jetpacs-surfaces--flush-outbox ()
+  "Send the newest queued update per surface; the older ones never left."
+  (setq jetpacs-surfaces--outbox-timer nil)
+  (let ((outbox jetpacs-surfaces--outbox))
+    (setq jetpacs-surfaces--outbox (make-hash-table :test 'equal))
+    (maphash (lambda (surface params)
+               (when (jetpacs-send "surface.update" params)
+                 (puthash surface (alist-get 'revision params)
+                          jetpacs-surfaces--sent-revisions)))
+             outbox)))
+
+(defun jetpacs-surfaces--send-update (surface params)
+  "Send or coalesce PARAMS for SURFACE per the §5 sender rule."
+  (if (and (zerop (jetpacs-surfaces--flush-delay))
+           (not (gethash surface jetpacs-surfaces--outbox)))
+      ;; Caught up: the v1 path, synchronous and unqueued.
+      (when (jetpacs-send "surface.update" params)
+        (puthash surface (alist-get 'revision params)
+                 jetpacs-surfaces--sent-revisions))
+    ;; Lagging (or this surface already queued): coalesce to latest.
+    (when (gethash surface jetpacs-surfaces--outbox)
+      (cl-incf jetpacs-surfaces--conflated))
+    (puthash surface params jetpacs-surfaces--outbox)
+    (unless jetpacs-surfaces--outbox-timer
+      (setq jetpacs-surfaces--outbox-timer
+            (run-at-time (jetpacs-surfaces--flush-delay) nil
+                         #'jetpacs-surfaces--flush-outbox)))))
+
+(defun jetpacs-surfaces--note-lag (payload)
+  "Read PAYLOAD's `revision_seen' as backpressure telemetry (§5 rule 5).
+The field was designed for staleness detection; here it moonlights as
+the drowning signal: persistently trailing what we last pushed means
+the phone can't keep up, so the coalescing window stretches."
+  (let* ((surface (alist-get 'surface payload))
+         (seen (alist-get 'revision_seen payload))
+         (sent (and (stringp surface)
+                    (gethash surface jetpacs-surfaces--sent-revisions))))
+    (when (and (numberp seen) (>= seen 0) (numberp sent))
+      (if (>= (- sent seen) 2)
+          (cl-incf jetpacs-surfaces--lag-streak)
+        (setq jetpacs-surfaces--lag-streak 0)))))
+
+(defun jetpacs-surfaces--reset-conflation (&rest _)
+  "Fresh session, fresh gauge: clear the outbox and the lag state.
+A stale outbox entry would be revision-guarded anyway; dropping it just
+avoids sending work the reconnect hooks are about to redo."
+  (when (timerp jetpacs-surfaces--outbox-timer)
+    (cancel-timer jetpacs-surfaces--outbox-timer))
+  (setq jetpacs-surfaces--outbox-timer nil
+        jetpacs-surfaces--lag-streak 0)
+  (clrhash jetpacs-surfaces--outbox)
+  (clrhash jetpacs-surfaces--sent-revisions))
+
+;; Depth -49: right after the revision-snapshot absorb (-50), before any
+;; hook member pushes a surface.
+(add-hook 'jetpacs-connected-hook #'jetpacs-surfaces--reset-conflation -49)
 
 (defun jetpacs-surface-update (surface revision spec &optional ttl-s stale-spec current-view)
   "Send a `surface.update' for SURFACE at REVISION with SPEC.
 When `jetpacs-lint-on-push' is set (and jetpacs-lint is loaded), SPEC is
 validated first and any invalid node replaced by a visible error node,
-so one bad subtree degrades instead of blanking the whole push."
+so one bad subtree degrades instead of blanking the whole push.
+Under measured companion lag, updates coalesce per surface — the §5
+sender rule — so only the newest state ever crosses the wire."
   (when (and (bound-and-true-p jetpacs-lint-on-push)
              (fboundp 'jetpacs-lint-spec))
     (let ((problems (jetpacs-lint-spec spec)))
@@ -130,11 +231,12 @@ so one bad subtree degrades instead of blanking the whole push."
                                          surface (cdr p) (car p))
                            :warning))
         (setq spec (jetpacs-lint-sanitize-spec spec)))))
-  (jetpacs-send "surface.update"
-             (append `((surface . ,surface) (revision . ,revision) (spec . ,spec))
-                     (when ttl-s     `((ttl_s . ,ttl-s)))
-                     (when stale-spec `((stale_spec . ,stale-spec)))
-                     (when current-view `((current_view . ,current-view))))))
+  (jetpacs-surfaces--send-update
+   surface
+   (append `((surface . ,surface) (revision . ,revision) (spec . ,spec))
+           (when ttl-s     `((ttl_s . ,ttl-s)))
+           (when stale-spec `((stale_spec . ,stale-spec)))
+           (when current-view `((current_view . ,current-view))))))
 
 (defun jetpacs-surface-push (surface spec &optional ttl-s stale-spec current-view)
   "Send SURFACE with an auto-incremented monotonic revision."
@@ -142,7 +244,12 @@ so one bad subtree degrades instead of blanking the whole push."
   (jetpacs-surface-update surface (jetpacs--next-revision) spec ttl-s stale-spec current-view))
 
 (defun jetpacs-surface-remove (surface)
-  "Send a `surface.remove' for SURFACE."
+  "Send a `surface.remove' for SURFACE.
+A queued update for SURFACE is dropped first: the remove is newer, and
+flushing the pair out of order would resurrect the surface."
+  (when (gethash surface jetpacs-surfaces--outbox)
+    (remhash surface jetpacs-surfaces--outbox)
+    (cl-incf jetpacs-surfaces--conflated))
   (jetpacs-send "surface.remove" `((surface . ,surface))))
 
 ;; ─── Inbound actions (companion -> Emacs) ────────────────────────────────────
@@ -279,6 +386,9 @@ like ivy/counsel/consult reroute prompts through `read-file-name-function'
 primitives run, and would otherwise reach a keyboard UI the phone can't
 drive.  `disabled-command-function' is nil'd so a novice.el disabled
 command runs instead of raw-reading a confirmation char (another hang)."
+  ;; Every event is also a lag report: its `revision_seen' feeds the
+  ;; §5 backpressure gauge before anything else happens.
+  (jetpacs-surfaces--note-lag payload)
   (let* ((action  (alist-get 'action payload))
          (args    (alist-get 'args payload))
          ;; The prompt resolves client-side: `jetpacs-action' indexed it by

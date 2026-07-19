@@ -24,7 +24,7 @@ is the source of truth behind it.
   │  • Caches last-known UI state   │
   │  • Queues offline actions       │
   └──────────────┬──────────────────┘
-                 │  Jetpacs: NDJSON bridge
+                 │  Jetpacs: JSON-RPC 2.0 bridge
                  │  (loopback socket → signed Unix socket)
   ┌──────────────┴──────────────────┐
   │  Emacs (the source of truth)    │

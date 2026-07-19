@@ -598,7 +598,7 @@ class TriggerHost(private val context: Context) {
 
             val conn = JetpacsRuntime.server?.connection()
             if (conn != null && conn.helloComplete &&
-                conn.send(Frame(kind = "event.action", payload = payload))
+                conn.notify(Method.EVENT_ACTION, payload)
             ) {
                 Log.d(TAG, "Fired ${row.id} live")
                 return
@@ -608,7 +608,7 @@ class TriggerHost(private val context: Context) {
                 else -> {
                     queueExecutor.execute {
                         JetpacsRuntime.database?.eventDao()?.insert(QueuedEvent(
-                            kind = "event.action",
+                            kind = Method.EVENT_ACTION,
                             payload = payload.toString(),
                             dedupeKey = row.dedupe,
                         ))

@@ -216,12 +216,22 @@ stripped of its gate and pushed, which would arm it ungated (SPEC
 No-op unless connected and the session granted `triggers' — pushing an
 empty set is meaningful (it clears the companion's table), so this
 sends even when the registry is empty.  Satisfies any pending
-debounced push (`jetpacs-triggers-push')."
+debounced push (`jetpacs-triggers-push').
+
+A request under EBP 2: acceptance is the empty result, and a wholesale
+rejection comes back as a typed 1101 instead of v1's codeless log line
+on the phone — the set author finally hears about it."
   (when (timerp jetpacs-triggers--push-timer)
     (cancel-timer jetpacs-triggers--push-timer)
     (setq jetpacs-triggers--push-timer nil))
   (when (and (jetpacs-connected-p) (jetpacs-granted-p "triggers"))
-    (jetpacs-send "triggers.set" `((triggers . ,(jetpacs-triggers--specs))))))
+    (jetpacs-request "triggers.set" `((triggers . ,(jetpacs-triggers--specs)))
+                  (lambda (_result err)
+                    (when (and err (not (eq (alist-get 'code err) -1)))
+                      (message "Jetpacs: triggers.set rejected [%s]: %s"
+                               (or (alist-get 'kind (alist-get 'data err))
+                                   (alist-get 'code err))
+                               (alist-get 'message err)))))))
 
 (defun jetpacs-triggers-push ()
   "Debounced `jetpacs-triggers-push-now'.

@@ -1,15 +1,15 @@
 ;;; jetpacs-lint.el --- validate SDUI specs before the wire -*- lexical-binding: t; -*-
 
 ;; A spec is a tree of alists built by the `jetpacs-widgets.el' constructors
-;; and serialized to JSON by `jetpacs--encode'.  A malformed node — an
-;; unknown `t', a non-serializable attribute value, a broken action —
+;; and serialized to JSON by `jetpacs--encode-frame'.  A malformed node —
+;; an unknown `t', a non-serializable attribute value, a broken action —
 ;; either renders as nothing on the companion or, worse, makes
 ;; `json-serialize' throw and blanks the *whole* push.  This module lets a
 ;; Tier 1 catch those before they reach the wire:
 ;;
 ;;   `jetpacs-lint-spec'       — return a list of problems for a spec (nil = clean).
-;;   `jetpacs-lint-payload'    — validate a frame kind + payload against the
-;;                            kind schema (the frame-level counterpart).
+;;   `jetpacs-lint-payload'    — validate a method + params against the
+;;                            method schema (the message-level counterpart).
 ;;   `jetpacs-render-to-json'  — serialize + parse a spec headless (the wire
 ;;                            round-trip, so views are testable with no phone).
 ;;   `jetpacs-lint-on-push'    — when set, `jetpacs-surface-update' replaces each
@@ -19,11 +19,13 @@
 ;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
 ;; (SduiRenderer.kt) and `ebp/goldens/widgets.golden'; the drift test
 ;; `jetpacs-lint-types-cover-golden' fails if a constructor emits a `t' not
-;; listed here.  Since Spec 1.0-rc the tables below also carry the authored
-;; per-node key schema (`jetpacs-lint-node-schema') and the frame-kind
-;; schema (`jetpacs-lint-kind-schema'); `build-contract.el' publishes both
-;; in ebp/contract.json (contract_format 2, the ebp protocol submodule)
-;; for non-elisp implementations.
+;; listed here.  The tables below also carry the authored per-node key
+;; schema (`jetpacs-lint-node-schema'), the JSON-RPC method schema with
+;; result shapes (`jetpacs-lint-kind-schema', `jetpacs-lint-result-schema')
+;; and the error-code vocabulary (`jetpacs-lint-error-codes');
+;; `build-contract.el' publishes them all in ebp/contract.json
+;; (contract_format 5, the ebp protocol submodule) for non-elisp
+;; implementations.
 
 ;;; Code:
 
@@ -110,14 +112,18 @@ negotiation authority is the welcome's `device.state_types' report
 literal by the companion — almost always a typo worth a warning.")
 
 (defconst jetpacs-lint-action-builtins
-  '(("view.switch" view)
-    ("clipboard.copy" text)
-    ("share.send" text)
-    ("jetpacs.settings.open"))
-  "Companion-local builtins → the payload keys each requires (SPEC §5).
-Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
-must name one of these and carry every listed key.  `build-contract.el'
-derives the discriminated action schema in `ebp/contract.json' from this.")
+  '(("view.switch" (view) ())
+    ("clipboard.copy" (text) ())
+    ("share.send" (text) (title))
+    ("jetpacs.settings.open" () ()))
+  "Companion-local builtins → required and optional payload keys (SPEC §5).
+Each entry is (NAME REQUIRED OPTIONAL): an action object using `builtin'
+must name one of these and carry every REQUIRED key; OPTIONAL keys are
+legal beside them (share.send's `title' is the share-sheet subject,
+honored where the receiving app supports one).  `build-contract.el'
+derives the discriminated action schema in `ebp/contract.json' from
+this — the OPTIONAL column exists so the contract can express a key the
+golden corpus legitimately carries without requiring it everywhere.")
 
 (defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style key)
   "Keys legal on any node, attached after construction.
@@ -210,64 +216,104 @@ not re-declared here: the numeric/color/action key classes above apply by
 key name.  `build-contract.el' publishes this as `node_schema'.")
 
 (defconst jetpacs-lint-kind-schema
-  ;; (KIND DIRECTION REQUIRED OPTIONAL) | (KIND DIRECTION node)
+  ;; (METHOD DIRECTION CLASS REQUIRED OPTIONAL) | (METHOD DIRECTION CLASS node)
   ;; DIRECTION: who sends it — `client' (Emacs), `companion', or `both'.
-  ;; `node' marks a payload that is a §9 node tree rather than a fixed
-  ;; key set.
-  '(;; Handshake (SPEC §3)
-    ("session.hello"    client    (protocol client wants) (features))
-    ("auth.challenge"   companion (nonce)                 ())
-    ("auth.response"    client    (nonce mac)             ())
-    ("session.welcome"  companion (server_proof granted node_types surfaces
-                                   queued_events)
-                                                          (protocol server
-                                                           device))
-    ;; Envelope-level (SPEC §2)
-    ("ack"              both      ()                      ())
-    ("error"            both      (code)                  (detail perm settings))
-    ("ping"             both      ()                      ())
-    ("pong"             both      ()                      ())
-    ;; Surfaces, events, offline queue (SPEC §4–§6)
-    ("surface.update"   client    (surface revision spec) (ttl_s stale_spec
-                                                           current_view))
-    ("surface.remove"   client    (surface)               ())
-    ("event.action"     companion (action)                (args surface
-                                                           revision_seen fields
-                                                           queued_at))
-    ("state.changed"    companion (id value)              ())
-    ("queue.replay"     client    ()                      ())
-    ("queue.drained"    companion (delivered expired)     (duplicate_request))
-    ;; Dialogs, toasts, pies, reminders, theme (SPEC §7)
-    ("dialog.show"      client    node)
-    ("dialog.dismiss"   client    ()                      ())
-    ("pie_menu.show"    client    (categories)            (center_label buffer))
-    ("pie_menu.dismiss" client    ()                      ())
-    ("toast.show"       client    (text)                  ())
-    ("reminders.set"    client    (reminders)             (owner))
-    ("theme.set"        client    ()                      (dark colors syntax))
+  ;; CLASS: `request' (carries an id, answered exactly once, result XOR
+  ;; error) or `notify' (no id, never answered) — the JSON-RPC 2.0
+  ;; classification of SPEC-2 §4.  `node' marks params that are a §9
+  ;; node tree rather than a fixed key set.
+  '(;; Handshake (SPEC-2 §3): two request/response pairs.  v1's
+    ;; auth.challenge and session.welcome dissolved into the RESPONSES
+    ;; of these two — see `jetpacs-lint-result-schema'.
+    ("session.hello"    client    request (protocol client wants) (features))
+    ("auth.response"    client    request (nonce mac)             ())
+    ;; Requests above the handshake (SPEC-2 §4).  v1's capability.result
+    ;; and queue.drained dissolved into responses; ack/error/ping/pong
+    ;; stopped existing as methods.
+    ("capability.invoke" client   request (cap)                   (args))
+    ("queue.replay"     client    request ()                      ())
+    ("triggers.set"     client    request (triggers)              ())
+    ("reminders.set"    client    request (reminders)             (owner))
+    ;; Notifications: surfaces, events (SPEC §4–§6)
+    ("surface.update"   client    notify  (surface revision spec) (ttl_s stale_spec
+                                                                   current_view))
+    ("surface.remove"   client    notify  (surface)               ())
+    ("event.action"     companion notify  (action)                (args surface
+                                                                   revision_seen fields
+                                                                   queued_at))
+    ("state.changed"    companion notify  (id value)              (surface))
+    ;; Dialogs, toasts, pies, theme (SPEC §7) — dialog.show stays a
+    ;; notification in the first cut (SPEC-2 §4 staging note).
+    ("dialog.show"      client    notify  node)
+    ("dialog.dismiss"   client    notify  ()                      ())
+    ("pie_menu.show"    client    notify  (categories)            (center_label buffer))
+    ("pie_menu.dismiss" client    notify  ()                      ())
+    ("toast.show"       client    notify  (text)                  ())
+    ("theme.set"        client    notify  ()                      (dark colors syntax))
     ;; Editor sync & completion (SPEC §8).  The companion→client legs
     ;; (edit.open/delta/caret/close/complete/command) are §5 actions
-    ;; riding `event.action', not frame kinds — only the client→companion
-    ;; legs appear here.
-    ("completions.show" client    (id request_id prefix candidates) ())
-    ("diagnostics.show" client    (id session seq diags)  ())
-    ("eldoc.show"       client    (id session text)       ())
-    ("fontify.show"     client    (id session seq runs)   ())
-    ("edit.resync"      client    (id session)            ())
-    ("edit.apply"       client    (id session seq cursor) (start del text len
-                                                           sel_start sel_end))
-    ;; Device capabilities & triggers (SPEC §10–§11)
-    ("capability.invoke" client   (cap)                   (args))
-    ("capability.result" companion (ok)                   (result))
-    ("triggers.set"      client   (triggers)              ()))
-  "Frame-kind schema: kind → sender direction + payload keys.
-Mirrors `Kind' in Envelope.kt and the frame vocabulary of SPEC §§2–8,
-10–11, authored from the reference implementations' actual send sites.
-`jetpacs-lint-payload' enforces it (missing required = error, unknown
-key = warning); `build-contract.el' publishes it as `kind_schema'.
+    ;; riding `event.action', not methods — only the client→companion
+    ;; legs appear here (first-cut staging; the §4 promotions come later).
+    ("completions.show" client    notify  (id request_id prefix candidates) ())
+    ("diagnostics.show" client    notify  (id session seq diags)  ())
+    ("eldoc.show"       client    notify  (id session text)       ())
+    ("fontify.show"     client    notify  (id session seq runs)   ())
+    ("edit.resync"      client    notify  (id session)            ())
+    ("edit.apply"       client    notify  (id session seq cursor) (start del text len
+                                                                   sel_start sel_end))
+    ;; Envelope-level channels (SPEC-2 §2.3)
+    ("log.error"        companion notify  (code message)          (data))
+    ("rpc.cancel"       both      notify  (id)                    ()))
+  "Method schema: JSON-RPC method → direction, class, and params keys.
+Mirrors `Method' in Envelope.kt and the method table of SPEC-2 §4 as
+staged for the first cut, authored from the reference implementations'
+actual send sites.  `jetpacs-lint-payload' enforces it (missing required
+= error, unknown key = warning); `build-contract.el' publishes it as
+`methods'.  Request results live in `jetpacs-lint-result-schema'.
 Action names (§5 registry entries, e.g. `trigger.fired', `edit.open')
 are deliberately NOT enumerated — they are negotiated vocabulary, not
-frame kinds.")
+methods.")
+
+(defconst jetpacs-lint-result-schema
+  ;; (METHOD REQUIRED OPTIONAL) — the `result' object each request
+  ;; method's response carries.  An empty result means "success, nothing
+  ;; to say", never failure (SPEC-2 §2.1).
+  '(("session.hello"    (nonce)                                   ())
+    ("auth.response"    (server_proof granted node_types surfaces
+                         queued_events)
+                        (protocol server device input_state can_disable))
+    ("capability.invoke" ()                                       (result))
+    ("queue.replay"     (delivered expired)                       (duplicate_request))
+    ("triggers.set"     ()                                        ())
+    ("reminders.set"    ()                                        ()))
+  "Result schema for each request method in `jetpacs-lint-kind-schema'.
+The challenge is `session.hello's result; the welcome (the treaty, v1's
+session.welcome fields intact) is `auth.response's.  Published to the
+contract as each method's `result'.")
+
+(defconst jetpacs-lint-error-codes
+  ;; (CODE KIND CONTEXT) — SPEC-2 §2.4.  KIND is the readable string
+  ;; vocabulary riding `data.kind'; codes outside -32768..-32000 are
+  ;; application codes.  32000 and -1 are landmines, never emitted.
+  '((-32700 "parse-error"      "unparseable frame")
+    (-32600 "invalid-request"  "not JSON-RPC 2.0 / prohibited batch / wrong direction or class")
+    (-32601 "method-not-found" "unknown request method")
+    (-32602 "invalid-params"   "JSON-RPC standard set, reserved")
+    (-32603 "internal"         "handler signalled")
+    (1001 "cap-unsupported"    "capability.invoke")
+    (1002 "cap-permission"     "capability.invoke; remedy rides data (perm, settings)")
+    (1003 "cap-failed"         "capability.invoke")
+    (1101 "triggers-rejected"  "triggers.set wholesale rejection")
+    (1200 "not-authenticated"  "any method before the proof completes")
+    (1201 "spec-invalid"       "malformed params")
+    (1202 "proto-version"      "protocol mismatch at hello")
+    (1203 "auth-failed"        "bad MAC")
+    (1301 "request-cancelled"  "the answer to a cancelled request")
+    (1400 "frame-too-large"    "frame-cap refusal, rides log.error")
+    (1401 "overloaded"         "bounded-queue exhaustion, rides log.error"))
+  "The error-code vocabulary (SPEC-2 §2.4), published as `error_codes'.
+A conforming implementation emits no code outside this list; growing it
+is an ordinary amendment.")
 
 (defconst jetpacs-lint--numeric-attrs
   '(padding weight spacing run_spacing elevation size min_lines max_lines
@@ -361,7 +407,7 @@ recursion, not here."
         (let ((spec (assoc builtin jetpacs-lint-action-builtins)))
           (if (not spec)
               (funcall report path (format "unknown builtin: %S" builtin))
-            (dolist (req (cdr spec))
+            (dolist (req (nth 1 spec))
               (unless (assq req val)
                 (funcall report path
                          (format "builtin %s requires `%s'" builtin req)))))))
@@ -588,31 +634,31 @@ own ERT tests to keep its views wire-valid without a companion attached."
 
 ;;;###autoload
 (defun jetpacs-lint-payload (kind payload)
-  "Return a list of (PATH . PROBLEM) for a frame's KIND and PAYLOAD alist.
-nil = clean.  The frame-kind half of the schema registry: KIND must be
-registered in `jetpacs-lint-kind-schema', PAYLOAD must carry the kind's
-required keys (errors), and a key outside the schema is a \"warning: \"-
-prefixed problem.  A kind whose payload is a §9 node tree
-\(`dialog.show') is validated with `jetpacs-lint-spec'.  PAYLOAD nil
-means an empty payload."
+  "Return a list of (PATH . PROBLEM) for a message's KIND and PAYLOAD alist.
+nil = clean.  The method half of the schema registry: KIND (the method
+name) must be registered in `jetpacs-lint-kind-schema', PAYLOAD (the
+params) must carry the method's required keys (errors), and a key
+outside the schema is a \"warning: \"-prefixed problem.  A method whose
+params are a §9 node tree (`dialog.show') is validated with
+`jetpacs-lint-spec'.  PAYLOAD nil means empty params."
   (let* ((entry (assoc kind jetpacs-lint-kind-schema))
          problems
          (report (lambda (path msg) (push (cons path msg) problems))))
     (cond
      ((not entry)
-      (funcall report nil (format "unknown frame kind: %S" kind)))
-     ((eq (nth 2 entry) 'node)
+      (funcall report nil (format "unknown method: %S" kind)))
+     ((eq (nth 3 entry) 'node)
       (setq problems (reverse (jetpacs-lint-spec payload))))
      ((and payload (not (jetpacs-lint--alist-p payload)))
-      (funcall report nil (format "payload must be an object: %S" payload)))
+      (funcall report nil (format "params must be an object: %S" payload)))
      (t
-      (dolist (req (nth 2 entry))
+      (dolist (req (nth 3 entry))
         (unless (assq req payload)
           (funcall report (list req)
                    (format "%s: missing required `%s'" kind req))))
       (dolist (pair payload)
         (let ((key (car pair)))
-          (unless (or (memq key (nth 2 entry)) (memq key (nth 3 entry)))
+          (unless (or (memq key (nth 3 entry)) (memq key (nth 4 entry)))
             (funcall report (list key)
                      (format "warning: unknown payload key `%s' on %s"
                              key kind)))))))

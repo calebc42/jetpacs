@@ -39,7 +39,7 @@ live transients, where a bounded set of human-written labels fits a pie.
 
 | module | role |
 |---|---|
-| `jetpacs.el` | transport: NDJSON framing, handshake, pairing auth, reconnect backoff |
+| `jetpacs.el` | transport: JSON-RPC 2.0 envelope, Content-Length framing + frame cap, handshake, pairing auth, reconnect backoff |
 | `jetpacs-widgets.el` | the widget constructors (wire shapes in `ebp/goldens/widgets.golden`) |
 | `jetpacs-surfaces.el` | surface push + monotonic revisions, action dispatch table, UI-state store |
 | `jetpacs-triggers.el` | device-trigger registry: `triggers.set` replace-set push (gated on the `triggers` grant), `trigger.fired` dispatch (SPEC §11) |
@@ -215,7 +215,7 @@ in the ebp protocol repo:
 
 | Kotlin surface | SPEC section |
 |---|---|
-| `FrameCodec` / `Envelope` (NDJSON, envelope, ids) | §1–§2 |
+| `FrameCodec` / `Envelope` (Content-Length framing, JSON-RPC messages, error codes) + `InboundPipeline` (SPEC-2 §5 conflation) | SPEC-2 §§1–2, §5 |
 | `JetpacsAuth` + handshake in `JetpacsConnection` | §3 |
 | `session.welcome` `device` report | §3, §10 |
 | `SurfaceStore` / `SurfaceManager` (revisions, cache, multi-view) | §4 |

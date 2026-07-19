@@ -21,19 +21,15 @@ class JetpacsDialogState {
         val promptId = findPromptId(spec)
         onDismissed = if (promptId != null) {
             {
-                val action = JSONObject().apply {
+                val payload = JSONObject().apply {
                     put("action", "prompt.dismiss")
                     put("args", JSONObject().apply { put("prompt_id", promptId) })
                 }
-                val frame = Frame(
-                    kind = "event.action",
-                    payload = action,
-                )
                 // Invoked from the dialog's onDismissRequest, i.e. the main
                 // thread — a socket write there throws
                 // NetworkOnMainThreadException and kills the app.
                 thread(name = "JetpacsPromptDismiss") {
-                    JetpacsRuntime.server?.connection()?.send(frame)
+                    JetpacsRuntime.server?.connection()?.notify(Method.EVENT_ACTION, payload)
                 }
             }
         } else null

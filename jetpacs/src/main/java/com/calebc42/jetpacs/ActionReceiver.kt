@@ -56,7 +56,7 @@ class ActionReceiver : BroadcastReceiver() {
 
         val conn = JetpacsRuntime.server?.connection()
         if (conn != null && conn.helloComplete &&
-            conn.send(Frame(kind = Kind.STATE_CHANGED, payload = payload))
+            conn.notify(Method.STATE_CHANGED, payload)
         ) {
             Log.d(TAG, "Delivered state.changed for '$id'")
         } else {
@@ -64,7 +64,7 @@ class ActionReceiver : BroadcastReceiver() {
             // final value of an offline editing burst gets replayed.
             JetpacsRuntime.database?.eventDao()?.insert(
                 QueuedEvent(
-                    kind = Kind.STATE_CHANGED,
+                    kind = Method.STATE_CHANGED,
                     payload = payload.toString(),
                     dedupeKey = "state/$id",
                 )
@@ -110,7 +110,7 @@ class ActionReceiver : BroadcastReceiver() {
 
         val conn = JetpacsRuntime.server?.connection()
         if (conn != null && conn.helloComplete &&
-            conn.send(Frame(kind = "event.action", payload = event))
+            conn.notify(Method.EVENT_ACTION, event)
         ) {
             Log.d(TAG, "Delivered '$actionName' live")
             return
@@ -122,7 +122,7 @@ class ActionReceiver : BroadcastReceiver() {
                 // queue, wake, and (for now) local all persist the event.
                 JetpacsRuntime.database?.eventDao()?.insert(
                     QueuedEvent(
-                        kind = "event.action",
+                        kind = Method.EVENT_ACTION,
                         payload = event.toString(),
                         dedupeKey = action.optString("dedupe").ifEmpty { null },
                         ttlS = if (action.has("ttl_s")) action.optLong("ttl_s") else null,

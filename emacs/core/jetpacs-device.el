@@ -186,17 +186,26 @@ Negotiates with the companion:
 Returns non-nil when a set was sent."
   (let ((owner (or owner jetpacs-current-owner))
         (vec (vconcat reminders)))
-    (cond
-     ((jetpacs-granted-p "reminders.owner")
-      (jetpacs-send "reminders.set"
-                    `((owner . ,(or owner "")) (reminders . ,vec)))
-      t)
-     ((not (and (fboundp 'jetpacs-apps--multi-p) (jetpacs-apps--multi-p)))
-      (jetpacs-send "reminders.set" `((reminders . ,vec)))
-      t)
-     (t
-      (jetpacs-reminders--warn-unscoped owner)
-      nil))))
+    ;; A request under EBP 2 — acceptance is typed at last. Rejection is
+    ;; logged, not signalled: arming reminders stays fire-and-forget for
+    ;; callers.
+    (cl-flet ((send (params)
+                (jetpacs-request "reminders.set" params
+                              (lambda (_result err)
+                                (when (and err (not (eq (alist-get 'code err) -1)))
+                                  (message "Jetpacs: reminders.set rejected [%s]: %s"
+                                           (alist-get 'code err)
+                                           (alist-get 'message err)))))))
+      (cond
+       ((jetpacs-granted-p "reminders.owner")
+        (send `((owner . ,(or owner "")) (reminders . ,vec)))
+        t)
+       ((not (and (fboundp 'jetpacs-apps--multi-p) (jetpacs-apps--multi-p)))
+        (send `((reminders . ,vec)))
+        t)
+       (t
+        (jetpacs-reminders--warn-unscoped owner)
+        nil)))))
 
 ;; ─── Permission-free effectors ───────────────────────────────────────────────
 

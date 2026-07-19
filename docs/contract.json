@@ -178,7 +178,9 @@
       "optional": [
         "collapsed",
         "on_long_tap",
-        "on_swipe"
+        "on_swipe",
+        "swipe_start",
+        "swipe_end"
       ]
     },
     "reorderable_list": {
@@ -774,6 +776,13 @@
       "optional": []
     },
     "clipboard.copy": {
+      "required": [
+        "builtin",
+        "text"
+      ],
+      "optional": []
+    },
+    "share.send": {
       "required": [
         "builtin",
         "text"

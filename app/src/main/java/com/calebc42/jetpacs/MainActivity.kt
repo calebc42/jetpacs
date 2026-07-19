@@ -167,7 +167,8 @@ private fun BridgeScreen() {
      * Builtins are the companion-local fast path (they work with Emacs dead):
      * `view.switch` flips the view immediately from cache and merely informs
      * Emacs via a drop-policy `view.switched` event; `clipboard.copy` puts
-     * the action's `text` on the device clipboard. Everything else goes
+     * the action's `text` on the device clipboard; `share.send` opens the
+     * system share sheet for it. Everything else goes
      * through the normal ActionReceiver pipeline (live / queue / wake).
      */
     val dispatch = { action: JSONObject ->
@@ -200,6 +201,19 @@ private fun BridgeScreen() {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                     Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                 }
+            }
+            "share.send" -> {
+                val text = action.optString("text")
+                val title = action.optString("title")
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    if (title.isNotEmpty()) putExtra(Intent.EXTRA_SUBJECT, title)
+                }
+                context.startActivity(
+                    Intent.createChooser(send, title.ifEmpty { "Share" })
+                        .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                )
             }
             else -> context.sendBroadcast(actionIntent(context, action, dashboardRecord?.revision ?: 0))
         }

@@ -248,6 +248,28 @@ the system back gesture close the app from the detail view."
     (should (equal (alist-get 'initial_view pushed) "home"))
     (should (equal forced "overlay-view"))))
 
+(ert-deftest jetpacs-collapsible-side-swipes-and-share-builtin ()
+  "Collapsible headers carry the card's per-side swipe contract, and
+share.send is a known companion builtin — both wire-valid."
+  (let ((node (jetpacs-collapsible
+               "x" (jetpacs-text "h" 'body)
+               (list (jetpacs-text "c" 'body))
+               :on-swipe (jetpacs-action "legacy.cycle")
+               :swipe-start (jetpacs-swipe-action
+                             "check" "Cycle" (jetpacs-action "a.b")
+                             :color "#4CAF50")
+               :swipe-end (jetpacs-swipe-action
+                           "archive" "Archive" (jetpacs-action "c.d")))))
+    (should-not (jetpacs-lint-spec node))
+    (should (equal (alist-get 'icon (alist-get 'swipe_start node)) "check"))
+    (should (equal "a.b" (alist-get 'action
+                                    (alist-get 'on_trigger
+                                               (alist-get 'swipe_start node))))))
+  (let ((share (jetpacs-share-action "subtree text" :title "Heading")))
+    (should (equal (alist-get 'builtin share) "share.send"))
+    (should (equal (alist-get 'title share) "Heading"))
+    (should-not (jetpacs-lint-spec (jetpacs-button "Share" share)))))
+
 ;; ─── Transport ──────────────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-request-no-leak ()

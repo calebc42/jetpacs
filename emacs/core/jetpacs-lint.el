@@ -69,6 +69,7 @@ carries the payload keys its kind requires (`jetpacs-lint-action-builtins').")
 (defconst jetpacs-lint-action-builtins
   '(("view.switch" view)
     ("clipboard.copy" text)
+    ("share.send" text)
     ("jetpacs.settings.open"))
   "Companion-local builtins → the payload keys each requires (SPEC §5).
 Each entry is (NAME . REQUIRED-KEYS): an action object using `builtin'
@@ -100,7 +101,8 @@ root node (`jetpacs-send-dialog', SPEC §7).")
     ("card"            (children)           (on_tap on_swipe swipe_start
                                              swipe_end padding weight width
                                              height fill_fraction border))
-    ("collapsible"     (id header children) (collapsed on_long_tap on_swipe))
+    ("collapsible"     (id header children) (collapsed on_long_tap on_swipe
+                                             swipe_start swipe_end))
     ("reorderable_list" (items)             (on_reorder))
     ("table"           (rows)               (aligns on_add_row on_add_col
                                              padding))

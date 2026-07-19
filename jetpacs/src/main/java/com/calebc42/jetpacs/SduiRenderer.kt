@@ -249,7 +249,7 @@ fun SduiNode(node: JSONObject, surfaceId: String = "", revision: Int = 0, modifi
                 }
             }
             if (swipeStart != null || swipeEnd != null) {
-                SwipeActionCard(swipeStart, swipeEnd, dispatch) { cardContent() }
+                SwipeActionBox(swipeStart, swipeEnd, dispatch) { cardContent() }
             } else if (swipeJson != null) {
                 val density = LocalDensity.current
                 val thresholdPx = with(density) { 80.dp.toPx() }
@@ -601,6 +601,12 @@ private fun SduiCollapsible(
     val header = node.optJSONObject("header")
     val longTapAction = node.optJSONObject("on_long_tap")
     val swipeJson = node.optJSONObject("on_swipe")
+    // Per-side swipe actions (SPEC §9), same contract as `card`: when
+    // present they win over the legacy single-action on_swipe and bring
+    // the revealed icon/label/color background with them.
+    val swipeStart = node.optJSONObject("swipe_start")
+    val swipeEnd = node.optJSONObject("swipe_end")
+    val hasSideActions = swipeStart != null || swipeEnd != null
     var swipeOffset by remember { mutableFloatStateOf(0f) }
 
     // A single chevron that rotates between right (collapsed) and
@@ -611,13 +617,13 @@ private fun SduiCollapsible(
         label = "chevron"
     )
 
-    Column(modifier = modifier.fillMaxWidth()) {
+    val headerRow: @Composable () -> Unit = {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .then(
-                    if (swipeJson != null) {
+                    if (swipeJson != null && !hasSideActions) {
                         Modifier
                             .pointerInput(swipeJson) {
                                 detectHorizontalDragGestures(
@@ -659,6 +665,14 @@ private fun SduiCollapsible(
                     SduiNode(header, surfaceId, revision, Modifier, dispatch)
                 }
             }
+        }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (hasSideActions) {
+            SwipeActionBox(swipeStart, swipeEnd, dispatch) { headerRow() }
+        } else {
+            headerRow()
         }
         AnimatedVisibility(visible = expanded) {
             Column(modifier = Modifier.padding(start = 24.dp, top = 2.dp)) {
@@ -750,14 +764,15 @@ internal fun JetpacsBadged(node: JSONObject, content: @Composable () -> Unit) {
 }
 
 /**
- * Per-side card swipe actions (SPEC §9): dragging reveals the side's
- * icon/label on its (optionally hex-colored) background; a full swipe past
- * the threshold fires `on_trigger` once, with a haptic tick, and the card
- * springs back — the client answers by pushing the updated list, the same
- * contract as the legacy single-action `on_swipe`.
+ * Per-side swipe actions (SPEC §9), hosting cards and collapsible
+ * headers alike: dragging reveals the side's icon/label on its (optionally
+ * hex-colored) background; a full swipe past the threshold fires
+ * `on_trigger` once, with a haptic tick, and the content springs back —
+ * the client answers by pushing the updated list, the same contract as
+ * the legacy single-action `on_swipe`.
  */
 @Composable
-private fun SwipeActionCard(
+private fun SwipeActionBox(
     swipeStart: JSONObject?,
     swipeEnd: JSONObject?,
     dispatch: (JSONObject) -> Unit,

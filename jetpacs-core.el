@@ -16112,6 +16112,23 @@ hypertext skin ships it as native nodes (headings, tables, images)."
 (add-hook 'jetpacs-files-editor-actions-functions
           #'jetpacs-files--html-editor-actions)
 
+(defun jetpacs-files--org-editor-actions (file)
+  "Editor top-bar hook: an \"Outline\" affordance while an org FILE is open.
+Opens the file's rendered outline (the org render skin) — where headings
+are tappable for the header action sheet, narrow/widen, and the rest —
+without the live-editor's caret/delta sync in the way (it is a read
+surface; mutations save the file, and the editor reloads them on reopen)."
+  (when (and (stringp file) (string-suffix-p ".org" file t)
+             (file-readable-p file))
+    (list (jetpacs-icon-button "toc"
+                            (jetpacs-action "files.open-outline"
+                                         :args `((file . ,file))
+                                         :when-offline "drop")
+                            :content-description "Outline"))))
+
+(add-hook 'jetpacs-files-editor-actions-functions
+          #'jetpacs-files--org-editor-actions)
+
 (defun jetpacs-files--dired-cards (buffer)
   "Dired skin: render dired BUFFER as a list of file/dir cards.
 Directories sort first, then files.  A \"..\" card heads the list only when
@@ -16490,6 +16507,19 @@ view, and returns that path."
          (lambda ()
            (eww-open-file file)
            (or (get-buffer "*eww*") (current-buffer))))))))
+
+(jetpacs-defaction "files.open-outline"
+  ;; View the org file's buffer through the render skin (jetpacs-org-render):
+  ;; headings become tappable (the header action sheet), narrow/widen work.
+  ;; Same root allowlist as files.open.
+  (lambda (args _)
+    (let ((file (alist-get 'file args)))
+      (if (not (and (stringp file)
+                    (file-readable-p file)
+                    (jetpacs-files--within-root-p file)))
+          (jetpacs-shell-notify "Can't open that file")
+        (jetpacs-shell-view-buffer-of
+         (lambda () (find-file-noselect file)))))))
 
 (jetpacs-defaction "files.grep"
   ;; The query arrives through the bridged minibuffer (this runs inside an

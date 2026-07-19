@@ -7473,5 +7473,40 @@ otherwise strips (org-get-repeat reads it back); the body lints; clear removes."
         (goto-char (point-min))
         (should-not (org-entry-get (point) "SCHEDULED"))))))
 
+(ert-deftest jetpacs-files-org-outline-button ()
+  "An org editor gets an \"Outline\" top-bar action; it opens the file's
+rendered buffer, where headings are tappable (org.header.actions).
+Non-org files get no such button."
+  (let* ((dir (make-temp-file "jp-org" t))
+         (org (expand-file-name "notes.org" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file org (insert "* Heading\nbody\n"))
+          (let ((acts (jetpacs-files--org-editor-actions org)))
+            (should acts)
+            (should (string-search
+                     "files.open-outline"
+                     (json-serialize (jetpacs-tests--canon (car acts))
+                                     :null-object :null :false-object :false))))
+          (with-temp-file (expand-file-name "x.txt" dir) (insert "hi"))
+          (should-not (jetpacs-files--org-editor-actions
+                       (expand-file-name "x.txt" dir)))
+          ;; The action views the org buffer, rendered with tappable headings.
+          (let ((jetpacs-files-roots `(("t" . ,dir))) viewed)
+            (cl-letf (((symbol-function 'jetpacs-shell-view-buffer-of)
+                       (lambda (thunk) (setq viewed (funcall thunk))))
+                      ((symbol-function 'jetpacs-shell-notify) #'ignore))
+              (jetpacs--on-action `((action . "files.open-outline")
+                                 (args . ((file . ,org)))) nil)
+              (should (bufferp viewed))
+              (should (eq (buffer-local-value 'major-mode viewed) 'org-mode))
+              (should (string-search
+                       "org.header.actions"
+                       (json-serialize
+                        (jetpacs-tests--canon
+                         (apply #'jetpacs-column (jetpacs-render-buffer viewed)))
+                        :null-object :null :false-object :false))))))
+      (ignore-errors (delete-directory dir t)))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

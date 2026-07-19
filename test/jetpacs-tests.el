@@ -6629,5 +6629,231 @@ hello app parses whole with its documented teardown."
     (should (string-search "(jetpacs-action \"hello.tap\")" hello))
     (should (string-search "(jetpacs-app-unregister \"hello\")" hello))))
 
+;; ─── Capture template builder ────────────────────────────────────────────────
+
+(defmacro jetpacs-tests--with-captpl-env (&rest body)
+  "Run BODY in a clean capture-template-builder environment.
+Fresh UI state, empty capture templates, a temp org tree, stubbed
+persistence/push/notify (the last notify lands in `notified')."
+  (declare (indent 0))
+  `(let* ((jetpacs--ui-state (make-hash-table :test 'equal))
+          (org-capture-templates nil)
+          (org-directory (make-temp-file "captpl" t))
+          (org-default-notes-file (expand-file-name "inbox.org" org-directory))
+          (org-todo-keywords '((sequence "TODO" "NEXT" "|" "DONE")))
+          (saved nil) (notified nil)
+          (jetpacs-org--captpl-editing nil)
+          (jetpacs-org--captpl-entry nil))
+     (ignore saved notified)
+     (unwind-protect
+         (cl-letf (((symbol-function 'jetpacs-settings-save-variable)
+                    (lambda (sym val) (push (cons sym val) saved) t))
+                   ((symbol-function 'jetpacs-shell-push)
+                    (cl-function (lambda (&optional _tab &key _switch-to))))
+                   ((symbol-function 'jetpacs-shell-notify)
+                    (lambda (msg &rest _) (setq notified msg))))
+           ,@body)
+       (delete-directory org-directory t))))
+
+(ert-deftest jetpacs-captpl-build-template ()
+  "The builder state generates the expected org capture template string."
+  (jetpacs-tests--with-captpl-env
+    (jetpacs-ui-state-put "captpl-todo" "TODO")
+    (jetpacs-ui-state-put "captpl-tags" ["work" "urgent"])
+    (jetpacs-ui-state-put "captpl-prompts" ["Effort"])
+    (jetpacs-ui-state-put "captpl-timestamp" "Inactive (%U)")
+    (jetpacs-ui-state-put "captpl-link" t)
+    (jetpacs-ui-state-put "captpl-initial" t)
+    (should (equal "* TODO %? :work:urgent:\nEffort: %^{Effort}\n%U\n%a\n%i"
+                   (jetpacs-org--captpl-build-template))))
+  ;; Resting values contribute nothing: the minimal template is bare.
+  (jetpacs-tests--with-captpl-env
+    (jetpacs-ui-state-put "captpl-todo" "None")
+    (jetpacs-ui-state-put "captpl-timestamp" "None")
+    (should (equal "* %?" (jetpacs-org--captpl-build-template)))))
+
+(ert-deftest jetpacs-captpl-fields-round-trip ()
+  "Reverse-parsing a generated template recovers the builder fields."
+  (jetpacs-tests--with-captpl-env
+    (jetpacs-ui-state-put "captpl-todo" "NEXT")
+    (jetpacs-ui-state-put "captpl-tags" ["home"])
+    (jetpacs-ui-state-put "captpl-prompts" ["Effort" "Who"])
+    (jetpacs-ui-state-put "captpl-timestamp" "Active (%T)")
+    (jetpacs-ui-state-put "captpl-initial" t)
+    (let ((fields (jetpacs-org--captpl-template-fields
+                   (jetpacs-org--captpl-build-template))))
+      (should (equal "NEXT" (alist-get 'todo fields)))
+      (should (equal '("home") (alist-get 'tags fields)))
+      (should (equal '("Effort" "Who") (alist-get 'prompts fields)))
+      (should (equal "Active (%T)" (alist-get 'timestamp fields)))
+      (should-not (alist-get 'link fields))
+      (should (alist-get 'initial fields))))
+  ;; A classic hand-written Todo default parses sensibly too.
+  (jetpacs-tests--with-captpl-env
+    (let ((fields (jetpacs-org--captpl-template-fields "* TODO %?\n%U\n%i")))
+      (should (equal "TODO" (alist-get 'todo fields)))
+      (should-not (alist-get 'tags fields))
+      (should (equal "Inactive (%U)" (alist-get 'timestamp fields)))
+      (should (alist-get 'initial fields))
+      (should-not (alist-get 'prompts fields)))))
+
+(ert-deftest jetpacs-captpl-template-prompts ()
+  "Template prompt parsing: %? adds Headline, %^{N|default} drops defaults."
+  (should (equal '("Headline" "Effort")
+                 (jetpacs-org-capture-template-prompts
+                  "* TODO %?\nEffort: %^{Effort|1h}\n%U")))
+  (should (equal '("Who") (jetpacs-org-capture-template-prompts "%^{Who}")))
+  (should-not (jetpacs-org-capture-template-prompts "* plain\n%U")))
+
+(ert-deftest jetpacs-captpl-save-creates-entry ()
+  "org.templates.new → fill → org.templates.save lands a persisted entry."
+  (jetpacs-tests--with-captpl-env
+    (jetpacs--on-action '((action . "org.templates.new")) nil)
+    (should (eq 'new jetpacs-org--captpl-editing))
+    ;; The fresh builder already generated a template with %U and %i.
+    (should (string-search "%U" (jetpacs-ui-state "captpl-template")))
+    (jetpacs-ui-state-put "captpl-key" "w")
+    (jetpacs-ui-state-put "captpl-description" "Work log")
+    (jetpacs-ui-state-put "captpl-headline" "Log")
+    (jetpacs--on-action '((action . "org.templates.save")) nil)
+    (let ((entry (assoc "w" org-capture-templates)))
+      (should entry)
+      (should (equal "Work log" (nth 1 entry)))
+      (should (eq 'entry (nth 2 entry)))
+      (should (equal `(file+headline ,org-default-notes-file "Log")
+                     (nth 3 entry)))
+      (should (equal '(:empty-lines 1) (nthcdr 5 entry))))
+    (should (assq 'org-capture-templates saved))
+    (should-not jetpacs-org--captpl-editing)
+    ;; The builder state was cleared on the way out.
+    (should-not (jetpacs-ui-state "captpl-key"))))
+
+(ert-deftest jetpacs-captpl-save-validates ()
+  "A save with no key or name notifies and leaves the builder open."
+  (jetpacs-tests--with-captpl-env
+    (jetpacs--on-action '((action . "org.templates.new")) nil)
+    (jetpacs--on-action '((action . "org.templates.save")) nil)
+    (should (eq 'new jetpacs-org--captpl-editing))
+    (should-not org-capture-templates)
+    (should-not saved)
+    (should (string-search "key" notified))))
+
+(ert-deftest jetpacs-captpl-edit-seeds-and-saves-in-place ()
+  "Editing seeds the builder from the entry; saving replaces it in place."
+  (jetpacs-tests--with-captpl-env
+    (setq org-capture-templates
+          `(("t" "Todo" entry (file+headline ,org-default-notes-file "Tasks")
+             "* TODO %?\n%U\n%i" :empty-lines 1)
+            ("n" "Note" entry (file ,org-default-notes-file) "* %? :note:")))
+    (jetpacs--on-action '((action . "org.templates.edit")
+                          (args . ((key . "t")))) nil)
+    (should (equal "t" jetpacs-org--captpl-editing))
+    (should (equal "Todo" (jetpacs-ui-state "captpl-description")))
+    (should (equal "inbox.org" (car (jetpacs-ui-state-list "captpl-file"))))
+    (should (equal "Tasks" (jetpacs-ui-state "captpl-headline")))
+    (should (equal "TODO" (car (jetpacs-ui-state-list "captpl-todo"))))
+    (should (equal "* TODO %?\n%U\n%i" (jetpacs-ui-state "captpl-template")))
+    ;; Retitle it and drop the headline: the entry updates without moving.
+    (jetpacs-ui-state-put "captpl-description" "Task")
+    (jetpacs-ui-state-put "captpl-headline" "")
+    (jetpacs--on-action '((action . "org.templates.save")) nil)
+    (should (equal '("t" "n") (mapcar #'car org-capture-templates)))
+    (let ((entry (assoc "t" org-capture-templates)))
+      (should (equal "Task" (nth 1 entry)))
+      (should (equal `(file ,org-default-notes-file) (nth 3 entry)))
+      (should (equal '(:empty-lines 1) (nthcdr 5 entry))))))
+
+(ert-deftest jetpacs-captpl-rename-guards-occupied-key ()
+  "Renaming a template onto another template's key is refused."
+  (jetpacs-tests--with-captpl-env
+    (setq org-capture-templates
+          '(("t" "Todo" entry (file "a.org") "* TODO %?")
+            ("n" "Note" entry (file "a.org") "* %?")))
+    (jetpacs--on-action '((action . "org.templates.edit")
+                          (args . ((key . "t")))) nil)
+    (jetpacs-ui-state-put "captpl-key" "n")
+    (jetpacs--on-action '((action . "org.templates.save")) nil)
+    (should (equal "t" jetpacs-org--captpl-editing))
+    (should (equal "Todo" (nth 1 (assoc "t" org-capture-templates))))
+    (should (equal "Note" (nth 1 (assoc "n" org-capture-templates))))
+    (should (string-search "already belongs" notified))))
+
+(ert-deftest jetpacs-captpl-preserves-what-builder-cannot-edit ()
+  "Exotic targets/types/props survive a save; function templates refuse edit."
+  (jetpacs-tests--with-captpl-env
+    (setq org-capture-templates
+          '(("j" "Journal" plain (clock) "%?" :unnarrowed t)))
+    (jetpacs--on-action '((action . "org.templates.edit")
+                          (args . ((key . "j")))) nil)
+    (should (equal "j" jetpacs-org--captpl-editing))
+    (jetpacs-ui-state-put "captpl-template" "%? edited")
+    (jetpacs--on-action '((action . "org.templates.save")) nil)
+    (should (equal '("j" "Journal" plain (clock) "%? edited" :unnarrowed t)
+                   (assoc "j" org-capture-templates))))
+  (jetpacs-tests--with-captpl-env
+    (setq org-capture-templates
+          (list (list "f" "Fancy" 'entry '(file "a.org") #'ignore)))
+    (jetpacs--on-action '((action . "org.templates.edit")
+                          (args . ((key . "f")))) nil)
+    (should-not jetpacs-org--captpl-editing)
+    (should (string-search "elisp" notified))))
+
+(ert-deftest jetpacs-captpl-delete ()
+  "org.templates.delete removes the entry and persists; open editor closes."
+  (jetpacs-tests--with-captpl-env
+    (setq org-capture-templates
+          '(("t" "Todo" entry (file "a.org") "* TODO %?")
+            ("n" "Note" entry (file "a.org") "* %?")))
+    (jetpacs--on-action '((action . "org.templates.delete")
+                          (args . ((key . "n")))) nil)
+    (should (equal '("t") (mapcar #'car org-capture-templates)))
+    (should (assq 'org-capture-templates saved))
+    (should (string-search "Note" notified))
+    ;; Deleting the template being edited closes the builder.
+    (jetpacs--on-action '((action . "org.templates.edit")
+                          (args . ((key . "t")))) nil)
+    (jetpacs--on-action '((action . "org.templates.delete")
+                          (args . ((key . "t")))) nil)
+    (should-not org-capture-templates)
+    (should-not jetpacs-org--captpl-editing)))
+
+(ert-deftest jetpacs-captpl-update-regenerates-except-raw ()
+  "org.templates.update rewrites the template for builder fields only."
+  (jetpacs-tests--with-captpl-env
+    (jetpacs--on-action '((action . "org.templates.new")) nil)
+    (jetpacs--on-action '((action . "org.templates.update")
+                          (args . ((field . "todo") (value . ["NEXT"])))) nil)
+    (should (string-prefix-p "* NEXT %?" (jetpacs-ui-state "captpl-template")))
+    ;; A raw-field update must not clobber the hand edit...
+    (jetpacs--on-action '((action . "org.templates.update")
+                          (args . ((field . "template")
+                                   (value . "* custom %?")))) nil)
+    (should (equal "* custom %?" (jetpacs-ui-state "captpl-template")))
+    ;; ...until the user asks to rebuild (the no-field Rebuild button).
+    (jetpacs--on-action '((action . "org.templates.update")) nil)
+    (should (string-prefix-p "* NEXT %?" (jetpacs-ui-state "captpl-template")))))
+
+(ert-deftest jetpacs-captpl-screens-lint ()
+  "The hub and builder screens lint clean and carry their actions."
+  (jetpacs-tests--with-captpl-env
+    (setq org-capture-templates
+          '(("t" "Todo" entry (file "a.org") "* TODO %?")))
+    (jetpacs--on-action '((action . "org.templates.new")) nil)
+    (let ((body (jetpacs-org--captpl-builder-body)))
+      (should-not (jetpacs-lint-spec body))
+      (let ((json (json-serialize (jetpacs-tests--canon body)
+                                  :null-object :null :false-object :false)))
+        (should (string-search "org.templates.update" json))
+        (should (string-search "org.templates.save" json))
+        (should (string-search "captpl-template" json))))
+    (let ((hub (jetpacs-org--captpl-hub-body)))
+      (should-not (jetpacs-lint-spec hub))
+      (let ((json (json-serialize (jetpacs-tests--canon hub)
+                                  :null-object :null :false-object :false)))
+        (should (string-search "Todo" json))
+        (should (string-search "org.templates.edit" json))
+        (should (string-search "org.templates.delete" json))
+        (should (string-search "org.templates.new" json))))))
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

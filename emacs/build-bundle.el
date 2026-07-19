@@ -29,7 +29,6 @@
        (core-files '("core/jetpacs.el"
                      "core/jetpacs-commands.el"
                      "core/jetpacs-config.el"
-                     "core/jetpacs-org.el"
                      "core/jetpacs-theme.el"
                      "core/jetpacs-widgets.el"
                      "core/jetpacs-lint.el"
@@ -54,6 +53,10 @@
                      "core/jetpacs-sync.el"
                      "core/jetpacs-complete.el"
                      "core/jetpacs-settings.el"
+                     ;; jetpacs-org sits here (not with the early data
+                     ;; layers): its capture-template builder rides the
+                     ;; shell/settings machinery above.
+                     "core/jetpacs-org.el"
                      "core/jetpacs-files.el"
                      "core/jetpacs-witheditor.el"
                      "core/jetpacs-emacs-ui.el"

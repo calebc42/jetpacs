@@ -1,0 +1,6 @@
+* Jetpacs — An Android Implementation of EBP
+
+This branch is the hand-written rebuild of the Jetpacs platform. It exists to prove the foundation and to be copied from — not to be the one true mobile Emacs.
+
+The original LLM-Generated Proof of Concept can be found on the `slop-fork/main` branch. This is the north star the rebuild writes toward.
+

@@ -8464,8 +8464,14 @@ offline-queued save replaying after its editor closed never orphans
                        visible)))
           (jetpacs-surface-push
            jetpacs-shell-surface-id
+           ;; initial_view is the companion's back-stack ROOT (its
+           ;; BackHandler resets the stack whenever the active view equals
+           ;; it), so it must be the current tab — never a firing overlay.
+           ;; Using ACTIVE here made the system back gesture close the app
+           ;; from any overlay (e.g. the glasspane detail view).  Snackbar
+           ;; routing still follows the overlay-aware active view above.
            `((views . ,views)
-             (initial_view . ,active))
+             (initial_view . ,(jetpacs-shell-current-tab)))
            nil nil
            ;; Force the companion onto a view only when this push *is* a
            ;; navigation — see SWITCH-TO above.

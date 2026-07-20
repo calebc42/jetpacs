@@ -230,6 +230,41 @@ The live-coding contract: a broken Tier 1 view costs its own screen."
     (should-not (jetpacs-shell--visible-views))
     (should-not (jetpacs-shell--active-view))))
 
+(ert-deftest jetpacs-shell-push-initial-view-is-tab-not-overlay ()
+  "The pushed initial_view stays the current tab while an overlay fires.
+initial_view anchors the companion's back stack (its BackHandler resets
+the stack whenever the active view equals it) — an overlay there made
+the system back gesture close the app from the detail view."
+  (let ((jetpacs-shell-views
+         (list (cons "home"
+                     (list :builder (lambda (_) (jetpacs-text "home" 'body))
+                           :tab '(:icon "home" :label "Home")
+                           :order 1))
+               (cons "overlay-view"
+                     (list :builder (lambda (_) (jetpacs-text "detail" 'body))
+                           :when (lambda () t)
+                           :overlay (lambda () t)
+                           :order 2))))
+        (jetpacs-shell--current-tab "home")
+        (jetpacs-shell--snackbar nil)
+        (jetpacs-shell--repush-timer nil)
+        (jetpacs-shell-view-filter-function nil)
+        (jetpacs-shell-after-push-hook nil)
+        (jetpacs-shell-view-switched-hook nil)
+        (jetpacs--registration-owners (make-hash-table :test 'equal))
+        pushed forced)
+    (cl-letf (((symbol-function 'jetpacs-shell--schedule-repush) #'ignore)
+              ((symbol-function 'jetpacs-surface-push)
+               (lambda (_id spec &optional _a _b target)
+                 (setq pushed spec forced target))))
+      (jetpacs-shell-push nil :switch-to "overlay-view"))
+    ;; The overlay is the active view (a push lands there)...
+    (should (equal (jetpacs-shell--active-view) "overlay-view"))
+    ;; ...but the back-stack root stays the tab, and the forced switch
+    ;; still targets the overlay.
+    (should (equal (alist-get 'initial_view pushed) "home"))
+    (should (equal forced "overlay-view"))))
+
 (ert-deftest jetpacs-shell-push-failure-requeues-snackbar ()
   "A push that dies in `jetpacs-surface-push' must not eat the queued
 snackbar: it is requeued and rides the next successful push."

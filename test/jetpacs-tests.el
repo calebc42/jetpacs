@@ -1362,6 +1362,57 @@ The planning add+remove path was previously non-functional."
       (should-not (org-entry-get (point-min) "SCHEDULED"))
       (should (org-entry-get (point-min) "DEADLINE")))))
 
+(ert-deftest jetpacs-org-detail-body-renders-subtree ()
+  "The core detail overlay renders a heading's own subtree, faithfully and
+narrowed: the subtree's text is present, a sibling is not, and the in-place
+Widen affordance is suppressed."
+  (jetpacs-tests--with-org-file buf
+      "* Alpha\nbody of alpha\n** child one\n* Beta\nother\n"
+    (goto-char (point-min))
+    (let* ((ref (jetpacs-org-heading-ref))
+           (dump (format "%S" (jetpacs-org--detail-body ref))))
+      (should (string-match-p "Alpha" dump))
+      (should (string-match-p "body of alpha" dump))
+      (should (string-match-p "child one" dump))
+      ;; The sibling outside the narrowed subtree must not leak in.
+      (should-not (string-match-p "Beta" dump))
+      ;; No stray widen affordance in the overlay.
+      (should-not (string-match-p "Widen" dump))
+      ;; The shared buffer's restriction is restored after the build.
+      (should-not (buffer-narrowed-p)))))
+
+(ert-deftest jetpacs-org-detail-route-and-gate ()
+  "`org.detail.open' routes the ref to the overlay; its `:overlay' gate
+fires only while the route is set; the builder is a pure function of the
+route ref; `org.detail.close' drops it."
+  (jetpacs-tests--with-org-file buf
+      "* Solo\nx\n"
+    (goto-char (point-min))
+    (let ((jetpacs-shell--route-params (make-hash-table :test 'equal))
+          (ref (jetpacs-org-heading-ref))
+          (pushed nil))
+      (cl-letf (((symbol-function 'jetpacs-shell-push)
+                 (lambda (&rest args) (setq pushed args)))
+                ((symbol-function 'jetpacs-dismiss-dialog) #'ignore))
+        (let ((gate (plist-get (cdr (assoc "org-detail" jetpacs-shell-views))
+                               :overlay)))
+          ;; Dormant: gate closed.
+          (should-not (funcall gate))
+          ;; Open routes with the ref and forces the overlay.
+          (funcall (gethash "org.detail.open" jetpacs-action-handlers) ref nil)
+          (should (equal '(nil :switch-to "org-detail") pushed))
+          (should (equal ref (jetpacs-shell-route-params "org-detail")))
+          (should (funcall gate))
+          ;; The builder is a pure function of the route ref: title = headline.
+          (let ((view (jetpacs-shell--build-view
+                       "org-detail"
+                       (cdr (assoc "org-detail" jetpacs-shell-views)) nil)))
+            (should (string-match-p "Solo" (format "%S" view))))
+          ;; Close drops the route; the gate closes again.
+          (funcall (gethash "org.detail.close" jetpacs-action-handlers) nil nil)
+          (should-not (jetpacs-shell-route-params "org-detail"))
+          (should-not (funcall gate)))))))
+
 (ert-deftest jetpacs-org-entry-matches ()
   "The point accessor of the query grammar, term by term."
   (jetpacs-tests--with-org-file buf

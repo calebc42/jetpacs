@@ -1512,6 +1512,13 @@ runs pay regexp cost at most."
                       :args `((buffer . ,buffer-name) (pos . ,pos))
                       :when-offline "drop")))))
 
+(defvar jetpacs-org-render-hide-widen nil
+  "When non-nil, `jetpacs-org-render' omits its narrow->widen affordance.
+The `org-detail' overlay binds this: it owns its own back navigation and
+re-narrows the shared buffer on every build, so an in-body Widen button
+would be a confusing no-op there.  The file editor leaves it nil, keeping
+the reversible narrow-to-subtree focus.")
+
 (defun jetpacs-org-render (buffer)
   "Tier-1 render skin for org BUFFER: the Tier-0 line render, upgraded.
 See the section comment above for exactly what upgrades; everything
@@ -1550,8 +1557,9 @@ their taps to the footnote dialog via the Tier-0 span-action seam."
                                     'caption)))))
       ;; A narrowed buffer (the header sheet's "Narrow to subtree") shows
       ;; only the subtree; prepend a widen affordance so the focus is
-      ;; reversible without leaving the view.
-      (when (buffer-narrowed-p)
+      ;; reversible without leaving the view.  The detail overlay suppresses
+      ;; it (`jetpacs-org-render-hide-widen') — it re-narrows on every build.
+      (when (and (not jetpacs-org-render-hide-widen) (buffer-narrowed-p))
         (setq out (cons (jetpacs-button "⤢ Widen"
                                         (jetpacs-action "org.header.widen"
                                                         :args `((buffer . ,name))
@@ -1909,6 +1917,9 @@ whole card opens the file in the editor."
   (jetpacs-column
    (jetpacs-text (or (alist-get 'headline ref) "Heading") 'title)
    (jetpacs-org--sheet-item
+    "open_in_full" "Open detail"
+    (jetpacs-action "org.detail.open" :args ref :when-offline "drop"))
+   (jetpacs-org--sheet-item
     "radio_button_checked" "Cycle TODO"
     (jetpacs-action "org.header.todo" :args ref :when-offline "queue"))
    (jetpacs-org--sheet-item
@@ -2248,6 +2259,72 @@ then inject the cookie into the written stamp bracket."
   (jetpacs-defaction "org.timestamp.cancel"
     (lambda (_ _)
       (jetpacs-org--ts-close))))
+
+;; ── Heading detail overlay (unopinionated) ───────────────────────────────────
+;;
+;; A core, PKM-neutral drill-in: the heading's own subtree rendered faithfully
+;; through `jetpacs-org-render' (tables, images, checkboxes — every tap still
+;; resolves against the live buffer), under a back arrow.  Route-param
+;; navigation keeps the builder a pure function of its ref (no module state
+;; var), and the `:overlay' predicate fires only while the route is set.  Being
+;; core-owned, it is reachable from any app's host view (the shared file
+;; editor) without tripping the multi-app view filter — the structural reason
+;; an app-owned detail overlay could not.
+
+(defun jetpacs-org--detail-body (ref)
+  "The faithfully rendered subtree for heading REF, as a lazy column.
+REF is a heading ref (see `jetpacs-org-heading-ref').  Renders the live
+file buffer narrowed to the subtree — no imposed layout — so header taps,
+checkboxes and links still resolve against the real buffer.  A ref that no
+longer resolves degrades to a not-found notice."
+  (condition-case err
+      (let ((marker (jetpacs-org-resolve-ref ref)))
+        (with-current-buffer (marker-buffer marker)
+          (save-excursion
+            (save-restriction
+              (widen)
+              (goto-char marker)
+              (org-narrow-to-subtree)
+              (let ((jetpacs-org-render-hide-widen t))
+                (apply #'jetpacs-lazy-column (jetpacs-render-buffer)))))))
+    (error
+     (jetpacs-column
+      (jetpacs-text "Couldn't open this heading" 'title)
+      (jetpacs-text (error-message-string err) 'caption)))))
+
+(defun jetpacs-org--detail-view (snackbar params)
+  "The org heading detail overlay; PARAMS is the route ref.
+A pure function of PARAMS: the heading's subtree under a back arrow."
+  (jetpacs-shell-nav-view
+   (or (alist-get 'headline params) "Heading")
+   (jetpacs-org--detail-body params)
+   :nav-action (jetpacs-action "org.detail.close")
+   :snackbar snackbar))
+
+(jetpacs-shell-define-view "org-detail"
+                           :builder #'jetpacs-org--detail-view
+                           :when (lambda () (jetpacs-shell-route-params "org-detail"))
+                           :overlay (lambda () (jetpacs-shell-route-params "org-detail"))
+                           :order 114)
+
+(progn
+  (jetpacs-defaction "org.detail.open"
+    ;; ARGS is a heading ref (`jetpacs-org-heading-ref').  Route-param
+    ;; navigation: the overlay reads the ref straight from its route, so there
+    ;; is no per-module state var to set.  Fired from the header sheet, hence
+    ;; the dialog dismiss.
+    (lambda (args _)
+      (jetpacs-dismiss-dialog)
+      (if (alist-get 'file args)
+          (jetpacs-shell-navigate "org-detail" args)
+        (jetpacs-shell-notify "No heading to open")
+        (jetpacs-shell-push))))
+
+  (jetpacs-defaction "org.detail.close"
+    ;; The explicit back for the route: drop the ref so the overlay's
+    ;; `:overlay' predicate stops firing, dismissing it.
+    (lambda (_ _)
+      (jetpacs-shell-clear-route "org-detail"))))
 
 (provide 'jetpacs-org)
 ;;; jetpacs-org.el ends here

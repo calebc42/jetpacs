@@ -9168,11 +9168,24 @@ current.  For gating dynamic registrations an app makes outside its
 
 (defun jetpacs-apps--view-visible-p (name)
   "Single-app: everything shows.  Multi-app: the current app's views
-plus every unclaimed view (core tabs, the home grid itself)."
+plus every unclaimed view (core tabs, the home grid itself), plus any
+currently-firing OVERLAY.
+
+An overlay is a transient drill-in destination (the Glasspane heading
+detail), and it can be fired from ANOTHER app's host view — the shared
+core file editor lives in the vanilla Jetpacs app, yet tapping a heading
+there drills into `glasspane.detail'.  Gating overlays by owner drops
+that view from the push while the other app is current, so the drill-in
+has nothing to land on.  A firing overlay therefore bypasses the owner
+check; a dormant one (its `:overlay' predicate nil) is still filtered,
+so no other app's detail leaks in."
   (or (not (jetpacs-apps--multi-p))
       (let ((owner (jetpacs-apps--owner name)))
         (or (null owner)
-            (equal owner (jetpacs-apps-current))))))
+            (equal owner (jetpacs-apps-current))
+            (let ((pred (plist-get (cdr (assoc name jetpacs-shell-views))
+                                   :overlay)))
+              (and pred (condition-case nil (funcall pred) (error nil))))))))
 
 ;; Core view slots resolve to a per-app override when the current app
 ;; registered one: "settings" reaches "glasspane.settings" inside

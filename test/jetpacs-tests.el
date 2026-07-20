@@ -5069,6 +5069,33 @@ core views) are included."
     (jetpacs-apps-remove "hello")
     (should (jetpacs-apps--view-visible-p "agenda"))))
 
+(ert-deftest jetpacs-apps-firing-overlay-bypasses-owner-gate ()
+  "A currently-firing overlay is visible from any app, so a cross-app
+drill-in (the shared core file editor -> `glasspane.detail') has a view
+to land on.  A dormant overlay stays gated by owner, and a non-overlay
+cross-app view is never exempted."
+  (let* ((detail-ref nil)
+         (jetpacs-apps--registry nil)
+         (jetpacs-apps--current nil)
+         ;; The :overlay predicate fires while its state is set — the same
+         ;; ref-gate shape as glasspane.detail (:overlay reads a ref var).
+         (jetpacs-shell-views
+          (list (cons "glasspane.detail"
+                      (list :overlay (lambda () (and detail-ref t)))))))
+    (jetpacs-defapp "glasspane" :views '("agenda" "glasspane.detail"))
+    (jetpacs-defapp "hello" :views '("hello"))
+    (setq jetpacs-apps--current "hello")          ; current app is NOT glasspane
+    (should (jetpacs-apps--multi-p))
+    ;; Dormant overlay: filtered out (owner glasspane != current hello) —
+    ;; this is the pre-fix behavior that broke the heading drill-in.
+    (should-not (jetpacs-apps--view-visible-p "glasspane.detail"))
+    ;; Firing overlay: bypasses the owner gate, so the detail push carries
+    ;; its own destination and the drill-in lands.
+    (setq detail-ref '((file . "x")))
+    (should (jetpacs-apps--view-visible-p "glasspane.detail"))
+    ;; A non-overlay cross-app view is never exempted, ref or no ref.
+    (should-not (jetpacs-apps--view-visible-p "agenda"))))
+
 (ert-deftest jetpacs-apps-bottom-bar-and-home-gating ()
   "The bottom bar shows one app's tabs; home enters the push multi-app only."
   (let ((jetpacs-apps--registry nil)

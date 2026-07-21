@@ -22,7 +22,8 @@
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
                    jetpacs-package-browser jetpacs-customize jetpacs-modus
                    jetpacs-tools jetpacs-project jetpacs-sql
-                   jetpacs-hosts jetpacs-automations jetpacs-org-toolbar))
+                   jetpacs-hosts jetpacs-automations jetpacs-org-toolbar
+                   jetpacs-pack))
   (require feature))
 
 (dolist (feature '(glasspane glasspane-ui glasspane-org glasspane-magit))

@@ -8101,5 +8101,48 @@ vocabulary `jetpacs-lint' checks."
 ;; ─── Query routing (vulpea index vs org-ql) ─────────────────────────────────
 
 
+(ert-deftest jetpacs-capture-fills-template ()
+  "The filled capture template must be the one that actually runs."
+  (let* ((file (make-temp-file "jetpacs-capture-test" nil ".org"))
+         (org-capture-templates
+          `(("t" "Task" entry (file ,file)
+             "* TODO %^{Headline}\n%^{Notes|no notes}\n%?"))))
+    (unwind-protect
+        (progn
+          (jetpacs-org-capture-run "t" '(("Headline" . "Buy milk")
+                                      ("Notes" . "2% fat")))
+          (let ((content (with-current-buffer (find-file-noselect file)
+                           (buffer-string))))
+            (should (string-search "* TODO Buy milk" content))
+            (should (string-search "2% fat" content))
+            (should-not (string-search "%^{" content))))
+      (delete-file file))))
+
+(ert-deftest jetpacs-capture-shared-body ()
+  "Text shared from another app is appended below the filled template."
+  (let* ((file (make-temp-file "jetpacs-share-test" nil ".org"))
+         (org-capture-templates
+          `(("t" "Task" entry (file ,file) "* TODO %^{Headline}\n%?"))))
+    (unwind-protect
+        (progn
+          (jetpacs-org-capture-run "t" '(("Headline" . "Read article"))
+                                "https://example.com/post\nInteresting bit.")
+          (let ((content (with-current-buffer (find-file-noselect file)
+                           (buffer-string))))
+            (should (string-search "* TODO Read article" content))
+            (should (string-search "https://example.com/post" content))
+            (should (string-search "Interesting bit." content))))
+      (delete-file file))))
+
+(ert-deftest jetpacs-date-shift-arithmetic ()
+  (should (equal (jetpacs-date-shift "2026-07-01" 1 'day) "2026-07-02"))
+  (should (equal (jetpacs-date-shift "2026-07-01" -1 'day) "2026-06-30"))
+  (should (equal (jetpacs-date-shift "2026-07-01" -1 'week) "2026-06-24"))
+  (should (equal (jetpacs-date-shift "2026-01-31" 1 'month) "2026-02-28"))
+  (should (equal (jetpacs-date-shift "2024-01-31" 1 'month) "2024-02-29"))
+  (should (equal (jetpacs-date-shift "2026-12-15" 1 'month) "2027-01-15"))
+  (should (equal (jetpacs-date-shift "2026-01-15" -1 'month) "2025-12-15")))
+
+
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

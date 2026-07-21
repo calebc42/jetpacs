@@ -1012,13 +1012,6 @@ to the day the command runs, and its agenda exercise always has
 something due.  Editing tour dates means re-anchoring this to the
 new authoring day.")
 
-(defun jetpacs-demo--noon (date)
-  "Encoded noon of DATE (\"YYYY-MM-DD\"); noon dodges DST date flips."
-  (encode-time 0 0 12
-               (string-to-number (substring date 8 10))
-               (string-to-number (substring date 5 7))
-               (string-to-number (substring date 0 4))))
-
 (defun jetpacs-demo--shift-dates (content days)
   "CONTENT with every day-named \"YYYY-MM-DD Day\" date moved DAYS forward.
 One rewrite covers every org form in the tour — active and inactive
@@ -1033,14 +1026,14 @@ the authored style."
        (lambda (stamp)
          (format-time-string
           "%Y-%m-%d %a"
-          (time-add (jetpacs-demo--noon (substring stamp 0 10))
+          (time-add (jetpacs-date-encode (substring stamp 0 10))
                     (days-to-time days))))
        content t t))))
 
 (defun jetpacs-demo--date-shift ()
   "Days from the tour's authoring anchor to today."
   (- (time-to-days (current-time))
-     (time-to-days (jetpacs-demo--noon jetpacs-demo--date-anchor))))
+     (time-to-days (jetpacs-date-encode jetpacs-demo--date-anchor))))
 
 ;; ─── Setup ───────────────────────────────────────────────────────────────────
 

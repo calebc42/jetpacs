@@ -2050,10 +2050,10 @@ An absent/unparseable stamp seeds today's date and empty repeater/delay."
   (when (and (stringp stamp)
              (string-match "\\`[<[]\\(.*\\)[]>]\\'" stamp))
     (let ((inner (match-string 1 stamp)))
-      (when (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" inner)
-        (jetpacs-ui-state-put "ts-date" (match-string 1 inner)))
-      (when (string-match "\\([0-9]\\{1,2\\}:[0-9]\\{2\\}\\)" inner)
-        (jetpacs-ui-state-put "ts-time" (match-string 1 inner)))
+      (when-let ((date (jetpacs-org-ts-date inner)))
+        (jetpacs-ui-state-put "ts-date" date))
+      (when-let ((time (jetpacs-org-ts-time inner)))
+        (jetpacs-ui-state-put "ts-time" time))
       ;; Repeater: `.+' / `++' / `+' then N then unit (order matters).
       (when (string-match "\\(\\.\\+\\|\\+\\+\\|\\+\\)\\([0-9]+\\)\\([dwmy]\\)" inner)
         (jetpacs-ui-state-put "ts-rep-type" (match-string 1 inner))
@@ -2325,6 +2325,352 @@ A pure function of PARAMS: the heading's subtree under a back arrow."
     ;; `:overlay' predicate stops firing, dismissing it.
     (lambda (_ _)
       (jetpacs-shell-clear-route "org-detail"))))
+
+;; ─── Shared org primitives (extracted from the reference Tier-1) ────────────
+;; Timestamp field extractors, headless capture, the outline model, the
+;; LOGBOOK parser, planning-repeater surgery, and the #+TBLFM resolver —
+;; opinion-free org machinery any Tier-1 can lean on.  The reference
+;; app's views compose these; nothing here knows about agendas or PKM.
+
+(defun jetpacs-org-ts-date (ts)
+  "Return the YYYY-MM-DD date inside org timestamp string TS, or nil."
+  (when (and (stringp ts)
+             (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" ts))
+    (match-string 1 ts)))
+
+(defun jetpacs-org-ts-time (ts)
+  "Return the HH:MM time inside org timestamp string TS, or nil."
+  (when (and (stringp ts)
+             (string-match "\\([0-9]\\{1,2\\}:[0-9]\\{2\\}\\)" ts))
+    (match-string 1 ts)))
+
+(defun jetpacs-org-ts-repeater (ts)
+  "Return the repeater cookie (e.g. \"+1w\", \".+2d\") inside TS, or nil.
+The one part of a timestamp the date-stamp chip can't display."
+  (when (and (stringp ts)
+             (string-match "\\([.+]?\\+[0-9]+[hdwmy]\\)" ts))
+    (match-string 1 ts)))
+
+(defun jetpacs-org-capture-prompts (template-string)
+  "Return the ordered field names to collect for TEMPLATE-STRING.
+Each `%^{NAME}' or `%^{NAME|default}' contributes NAME (the default is
+dropped from the label but honoured at fill time). A `%?' body position
+adds a leading \"Headline\" field. Duplicates are removed."
+  (let (prompts (start 0))
+    (while (string-match "%\\^{\\([^}]+\\)}" template-string start)
+      ;; Capture the match BEFORE `split-string' runs — it calls `string-match'
+      ;; internally and would clobber the match data, leaving `match-end' wrong
+      ;; and the loop spinning forever.
+      (let ((spec (match-string 1 template-string))
+            (end (match-end 0)))
+        (push (string-trim (car (split-string spec "|"))) prompts)
+        (setq start end)))
+    (setq prompts (nreverse prompts))
+    (delete-dups
+     (if (string-match-p "%\\?" template-string)
+         (cons "Headline" prompts)
+       prompts))))
+
+(defun jetpacs-org-capture-templates ()
+  "Return list of capture templates."
+  (mapcar (lambda (tmpl)
+            (let ((key (nth 0 tmpl))
+                  (desc (nth 1 tmpl))
+                  (template-string (nth 4 tmpl)))
+              `((key . ,key)
+                (description . ,desc)
+                (prompts . ,(vconcat (jetpacs-org-capture-prompts 
+                                      (if (stringp template-string) template-string "")))))))
+          org-capture-templates))
+
+(defun jetpacs-org-capture-fill (tmpl values)
+  "Fill org capture TMPL string from VALUES (NAME -> user input alist).
+`%?' becomes the Headline value; each `%^{NAME|default}' becomes the user
+value for NAME, else its default, else empty. Any *other* interactive
+escape that survives (`%^{…}' with no value, `%^t', `%^g', …) is then
+stripped, so `org-capture' can never block on a minibuffer prompt — which
+on the phone would hang behind the bridge."
+  (let ((headline (or (cdr (assoc "Headline" values)) "")))
+    ;; %? — free-form body position.
+    (setq tmpl (replace-regexp-in-string "%\\?" headline tmpl t t))
+    ;; %^{NAME|default} — scan the template's own tokens so NAME always
+    ;; matches what `jetpacs-org-capture-prompts' produced.
+    (setq tmpl (replace-regexp-in-string
+                "%\\^{\\([^}]*\\)}"
+                (lambda (m)
+                  ;; M is the whole "%^{ … }" match; parse it directly rather
+                  ;; than via match-data (unreliable inside this callback).
+                  (let* ((spec (substring m 3 -1))
+                         (bar (string-search "|" spec))
+                         (name (string-trim (if bar (substring spec 0 bar) spec)))
+                         (default (and bar (substring spec (1+ bar))))
+                         (val (cdr (assoc name values))))
+                    (cond ((and (stringp val) (not (string-empty-p val))) val)
+                          ((stringp default) default)
+                          (t ""))))
+                tmpl t t))
+    ;; Neutralise any remaining caret (interactive) escapes; leave plain
+    ;; ones like %U %t %i %a for org to expand non-interactively.
+    (replace-regexp-in-string "%\\^.?" "" tmpl t t)))
+
+(defun jetpacs-org-capture-run (template-key values &optional extra-body)
+  "Run capture for TEMPLATE-KEY with VALUES alist (NAME -> user input).
+EXTRA-BODY, when non-empty, is appended below the filled template —
+the carrier for text shared from another app via the share sheet."
+  (let ((entry (assoc template-key org-capture-templates)))
+    (when entry
+      (let* ((tmpl (nth 4 entry))
+             (filled (if (stringp tmpl)
+                         (jetpacs-org-capture-fill tmpl values)
+                       tmpl))
+             (filled (if (and (stringp filled)
+                              (stringp extra-body)
+                              (not (string-empty-p (string-trim extra-body))))
+                         (concat filled "\n" (string-trim extra-body))
+                       filled))
+             ;; Shallow-copy the entry, swap in the filled template, and force
+             ;; :immediate-finish so the capture buffer never waits for the
+             ;; C-c C-c a phone user can't press.
+             (new-entry (copy-sequence entry)))
+        (setcar (nthcdr 4 new-entry) filled)
+        (setcdr (nthcdr 4 new-entry)
+                (append (nthcdr 5 new-entry) '(:immediate-finish t)))
+        ;; `org-capture-entry' short-circuits template selection inside
+        ;; `org-capture', so binding it to the FILLED copy is what makes the
+        ;; pre-filled template the one that actually runs.  (Binding it to
+        ;; the original — as this code once did — re-ran the raw %^{...}
+        ;; prompts and double-asked the user through the bridge.)
+        (let ((org-capture-entry new-entry))
+          ;; Safety net: a fully pre-filled template shouldn't prompt at all,
+          ;; but if any escape slips through, never let `org-capture' block
+          ;; Emacs forever on a minibuffer the phone can't answer. `with-timeout'
+          ;; fires even while a synchronous read is waiting.
+          (with-timeout (30 (message "jetpacs: capture timed out (a prompt was left unanswered)"))
+            (org-capture)))))))
+
+(defcustom jetpacs-org-outline-max-headings 400
+  "Cap on headings rendered in one reader pass, to bound very large files."
+  :type 'integer :group 'jetpacs)
+
+(defcustom jetpacs-org-outline-show-deadline t
+  "Show each heading's DEADLINE date on its reader header (red when overdue)."
+  :type 'boolean :group 'jetpacs)
+
+(defcustom jetpacs-org-outline-show-clocked nil
+  "Show each heading's total clocked time on its reader header.
+Off by default: computing the sums adds an `org-clock-sum' pass over
+the file on every render."
+  :type 'boolean :group 'jetpacs)
+
+;; ─── Parsing ───────────────────────────────────────────────────────────────────
+
+(defun jetpacs-org--outline-record (pos next)
+  "Build a record for the heading at POS, whose body ends at NEXT.
+Returns a plist with :level :pos :line :props :body :body-start.
+:body-start is the real-buffer position of the first non-blank char
+in the body, used to map temp-buffer positions back for interactive
+elements (checkboxes)."
+  (save-excursion
+    (goto-char pos)
+    (let* ((comps (org-heading-components))
+           (level (or (nth 0 comps) 1))
+           (todo (nth 2 comps))
+           (priority (nth 3 comps))
+           (title (or (nth 4 comps) ""))
+           (tags (ignore-errors (org-get-tags pos t)))
+           (done (and todo (member todo org-done-keywords) t))
+           (deadline (and jetpacs-org-outline-show-deadline
+                          (ignore-errors (org-entry-get pos "DEADLINE"))))
+           (clocked (and jetpacs-org-outline-show-clocked
+                         (get-text-property pos :org-clock-minutes)))
+           (line (buffer-substring-no-properties
+                  (line-beginning-position) (line-end-position)))
+           (props (ignore-errors (org-entry-properties pos 'standard)))
+           (body-info
+            (progn
+              (goto-char pos)
+              ;; No FULL arg: skip only planning + PROPERTIES (shown as
+              ;; their own section).  LOGBOOK and other drawers stay in
+              ;; the body, where the rich renderer folds them.
+              (ignore-errors (org-end-of-meta-data))
+              (let* ((b (min (point) next))
+                     (raw (buffer-substring-no-properties b next))
+                     (trimmed (string-trim-left raw "\\(?:[ \t]*[\n\r]\\)+"))
+                     (trim-count (- (length raw) (length trimmed))))
+                (list (string-trim-right trimmed) (+ b trim-count)))))
+           (body (car body-info))
+           (body-start (cadr body-info)))
+      (list :level level :pos pos :line line :props props
+            :todo todo :priority (and priority (char-to-string priority))
+            :title title :tags tags :done done
+            :deadline deadline :clocked clocked
+            :body body :body-start body-start))))
+
+(defun jetpacs-org-outline-collect (beg end include-first)
+  "Collect heading records between BEG and END.
+INCLUDE-FIRST non-nil includes the heading at BEG (used for subtrees)."
+  (let (positions records)
+    (save-excursion
+      (goto-char beg)
+      (when (and include-first (org-at-heading-p))
+        (push (line-beginning-position) positions)
+        (end-of-line))                  ; don't re-match this heading below
+      (while (re-search-forward org-heading-regexp end t)
+        (push (line-beginning-position) positions)))
+    (setq positions (nreverse positions))
+    (cl-loop for cell on positions
+             for pos = (car cell)
+             for next = (or (cadr cell) end)
+             do (push (jetpacs-org--outline-record pos next) records))
+    (nreverse records)))
+
+(defun jetpacs-org-outline-tree (records)
+  "Nest flat RECORDS into a tree by :level. Each node gains a :children list."
+  (let* ((root (list :level 0 :children nil))
+         (stack (list root)))
+    (dolist (rec records)
+      (let ((node (append rec (list :children nil)))
+            (level (plist-get rec :level)))
+        (while (>= (plist-get (car stack) :level) level)
+          (pop stack))
+        (let ((parent (car stack)))
+          (plist-put parent :children
+                     (append (plist-get parent :children) (list node))))
+        (push node stack)))
+    (plist-get root :children)))
+
+;; ─── Rendering ──────────────────────────────────────────────────────────────────
+
+(defun jetpacs-org-outline-cap (records)
+  "Truncate RECORDS to `jetpacs-org-outline-max-headings'."
+  (if (> (length records) jetpacs-org-outline-max-headings)
+      (cl-subseq records 0 jetpacs-org-outline-max-headings)
+    records))
+
+(defun jetpacs-org-clocked-in-p (pos)
+  "Whether the heading at POS in the current buffer is the clocked task."
+  (and (bound-and-true-p org-clock-hd-marker)
+       (marker-buffer org-clock-hd-marker)
+       (eq (marker-buffer org-clock-hd-marker) (current-buffer))
+       (save-excursion
+         (goto-char pos)
+         (= (line-beginning-position)
+            (save-excursion (goto-char org-clock-hd-marker)
+                            (line-beginning-position))))))
+
+(defun jetpacs-org-parse-logbook (text)
+  ;; Keywords may be written lowercase in org files ("clock:" is as valid
+  ;; as "CLOCK:"), so match case-insensitively — explicitly, like
+  ;; org-element does, never relying on the ambient `case-fold-search'.
+  (let ((case-fold-search t)
+        (lines (split-string text "\n" t "[ \t]+"))
+        entries current-entry)
+    (dolist (line lines)
+      (cond
+       ((string-match "^CLOCK: \\[\\(.*?\\)\\]--\\[\\(.*?\\)\\] =>[ \t]+\\(.*\\)$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'clock :start (match-string 1 line)
+                                  :end (match-string 2 line)
+                                  :duration (match-string 3 line))))
+       ((string-match "^CLOCK: \\[\\(.*?\\)\\]$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'clock :start (match-string 1 line) :active t)))
+       ((string-match "^- Note taken on \\(\\[.*?\\]\\) \\\\\\\\$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'note :timestamp (match-string 1 line) :content "")))
+       ((string-match "^- State \"\\(.*?\\)\"[ \t]+from \"\\(.*?\\)\"[ \t]+\\(\\[.*?\\]\\)\\(\\(?: \\\\\\\\\\)?\\)$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'state :to (match-string 1 line) :from (match-string 2 line)
+                                  :timestamp (match-string 3 line)
+                                  :has-note (not (string-empty-p (match-string 4 line)))
+                                  :content "")))
+       ((string-match "^- State \"\\(.*?\\)\"[ \t]+\\(\\[.*?\\]\\)\\(\\(?: \\\\\\\\\\)?\\)$" line)
+        (when current-entry (push current-entry entries))
+        (setq current-entry (list :type 'state :to (match-string 1 line)
+                                  :timestamp (match-string 2 line)
+                                  :has-note (not (string-empty-p (match-string 3 line)))
+                                  :content "")))
+       (t
+        ;; Continuation line
+        (when current-entry
+          (let ((content (plist-get current-entry :content)))
+            (setq current-entry (plist-put current-entry :content
+                                           (if (string-empty-p content)
+                                               line
+                                             (concat content "\n" line)))))))))
+    (when current-entry (push current-entry entries))
+    (nreverse entries)))
+
+(defun jetpacs-org-logbook-entries (pos)
+  "Return structured logbook entries for heading at POS, or nil.
+Drawer delimiters are matched case-insensitively (\":logbook:\" is
+valid org), explicitly rather than via ambient `case-fold-search'."
+  (save-excursion
+    (goto-char pos)
+    (let ((case-fold-search t)
+          (end (save-excursion (org-end-of-meta-data t) (point))))
+      (goto-char pos)
+      (when (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$" end t)
+        (let ((start (match-end 0)))
+          (when (re-search-forward "^[ \t]*:END:[ \t]*$" end t)
+            (jetpacs-org-parse-logbook (buffer-substring-no-properties start (match-beginning 0)))))))))
+
+(defun jetpacs-org-set-repeater (type repeater)
+  "Rewrite the repeater cookie on the TYPE planning timestamp at point.
+TYPE is \"SCHEDULED\" or \"DEADLINE\"; REPEATER like \"+1w\" (nil
+removes).  A heading without a TYPE timestamp is a no-op — the dialog
+asks for a date first."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((bound (save-excursion (outline-next-heading) (point))))
+      (when (re-search-forward (concat type ":[ \t]*\\([<[]\\)") bound t)
+        (let* ((beg (match-beginning 1))
+               (close (if (equal (match-string 1) "<") ">" "]"))
+               (end (progn (goto-char beg) (search-forward close bound)))
+               (ts (buffer-substring-no-properties beg end))
+               (stripped (replace-regexp-in-string
+                          "[ \t]+[.+]?\\+[0-9]+[hdwmy]" "" ts))
+               (new (if repeater
+                        (concat (substring stripped 0 -1) " " repeater
+                                (substring stripped -1))
+                      stripped)))
+          (delete-region beg end)
+          (goto-char beg)
+          (insert new))))))
+
+(defun jetpacs-org-table-field-formula ()
+  "The #+TBLFM entry (LHS . RHS) computing the field at point, or nil.
+Field formulas (@R$C, with @< / @> resolved to concrete rows) win over
+column formulas ($C), mirroring org's own recalculation.  Point must be
+inside a table.  The LHS comes back exactly as written in the #+TBLFM
+line, so callers can `assoc' it in `org-table-get-stored-formulas'
+output to update the formula in place.  Formulas keyed by field name
+are not resolved — those cells stay value-editable."
+  (org-table-analyze)
+  (let* ((line (count-lines org-table-current-begin-pos
+                            (line-beginning-position)))
+         (dline (org-table-line-to-dline line))
+         (col (org-table-current-column))
+         (stored (org-table-get-stored-formulas t))
+         (norm (lambda (kv)
+                 (or (ignore-errors
+                       (org-table-formula-handle-first/last-rc (car kv)))
+                     (car kv)))))
+    (when (and dline col (> col 0))
+      (or (cl-find (format "@%d$%d" dline col) stored :key norm :test #'equal)
+          (cl-find (format "$%d" col) stored :key norm :test #'equal)))))
+
+(defun jetpacs-org-format-clock-time (start end)
+  (condition-case nil
+      (let ((s-date (substring start 0 10))
+            (s-time (substring start -5))
+            (e-date (substring end 0 10))
+            (e-time (substring end -5)))
+        (if (equal s-date e-date)
+            (format "%s, %s to %s" s-date s-time e-time)
+          (format "%s %s to %s %s" s-date s-time e-date e-time)))
+    (error (format "%s to %s" start end))))
+
 
 (provide 'jetpacs-org)
 ;;; jetpacs-org.el ends here

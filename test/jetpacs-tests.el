@@ -4140,22 +4140,6 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
         (forward-line 1)))
     seen))
 
-(defun jetpacs-tests--sdui-node-types ()
-  "The SDUI_NODE_TYPES set parsed from SduiRenderer.kt (the Kotlin source)."
-  (let ((f (expand-file-name
-            "../jetpacs/src/main/java/com/calebc42/jetpacs/SduiRenderer.kt"
-            jetpacs-tests--dir))
-        (types nil))
-    (with-temp-buffer
-      (insert-file-contents f)
-      (goto-char (point-min))
-      (when (re-search-forward "SDUI_NODE_TYPES[^=]*=[ \t]*setOf(" nil t)
-        (let* ((open (1- (match-end 0)))
-               (end (save-excursion (goto-char open) (forward-sexp) (point))))
-          (while (re-search-forward "\"\\([a-z_]+\\)\"" end t)
-            (cl-pushnew (match-string 1) types :test #'equal)))))
-    types))
-
 (defun jetpacs-tests--api-stability-symbols ()
   "Public jetpacs symbols named under `## The public surface' in API-STABILITY.md."
   (let ((f (expand-file-name "../docs/API-STABILITY.md" jetpacs-tests--dir)) (syms nil))
@@ -4187,17 +4171,16 @@ regenerates in place for comparison)."
     (should (string= committed (jetpacs-contract-string)))))
 
 (ert-deftest jetpacs-node-types-mirror ()
-  "lint node types = widgets.golden `t' set = Kotlin SDUI_NODE_TYPES.
-The cross-language leg: a node type added on one side but not the others
-fails CI.  The Kotlin dispatcher-vs-SDUI_NODE_TYPES leg lives in
-SduiRendererNodeTypesTest.kt."
+  "Contract node types (the derived lint list) = widgets.golden `t' set.
+Golden coverage: every contract node type has a golden line and no
+golden emits an off-contract type.  There is no Kotlin leg to mirror
+anymore — SDUI_NODE_TYPES is GENERATED from the same contract at build
+time (:jetpacs generateContractTypes), and its dispatcher-vs-contract
+test lives in SduiRendererNodeTypesTest.kt."
   (let ((lint   (sort (copy-sequence jetpacs-lint-node-types) #'string<))
-        (golden (sort (jetpacs-tests--golden-node-types) #'string<))
-        (kotlin (sort (jetpacs-tests--sdui-node-types) #'string<)))
+        (golden (sort (jetpacs-tests--golden-node-types) #'string<)))
     (should golden)
-    (should kotlin)
-    (should (equal lint golden))
-    (should (equal lint kotlin))))
+    (should (equal lint golden))))
 
 (ert-deftest jetpacs-api-stability-symbols-bound ()
   "Every public symbol named in API-STABILITY.md is actually defined.

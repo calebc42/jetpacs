@@ -6,10 +6,12 @@ import java.io.File
 
 /**
  * Pins the renderer's `when (type)` dispatch to [SDUI_NODE_TYPES]: a case added
- * without a matching set entry (or an entry with no case) fails here. This is
- * the Kotlin leg of the node-type mirror. The elisp leg (`jetpacs-node-types-mirror`
- * in `test/jetpacs-tests.el`) pins [SDUI_NODE_TYPES] to the lint table and the
- * wire golden, so together: lint = golden = set = dispatch.
+ * without a contract entry (or a contract type with no case) fails here. Since
+ * [SDUI_NODE_TYPES] is GENERATED from the contract's `node_types` (the
+ * `generateContractTypes` task), this holds the dispatcher to the contract
+ * itself — a wire addition lands renderer support in the same change-set as
+ * the submodule bump. The elisp leg (`jetpacs-node-types-mirror`) pins the
+ * golden corpus to the same contract, so together: contract = golden = dispatch.
  *
  * It reads the renderer source rather than reflecting, because a `when`'s string
  * labels are not introspectable at runtime. Only the dispatch's own case labels

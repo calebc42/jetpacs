@@ -87,32 +87,12 @@ import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/**
- * Every node type this build renders — the exact set of `when (type)`
- * cases in [SduiNode], published to the client in `session.welcome` as
- * `node_types` (SPEC §3, §9) so a newer client can detect a node this
- * companion predates and render a fallback instead of relying on the
- * unknown-node degradation.
- *
- * INVARIANT: this set and the `when` in [SduiNode] change together. The
- * `SduiRendererNodeTypesTest` fails if a `when` case is added without a
- * matching entry here.
- */
-val SDUI_NODE_TYPES: Set<String> = setOf(
-    // Layout containers
-    "column", "row", "box", "surface", "card", "collapsible",
-    "lazy_column", "flow_row", "divider", "spacer", "scaffold",
-    "reorderable_list", "table", "tabs",
-    // Content
-    "text", "rich_text", "date_stamp", "menu", "section_header",
-    "empty_state", "icon", "image", "progress",
-    // Visualization
-    "chart", "canvas", "month_grid",
-    // Input
-    "text_input", "editor", "checkbox", "switch", "enum_list",
-    "date_button", "time_button", "slider", "button", "icon_button",
-    "chip", "assist_chip", "badge",
-)
+// SDUI_NODE_TYPES — every node type this build renders, published to the
+// client in the welcome — is GENERATED from the contract's `node_types`
+// (ebp/contract.json) by the `generateContractTypes` task in this
+// module's build.gradle.kts, landing in build/generated/contract/.
+// The `when` in [SduiNode] renders exactly that set;
+// `SduiRendererNodeTypesTest` holds the two together.
 
 /**
  * The SDUI dispatcher: routes a spec node by its `t` discriminator.

@@ -4182,8 +4182,9 @@ on-device) or the empty string for a bare attention dot; nil for none."
 ;;                            invalid node in place with a visible error node,
 ;;                            so one bad subtree degrades instead of the push.
 ;;
-;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
-;; (SduiRenderer.kt) and `ebp/goldens/widgets.golden'; the drift test
+;; The known-type list is the same vocabulary as the Kotlin build's
+;; generated `SDUI_NODE_TYPES' (both derive from the contract) and
+;; `ebp/goldens/widgets.golden'; the drift test
 ;; `jetpacs-lint-types-cover-golden' fails if a constructor emits a `t' not
 ;; listed here.  The wire-vocabulary tables below — the per-node key
 ;; schema (`jetpacs-lint-node-schema'), the JSON-RPC method schema with
@@ -4251,9 +4252,10 @@ Object keys are interned symbols; arrays are lists.")
 (defconst jetpacs-lint-node-types
   (jetpacs-lint--contract-get 'node_types)
   "Node `t' discriminators the reference companion renders.
-The contract's `node_types'; mirror of `SDUI_NODE_TYPES' in
-SduiRenderer.kt.  A `t' outside this set is almost always a typo; a
-Tier 1 deliberately targeting an extended companion gates on
+The contract's `node_types'; the Kotlin build generates its
+`SDUI_NODE_TYPES' from the same contract entry, so the two cannot
+diverge.  A `t' outside this set is almost always a typo; a Tier 1
+deliberately targeting an extended companion gates on
 `jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys

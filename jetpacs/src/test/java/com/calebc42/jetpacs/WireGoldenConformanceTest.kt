@@ -188,8 +188,9 @@ class WireGoldenConformanceTest {
         assertEquals(5, contract.getInt("contract_format"))
         assertEquals(JETPACS_PROTOCOL_VERSION, contract.getInt("protocol_version"))
         assertTrue(contract.getString("spec_version").isNotEmpty())
-        // The third mirror leg: the published node vocabulary is exactly the
-        // renderer's (elisp already pins lint = golden = SDUI_NODE_TYPES).
+        // Build-wiring witness: SDUI_NODE_TYPES is generated from this same
+        // contract, so inequality here means a stale generated file, not a
+        // hand-copy drifting (there is no hand copy left to drift).
         assertEquals(SDUI_NODE_TYPES.toSortedSet(), nodeTypes.toSortedSet())
         // Every Method constant the companion compiles against is registered,
         // and its request/notification class matches the companion's own

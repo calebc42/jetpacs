@@ -37,7 +37,55 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir("build/generated/contract")
+        }
+    }
 }
+
+// ─── Generated wire vocabulary ───────────────────────────────────────────────
+// SDUI_NODE_TYPES derives at build time from the contract's `node_types`
+// (ebp/contract.json, the authored wire truth — ebp SPEC-CHANGES #30): the
+// Kotlin leg of the same single-source-of-truth rule the elisp client
+// follows (its lint tables derive at load). A wire change is an ebp
+// amendment + submodule bump; this task follows automatically, and
+// SduiRendererNodeTypesTest then holds the dispatcher to the new set.
+val generateContractTypes by tasks.registering {
+    val contract = rootProject.file("ebp/contract.json")
+    val outRoot = layout.buildDirectory.dir("generated/contract")
+    inputs.file(contract)
+    outputs.dir(outRoot)
+    doLast {
+        @Suppress("UNCHECKED_CAST")
+        val nodeTypes = (groovy.json.JsonSlurper()
+            .parse(contract) as Map<String, Any?>)["node_types"] as List<String>
+        val pkgDir = outRoot.get().dir("com/calebc42/jetpacs").asFile
+        pkgDir.mkdirs()
+        pkgDir.resolve("SduiNodeTypes.kt").writeText(buildString {
+            appendLine("// GENERATED from ebp/contract.json (`node_types`) by :jetpacs generateContractTypes.")
+            appendLine("// Do not edit — the contract is the authored truth (ebp SPEC-CHANGES #30).")
+            appendLine("package com.calebc42.jetpacs")
+            appendLine()
+            appendLine("/**")
+            appendLine(" * Every node type this build renders — the contract's `node_types`,")
+            appendLine(" * published to the client in the welcome (SPEC §3, §9) so a newer")
+            appendLine(" * client can detect a node this companion predates and render a")
+            appendLine(" * fallback instead of relying on the unknown-node degradation.")
+            appendLine(" *")
+            appendLine(" * INVARIANT: the `when` in SduiNode renders exactly this set —")
+            appendLine(" * `SduiRendererNodeTypesTest` fails when the dispatcher and the")
+            appendLine(" * contract diverge, so a wire addition lands renderer support in")
+            appendLine(" * the same change-set as the submodule bump.")
+            appendLine(" */")
+            appendLine("val SDUI_NODE_TYPES: Set<String> = setOf(")
+            nodeTypes.forEach { appendLine("    \"$it\",") }
+            appendLine(")")
+        })
+    }
+}
+
+tasks.named("preBuild") { dependsOn(generateContractTypes) }
 
 dependencies {
     // `api`, not `implementation`: hosts compose their UI out of these types

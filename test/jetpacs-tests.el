@@ -4170,16 +4170,19 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
     (nreverse syms)))
 
 (ert-deftest jetpacs-contract-artifact-current ()
-  "The committed ebp/contract.json byte-matches a fresh generation.
-Regenerate after an intentional wire-vocabulary change:
-  emacs --batch -l ebp/tools/build-contract.el -f ebp-contract-write
-then commit inside ebp/ and bump the submodule pointer."
-  (load (expand-file-name "../ebp/tools/build-contract.el" jetpacs-tests--dir) nil t)
+  "The committed ebp/contract.json byte-matches this reference's projection.
+The contract is authored in ebp (its amendment log governs; ebp #30).
+On a mismatch, fix the lint tables here — or, for an INTENDED wire
+change, land the ebp amendment first, then
+  emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write
+regenerates in place to confirm the tables now match; bump the
+submodule pointer with the ebp commit."
+  (load (expand-file-name "../emacs/build-contract.el" jetpacs-tests--dir) nil t)
   (let ((committed (with-temp-buffer
                      (let ((coding-system-for-read 'utf-8-unix))
-                       (insert-file-contents (ebp-contract-file)))
+                       (insert-file-contents (jetpacs-contract-file)))
                      (buffer-string))))
-    (should (string= committed (ebp-contract-string)))))
+    (should (string= committed (jetpacs-contract-string)))))
 
 (ert-deftest jetpacs-node-types-mirror ()
   "lint node types = widgets.golden `t' set = Kotlin SDUI_NODE_TYPES.

@@ -4,6 +4,13 @@ Status: **Option A decided 2026-07-15 — executing.** Branch
 `claude/jetpacs-modularization-59725d`. Companion decision doc: none (this
 file is the whole track).
 
+**Update 2026-07-21: inverted to Option B** (ebp SPEC-CHANGES #30) — the
+contract is authored in ebp; ebp carries no dependency on this repo.
+`emacs/build-contract.el` stays here as the conformance projector, and
+the drift test's mismatch workflow flips: amend ebp first, then make the
+lint tables match. The §"source-of-truth" analysis below is preserved as
+the record of why A was chosen first.
+
 ## Motivation
 
 The protocol contract — SPEC, `contract.json`, the golden corpus — is the one

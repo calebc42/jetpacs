@@ -810,5 +810,44 @@ it doesn't.  Informational only — nothing is settable here."
 ;; on the phone are now behind reality.
 (add-hook 'jetpacs-queue-drained-hook #'jetpacs-shell-refresh)
 
+;; ─── Refresh on external saves ───────────────────────────────────────────────
+;; The debounced "the user saved something the dashboard shows" seam: the
+;; app names what is relevant (`jetpacs-shell-save-refresh-predicate'),
+;; the shell owns the guards and the debounce.  Saves Jetpacs itself
+;; performs are excluded here (`jetpacs-in-action-p' — action handlers
+;; push explicitly); other programmatic-save exclusions belong in the
+;; app's predicate.
+
+(defcustom jetpacs-shell-save-refresh-delay 2
+  "Idle seconds after a relevant save before re-pushing the shell.
+Debounces bursts of saves (e.g. `org-save-all-org-buffers') into one push."
+  :type 'integer :group 'jetpacs)
+
+(defvar jetpacs-shell-save-refresh-predicate nil
+  "When non-nil, a function of no args deciding if the just-saved buffer
+is shell-relevant.  Called in the saving buffer from `after-save-hook';
+a non-nil return schedules one debounced `jetpacs-shell-push'.")
+
+(defvar jetpacs-shell-save-refresh-hook nil
+  "Run once each time a save-triggered refresh is scheduled.
+The app's cache invalidation belongs here.")
+
+(defvar jetpacs-shell--save-refresh-timer nil)
+
+(defun jetpacs-shell--after-save-refresh ()
+  "Schedule a debounced shell push when a relevant file was just saved."
+  (when (and jetpacs-shell-save-refresh-predicate
+             (jetpacs-connected-p)
+             (not (jetpacs-in-action-p))
+             (funcall jetpacs-shell-save-refresh-predicate))
+    (run-hooks 'jetpacs-shell-save-refresh-hook)
+    (when (timerp jetpacs-shell--save-refresh-timer)
+      (cancel-timer jetpacs-shell--save-refresh-timer))
+    (setq jetpacs-shell--save-refresh-timer
+          (run-with-idle-timer jetpacs-shell-save-refresh-delay nil
+                               #'jetpacs-shell-push))))
+
+(add-hook 'after-save-hook #'jetpacs-shell--after-save-refresh)
+
 (provide 'jetpacs-shell)
 ;;; jetpacs-shell.el ends here

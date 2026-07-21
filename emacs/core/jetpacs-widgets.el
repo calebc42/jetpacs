@@ -892,6 +892,59 @@ Returns nil when N is not an integer in 1..12."
   (and (integerp n) (>= n 1) (<= n 12)
        (aref jetpacs--month-abbrevs (1- n))))
 
+(defun jetpacs-swatch (hex &optional size)
+  "A round color chip of HEX at SIZE dp (default 22), or nil when HEX is nil."
+  (when hex
+    (jetpacs-surface nil :color hex :shape "circle"
+                     :width (or size 22) :height (or size 22))))
+
+(defun jetpacs-arc-points (cx cy r a0 a1 n)
+  "N+1 points along the arc A0→A1 degrees, centre (CX CY), radius R.
+Screen y grows downward, so a top semicircle spans 180°→0°."
+  (cl-loop for i from 0 to n
+           for a = (+ a0 (* (- a1 a0) (/ (float i) n)))
+           for rad = (degrees-to-radians a)
+           collect (list (+ cx (* r (cos rad))) (- cy (* r (sin rad))))))
+
+(cl-defun jetpacs-gauge (level &key (width 240) (height 132)
+                               (track-color "#8888aa") (fill-color "#00A676")
+                               (needle-color "#E64980"))
+  "A semicircular canvas gauge filled to LEVEL (0.0–1.0).
+Geometry derives from WIDTH/HEIGHT; the percentage renders centred
+above the hub."
+  (let* ((cx (/ width 2)) (cy (- height 16)) (r (- (/ width 2) 25))
+         (end (- 180 (* 180 (max 0.0 (min 1.0 level)))))
+         (na (degrees-to-radians end))
+         (nx (+ cx (* r 0.9 (cos na))))
+         (ny (- cy (* r 0.9 (sin na)))))
+    (jetpacs-canvas
+     width height
+     (list (jetpacs-draw-path (jetpacs-arc-points cx cy r 180 0 44)
+                              :color track-color :stroke 12)
+           (jetpacs-draw-path (jetpacs-arc-points cx cy r 180 end 44)
+                              :color fill-color :stroke 12)
+           (jetpacs-draw-line cx cy nx ny :color needle-color :stroke 3)
+           (jetpacs-draw-circle cx cy 7 :fill t :color needle-color)
+           (jetpacs-draw-text cx (- height 58)
+                              (format "%d%%" (round (* 100 level)))
+                              :align "center" :size 28 :color "primary")))))
+
+(defun jetpacs-filter-section (id label summary widget)
+  "One collapsible filter section, folded by default.
+ID names the fold-state id; LABEL is the always-visible section name.
+SUMMARY, when non-nil, is the active value rendered into the header so
+a folded section still shows what it contributes.  WIDGET is the
+section's control."
+  (jetpacs-collapsible
+   id
+   (if summary
+       (jetpacs-rich-text (list (jetpacs-span (concat label ": ") :bold t)
+                                (jetpacs-span summary))
+                          :style 'body)
+     (jetpacs-text label 'body))
+   (list widget)
+   :collapsed t))
+
 (defun jetpacs-date-encode (date)
   "Encoded noon of DATE (\"YYYY-MM-DD\"); noon dodges DST date flips.
 Parses by position, never by regexp/split, so it is safe inside a

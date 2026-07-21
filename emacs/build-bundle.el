@@ -74,6 +74,7 @@
                      "core/jetpacs-emacs-ui.el"
                      "core/jetpacs-package-browser.el"
                      "core/jetpacs-customize.el"
+                     "core/jetpacs-theme-picker.el"
                      "core/jetpacs-modus.el"
                      "core/jetpacs-tools.el"
                      "core/jetpacs-project.el"

@@ -5911,10 +5911,12 @@ marker, the style switches, and the customize cross-link."
 one-tap switch otherwise."
   (let ((jetpacs-theme-mode 'emacs))
     (should (string-search "Mirroring"
-                           (prin1-to-string (jetpacs-modus--mirror-note)))))
+                           (prin1-to-string
+                            (jetpacs-theme-picker-mirror-note "modus.mirror")))))
   (let ((jetpacs-theme-mode 'default))
     (should (string-search "modus.mirror"
-                           (prin1-to-string (jetpacs-modus--mirror-note))))))
+                           (prin1-to-string
+                            (jetpacs-theme-picker-mirror-note "modus.mirror"))))))
 
 (ert-deftest jetpacs-modus-settings-link-registered ()
   "The screen is reachable from the Emacs settings section, beside Packages
@@ -5931,7 +5933,11 @@ collapses the name to one-character columns (the on-device vertical-text bug)."
   (skip-unless (jetpacs-modus--available-p))
   (should (equal "Operandi Tinted"
                  (jetpacs-modus--display-name 'modus-operandi-tinted)))
-  (let* ((card (jetpacs-modus--theme-card 'modus-operandi 'modus-vivendi))
+  (let* ((card (jetpacs-theme-picker-theme-card
+                'modus-operandi 'modus-vivendi
+                :display-fn #'jetpacs-modus--display-name
+                :color-fn #'jetpacs-modus--color
+                :load-action "modus.load"))
          (row (car (append (alist-get 'children card) nil)))
          (children (append (alist-get 'children row) nil))
          (first (car children)))

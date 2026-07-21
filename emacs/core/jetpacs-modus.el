@@ -30,6 +30,7 @@
 (require 'cl-lib)
 (require 'jetpacs)
 (require 'jetpacs-widgets)
+(require 'jetpacs-theme-picker)
 (require 'jetpacs-shell)
 (require 'jetpacs-settings)
 
@@ -102,70 +103,21 @@ registry and by derivatives); fall back to the stock naming, where every
                      (modus-themes-get-color-value key :with-overrides)))))
       (and (stringp value) value))))
 
-;; ─── Swatches ────────────────────────────────────────────────────────────────
-
-(defun jetpacs-modus--swatch (hex &optional size)
-  "A round color chip of HEX at SIZE dp (default 22), or nil when HEX is nil."
-  (when hex
-    (jetpacs-surface nil :color hex :shape "circle"
-                     :width (or size 22) :height (or size 22))))
-
-(defconst jetpacs-modus--strip-keys
-  '(bg-main fg-main accent-0 accent-1 accent-2 accent-3 err info)
-  "Palette roles shown in the current theme's swatch strip.")
-
-(defun jetpacs-modus--strip ()
-  "The CURRENT theme's swatch strip: one chip per `jetpacs-modus--strip-keys'.
-Reads the live palette (no theme arg), which resolves on every modus version."
-  (delq nil (mapcar (lambda (key)
-                      (jetpacs-modus--swatch (jetpacs-modus--color key)))
-                    jetpacs-modus--strip-keys)))
-
-(defun jetpacs-modus--preview (theme)
-  "Per-theme swatches (background / foreground / accent) for THEME's list row.
-Only when the running modus can resolve a NON-current theme's palette, which
-needs `modus-themes-activate' (modus 5.0+).  On older modus we return nil, so
-the list shows uniformly clean names instead of swatches for the active theme
-alone."
-  (when (fboundp 'modus-themes-activate)
-    (delq nil (mapcar (lambda (key)
-                        (jetpacs-modus--swatch (jetpacs-modus--color key theme) 18))
-                      '(bg-main fg-main accent-0)))))
+;; ─── View sections (the shared scaffold, instantiated for modus) ─────────────
 
 (defun jetpacs-modus--display-name (theme)
   "A human-friendly label for THEME: drop the `modus-' prefix, then title-case,
 so `modus-operandi-tinted' reads as \"Operandi Tinted\"."
-  (capitalize
-   (replace-regexp-in-string
-    "-" " " (string-remove-prefix "modus-" (symbol-name theme)))))
-
-;; ─── View sections ───────────────────────────────────────────────────────────
-
-(defun jetpacs-modus--mirror-note ()
-  "Companion-mirror status: a live badge, or a one-tap switch to mirror mode."
-  (when (boundp 'jetpacs-theme-mode)
-    (if (eq jetpacs-theme-mode 'emacs)
-        (jetpacs-row (jetpacs-icon "smartphone" :size 16)
-                     (jetpacs-text "Mirroring to the companion" 'caption))
-      (jetpacs-chip "Mirror on phone" :icon "smartphone"
-                    :on-tap (jetpacs-action "modus.mirror" :when-offline "drop")))))
+  (jetpacs-theme-picker-display-name "modus-" theme))
 
 (defun jetpacs-modus--current-card (current)
   "The header card: the active theme's name, polarity, palette, mirror status."
-  (jetpacs-card
-   (list (apply #'jetpacs-column
-                (delq nil
-                      (list (jetpacs-text (if current
-                                              (jetpacs-modus--display-name current)
-                                            "No modus theme active")
-                                          'title)
-                            (when current
-                              (jetpacs-text (concat (if (jetpacs-modus--dark-p current)
-                                                        "Dark" "Light")
-                                                    " · " (symbol-name current))
-                                            'caption))
-                            (when current (apply #'jetpacs-row (jetpacs-modus--strip)))
-                            (when current (jetpacs-modus--mirror-note))))))))
+  (jetpacs-theme-picker-current-card current
+                                     :display-fn #'jetpacs-modus--display-name
+                                     :dark-p-fn #'jetpacs-modus--dark-p
+                                     :color-fn #'jetpacs-modus--color
+                                     :mirror-action "modus.mirror"
+                                     :none-label "No modus theme active"))
 
 (defun jetpacs-modus--actions-row ()
   "Quick-action buttons the running modus version supports, or nil."
@@ -185,38 +137,13 @@ so `modus-operandi-tinted' reads as \"Operandi Tinted\"."
             buttons))
     (when buttons (apply #'jetpacs-row buttons))))
 
-(defun jetpacs-modus--theme-card (theme current)
-  "A single-line row for THEME: name, preview swatches, and a marker; a tap
-loads it.  CURRENT (the active theme) is checked and not re-loadable.  The
-swatches are spread as direct row children (a nested `row' fills the width and
-would starve the weighted name); polarity is omitted — the cards are already
-grouped under Light/Dark headers."
-  (let ((activep (eq theme current)))
-    (jetpacs-card
-     (list (apply #'jetpacs-row
-                  (append
-                   (list (jetpacs-box
-                          (list (jetpacs-text (jetpacs-modus--display-name theme)
-                                              'label))
-                          :weight 1))
-                   (jetpacs-modus--preview theme)
-                   (list (if activep
-                             (jetpacs-icon "check_circle" :color "primary")
-                           (jetpacs-icon "chevron_right"))))))
-     :on-tap (unless activep
-               (jetpacs-action "modus.load"
-                               :args `((theme . ,(symbol-name theme)))
-                               :when-offline "drop")))))
-
 (defun jetpacs-modus--themes-section (current)
   "The theme picker: cards grouped Light then Dark."
-  (let* ((themes (jetpacs-modus--themes))
-         (light (seq-remove #'jetpacs-modus--dark-p themes))
-         (dark (seq-filter #'jetpacs-modus--dark-p themes))
-         (card (lambda (theme) (jetpacs-modus--theme-card theme current))))
-    (append
-     (when light (cons (jetpacs-section-header "Light") (mapcar card light)))
-     (when dark (cons (jetpacs-section-header "Dark") (mapcar card dark))))))
+  (jetpacs-theme-picker-themes-section (jetpacs-modus--themes) current
+                                       :dark-p-fn #'jetpacs-modus--dark-p
+                                       :display-fn #'jetpacs-modus--display-name
+                                       :color-fn #'jetpacs-modus--color
+                                       :load-action "modus.load"))
 
 (defconst jetpacs-modus--options
   '((modus-themes-bold-constructs    . "Bold keywords")
@@ -246,18 +173,6 @@ grouped under Light/Dark headers."
                         (jetpacs-text (concat label " — not available") 'caption))))))
            jetpacs-modus--options)))
 
-(defun jetpacs-modus--more-link ()
-  "A card cross-linking into the customize browser's modus group."
-  (jetpacs-card
-   (list (jetpacs-row
-          (jetpacs-icon "tune")
-          (jetpacs-box (list (jetpacs-text "More options in Customize" 'label))
-                       :weight 1)
-          (jetpacs-icon "chevron_right")))
-   :on-tap (jetpacs-action "customize.show"
-                           :args '((group . "modus-themes"))
-                           :when-offline "drop")))
-
 (defun jetpacs-modus--body ()
   "The screen body, assuming the modus library is loaded."
   (let ((current (jetpacs-modus--current)))
@@ -268,7 +183,7 @@ grouped under Light/Dark headers."
                         (jetpacs-modus--actions-row))
                   (jetpacs-modus--themes-section current)
                   (jetpacs-modus--style-section)
-                  (list (jetpacs-modus--more-link)))))))
+                  (list (jetpacs-theme-picker-more-link "modus-themes")))))))
 
 (defun jetpacs-modus--view (snackbar)
   "The shell view: back returns to the settings screen."

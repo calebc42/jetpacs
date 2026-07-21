@@ -4390,7 +4390,8 @@ key name.")
                      (jetpacs-lint--syms (alist-get 'optional params))))))
   "Method schema: JSON-RPC method → direction, class, and params keys.
 The contract's `methods' table — SPEC-2 §4 as staged for the first cut;
-mirror of `Method' in Envelope.kt.  `jetpacs-lint-payload' enforces it
+the Kotlin build generates its `Method' object from the same table, so
+the two cannot diverge.  `jetpacs-lint-payload' enforces it
 (missing required = error, unknown key = warning).  Request results live
 in `jetpacs-lint-result-schema'.  Action names (§5 registry entries,
 e.g. `trigger.fired', `edit.open') are deliberately NOT enumerated —

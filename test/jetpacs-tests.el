@@ -3917,27 +3917,13 @@ and a seeded corruption of a real golden line all report problems."
                          (alist-get 'params line))))
     (should (jetpacs-lint-payload method params))))
 
-(defun jetpacs-tests--envelope-kinds ()
-  "The Kind strings declared in Envelope.kt (the Kotlin source)."
-  (let ((f (expand-file-name
-            "../jetpacs/src/main/java/com/calebc42/jetpacs/Envelope.kt"
-            jetpacs-tests--dir))
-        kinds)
-    (with-temp-buffer
-      (insert-file-contents f)
-      (goto-char (point-min))
-      (while (re-search-forward "const val [A-Z_]+ = \"\\([a-z_.]+\\)\"" nil t)
-        (cl-pushnew (match-string 1) kinds :test #'equal)))
-    (nreverse kinds)))
-
-(ert-deftest jetpacs-lint-kind-schema-covers-envelope ()
-  "Every Kotlin `Kind' constant is a registered kind — the cross-language
-leg for frames.  The schema may know more kinds than Envelope.kt names
-\(the companion handles several by literal string), never fewer."
-  (let ((kotlin (jetpacs-tests--envelope-kinds)))
-    (should kotlin)
-    (dolist (k kotlin)
-      (should (assoc k jetpacs-lint-kind-schema)))))
+;; The former `jetpacs-lint-kind-schema-covers-envelope' test parsed
+;; Envelope.kt's hand-written Method constants and asserted each was a
+;; registered kind.  The Kotlin build now GENERATES its Method object
+;; from the contract's `methods' table (:jetpacs generateContractTypes)
+;; — the same table this suite's `jetpacs-lint-kind-schema' derives
+;; from — so the coverage holds by construction and the source-parsing
+;; leg is gone.
 
 (ert-deftest jetpacs-lint-sanitize-isolates-bad-subtree ()
   "Sanitizing replaces only the invalid node, keeping siblings intact."

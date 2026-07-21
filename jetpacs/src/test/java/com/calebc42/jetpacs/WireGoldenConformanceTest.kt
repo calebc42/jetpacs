@@ -192,9 +192,9 @@ class WireGoldenConformanceTest {
         // contract, so inequality here means a stale generated file, not a
         // hand-copy drifting (there is no hand copy left to drift).
         assertEquals(SDUI_NODE_TYPES.toSortedSet(), nodeTypes.toSortedSet())
-        // Every Method constant the companion compiles against is registered,
-        // and its request/notification class matches the companion's own
-        // dispatch sets.
+        // Build-wiring witness: Method is generated from this same contract's
+        // `methods` table, so a mismatch here means a stale generated file,
+        // not a hand table drifting.
         val registered = methods.keys().asSequence().toSet()
         val all = Method.REQUESTS + Method.CLIENT_NOTIFICATIONS + Method.COMPANION_SENDS
         for (m in all) {
@@ -209,9 +209,11 @@ class WireGoldenConformanceTest {
             assertEquals("`$m` result presence vs type",
                 entry.getString("type") == "request", entry.has("result"))
         }
-        // The error-code vocabulary covers every code the companion emits.
+        // The codes the companion's emission sites actually use, present in
+        // the vocabulary (EbpError is generated from it, so this doubles as
+        // the build-wiring witness for the error leg).
         for (code in listOf(
-                EbpError.PARSE, EbpError.INVALID_REQUEST, EbpError.METHOD_NOT_FOUND,
+                EbpError.PARSE_ERROR, EbpError.INVALID_REQUEST, EbpError.METHOD_NOT_FOUND,
                 EbpError.CAP_UNSUPPORTED, EbpError.CAP_PERMISSION, EbpError.CAP_FAILED,
                 EbpError.TRIGGERS_REJECTED, EbpError.NOT_AUTHENTICATED,
                 EbpError.SPEC_INVALID, EbpError.PROTO_VERSION, EbpError.AUTH_FAILED,

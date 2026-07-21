@@ -45,12 +45,12 @@ android {
 }
 
 // ─── Generated wire vocabulary ───────────────────────────────────────────────
-// SDUI_NODE_TYPES derives at build time from the contract's `node_types`
-// (ebp/contract.json, the authored wire truth — ebp SPEC-CHANGES #30): the
-// Kotlin leg of the same single-source-of-truth rule the elisp client
-// follows (its lint tables derive at load). A wire change is an ebp
-// amendment + submodule bump; this task follows automatically, and
-// SduiRendererNodeTypesTest then holds the dispatcher to the new set.
+// SDUI_NODE_TYPES, the Method table, and the EbpError codes derive at build
+// time from the contract (ebp/contract.json, the authored wire truth — ebp
+// SPEC-CHANGES #30): the Kotlin leg of the same single-source-of-truth rule
+// the elisp client follows (its lint tables derive at load). A wire change
+// is an ebp amendment + submodule bump; this task follows automatically,
+// and SduiRendererNodeTypesTest then holds the dispatcher to the new set.
 val generateContractTypes by tasks.registering {
     val contract = rootProject.file("ebp/contract.json")
     val outRoot = layout.buildDirectory.dir("generated/contract")
@@ -58,8 +58,15 @@ val generateContractTypes by tasks.registering {
     outputs.dir(outRoot)
     doLast {
         @Suppress("UNCHECKED_CAST")
-        val nodeTypes = (groovy.json.JsonSlurper()
-            .parse(contract) as Map<String, Any?>)["node_types"] as List<String>
+        val parsed = groovy.json.JsonSlurper().parse(contract) as Map<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val nodeTypes = parsed["node_types"] as List<String>
+        @Suppress("UNCHECKED_CAST")
+        val methods = parsed["methods"] as Map<String, Map<String, Any?>>
+        @Suppress("UNCHECKED_CAST")
+        val errorCodes = parsed["error_codes"] as Map<String, Map<String, Any?>>
+        fun constName(wire: String) =
+            wire.uppercase().replace('.', '_').replace('-', '_')
         val pkgDir = outRoot.get().dir("com/calebc42/jetpacs").asFile
         pkgDir.mkdirs()
         pkgDir.resolve("SduiNodeTypes.kt").writeText(buildString {
@@ -81,6 +88,61 @@ val generateContractTypes by tasks.registering {
             appendLine("val SDUI_NODE_TYPES: Set<String> = setOf(")
             nodeTypes.forEach { appendLine("    \"$it\",") }
             appendLine(")")
+        })
+        val requests = methods.filterValues {
+            it["type"] == "request" && it["direction"] != "companion"
+        }.keys
+        val clientNotifications = methods.filterValues {
+            it["type"] == "notification" && it["direction"] != "companion"
+        }.keys
+        val companionSends = methods.filterValues {
+            it["direction"] == "companion"
+        }.keys
+        pkgDir.resolve("WireVocabulary.kt").writeText(buildString {
+            appendLine("// GENERATED from ebp/contract.json (`methods`, `error_codes`) by :jetpacs generateContractTypes.")
+            appendLine("// Do not edit — the contract is the authored truth (ebp SPEC-CHANGES #30).")
+            appendLine("package com.calebc42.jetpacs")
+            appendLine()
+            appendLine("/**")
+            appendLine(" * Dot-namespaced JSON-RPC method names (SPEC-2 §4) — the contract's")
+            appendLine(" * `methods` table.")
+            appendLine(" *")
+            appendLine(" * A request carries an `id` and is answered exactly once — result XOR")
+            appendLine(" * error; a notification carries no `id` and is never answered.")
+            appendLine(" */")
+            appendLine("object Method {")
+            methods.keys.forEach {
+                appendLine("    const val ${constName(it)} = \"$it\"")
+            }
+            appendLine()
+            appendLine("    /** Methods the companion accepts as requests. */")
+            appendLine("    val REQUESTS = setOf(")
+            requests.forEach { appendLine("        ${constName(it)},") }
+            appendLine("    )")
+            appendLine()
+            appendLine("    /** Methods the companion accepts as notifications. */")
+            appendLine("    val CLIENT_NOTIFICATIONS = setOf(")
+            clientNotifications.forEach { appendLine("        ${constName(it)},") }
+            appendLine("    )")
+            appendLine()
+            appendLine("    /** Methods only the companion sends — receiving one is a direction violation. */")
+            appendLine("    val COMPANION_SENDS = setOf(")
+            companionSends.forEach { appendLine("        ${constName(it)},") }
+            appendLine("    )")
+            appendLine("}")
+            appendLine()
+            appendLine("/**")
+            appendLine(" * Error codes (SPEC-2 §2.4) — the contract's `error_codes`, each named")
+            appendLine(" * by its `data.kind` vocabulary string. `-32768..-32000` is JSON-RPC's")
+            appendLine(" * reserved range; application codes live outside it. Never emit `32000`")
+            appendLine(" * (a jsonrpc.el sentinel meaning \"no error\") or `-1` (its local")
+            appendLine(" * \"Server died\").")
+            appendLine(" */")
+            appendLine("object EbpError {")
+            errorCodes.forEach { (code, entry) ->
+                appendLine("    const val ${constName(entry["kind"] as String)} = $code")
+            }
+            appendLine("}")
         })
     }
 }

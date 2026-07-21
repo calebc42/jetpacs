@@ -6,8 +6,9 @@
 ;; "Fire now" test button.  Pure rendering — the registry, the actions
 ;; (`trigger.toggle' / `trigger.test'), and the persistence live in
 ;; jetpacs-triggers.el; authoring stays in elisp (`jetpacs-deftrigger'
-;; in your init).  Rule layers on top are app territory (the glasspane
-;; repo's glasspane-automations.el reads them from org files).
+;; in your init).  The literate rule layer on top is the sibling
+;; `jetpacs-automations-org.el' — one org heading per rule; org is
+;; built into Emacs, so the loader is core, not app territory.
 ;;
 ;; Deliberately NOT an `jetpacs-defapp': that would flip the launcher into
 ;; multi-app mode for everyone.  It is a satellite screen behind a

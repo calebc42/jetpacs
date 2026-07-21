@@ -65,6 +65,9 @@
                      ;; layers): its capture-template builder rides the
                      ;; shell/settings machinery above.
                      "core/jetpacs-org.el"
+                     "core/jetpacs-org-toolbar.el"
+                     "core/jetpacs-org-rich.el"
+                     "core/jetpacs-automations-org.el"
                      "core/jetpacs-files.el"
                      "core/jetpacs-witheditor.el"
                      "core/jetpacs-emacs-ui.el"

@@ -55,6 +55,9 @@
 (require 'jetpacs-automations)
 (require 'jetpacs-app-store)
 (require 'jetpacs-org)
+(require 'jetpacs-org-toolbar)
+(require 'jetpacs-org-rich)
+(require 'jetpacs-automations-org)
 (require 'jetpacs-demo)
 
 ;; ─── Capture ────────────────────────────────────────────────────────────────
@@ -7861,6 +7864,242 @@ Non-org files get no such button."
                          (apply #'jetpacs-column (jetpacs-render-buffer viewed)))
                         :null-object :null :false-object :false))))))
       (ignore-errors (delete-directory dir t)))))
+
+;; ─── The org-layer siblings: rich rendering, toolbar, automations loader ─────
+;; Migrated from the glasspane repo when the three modules moved into
+;; core (they depend only on built-in org + core; the app kept its
+;; opinionated layers on top).
+
+(defmacro jetpacs-tests--with-automations-file (content &rest body)
+  "Run BODY with a temp automations file holding CONTENT."
+  (declare (indent 1))
+  `(let* ((file (make-temp-file "jetpacs-autom" nil ".org"))
+          (jetpacs-automations-org-file file)
+          (jetpacs-automations-org--ids nil)
+          (jetpacs-triggers--table (make-hash-table :test 'equal))
+          (jetpacs-triggers-changed-hook nil))
+     (unwind-protect
+         (progn (with-temp-file file (insert ,content))
+                ,@body)
+       (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+       (delete-file file))))
+
+(ert-deftest jetpacs-automations-org-parses-rules ()
+  "Headings with :TRIGGER: become registrations; DONE disables; the
+lowercase drawer parses (org case conventions)."
+  (jetpacs-tests--with-automations-file
+      (concat "* Charge sync\n"
+              ":PROPERTIES:\n:TRIGGER: power connected\n:POLICY: wake\n"
+              ":THROTTLE: 300\n:END:\n"
+              "#+begin_src elisp\n(setq jetpacs-tests--autom-fired data)\n#+end_src\n"
+              ;; Case conventions: lowercase drawer + property + block.
+              "* Low battery\n"
+              ":properties:\n:trigger: battery.level below 20\n:end:\n"
+              "#+begin_src emacs-lisp\n(ignore)\n#+end_src\n"
+              "* DONE Old rule\n"
+              ":PROPERTIES:\n:TRIGGER: screen off\n:END:\n"
+              "* Not a rule\nJust some notes.\n"
+              "* Bad type\n"
+              ":PROPERTIES:\n:TRIGGER: warp.drive on\n:END:\n"
+              ;; Hardware-gated, not shipped: must be skipped, or its
+              ;; presence would poison the whole replace-set companion-side.
+              "* Home wifi\n"
+              ":PROPERTIES:\n:TRIGGER: wifi.ssid connected\n:END:\n")
+    (let ((ids (jetpacs-automations-org-reload)))
+      (should (equal (sort (copy-sequence ids) #'string<)
+                     '("org/Charge sync" "org/Low battery")))
+      (let ((reg (gethash "org/Charge sync" jetpacs-triggers--table)))
+        (should (equal (plist-get reg :type) "power"))
+        (should (equal (plist-get reg :params) '((state . "connected"))))
+        (should (equal (plist-get reg :policy) "wake"))
+        (should (= (plist-get reg :throttle-s) 300))
+        (should (functionp (plist-get reg :handler))))
+      (let ((reg (gethash "org/Low battery" jetpacs-triggers--table)))
+        (should (equal (plist-get reg :type) "battery.level"))
+        (should (equal (plist-get reg :params) '((below . 20)))))
+      ;; DONE and unknown/unshipped-type rules never registered.
+      (should-not (gethash "org/Old rule" jetpacs-triggers--table))
+      (should-not (gethash "org/Bad type" jetpacs-triggers--table))
+      (should-not (gethash "org/Home wifi" jetpacs-triggers--table)))))
+
+(ert-deftest jetpacs-automations-org-handler-runs-and-reload-replaces ()
+  "The src-block handler fires with `data' in scope; a reload drops
+rules that left the file."
+  (defvar jetpacs-tests--autom-fired nil)
+  (jetpacs-tests--with-automations-file
+      (concat "* Charge sync\n"
+              ":PROPERTIES:\n:TRIGGER: power connected\n:END:\n"
+              "#+begin_src elisp\n(setq jetpacs-tests--autom-fired data)\n#+end_src\n")
+    (jetpacs-automations-org-reload)
+    ;; Reload binds the owner itself (it also fires from the after-save
+    ;; hook, where no load-time binding exists).
+    (should (equal "org-automations" (jetpacs--owner-of "trigger" "org/Charge sync")))
+    (setq jetpacs-tests--autom-fired nil)
+    (jetpacs-trigger-test-fire "org/Charge sync")
+    ;; Test fires carry no data payload; args reached the handler.
+    (should (gethash "org/Charge sync" jetpacs-triggers--last-fired))
+    ;; Simulate a real fire with data.
+    (jetpacs-triggers--on-fired
+     '((id . "org/Charge sync") (type . "power")
+       (data . ((state . "connected"))) (at_ms . 1))
+     nil)
+    (should (equal (alist-get 'state jetpacs-tests--autom-fired) "connected"))
+    ;; Rewrite the file without the rule: reload unregisters it.
+    (with-temp-file file (insert "* Nothing here\n"))
+    (when-let ((buf (find-buffer-visiting file))) (kill-buffer buf))
+    (should-not (jetpacs-automations-org-reload))
+    (should-not (gethash "org/Charge sync" jetpacs-triggers--table))))
+
+(ert-deftest jetpacs-org-rich-table-node ()
+  "Org tables emit native table nodes: header, rule, aligns, cell taps."
+  (let* ((body (concat "| Item | Qty |\n"
+                       "|------+-----|\n"
+                       "| a    |   1 |\n"
+                       "| bb   |   2 |\n"))
+         (table (car (jetpacs-org-rich-body body nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't table) "table"))
+    (let* ((rows (append (alist-get 'rows table) nil))
+           (r0 (nth 0 rows)) (r1 (nth 1 rows)) (r2 (nth 2 rows)))
+      (should (= (length rows) 4))
+      (should (eq (alist-get 'header r0) t))
+      (should (eq (alist-get 'rule r1) t))
+      ;; The numeric column right-aligns (org's own heuristic).
+      (should (equal (append (alist-get 'aligns table) nil) '("start" "end")))
+      ;; Cells carry edit actions with real-file positions baked in,
+      ;; and a long-press menu for row/column operations.
+      (let* ((cell (aref (alist-get 'cells r2) 0))
+             (tap (alist-get 'on_tap cell))
+             (long (alist-get 'on_long_tap cell)))
+        (should (equal (alist-get 'action tap) "org.table.edit"))
+        (should (equal (alist-get 'file (alist-get 'args tap)) "/tmp/t.org"))
+        (should (integerp (alist-get 'pos (alist-get 'args tap))))
+        (should (equal (alist-get 'action long) "org.table.cell-menu"))
+        (should (equal (alist-get 'args long) (alist-get 'args tap)))))
+    ;; Add affordances point back at the table.
+    (should (equal (alist-get 'action (alist-get 'on_add_row table))
+                   "org.table.add-row"))
+    (should (equal (alist-get 'action (alist-get 'on_add_col table))
+                   "org.table.add-col"))))
+
+(ert-deftest jetpacs-org-rich-table-readonly-without-context ()
+  "Without file context the table renders, but nothing is tappable."
+  (let ((table (car (jetpacs-org-rich-body "| a | b |\n" nil))))
+    (should (equal (alist-get 't table) "table"))
+    (should-not (alist-get 'on_add_row table))
+    (should-not (alist-get 'on_add_col table))
+    (let ((cell (aref (alist-get 'cells (aref (alist-get 'rows table) 0)) 0)))
+      (should-not (alist-get 'on_tap cell)))
+    ;; A lone row group is not a header.
+    (should-not (alist-get 'header (aref (alist-get 'rows table) 0)))))
+
+(ert-deftest jetpacs-org-rich-table-cookie-alignment ()
+  "Cookie rows configure column alignment and drop out of display."
+  (let ((table (car (jetpacs-org-rich-body "| <c> | <r> |\n| a | b |\n" nil))))
+    (should (equal (append (alist-get 'aligns table) nil) '("center" "end")))
+    (should (= (length (alist-get 'rows table)) 1))))
+
+(ert-deftest jetpacs-org-rich-emphasis-preserves-trailing-space ()
+  "Whitespace after inline objects survives rendering.
+Org stores it as `:post-blank' on the object — it is in neither the
+object's contents nor the next string, so the emitter must re-add it."
+  (let* ((node (car (jetpacs-org-rich-body
+                     "a /it/ b *bo*  c ~vb~ d [[https://e.org][ln]] e"
+                     nil)))
+         (text (mapconcat (lambda (sp) (alist-get 'text sp))
+                          (alist-get 'spans node) "")))
+    (should (equal text "a it b bo  c vb d ln e"))))
+
+;; ─── Org babel results: foldable and read-only ──────────────────────────────
+
+(ert-deftest jetpacs-org-rich-results-foldable-and-inert ()
+  "Babel #+RESULTS render inside a foldable section without edit taps."
+  ;; Table results: no cell taps, no menus, no add affordances.
+  (let* ((node (car (jetpacs-org-rich-body
+                     "#+RESULTS:\n| a | b |\n| 1 | 2 |\n"
+                     nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't node) "collapsible"))
+    (should (equal (alist-get 'text (alist-get 'header node)) "RESULTS"))
+    (should-not (alist-get 'collapsed node))    ; visible until folded
+    (let ((table (aref (alist-get 'children node) 0)))
+      (should (equal (alist-get 't table) "table"))
+      (should-not (alist-get 'on_add_row table))
+      (should-not (alist-get 'on_add_col table))
+      (let ((cell (aref (alist-get 'cells (aref (alist-get 'rows table) 0)) 0)))
+        (should-not (alist-get 'on_tap cell))
+        (should-not (alist-get 'on_long_tap cell)))))
+  ;; Fixed-width results (the ": value" form) fold too.
+  (let ((node (car (jetpacs-org-rich-body "#+RESULTS:\n: 3\n"
+                                            nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't node) "collapsible"))
+    (should (equal (alist-get 'text (alist-get 'header node)) "RESULTS")))
+  ;; The same table without #+RESULTS stays editable.
+  (let ((table (car (jetpacs-org-rich-body "| a | b |\n" nil "/tmp/t.org" 10))))
+    (should (equal (alist-get 't table) "table"))
+    (should (alist-get 'on_add_row table))))
+
+;; ─── Org babel: emitter and action ──────────────────────────────────────────
+
+(ert-deftest jetpacs-org-rich-src-block-run-header ()
+  "Executable src blocks with file context grow a run header; others don't."
+  (require 'ob-emacs-lisp)
+  (let ((body "#+begin_src emacs-lisp\n(+ 1 2)\n#+end_src\n"))
+    ;; With context and a loaded language: column of header row + code.
+    (let* ((node (car (jetpacs-org-rich-body body nil "/tmp/t.org" 10)))
+           (kids (alist-get 'children node)))
+      (should (equal (alist-get 't node) "column"))
+      (let* ((row-kids (alist-get 'children (aref kids 0)))
+             (tap (alist-get 'on_tap (aref row-kids 2))))
+        (should (equal (alist-get 'text (aref row-kids 0)) "emacs-lisp"))
+        (should (equal (alist-get 'action tap) "org.babel.execute"))
+        (should (integerp (alist-get 'pos (alist-get 'args tap)))))
+      (should (equal (alist-get 't (aref kids 1)) "text")))
+    ;; Without file context: plain highlighted code, no affordance.
+    (should (equal (alist-get 't (car (jetpacs-org-rich-body body nil)))
+                   "text"))
+    ;; A language this Emacs can't execute: plain code even with context.
+    (should (equal (alist-get
+                    't (car (jetpacs-org-rich-body
+                             "#+begin_src nosuchlang\nx\n#+end_src\n"
+                             nil "/tmp/t.org" 10)))
+                   "text"))))
+
+(ert-deftest jetpacs-org-rich-drawer-renders-folded ()
+  "Drawers render as collapsed sections instead of disappearing."
+  (let* ((nodes (jetpacs-org-rich-body
+                 ":LOGBOOK:\n- Note taken\n:END:\nBody\n" nil))
+         (drawer (car nodes)))
+    (should (= (length nodes) 2))       ; drawer + body paragraph
+    (should (equal (alist-get 't drawer) "collapsible"))
+    (should (eq (alist-get 'collapsed drawer) t))
+    (should (equal (alist-get 'text (alist-get 'header drawer)) "LOGBOOK"))
+    (should (> (length (alist-get 'children drawer)) 0))))
+
+(ert-deftest jetpacs-org-toolbar-lints-and-roundtrips ()
+  "The org toolbar is wire-valid data on an editor node (SPEC §9).
+This list is the toolbar's specification of record — the companion's
+OrgEditToolbar.kt is gone — so every op must stay inside the closed
+vocabulary `jetpacs-lint' checks."
+  (let ((ed (jetpacs-editor "f.org" "content"
+                         :syntax "org"
+                         :toolbar (jetpacs-org-toolbar))))
+    (should-not (jetpacs-lint-spec ed))
+    (let* ((toolbar (alist-get 'toolbar (jetpacs-render-to-json ed)))
+           (items (append toolbar nil)))
+      (should (vectorp toolbar))
+      (should (= 18 (length items)))
+      ;; The long-press secondaries (progress cookie, timestamp) survive.
+      (should (= 2 (cl-count-if (lambda (item) (assq 'long_press item)) items)))
+      ;; The src menu keeps its free-form ${input:Language} escape.
+      (should (cl-find-if
+               (lambda (item)
+                 (cl-find-if (lambda (sub)
+                               (string-search "${input:Language}"
+                                              (or (alist-get 'snippet sub) "")))
+                             (append (alist-get 'menu item) nil)))
+               items)))))
+
+;; ─── Query routing (vulpea index vs org-ql) ─────────────────────────────────
+
 
 (provide 'jetpacs-tests)
 ;;; jetpacs-tests.el ends here

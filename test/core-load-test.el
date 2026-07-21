@@ -22,7 +22,7 @@
                    jetpacs-files jetpacs-witheditor jetpacs-emacs-ui
                    jetpacs-package-browser jetpacs-customize jetpacs-modus
                    jetpacs-tools jetpacs-project jetpacs-sql
-                   jetpacs-hosts jetpacs-automations))
+                   jetpacs-hosts jetpacs-automations jetpacs-org-toolbar))
   (require feature))
 
 (dolist (feature '(glasspane glasspane-ui glasspane-org glasspane-magit))
@@ -44,6 +44,14 @@
   (error "jetpacs-org failed to load"))
 (unless (featurep 'org)
   (error "jetpacs-org did not provide org support"))
+
+;; The org-layer siblings ride the same sanction: the rich renderer and
+;; the literate automations loader may require org.  (jetpacs-org-toolbar
+;; is pure widget data — it loads with the org-free core above.)
+(require 'jetpacs-org-rich)
+(require 'jetpacs-automations-org)
+(unless (and (featurep 'jetpacs-org-rich) (featurep 'jetpacs-automations-org))
+  (error "org-layer sibling failed to load"))
 
 ;; The shell must be servable on its own: views registered by core
 ;; feature modules exist even with no app loaded.

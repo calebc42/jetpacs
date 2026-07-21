@@ -14,7 +14,7 @@ a wire-level item gets a plan doc and the
 [CONTRIBUTING-NODES.md](CONTRIBUTING-NODES.md) checklist). Everything
 here is weighed against the standing thesis — *rich server, thin
 client* ([ROADMAP.md](ROADMAP.md),
-`Glasspane/docs/DECISION-no-binding-template-dsl.md`): expressiveness
+`DECISION-no-binding-template-dsl.md`): expressiveness
 comes from Emacs, never from widening the wire grammar.
 
 ## Why

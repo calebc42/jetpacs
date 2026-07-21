@@ -6,7 +6,7 @@ Stage 3 landed on Glasspane `main` in **re-scoped form**: the engine sources
 (`glasspane.org`, vulpea-backed `glasspane.notes`), the annotated action catalog,
 `glasspane-pack.el` + dependency-aware `glasspane-pack.json`, and the internal-poke drops
 all shipped — but the planned `:spec` migrations of Glasspane's rich card surfaces were
-**rejected** by `Glasspane/docs/DECISION-no-binding-template-dsl.md` (rich rendering stays
+**rejected** by `DECISION-no-binding-template-dsl.md` (rich rendering stays
 in elisp `:builder`s; `:spec` stays the minimal composer-facing grammar; no template DSL,
 no api 1.6.0). **Stage 4 (composer pack targeting) executed 2026-07-13** on the composer
 branch `claude/stage-4-pack-targeting` (S4.0–S4.6; see the companion's EXECUTED status
@@ -31,7 +31,7 @@ shipped.
 
 **Companion deliverables:**
 - **Stage 3** → `Glasspane/docs/PLAN-binding-adoption.md` — exists, executed (see its status
-  header), re-scoped by `Glasspane/docs/DECISION-no-binding-template-dsl.md`.
+  header), re-scoped by `DECISION-no-binding-template-dsl.md`.
 - **Stage 4** → `jetpacs-composer/docs/PLAN-pack-targeting.md` — **executed 2026-07-13**
   (see its EXECUTED status header for the commit list and batch gates; cross-linked from
   `jetpacs-composer/docs/PLAN-nocobase-horizons.md`). One renumbering against this doc's

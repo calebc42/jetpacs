@@ -20,7 +20,7 @@ layer** (the one org query/mutation grammar, confined to its module).
 The standing thesis is *rich server, thin client*: expressiveness comes
 from Emacs and its package ecosystem (vulpea, org-ql — installed as pack
 dependencies by the composer), never from widening the wire grammar
-(see `Glasspane/docs/DECISION-no-binding-template-dsl.md`).
+(see `DECISION-no-binding-template-dsl.md`).
 
 ## The meta-goal
 

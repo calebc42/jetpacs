@@ -180,7 +180,7 @@ satisfiable.
   carve-outs now in the roadmap (2.6 state sugar, 2.7 view lifecycle,
   3.1/3.2 wire deltas), which are *not* those machineries.
 - No wire template DSL; 3.2's verbs stay a closed enumerated set
-  (`Glasspane/docs/DECISION-no-binding-template-dsl.md`).
+  (`DECISION-no-binding-template-dsl.md`).
 - Do not port vulpea's hybrid schema into `jetpacs-org`; engine, not
   blueprint.
 - Do not vendor/depend on vui.el in core (the additive vui companion

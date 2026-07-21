@@ -102,7 +102,7 @@ The command palette is the Tier 0 default for raw keymaps; the radial pie
 is reserved for menus with human-written labels and ≤ ~10 items. Live
 transient sessions get a pie automatically (jetpacs-keymap syncs it); for a
 hand-curated pie over a mode, see
-[`jetpacs-magit.el`](https://github.com/calebc42/glasspane/blob/main/emacs/apps/jetpacs-magit.el)
+[`glasspane-magit.el`](https://github.com/calebc42/glasspane/blob/main/emacs/apps/glasspane-magit.el)
 (glasspane repo) — pure data plus key dispatch through the existing
 allowlisted action.
 

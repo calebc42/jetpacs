@@ -148,7 +148,7 @@ library names no host class):
 | `jetpacs-hypertext-register-shr-mode` | jetpacs-hypertext | one-line riders for shr-rendered modes (elfeed-show, nov, devdocs) |
 | `jetpacs-files-editor-{body,actions,toolbar}` + open/after-save hooks | jetpacs-files | per-file-type editor behaviour |
 | `jetpacs-settings-register-section` / `jetpacs-settings-after-set-hook` | jetpacs-settings | app settings exposure (the wire allowlist) |
-| `jetpacs-keymap` pie plumbing | jetpacs-keymap | curated Tier 1 pies (see jetpacs-magit.el) |
+| `jetpacs-keymap` pie plumbing | jetpacs-keymap | curated Tier 1 pies (see glasspane-magit.el) |
 | `jetpacs-defaction` | jetpacs-surfaces | every semantic action handler (allowlist rule: [SPEC §5](https://github.com/calebc42/ebp/blob/main/SPEC.md#5-events-the-semantic-action-boundary)) |
 | `jetpacs-device-*` / `jetpacs-capability-invoke` | jetpacs-device, jetpacs.el | device side-effects from handlers and triggers (SPEC §10) |
 | `jetpacs-deftrigger` / `jetpacs-trigger-register` | jetpacs-triggers | device events → elisp handlers, plus companion-local `on_fire` (SPEC §11) |

@@ -25,7 +25,7 @@
                    jetpacs-hosts jetpacs-automations))
   (require feature))
 
-(dolist (feature '(glasspane glasspane-ui glasspane-org jetpacs-magit))
+(dolist (feature '(glasspane glasspane-ui glasspane-org glasspane-magit))
   (when (featurep feature)
     (error "Core pulled in app feature %s" feature)))
 

@@ -114,7 +114,7 @@ where a tap must mean fold/unfold, not the span's own action)."
 
 (defun jetpacs-sections--retarget-taps (spans)
   "SPANS with their generic tap actions re-pointed at `sections.visit'.
-The Tier 0 line-span builder wires taps to `jetpacs.buffer.act', which
+The Tier 0 line-span builder wires taps to `emacs.buffer.act', which
 runs the RET command in place — in a magit buffer that command visits a
 thing by popping a desktop window the phone never sees.  `sections.visit'
 runs the same command under the follow shim and shows the destination in
@@ -123,7 +123,7 @@ taps pass through untouched."
   (mapcar
    (lambda (sp)
      (let ((tap (alist-get 'on_tap sp)))
-       (if (not (equal (alist-get 'action tap) "jetpacs.buffer.act"))
+       (if (not (equal (alist-get 'action tap) "emacs.buffer.act"))
            sp
          (let ((copy (copy-alist sp)))
            (setf (alist-get 'on_tap copy)

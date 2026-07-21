@@ -295,7 +295,7 @@ never touch nodes."
 ;; this section, so an shr change across Emacs versions is a one-spot edit.
 ;; Links and inline emphasis are NOT read here — they ride the Tier 0
 ;; line-span builder (`jetpacs-buffer--line-spans'), which already turns shr's
-;; mouse-face/keymap link runs into `jetpacs.buffer.act' taps and maps face
+;; mouse-face/keymap link runs into `emacs.buffer.act' taps and maps face
 ;; emphasis to span styling.  Only block structure is shr-specific.
 
 (defconst jetpacs-hypertext--shr-heading-faces
@@ -438,7 +438,7 @@ beginning; the buffer is not moved."
   "Spans for paragraph block [BEG, END), reflowed across its lines.
 Reuses `jetpacs-buffer--line-spans' with monospace and color emission off
 \(eww prose is proportional and themed by the device), so shr links become
-`jetpacs.buffer.act' taps and face emphasis maps to span styling for free;
+`emacs.buffer.act' taps and face emphasis maps to span styling for free;
 non-empty lines are joined by a space so the paragraph reflows."
   (let ((jetpacs-buffer-monospace nil)
         (jetpacs-buffer-emit-colors nil)
@@ -731,7 +731,7 @@ emitted SEGMENTS, led by TITLE.  Runs in BUF for buffer-local nav state."
 ;; alignment-bearing (argument lists, menus), so — unlike the shr adapter's
 ;; block reflow — each non-blank line becomes its own paragraph, preserving
 ;; layout.  Links and buttons (help xrefs, Info menu entries and *note refs)
-;; ride the Tier 0 line-span builder into `jetpacs.buffer.act' taps for free.
+;; ride the Tier 0 line-span builder into `emacs.buffer.act' taps for free.
 
 (defun jetpacs-hypertext--scan-lines (buf &optional classify)
   "Scan BUF into a model, one segment per non-blank line (layout preserved).

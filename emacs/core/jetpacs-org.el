@@ -1492,7 +1492,7 @@ Footnote references open their dialog; item checkboxes toggle; tapping a
 heading (but not a link inside it) opens the header action sheet — the
 organice-style tap-a-header affordance.  Everything else returns nil and
 keeps the generic Tier-0 behavior (links still open through
-`jetpacs.buffer.act').  Cheap pre-filters guard each check, so ordinary
+`emacs.buffer.act').  Cheap pre-filters guard each check, so ordinary
 runs pay regexp cost at most."
   (save-excursion
     (goto-char pos)

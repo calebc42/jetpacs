@@ -2,7 +2,7 @@
 
 **STATUS (2026-07-19): proposed.** The first thing built *on* the new
 wire rather than *for* it. Builds on the envelope swap (`06f83fe`,
-SPEC-2 amendment #27), `slop-docs/WEBSOCKET-transport-kit.md` (the
+SPEC-2 amendment #27), `ebp/slop-docs/WEBSOCKET-transport-kit.md` (the
 websocket.el v1.16 source read), and browsel as prior art
 (`~/pkb/resources/emacs/browsel`). This plan is also the answer to the
 kit's §4 question: the WS transport profile's spec text **waits for

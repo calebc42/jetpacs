@@ -2336,7 +2336,7 @@ outbound counterpart of the inbound `share.text' capture."
 
 (defun jetpacs-native-settings-action ()
   "Open native Jetpacs settings, even while Emacs is offline."
-  (jetpacs--node nil 'builtin "jetpacs.settings.open"))
+  (jetpacs--node nil 'builtin "companion.settings.open"))
 
 (cl-defun jetpacs-button (label action &key icon variant weight padding)
   "A button. VARIANT is filled/outlined/text/tonal."
@@ -3235,7 +3235,7 @@ literal by the companion — almost always a typo worth a warning.")
   '(("view.switch" (view) ())
     ("clipboard.copy" (text) ())
     ("share.send" (text) (title))
-    ("jetpacs.settings.open" () ()))
+    ("companion.settings.open" () ()))
   "Companion-local builtins → required and optional payload keys (SPEC §5).
 Each entry is (NAME REQUIRED OPTIONAL): an action object using `builtin'
 must name one of these and carry every REQUIRED key; OPTIONAL keys are
@@ -6753,7 +6753,7 @@ vim's hybrid style).  Configurable from the phone's Settings view."
   "Dim gray for line-number spans; legible on light and dark themes.")
 
 (defvar jetpacs-buffer-refresh-function nil
-  "Function called with no args after an `jetpacs.buffer.act' mutates a buffer.
+  "Function called with no args after an `emacs.buffer.act' mutates a buffer.
 The host shell sets this to re-push whatever surface is showing the buffer.
 Kept as a seam so this module never depends on a specific UI layer.")
 
@@ -6761,7 +6761,7 @@ Kept as a seam so this module never depends on a specific UI layer.")
   "When non-nil, a function (POS BUFFER-NAME) -> action alist, or nil.
 Consulted at the start of every span run before the generic actionable
 check; a non-nil result becomes that run's tap action instead of the
-default `jetpacs.buffer.act' dispatch.  Tier-1 skins let-bind this
+default `emacs.buffer.act' dispatch.  Tier-1 skins let-bind this
 around delegated region renders to route taps on mode-specific objects
 \(an org footnote reference, say) to their own actions.  A signaling
 function counts as nil — a broken skin routing must not cost the
@@ -6770,13 +6770,13 @@ render.")
 (defun jetpacs-buffer--span-action (pos buffer-name)
   "The tap action for the run starting at POS, or nil.
 The skin override wins; otherwise an actionable region gets the generic
-`jetpacs.buffer.act' dispatch."
+`emacs.buffer.act' dispatch."
   (or (and jetpacs-buffer-span-action-function
            (condition-case nil
                (funcall jetpacs-buffer-span-action-function pos buffer-name)
              (error nil)))
       (when (jetpacs-buffer--actionable-p pos)
-        (jetpacs-action "jetpacs.buffer.act"
+        (jetpacs-action "emacs.buffer.act"
                      :args `((buffer . ,buffer-name)
                              (pos . ,pos))))))
 
@@ -7397,7 +7397,7 @@ bridged to the companion automatically."
                 (call-interactively cmd)
                 t)))))))))
 
-(jetpacs-defaction "jetpacs.buffer.act"
+(jetpacs-defaction "emacs.buffer.act"
   (lambda (args _)
     (let ((buffer (alist-get 'buffer args))
           (pos (alist-get 'pos args)))
@@ -9344,7 +9344,7 @@ on another app's views."
 ;; Registered as a skin for `tabulated-list-mode' in
 ;; `jetpacs-render-buffer-functions'; anything the buffer view shows in a
 ;; tabulated-list derivative renders as sortable cards instead of monospace
-;; text.  Row taps reuse the existing `jetpacs.buffer.act' seam (push button /
+;; text.  Row taps reuse the existing `emacs.buffer.act' seam (push button /
 ;; RET at position), so activation adds no new dispatch surface; the only
 ;; new wire actions are `tablist.sort' and `tablist.refresh', both validated
 ;; against the buffer's own column format.
@@ -9461,7 +9461,7 @@ by its header label instead of a fragile index."
                         (list (jetpacs-text (or (car cols) "") 'label)
                               (unless (string-empty-p rest)
                                 (jetpacs-text rest 'caption))))))
-     :on-tap (jetpacs-action "jetpacs.buffer.act"
+     :on-tap (jetpacs-action "emacs.buffer.act"
                           :args `((buffer . ,buf-name) (pos . ,pos))
                           :when-offline "drop"))))
 
@@ -10385,7 +10385,7 @@ never touch nodes."
 ;; this section, so an shr change across Emacs versions is a one-spot edit.
 ;; Links and inline emphasis are NOT read here — they ride the Tier 0
 ;; line-span builder (`jetpacs-buffer--line-spans'), which already turns shr's
-;; mouse-face/keymap link runs into `jetpacs.buffer.act' taps and maps face
+;; mouse-face/keymap link runs into `emacs.buffer.act' taps and maps face
 ;; emphasis to span styling.  Only block structure is shr-specific.
 
 (defconst jetpacs-hypertext--shr-heading-faces
@@ -10528,7 +10528,7 @@ beginning; the buffer is not moved."
   "Spans for paragraph block [BEG, END), reflowed across its lines.
 Reuses `jetpacs-buffer--line-spans' with monospace and color emission off
 \(eww prose is proportional and themed by the device), so shr links become
-`jetpacs.buffer.act' taps and face emphasis maps to span styling for free;
+`emacs.buffer.act' taps and face emphasis maps to span styling for free;
 non-empty lines are joined by a space so the paragraph reflows."
   (let ((jetpacs-buffer-monospace nil)
         (jetpacs-buffer-emit-colors nil)
@@ -10821,7 +10821,7 @@ emitted SEGMENTS, led by TITLE.  Runs in BUF for buffer-local nav state."
 ;; alignment-bearing (argument lists, menus), so — unlike the shr adapter's
 ;; block reflow — each non-blank line becomes its own paragraph, preserving
 ;; layout.  Links and buttons (help xrefs, Info menu entries and *note refs)
-;; ride the Tier 0 line-span builder into `jetpacs.buffer.act' taps for free.
+;; ride the Tier 0 line-span builder into `emacs.buffer.act' taps for free.
 
 (defun jetpacs-hypertext--scan-lines (buf &optional classify)
   "Scan BUF into a model, one segment per non-blank line (layout preserved).
@@ -11068,7 +11068,7 @@ where a tap must mean fold/unfold, not the span's own action)."
 
 (defun jetpacs-sections--retarget-taps (spans)
   "SPANS with their generic tap actions re-pointed at `sections.visit'.
-The Tier 0 line-span builder wires taps to `jetpacs.buffer.act', which
+The Tier 0 line-span builder wires taps to `emacs.buffer.act', which
 runs the RET command in place — in a magit buffer that command visits a
 thing by popping a desktop window the phone never sees.  `sections.visit'
 runs the same command under the follow shim and shows the destination in
@@ -11077,7 +11077,7 @@ taps pass through untouched."
   (mapcar
    (lambda (sp)
      (let ((tap (alist-get 'on_tap sp)))
-       (if (not (equal (alist-get 'action tap) "jetpacs.buffer.act"))
+       (if (not (equal (alist-get 'action tap) "emacs.buffer.act"))
            sp
          (let ((copy (copy-alist sp)))
            (setf (alist-get 'on_tap copy)
@@ -15603,7 +15603,7 @@ Footnote references open their dialog; item checkboxes toggle; tapping a
 heading (but not a link inside it) opens the header action sheet — the
 organice-style tap-a-header affordance.  Everything else returns nil and
 keeps the generic Tier-0 behavior (links still open through
-`jetpacs.buffer.act').  Cheap pre-filters guard each check, so ordinary
+`emacs.buffer.act').  Cheap pre-filters guard each check, so ordinary
 runs pay regexp cost at most."
   (save-excursion
     (goto-char pos)

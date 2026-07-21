@@ -8,7 +8,7 @@
 ;; Registered as a skin for `tabulated-list-mode' in
 ;; `jetpacs-render-buffer-functions'; anything the buffer view shows in a
 ;; tabulated-list derivative renders as sortable cards instead of monospace
-;; text.  Row taps reuse the existing `jetpacs.buffer.act' seam (push button /
+;; text.  Row taps reuse the existing `emacs.buffer.act' seam (push button /
 ;; RET at position), so activation adds no new dispatch surface; the only
 ;; new wire actions are `tablist.sort' and `tablist.refresh', both validated
 ;; against the buffer's own column format.
@@ -125,7 +125,7 @@ by its header label instead of a fragile index."
                         (list (jetpacs-text (or (car cols) "") 'label)
                               (unless (string-empty-p rest)
                                 (jetpacs-text rest 'caption))))))
-     :on-tap (jetpacs-action "jetpacs.buffer.act"
+     :on-tap (jetpacs-action "emacs.buffer.act"
                           :args `((buffer . ,buf-name) (pos . ,pos))
                           :when-offline "drop"))))
 

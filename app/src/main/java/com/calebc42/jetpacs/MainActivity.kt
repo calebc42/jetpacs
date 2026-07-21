@@ -177,7 +177,7 @@ private fun BridgeScreen() {
      */
     val dispatch = { action: JSONObject ->
         when (action.optString("builtin")) {
-            "jetpacs.settings.open" -> {
+            "companion.settings.open" -> {
                 JetpacsRuntime.dialogState.dismiss()
                 JetpacsRuntime.pieMenuState.dismiss()
                 showJetpacsSettings = true

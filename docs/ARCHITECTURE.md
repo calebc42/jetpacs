@@ -220,7 +220,7 @@ in the ebp protocol repo:
 | `session.welcome` `device` report | §3, §10 |
 | `SurfaceStore` / `SurfaceManager` (revisions, cache, multi-view) | §4 |
 | `ActionReceiver` (actions, policies, dedupe), `dispatchWithValue` value injection | §5 |
-| Builtins (`view.switch`, `clipboard.copy`, `jetpacs.settings.open`) | §5 |
+| Builtins (`view.switch`, `clipboard.copy`, `companion.settings.open`) | §5 |
 | Offline queue + replay (`JetpacsDatabase`, replay loop) | §6 |
 | Dialogs, toasts, pies (`JetpacsDialogState`, `JetpacsPieMenuState`) | §7 |
 | `ReminderScheduler` (replace-set, reboot persistence) | §7 |

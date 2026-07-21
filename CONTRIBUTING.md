@@ -98,7 +98,7 @@ however good the feature.
    for an INTENTIONAL wire change
    (`emacs -Q --batch -l test/jetpacs-tests.el -f jetpacs-tests-regen-widget-golden`
    / `-f jetpacs-tests-regen-frame-golden` /
-   `emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write`),
+   `emacs --batch -l ebp/tools/build-contract.el -f ebp-contract-write`),
    and document the change in SPEC §9 (widgets) or the frame's own
    section. The release flow is two commits, one direction: edit the
    elisp tables/constructors here → regenerate into `ebp/` → commit in

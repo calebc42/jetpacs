@@ -62,7 +62,7 @@ vim's hybrid style).  Configurable from the phone's Settings view."
   "Dim gray for line-number spans; legible on light and dark themes.")
 
 (defvar jetpacs-buffer-refresh-function nil
-  "Function called with no args after an `jetpacs.buffer.act' mutates a buffer.
+  "Function called with no args after an `emacs.buffer.act' mutates a buffer.
 The host shell sets this to re-push whatever surface is showing the buffer.
 Kept as a seam so this module never depends on a specific UI layer.")
 
@@ -70,7 +70,7 @@ Kept as a seam so this module never depends on a specific UI layer.")
   "When non-nil, a function (POS BUFFER-NAME) -> action alist, or nil.
 Consulted at the start of every span run before the generic actionable
 check; a non-nil result becomes that run's tap action instead of the
-default `jetpacs.buffer.act' dispatch.  Tier-1 skins let-bind this
+default `emacs.buffer.act' dispatch.  Tier-1 skins let-bind this
 around delegated region renders to route taps on mode-specific objects
 \(an org footnote reference, say) to their own actions.  A signaling
 function counts as nil — a broken skin routing must not cost the
@@ -79,13 +79,13 @@ render.")
 (defun jetpacs-buffer--span-action (pos buffer-name)
   "The tap action for the run starting at POS, or nil.
 The skin override wins; otherwise an actionable region gets the generic
-`jetpacs.buffer.act' dispatch."
+`emacs.buffer.act' dispatch."
   (or (and jetpacs-buffer-span-action-function
            (condition-case nil
                (funcall jetpacs-buffer-span-action-function pos buffer-name)
              (error nil)))
       (when (jetpacs-buffer--actionable-p pos)
-        (jetpacs-action "jetpacs.buffer.act"
+        (jetpacs-action "emacs.buffer.act"
                      :args `((buffer . ,buffer-name)
                              (pos . ,pos))))))
 
@@ -706,7 +706,7 @@ bridged to the companion automatically."
                 (call-interactively cmd)
                 t)))))))))
 
-(jetpacs-defaction "jetpacs.buffer.act"
+(jetpacs-defaction "emacs.buffer.act"
   (lambda (args _)
     (let ((buffer (alist-get 'buffer args))
           (pos (alist-get 'pos args)))

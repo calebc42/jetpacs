@@ -2379,7 +2379,7 @@ POS-driven eww/Info/help RET can't be hijacked by a stale event."
 a paragraph with spans becomes a rich_text carrying those spans."
   (let* ((spans (list (jetpacs-span "hello ")
                       (jetpacs-span "link"
-                                 :on-tap (jetpacs-action "jetpacs.buffer.act"
+                                 :on-tap (jetpacs-action "emacs.buffer.act"
                                                       :args '((buffer . "b") (pos . 3))))))
          (model (list (list :kind 'heading :level 2 :spans spans)
                       (list :kind 'para :spans spans)))
@@ -2410,7 +2410,7 @@ a paragraph with spans becomes a rich_text carrying those spans."
 
 (defun jetpacs-hypertext--emit-cases ()
   "Document models exercising every segment kind; each yields a node list."
-  (let* ((act (jetpacs-action "jetpacs.buffer.act"
+  (let* ((act (jetpacs-action "emacs.buffer.act"
                            :args '((buffer . "*eww*") (pos . 42))))
          (link (jetpacs-span "docs" :on-tap act))
          (spans (list (jetpacs-span "see the ") link (jetpacs-span " page."))))
@@ -2466,7 +2466,7 @@ Only run this after an INTENTIONAL change; review the diff."
 
 (ert-deftest jetpacs-hypertext-shr-scan ()
   "An shr-rendered buffer scans into headings (with levels) and link-bearing
-paragraphs; link spans tap `jetpacs.buffer.act', and the emitted document is
+paragraphs; link spans tap `emacs.buffer.act', and the emitted document is
 wire-valid.  Gated on libxml (absent in lean builds; present in CI Emacs)."
   (skip-unless (jetpacs-feature-p 'libxml))
   (require 'shr)
@@ -2492,14 +2492,14 @@ wire-valid.  Gated on libxml (absent in lean builds; present in CI Emacs)."
       (should (equal (mapcar (lambda (h) (plist-get h :level)) headings) '(1 2)))
       (should (member "Main Heading"
                       (mapcar (lambda (h) (plist-get h :text)) headings))))
-    ;; Paragraphs, at least one carrying a link span tapping jetpacs.buffer.act.
+    ;; Paragraphs, at least one carrying a link span tapping emacs.buffer.act.
     (let* ((paras (seq-filter (lambda (s) (eq (plist-get s :kind) 'para)) model))
            (spans (apply #'append (mapcar (lambda (p) (plist-get p :spans)) paras)))
            (taps (seq-filter (lambda (sp) (alist-get 'on_tap sp)) spans)))
       (should (>= (length paras) 2))
       (should (>= (length taps) 1))
       (should (equal (alist-get 'action (alist-get 'on_tap (car taps)))
-                     "jetpacs.buffer.act")))
+                     "emacs.buffer.act")))
     ;; The whole emitted document is wire-valid.
     (dolist (n (jetpacs-hypertext--emit model "Test Page"))
       (should (null (jetpacs-lint-spec n))))))
@@ -2697,7 +2697,7 @@ no command, so the wire can never name a command to run."
 
 (ert-deftest jetpacs-hypertext-help-adapter ()
   "help-mode renders as a document: the subject is the title, xref buttons
-become jetpacs.buffer.act taps, and the emitted document is wire-valid."
+become emacs.buffer.act taps, and the emitted document is wire-valid."
   (require 'help-mode)
   (save-window-excursion (describe-function 'car))
   (let* ((buf (get-buffer "*Help*"))
@@ -2712,7 +2712,7 @@ become jetpacs.buffer.act taps, and the emitted document is wire-valid."
     (should (equal title "car"))
     (should (>= (length taps) 1))
     (should (equal (alist-get 'action (alist-get 'on_tap (car taps)))
-                   "jetpacs.buffer.act"))
+                   "emacs.buffer.act"))
     (dolist (n nodes) (should (null (jetpacs-lint-spec n))))))
 
 (ert-deftest jetpacs-hypertext-info-classify ()
@@ -3690,7 +3690,7 @@ excluded from the settings.set/reset gate and from switch state handlers."
                  (on_tap . ((builtin . "clipboard.copy") (text . "hi"))))))
   (should-not (jetpacs-lint-spec
                `((t . "button") (label . "L")
-                 (on_tap . ((builtin . "jetpacs.settings.open")))))))
+                 (on_tap . ((builtin . "companion.settings.open")))))))
 
 (ert-deftest jetpacs-lint-recognizes-chart-and-widget-action-keys ()
   "`on_point_tap' and `on_button' are validated as embedded actions."
@@ -4172,14 +4172,14 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
 (ert-deftest jetpacs-contract-artifact-current ()
   "The committed ebp/contract.json byte-matches a fresh generation.
 Regenerate after an intentional wire-vocabulary change:
-  emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write
+  emacs --batch -l ebp/tools/build-contract.el -f ebp-contract-write
 then commit inside ebp/ and bump the submodule pointer."
-  (load (expand-file-name "../emacs/build-contract.el" jetpacs-tests--dir) nil t)
+  (load (expand-file-name "../ebp/tools/build-contract.el" jetpacs-tests--dir) nil t)
   (let ((committed (with-temp-buffer
                      (let ((coding-system-for-read 'utf-8-unix))
-                       (insert-file-contents (jetpacs-contract-file)))
+                       (insert-file-contents (ebp-contract-file)))
                      (buffer-string))))
-    (should (string= committed (jetpacs-contract-string)))))
+    (should (string= committed (ebp-contract-string)))))
 
 (ert-deftest jetpacs-node-types-mirror ()
   "lint node types = widgets.golden `t' set = Kotlin SDUI_NODE_TYPES.
@@ -6172,7 +6172,7 @@ satellites under Emacs — no companion-theme/dialog-style left on Emacs."
     (should (string-search "settings-emacs" hub)))
   ;; Jetpacs surface: native Android access + Dialog style + the system knob.
   (let ((j (prin1-to-string (jetpacs-shell--jetpacs-settings-view nil))))
-    (should (string-search "jetpacs.settings.open" j))
+    (should (string-search "companion.settings.open" j))
     (should (string-search "setting/jetpacs-dialog-style" j))
     (should (string-search "setting/jetpacs-apps-show-vanilla-app" j)))
   ;; Emacs surface: connection knobs, but NOT the relocated companion

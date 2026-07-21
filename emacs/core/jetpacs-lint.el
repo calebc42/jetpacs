@@ -115,7 +115,7 @@ literal by the companion — almost always a typo worth a warning.")
   '(("view.switch" (view) ())
     ("clipboard.copy" (text) ())
     ("share.send" (text) (title))
-    ("jetpacs.settings.open" () ()))
+    ("companion.settings.open" () ()))
   "Companion-local builtins → required and optional payload keys (SPEC §5).
 Each entry is (NAME REQUIRED OPTIONAL): an action object using `builtin'
 must name one of these and carry every REQUIRED key; OPTIONAL keys are

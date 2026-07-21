@@ -571,7 +571,7 @@ outbound counterpart of the inbound `share.text' capture."
 
 (defun jetpacs-native-settings-action ()
   "Open native Jetpacs settings, even while Emacs is offline."
-  (jetpacs--node nil 'builtin "jetpacs.settings.open"))
+  (jetpacs--node nil 'builtin "companion.settings.open"))
 
 (cl-defun jetpacs-button (label action &key icon variant weight padding)
   "A button. VARIANT is filled/outlined/text/tonal."

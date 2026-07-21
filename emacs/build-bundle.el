@@ -24,6 +24,14 @@
 ;;; Code:
 
 (let* ((here (file-name-directory (or load-file-name buffer-file-name)))
+       ;; The wire contract, embedded verbatim: `jetpacs-lint' derives its
+       ;; vocabulary tables from it at load, and a deployed bundle has no
+       ;; ebp/ checkout beside it.  Re-run this build after an ebp
+       ;; submodule bump so the embedded copy tracks the pinned contract.
+       (contract (with-temp-buffer
+                   (insert-file-contents
+                    (expand-file-name "../ebp/contract.json" here))
+                   (buffer-string)))
        ;; Dependency order. Do not reorder without re-checking the require
        ;; graph.
        (core-files '("core/jetpacs.el"
@@ -80,7 +88,13 @@
                          ";; Concatenated in dependency order; each part keeps its own `provide',\n"
                          ";; so the inter-file `require' forms resolve within this file.\n"
                          ";;\n"
-                         ";;; Code:\n\n")
+                         ";;; Code:\n\n"
+                         ";;; ==================================================================\n"
+                         ";;; BEGIN embedded wire contract (from ebp/contract.json)\n"
+                         ";;; ==================================================================\n\n"
+                         "(defvar jetpacs-lint--contract-embedded nil)\n"
+                         (format "(setq jetpacs-lint--contract-embedded %S)\n\n"
+                                 contract))
                  (dolist (f files)
                    (insert ";;; ==================================================================\n"
                            (format ";;; BEGIN %s\n" f)

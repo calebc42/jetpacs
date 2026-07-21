@@ -13,8 +13,13 @@
 ;;
 ;;   emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write
 ;;
-;; The projection is STATIC AND AUTHORED ONLY: the node/method schemas
-;; are the hand-reviewed `jetpacs-lint.el' tables, never inferred from
+;; Since the #30 follow-up `jetpacs-lint's wire tables themselves DERIVE
+;; from ebp/contract.json at load, making this projection a ROUND TRIP:
+;; contract → derived tables → this output must reproduce the committed
+;; contract byte-exactly, so the drift test witnesses that the
+;; derivation is lossless (and that the client's own api/protocol
+;; versions still match the contract's) rather than guarding
+;; hand-copied tables.  The projection is STATIC: never inferred from
 ;; golden examples, and there are no live registrations (node support is
 ;; still negotiated per-connection via `node_types', SPEC-2 §3).  Output
 ;; is byte-stable — fixed key order, arrays as vectors, UTF-8/LF, one

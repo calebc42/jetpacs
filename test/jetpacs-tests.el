@@ -4171,12 +4171,14 @@ mirror invariant, the renderer's SDUI_NODE_TYPES — doesn't know about."
 
 (ert-deftest jetpacs-contract-artifact-current ()
   "The committed ebp/contract.json byte-matches this reference's projection.
-The contract is authored in ebp (its amendment log governs; ebp #30).
-On a mismatch, fix the lint tables here — or, for an INTENDED wire
-change, land the ebp amendment first, then
-  emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write
-regenerates in place to confirm the tables now match; bump the
-submodule pointer with the ebp commit."
+The contract is authored in ebp (its amendment log governs; ebp #30),
+and the lint tables DERIVE from it at load — so this is the round-trip
+witness: contract → derived tables → projection must be byte-identical,
+proving the derivation lossless and the client's api/protocol versions
+in sync with the contract.  For an intended wire change, land the ebp
+amendment first and bump the submodule; the tables follow automatically
+(`emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write`
+regenerates in place for comparison)."
   (load (expand-file-name "../emacs/build-contract.el" jetpacs-tests--dir) nil t)
   (let ((committed (with-temp-buffer
                      (let ((coding-system-for-read 'utf-8-unix))

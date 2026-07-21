@@ -8,6 +8,1052 @@
 ;;; Code:
 
 ;;; ==================================================================
+;;; BEGIN embedded wire contract (from ebp/contract.json)
+;;; ==================================================================
+
+(defvar jetpacs-lint--contract-embedded nil)
+(setq jetpacs-lint--contract-embedded "{
+  \"contract_format\": 5,
+  \"reference_api_version\": \"2.0.0\",
+  \"protocol_version\": 2,
+  \"spec_version\": \"2.0-draft\",
+  \"node_types\": [
+    \"text\",
+    \"rich_text\",
+    \"row\",
+    \"flow_row\",
+    \"column\",
+    \"box\",
+    \"surface\",
+    \"lazy_column\",
+    \"spacer\",
+    \"divider\",
+    \"card\",
+    \"collapsible\",
+    \"reorderable_list\",
+    \"table\",
+    \"tabs\",
+    \"chart\",
+    \"canvas\",
+    \"month_grid\",
+    \"icon\",
+    \"image\",
+    \"date_stamp\",
+    \"section_header\",
+    \"empty_state\",
+    \"progress\",
+    \"menu\",
+    \"button\",
+    \"icon_button\",
+    \"chip\",
+    \"assist_chip\",
+    \"badge\",
+    \"text_input\",
+    \"editor\",
+    \"checkbox\",
+    \"switch\",
+    \"enum_list\",
+    \"date_button\",
+    \"time_button\",
+    \"slider\",
+    \"scaffold\"
+  ],
+  \"node_schema\": {
+    \"*\": {
+      \"required\": [],
+      \"optional\": [
+        \"scroll_here\",
+        \"dialog_style\",
+        \"key\"
+      ]
+    },
+    \"text\": {
+      \"required\": [
+        \"text\"
+      ],
+      \"optional\": [
+        \"style\",
+        \"weight\",
+        \"color\",
+        \"selectable\",
+        \"max_lines\",
+        \"padding\",
+        \"syntax\"
+      ]
+    },
+    \"rich_text\": {
+      \"required\": [
+        \"spans\"
+      ],
+      \"optional\": [
+        \"style\",
+        \"padding\"
+      ]
+    },
+    \"row\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": [
+        \"spacing\",
+        \"align\",
+        \"scroll\",
+        \"weight\",
+        \"fill\"
+      ]
+    },
+    \"flow_row\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": [
+        \"spacing\",
+        \"run_spacing\"
+      ]
+    },
+    \"column\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": [
+        \"spacing\",
+        \"align\",
+        \"scroll\",
+        \"weight\",
+        \"fill\"
+      ]
+    },
+    \"box\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": [
+        \"alignment\",
+        \"padding\",
+        \"weight\",
+        \"on_tap\",
+        \"width\",
+        \"height\",
+        \"fill_fraction\",
+        \"border\"
+      ]
+    },
+    \"surface\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": [
+        \"color\",
+        \"shape\",
+        \"elevation\",
+        \"padding\",
+        \"fill\",
+        \"width\",
+        \"height\",
+        \"fill_fraction\",
+        \"border\"
+      ]
+    },
+    \"lazy_column\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": []
+    },
+    \"spacer\": {
+      \"required\": [],
+      \"optional\": [
+        \"height\",
+        \"width\",
+        \"weight\"
+      ]
+    },
+    \"divider\": {
+      \"required\": [],
+      \"optional\": []
+    },
+    \"card\": {
+      \"required\": [
+        \"children\"
+      ],
+      \"optional\": [
+        \"on_tap\",
+        \"on_swipe\",
+        \"swipe_start\",
+        \"swipe_end\",
+        \"padding\",
+        \"weight\",
+        \"width\",
+        \"height\",
+        \"fill_fraction\",
+        \"border\"
+      ]
+    },
+    \"collapsible\": {
+      \"required\": [
+        \"id\",
+        \"header\",
+        \"children\"
+      ],
+      \"optional\": [
+        \"collapsed\",
+        \"on_long_tap\",
+        \"on_swipe\",
+        \"swipe_start\",
+        \"swipe_end\"
+      ]
+    },
+    \"reorderable_list\": {
+      \"required\": [
+        \"items\"
+      ],
+      \"optional\": [
+        \"on_reorder\"
+      ]
+    },
+    \"table\": {
+      \"required\": [
+        \"rows\"
+      ],
+      \"optional\": [
+        \"aligns\",
+        \"on_add_row\",
+        \"on_add_col\",
+        \"padding\"
+      ]
+    },
+    \"tabs\": {
+      \"required\": [
+        \"items\",
+        \"children\"
+      ],
+      \"optional\": [
+        \"initial\",
+        \"scrollable\",
+        \"pager_only\",
+        \"on_change\",
+        \"id\"
+      ]
+    },
+    \"chart\": {
+      \"required\": [
+        \"series\"
+      ],
+      \"optional\": [
+        \"kind\",
+        \"height\",
+        \"y_range\",
+        \"summary\",
+        \"on_point_tap\",
+        \"children\"
+      ]
+    },
+    \"canvas\": {
+      \"required\": [
+        \"width\",
+        \"height\",
+        \"ops\"
+      ],
+      \"optional\": [
+        \"children\"
+      ]
+    },
+    \"month_grid\": {
+      \"required\": [
+        \"month\"
+      ],
+      \"optional\": [
+        \"marks\",
+        \"selected\",
+        \"min_month\",
+        \"max_month\",
+        \"on_day_tap\",
+        \"on_month_change\",
+        \"children\"
+      ]
+    },
+    \"icon\": {
+      \"required\": [
+        \"name\"
+      ],
+      \"optional\": [
+        \"size\",
+        \"color\",
+        \"padding\",
+        \"badge\"
+      ]
+    },
+    \"image\": {
+      \"required\": [
+        \"url\"
+      ],
+      \"optional\": [
+        \"content_description\",
+        \"padding\",
+        \"width\",
+        \"height\",
+        \"aspect_ratio\",
+        \"content_scale\"
+      ]
+    },
+    \"date_stamp\": {
+      \"required\": [],
+      \"optional\": [
+        \"day\",
+        \"month\",
+        \"month_index\",
+        \"year\",
+        \"time\",
+        \"padding\"
+      ]
+    },
+    \"section_header\": {
+      \"required\": [
+        \"title\"
+      ],
+      \"optional\": [
+        \"trailing\",
+        \"padding\"
+      ]
+    },
+    \"empty_state\": {
+      \"required\": [],
+      \"optional\": [
+        \"icon\",
+        \"title\",
+        \"caption\",
+        \"on_tap\",
+        \"action_label\",
+        \"padding\"
+      ]
+    },
+    \"progress\": {
+      \"required\": [],
+      \"optional\": [
+        \"variant\",
+        \"value\",
+        \"padding\"
+      ]
+    },
+    \"menu\": {
+      \"required\": [
+        \"items\"
+      ],
+      \"optional\": [
+        \"icon\",
+        \"padding\"
+      ]
+    },
+    \"button\": {
+      \"required\": [
+        \"label\",
+        \"on_tap\"
+      ],
+      \"optional\": [
+        \"icon\",
+        \"variant\",
+        \"weight\",
+        \"padding\"
+      ]
+    },
+    \"icon_button\": {
+      \"required\": [
+        \"icon\",
+        \"on_tap\"
+      ],
+      \"optional\": [
+        \"content_description\",
+        \"padding\",
+        \"badge\"
+      ]
+    },
+    \"chip\": {
+      \"required\": [
+        \"label\"
+      ],
+      \"optional\": [
+        \"on_tap\",
+        \"selected\",
+        \"icon\",
+        \"padding\"
+      ]
+    },
+    \"assist_chip\": {
+      \"required\": [
+        \"label\"
+      ],
+      \"optional\": [
+        \"on_tap\",
+        \"icon\",
+        \"padding\"
+      ]
+    },
+    \"badge\": {
+      \"required\": [
+        \"label\"
+      ],
+      \"optional\": [
+        \"icon\",
+        \"color\",
+        \"padding\",
+        \"children\"
+      ]
+    },
+    \"text_input\": {
+      \"required\": [
+        \"id\"
+      ],
+      \"optional\": [
+        \"value\",
+        \"hint\",
+        \"label\",
+        \"on_submit\",
+        \"single_line\",
+        \"min_lines\",
+        \"max_lines\",
+        \"monospace\",
+        \"syntax\",
+        \"password\",
+        \"keyboard\",
+        \"autofocus\",
+        \"clear_on_submit\",
+        \"padding\"
+      ]
+    },
+    \"editor\": {
+      \"required\": [
+        \"id\"
+      ],
+      \"optional\": [
+        \"value\",
+        \"on_save\",
+        \"on_enter\",
+        \"read_only\",
+        \"syntax\",
+        \"line_numbers\",
+        \"complete\",
+        \"chromeless\",
+        \"publish_state\",
+        \"autofocus\",
+        \"toolbar\"
+      ]
+    },
+    \"checkbox\": {
+      \"required\": [
+        \"id\"
+      ],
+      \"optional\": [
+        \"checked\",
+        \"label\",
+        \"on_change\",
+        \"padding\"
+      ]
+    },
+    \"switch\": {
+      \"required\": [
+        \"id\"
+      ],
+      \"optional\": [
+        \"checked\",
+        \"label\",
+        \"on_change\",
+        \"padding\"
+      ]
+    },
+    \"enum_list\": {
+      \"required\": [
+        \"id\",
+        \"options\"
+      ],
+      \"optional\": [
+        \"value\",
+        \"multi_select\",
+        \"allow_add\",
+        \"on_change\",
+        \"padding\"
+      ]
+    },
+    \"date_button\": {
+      \"required\": [
+        \"label\",
+        \"on_pick\"
+      ],
+      \"optional\": [
+        \"value\"
+      ]
+    },
+    \"time_button\": {
+      \"required\": [
+        \"label\",
+        \"on_pick\"
+      ],
+      \"optional\": [
+        \"value\"
+      ]
+    },
+    \"slider\": {
+      \"required\": [
+        \"id\",
+        \"on_change\"
+      ],
+      \"optional\": [
+        \"value\",
+        \"min\",
+        \"max\",
+        \"steps\"
+      ]
+    },
+    \"scaffold\": {
+      \"required\": [],
+      \"optional\": [
+        \"top_bar\",
+        \"fab\",
+        \"body\",
+        \"bottom_bar\",
+        \"floating_toolbar\",
+        \"snackbar\",
+        \"snackbar_action\",
+        \"drawer\",
+        \"on_refresh\"
+      ]
+    }
+  },
+  \"methods\": {
+    \"session.hello\": {
+      \"direction\": \"client\",
+      \"type\": \"request\",
+      \"params\": {
+        \"required\": [
+          \"protocol\",
+          \"client\",
+          \"wants\"
+        ],
+        \"optional\": [
+          \"features\"
+        ]
+      },
+      \"result\": {
+        \"required\": [
+          \"nonce\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"auth.response\": {
+      \"direction\": \"client\",
+      \"type\": \"request\",
+      \"params\": {
+        \"required\": [
+          \"nonce\",
+          \"mac\"
+        ],
+        \"optional\": []
+      },
+      \"result\": {
+        \"required\": [
+          \"server_proof\",
+          \"granted\",
+          \"node_types\",
+          \"surfaces\",
+          \"queued_events\"
+        ],
+        \"optional\": [
+          \"protocol\",
+          \"server\",
+          \"device\",
+          \"input_state\",
+          \"can_disable\"
+        ]
+      }
+    },
+    \"capability.invoke\": {
+      \"direction\": \"client\",
+      \"type\": \"request\",
+      \"params\": {
+        \"required\": [
+          \"cap\"
+        ],
+        \"optional\": [
+          \"args\"
+        ]
+      },
+      \"result\": {
+        \"required\": [],
+        \"optional\": [
+          \"result\"
+        ]
+      }
+    },
+    \"queue.replay\": {
+      \"direction\": \"client\",
+      \"type\": \"request\",
+      \"params\": {
+        \"required\": [],
+        \"optional\": []
+      },
+      \"result\": {
+        \"required\": [
+          \"delivered\",
+          \"expired\"
+        ],
+        \"optional\": [
+          \"duplicate_request\"
+        ]
+      }
+    },
+    \"triggers.set\": {
+      \"direction\": \"client\",
+      \"type\": \"request\",
+      \"params\": {
+        \"required\": [
+          \"triggers\"
+        ],
+        \"optional\": []
+      },
+      \"result\": {
+        \"required\": [],
+        \"optional\": []
+      }
+    },
+    \"reminders.set\": {
+      \"direction\": \"client\",
+      \"type\": \"request\",
+      \"params\": {
+        \"required\": [
+          \"reminders\"
+        ],
+        \"optional\": [
+          \"owner\"
+        ]
+      },
+      \"result\": {
+        \"required\": [],
+        \"optional\": []
+      }
+    },
+    \"surface.update\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"surface\",
+          \"revision\",
+          \"spec\"
+        ],
+        \"optional\": [
+          \"ttl_s\",
+          \"stale_spec\",
+          \"current_view\"
+        ]
+      }
+    },
+    \"surface.remove\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"surface\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"event.action\": {
+      \"direction\": \"companion\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"action\"
+        ],
+        \"optional\": [
+          \"args\",
+          \"surface\",
+          \"revision_seen\",
+          \"fields\",
+          \"queued_at\"
+        ]
+      }
+    },
+    \"state.changed\": {
+      \"direction\": \"companion\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"value\"
+        ],
+        \"optional\": [
+          \"surface\"
+        ]
+      }
+    },
+    \"dialog.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": \"node\"
+    },
+    \"dialog.dismiss\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [],
+        \"optional\": []
+      }
+    },
+    \"pie_menu.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"categories\"
+        ],
+        \"optional\": [
+          \"center_label\",
+          \"buffer\"
+        ]
+      }
+    },
+    \"pie_menu.dismiss\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [],
+        \"optional\": []
+      }
+    },
+    \"toast.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"text\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"theme.set\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [],
+        \"optional\": [
+          \"dark\",
+          \"colors\",
+          \"syntax\"
+        ]
+      }
+    },
+    \"completions.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"request_id\",
+          \"prefix\",
+          \"candidates\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"diagnostics.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"session\",
+          \"seq\",
+          \"diags\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"eldoc.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"session\",
+          \"text\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"fontify.show\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"session\",
+          \"seq\",
+          \"runs\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"edit.resync\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"session\"
+        ],
+        \"optional\": []
+      }
+    },
+    \"edit.apply\": {
+      \"direction\": \"client\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\",
+          \"session\",
+          \"seq\",
+          \"cursor\"
+        ],
+        \"optional\": [
+          \"start\",
+          \"del\",
+          \"text\",
+          \"len\",
+          \"sel_start\",
+          \"sel_end\"
+        ]
+      }
+    },
+    \"log.error\": {
+      \"direction\": \"companion\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"code\",
+          \"message\"
+        ],
+        \"optional\": [
+          \"data\"
+        ]
+      }
+    },
+    \"rpc.cancel\": {
+      \"direction\": \"both\",
+      \"type\": \"notification\",
+      \"params\": {
+        \"required\": [
+          \"id\"
+        ],
+        \"optional\": []
+      }
+    }
+  },
+  \"error_codes\": {
+    \"-32700\": {
+      \"kind\": \"parse-error\",
+      \"context\": \"unparseable frame\"
+    },
+    \"-32600\": {
+      \"kind\": \"invalid-request\",
+      \"context\": \"not JSON-RPC 2.0 / prohibited batch / wrong direction or class\"
+    },
+    \"-32601\": {
+      \"kind\": \"method-not-found\",
+      \"context\": \"unknown request method\"
+    },
+    \"-32602\": {
+      \"kind\": \"invalid-params\",
+      \"context\": \"JSON-RPC standard set, reserved\"
+    },
+    \"-32603\": {
+      \"kind\": \"internal\",
+      \"context\": \"handler signalled\"
+    },
+    \"1001\": {
+      \"kind\": \"cap-unsupported\",
+      \"context\": \"capability.invoke\"
+    },
+    \"1002\": {
+      \"kind\": \"cap-permission\",
+      \"context\": \"capability.invoke; remedy rides data (perm, settings)\"
+    },
+    \"1003\": {
+      \"kind\": \"cap-failed\",
+      \"context\": \"capability.invoke\"
+    },
+    \"1101\": {
+      \"kind\": \"triggers-rejected\",
+      \"context\": \"triggers.set wholesale rejection\"
+    },
+    \"1200\": {
+      \"kind\": \"not-authenticated\",
+      \"context\": \"any method before the proof completes\"
+    },
+    \"1201\": {
+      \"kind\": \"spec-invalid\",
+      \"context\": \"malformed params\"
+    },
+    \"1202\": {
+      \"kind\": \"proto-version\",
+      \"context\": \"protocol mismatch at hello\"
+    },
+    \"1203\": {
+      \"kind\": \"auth-failed\",
+      \"context\": \"bad MAC\"
+    },
+    \"1301\": {
+      \"kind\": \"request-cancelled\",
+      \"context\": \"the answer to a cancelled request\"
+    },
+    \"1400\": {
+      \"kind\": \"frame-too-large\",
+      \"context\": \"frame-cap refusal, rides log.error\"
+    },
+    \"1401\": {
+      \"kind\": \"overloaded\",
+      \"context\": \"bounded-queue exhaustion, rides log.error\"
+    }
+  },
+  \"action_hook_keys\": [
+    \"on_tap\",
+    \"on_change\",
+    \"on_submit\",
+    \"on_save\",
+    \"on_enter\",
+    \"on_pick\",
+    \"on_reorder\",
+    \"on_refresh\",
+    \"nav_action\",
+    \"on_long_tap\",
+    \"on_swipe\",
+    \"on_add_row\",
+    \"on_add_col\",
+    \"on_trigger\",
+    \"on_day_tap\",
+    \"on_month_change\",
+    \"on_point_tap\",
+    \"on_button\"
+  ],
+  \"action_fields\": [
+    \"action\",
+    \"builtin\",
+    \"args\",
+    \"when_offline\",
+    \"dedupe\",
+    \"confirm\"
+  ],
+  \"offline_policies\": [
+    \"queue\",
+    \"drop\",
+    \"wake\"
+  ],
+  \"offline_default\": \"queue\",
+  \"action_schema\": {
+    \"remote\": {
+      \"required\": [
+        \"action\"
+      ],
+      \"optional\": [
+        \"args\",
+        \"when_offline\",
+        \"dedupe\",
+        \"confirm\"
+      ]
+    },
+    \"view.switch\": {
+      \"required\": [
+        \"builtin\",
+        \"view\"
+      ],
+      \"optional\": []
+    },
+    \"clipboard.copy\": {
+      \"required\": [
+        \"builtin\",
+        \"text\"
+      ],
+      \"optional\": []
+    },
+    \"share.send\": {
+      \"required\": [
+        \"builtin\",
+        \"text\"
+      ],
+      \"optional\": [
+        \"title\"
+      ]
+    },
+    \"companion.settings.open\": {
+      \"required\": [
+        \"builtin\"
+      ],
+      \"optional\": []
+    }
+  },
+  \"toolbar\": {
+    \"ops\": [
+      \"snippet\",
+      \"line\",
+      \"on_tap\",
+      \"menu\",
+      \"command\"
+    ],
+    \"placements\": [
+      \"cursor\",
+      \"line-start\",
+      \"block\"
+    ],
+    \"line_ops\": [
+      \"promote\",
+      \"demote\",
+      \"move-up\",
+      \"move-down\"
+    ]
+  },
+  \"binding\": {
+    \"layouts\": [
+      \"list\",
+      \"board\",
+      \"calendar\"
+    ],
+    \"transforms\": [
+      \"raw\",
+      \"string\",
+      \"date\",
+      \"date-label\",
+      \"tags-list\",
+      \"count\",
+      \"bool\",
+      \"ref\"
+    ],
+    \"spec_keys\": [
+      \"source\",
+      \"params\",
+      \"layout\",
+      \"template\",
+      \"header\",
+      \"group-by\",
+      \"empty-state\",
+      \"chrome\"
+    ],
+    \"chrome_kinds\": [
+      \"tab\",
+      \"nav\"
+    ],
+    \"source_field_types\": [
+      \"text\",
+      \"number\",
+      \"boolean\",
+      \"date\",
+      \"string-list\",
+      \"enum\",
+      \"ref\"
+    ]
+  }
+}
+")
+
+;;; ==================================================================
 ;;; BEGIN core/jetpacs.el
 ;;; ==================================================================
 
@@ -3139,13 +4185,19 @@ on-device) or the empty string for a bare attention dot; nil for none."
 ;; The known-type list is the same vocabulary as `SDUI_NODE_TYPES'
 ;; (SduiRenderer.kt) and `ebp/goldens/widgets.golden'; the drift test
 ;; `jetpacs-lint-types-cover-golden' fails if a constructor emits a `t' not
-;; listed here.  The tables below also carry the authored per-node key
+;; listed here.  The wire-vocabulary tables below — the per-node key
 ;; schema (`jetpacs-lint-node-schema'), the JSON-RPC method schema with
-;; result shapes (`jetpacs-lint-kind-schema', `jetpacs-lint-result-schema')
-;; and the error-code vocabulary (`jetpacs-lint-error-codes');
-;; `build-contract.el' publishes them all in ebp/contract.json
-;; (contract_format 5, the ebp protocol submodule) for non-elisp
-;; implementations.
+;; result shapes (`jetpacs-lint-kind-schema', `jetpacs-lint-result-schema'),
+;; the error-code vocabulary (`jetpacs-lint-error-codes'), and the
+;; action/toolbar/binding vocabularies — DERIVE at load from
+;; `ebp/contract.json' (contract_format 5), the contract authored in the
+;; ebp repo (its SPEC-CHANGES #30): one source of truth, no drift
+;; possible.  `build-contract.el' survives as the round-trip witness —
+;; the drift test re-projects these derived tables and byte-compares
+;; against the committed contract, proving the derivation lossless.
+;; Tables that are implementation detail (predicate grammars,
+;; numeric/color key classes, visible-text keys) remain authored here —
+;; they are not wire vocabulary.
 
 ;;; Code:
 
@@ -3157,33 +4209,67 @@ on-device) or the empty string for a bare attention dot; nil for none."
 ;; this file alone stays warning-clean.
 (declare-function jetpacs--node "jetpacs-widgets" (type &rest kvs))
 
+;; ─── The wire contract, the source of these tables ───────────────────────────
+
+(defvar jetpacs-lint--contract-embedded nil
+  "JSON text of the wire contract, set by the generated bundle.
+nil in a source checkout, where the contract is read from the ebp
+submodule beside emacs/core/ instead (`jetpacs-lint--contract-file').")
+
+(defconst jetpacs-lint--contract-file
+  (let ((here (and (or load-file-name buffer-file-name)
+                   (file-name-directory (or load-file-name buffer-file-name)))))
+    (and here (expand-file-name "../../ebp/contract.json" here)))
+  "Where a source checkout finds the contract (the ebp submodule).
+Consulted only when `jetpacs-lint--contract-embedded' is nil — the
+embedded copy wins so a deployed bundle never reads a stray checkout.")
+
+(defconst jetpacs-lint--contract
+  (json-parse-string
+   (or jetpacs-lint--contract-embedded
+       (if (and jetpacs-lint--contract-file
+                (file-readable-p jetpacs-lint--contract-file))
+           (with-temp-buffer
+             (insert-file-contents jetpacs-lint--contract-file)
+             (buffer-string))
+         (error "jetpacs-lint: no wire contract — init the ebp submodule \
+(git submodule update --init) or load the built jetpacs-core.el bundle")))
+   :object-type 'alist :array-type 'list)
+  "The parsed wire contract (ebp/contract.json) this client conforms to.
+Object keys are interned symbols; arrays are lists.")
+
+(defun jetpacs-lint--contract-get (&rest path)
+  "The contract value at PATH, a chain of symbol keys into the parse."
+  (let ((value jetpacs-lint--contract))
+    (dolist (key path value)
+      (setq value (alist-get key value)))))
+
+(defun jetpacs-lint--syms (names)
+  "NAMES (a list of strings) as interned symbols."
+  (mapcar #'intern names))
+
 (defconst jetpacs-lint-node-types
-  '("text" "rich_text" "row" "flow_row" "column" "box" "surface"
-    "lazy_column" "spacer" "divider" "card" "collapsible"
-    "reorderable_list" "table" "tabs" "chart" "canvas" "month_grid"
-    "icon" "image"
-    "date_stamp" "section_header" "empty_state" "progress" "menu" "button"
-    "icon_button" "chip" "assist_chip" "badge" "text_input" "editor" "checkbox"
-    "switch" "enum_list" "date_button" "time_button" "slider" "scaffold")
+  (jetpacs-lint--contract-get 'node_types)
   "Node `t' discriminators the reference companion renders.
-Mirror of `SDUI_NODE_TYPES' in SduiRenderer.kt.  A `t' outside this set
-is almost always a typo; a Tier 1 deliberately targeting an extended
-companion gates on `jetpacs-node-supported-p' instead.")
+The contract's `node_types'; mirror of `SDUI_NODE_TYPES' in
+SduiRenderer.kt.  A `t' outside this set is almost always a typo; a
+Tier 1 deliberately targeting an extended companion gates on
+`jetpacs-node-supported-p' instead.")
 
 (defconst jetpacs-lint--action-keys
-  '(on_tap on_change on_submit on_save on_enter on_pick on_reorder on_refresh
-    nav_action on_long_tap on_swipe on_add_row on_add_col on_trigger
-    on_day_tap on_month_change on_point_tap on_button)
-  "Node keys whose value is an embedded action object (SPEC §9).")
+  (jetpacs-lint--syms (jetpacs-lint--contract-get 'action_hook_keys))
+  "Node keys whose value is an embedded action object (SPEC §9).
+The contract's `action_hook_keys'.")
 
 (defconst jetpacs-lint--notification-action-keys '(label on_tap icon dismiss input)
   "Keys a notification `meta.actions' entry may carry (SPEC §9).
 An entry is required to carry `label' and `on_tap'; `input' is the inline
 text-reply sub-object `{hint?, key?}'.")
 
-(defconst jetpacs-lint-action-fields '(action builtin args when_offline dedupe
-                                       confirm)
-  "The fields an action object may carry (SPEC §5).
+(defconst jetpacs-lint-action-fields
+  (jetpacs-lint--syms (jetpacs-lint--contract-get 'action_fields))
+  "The fields an action object may carry (SPEC §5) — the contract's
+`action_fields'.
 `action' and `builtin' are mutually exclusive; a `builtin' additionally
 carries the payload keys its kind requires (`jetpacs-lint-action-builtins').
 `confirm' (since 1.23.0) is a prompt string the Emacs dispatch gate shows
@@ -3191,8 +4277,10 @@ as a native yes/no dialog before running the handler — companion-opaque
 and never echoed in `event.action' (SPEC §5): the client resolves the
 prompt from the index `jetpacs-action' builds, not from the wire.")
 
-(defconst jetpacs-lint--when-offline-values '("queue" "drop" "wake")
-  "Valid `when_offline' queue policies (SPEC §5); the default is \"queue\".")
+(defconst jetpacs-lint--when-offline-values
+  (jetpacs-lint--contract-get 'offline_policies)
+  "Valid `when_offline' queue policies (SPEC §5) — the contract's
+`offline_policies'; the default is \"queue\".")
 
 (defconst jetpacs-lint-state-predicate-types
   '("airplane" "battery.level" "bluetooth.enabled" "calendar.event"
@@ -3232,21 +4320,25 @@ negotiation authority is the welcome's `device.state_types' report
 literal by the companion — almost always a typo worth a warning.")
 
 (defconst jetpacs-lint-action-builtins
-  '(("view.switch" (view) ())
-    ("clipboard.copy" (text) ())
-    ("share.send" (text) (title))
-    ("companion.settings.open" () ()))
+  (cl-loop for (name . entry) in (jetpacs-lint--contract-get 'action_schema)
+           unless (eq name 'remote)
+           collect (list (symbol-name name)
+                         (jetpacs-lint--syms
+                          (remove "builtin" (alist-get 'required entry)))
+                         (jetpacs-lint--syms (alist-get 'optional entry))))
   "Companion-local builtins → required and optional payload keys (SPEC §5).
 Each entry is (NAME REQUIRED OPTIONAL): an action object using `builtin'
 must name one of these and carry every REQUIRED key; OPTIONAL keys are
 legal beside them (share.send's `title' is the share-sheet subject,
-honored where the receiving app supports one).  `build-contract.el'
-derives the discriminated action schema in `ebp/contract.json' from
-this — the OPTIONAL column exists so the contract can express a key the
-golden corpus legitimately carries without requiring it everywhere.")
+honored where the receiving app supports one).  Derived from the
+contract's discriminated `action_schema' — every row but `remote', with
+`builtin' itself dropped from REQUIRED (it is the discriminator, not a
+payload key).")
 
-(defconst jetpacs-lint-node-common-keys '(scroll_here dialog_style key)
-  "Keys legal on any node, attached after construction.
+(defconst jetpacs-lint-node-common-keys
+  (jetpacs-lint--syms (jetpacs-lint--contract-get 'node_schema '* 'optional))
+  "Keys legal on any node, attached after construction — the contract's
+`node_schema' \"*\" row.
 `scroll_here' marks a lazy_column child as its scroll target
 \(`jetpacs-scroll-here', SPEC §9); `dialog_style' rides a dialog spec's
 root node (`jetpacs-send-dialog', SPEC §7); `key' is a lazy_column
@@ -3257,83 +4349,23 @@ child's stable reconciliation identity — preferred over the child's
 
 (defconst jetpacs-lint-node-schema
   ;; (TYPE REQUIRED-KEYS OPTIONAL-KEYS) — one row per entry of
-  ;; `jetpacs-lint-node-types', same order.
-  '(("text"            (text)               (style weight color selectable
-                                             max_lines padding syntax))
-    ("rich_text"       (spans)              (style padding))
-    ("row"             (children)           (spacing align scroll weight fill))
-    ("flow_row"        (children)           (spacing run_spacing))
-    ("column"          (children)           (spacing align scroll weight fill))
-    ("box"             (children)           (alignment padding weight on_tap
-                                             width height fill_fraction border))
-    ("surface"         (children)           (color shape elevation padding fill
-                                             width height fill_fraction border))
-    ("lazy_column"     (children)           ())
-    ("spacer"          ()                   (height width weight))
-    ("divider"         ()                   ())
-    ("card"            (children)           (on_tap on_swipe swipe_start
-                                             swipe_end padding weight width
-                                             height fill_fraction border))
-    ("collapsible"     (id header children) (collapsed on_long_tap on_swipe
-                                             swipe_start swipe_end))
-    ("reorderable_list" (items)             (on_reorder))
-    ("table"           (rows)               (aligns on_add_row on_add_col
-                                             padding))
-    ("tabs"            (items children)     (initial scrollable pager_only
-                                             on_change id))
-    ;; The additive visualization nodes accept `children' as the
-    ;; `jetpacs-additive' degrade slot (1.23.0): a companion that renders
-    ;; the node ignores them; an older one renders them as the fallback.
-    ("chart"           (series)             (kind height y_range summary
-                                             on_point_tap children))
-    ("canvas"          (width height ops)   (children))
-    ("month_grid"      (month)              (marks selected min_month max_month
-                                             on_day_tap on_month_change
-                                             children))
-    ("icon"            (name)               (size color padding badge))
-    ("image"           (url)                (content_description padding width
-                                             height aspect_ratio content_scale))
-    ("date_stamp"      ()                   (day month month_index year time
-                                             padding))
-    ("section_header"  (title)              (trailing padding))
-    ("empty_state"     ()                   (icon title caption on_tap
-                                             action_label padding))
-    ("progress"        ()                   (variant value padding))
-    ("menu"            (items)              (icon padding))
-    ("button"          (label on_tap)       (icon variant weight padding))
-    ("icon_button"     (icon on_tap)        (content_description padding badge))
-    ("chip"            (label)              (on_tap selected icon padding))
-    ("assist_chip"     (label)              (on_tap icon padding))
-    ("badge"           (label)              (icon color padding children))
-    ("text_input"      (id)                 (value hint label on_submit
-                                             single_line min_lines max_lines
-                                             monospace syntax password keyboard
-                                             autofocus clear_on_submit
-                                             padding))
-    ("editor"          (id)                 (value on_save on_enter read_only
-                                             syntax line_numbers complete
-                                             chromeless publish_state autofocus
-                                             toolbar))
-    ("checkbox"        (id)                 (checked label on_change padding))
-    ("switch"          (id)                 (checked label on_change padding))
-    ("enum_list"       (id options)         (value multi_select allow_add
-                                             on_change padding))
-    ("date_button"     (label on_pick)      (value))
-    ("time_button"     (label on_pick)      (value))
-    ("slider"          (id on_change)       (value min max steps))
-    ("scaffold"        ()                   (top_bar fab body bottom_bar
-                                             floating_toolbar snackbar
-                                             snackbar_action drawer on_refresh)))
+  ;; `jetpacs-lint-node-types', same order, derived from the contract
+  ;; (the "*" row is `jetpacs-lint-node-common-keys' above).
+  (cl-loop for (type . row) in (jetpacs-lint--contract-get 'node_schema)
+           unless (eq type '*)
+           collect (list (symbol-name type)
+                         (jetpacs-lint--syms (alist-get 'required row))
+                         (jetpacs-lint--syms (alist-get 'optional row))))
   "Per-node key schema: (TYPE REQUIRED OPTIONAL), one row per node type.
-Authored from `ebp/goldens/widgets.golden' ∪ the `jetpacs-widgets.el'
-constructor signatures, hand-reviewed against WIDGETS.md and SPEC §9 (the
-review is ebp/SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing REQUIRED
-key as an error and a key outside the row (and outside
+The contract's `node_schema' (whose provenance is the golden corpus ∪
+the `jetpacs-widgets.el' constructor signatures, hand-reviewed —
+ebp/SPEC-CHANGES.md entry #1).  `jetpacs-lint-spec' reports a missing
+REQUIRED key as an error and a key outside the row (and outside
 `jetpacs-lint-node-common-keys') as a warning — a warning, not an error,
 because companions must ignore unknown keys (the §9 forward-compat rule),
 so an author may deliberately target a newer companion.  Value types are
-not re-declared here: the numeric/color/action key classes above apply by
-key name.  `build-contract.el' publishes this as `node_schema'.")
+not re-declared here: the numeric/color/action key classes apply by
+key name.")
 
 (defconst jetpacs-lint-kind-schema
   ;; (METHOD DIRECTION CLASS REQUIRED OPTIONAL) | (METHOD DIRECTION CLASS node)
@@ -3341,97 +4373,51 @@ key name.  `build-contract.el' publishes this as `node_schema'.")
   ;; CLASS: `request' (carries an id, answered exactly once, result XOR
   ;; error) or `notify' (no id, never answered) — the JSON-RPC 2.0
   ;; classification of SPEC-2 §4.  `node' marks params that are a §9
-  ;; node tree rather than a fixed key set.
-  '(;; Handshake (SPEC-2 §3): two request/response pairs.  v1's
-    ;; auth.challenge and session.welcome dissolved into the RESPONSES
-    ;; of these two — see `jetpacs-lint-result-schema'.
-    ("session.hello"    client    request (protocol client wants) (features))
-    ("auth.response"    client    request (nonce mac)             ())
-    ;; Requests above the handshake (SPEC-2 §4).  v1's capability.result
-    ;; and queue.drained dissolved into responses; ack/error/ping/pong
-    ;; stopped existing as methods.
-    ("capability.invoke" client   request (cap)                   (args))
-    ("queue.replay"     client    request ()                      ())
-    ("triggers.set"     client    request (triggers)              ())
-    ("reminders.set"    client    request (reminders)             (owner))
-    ;; Notifications: surfaces, events (SPEC §4–§6)
-    ("surface.update"   client    notify  (surface revision spec) (ttl_s stale_spec
-                                                                   current_view))
-    ("surface.remove"   client    notify  (surface)               ())
-    ("event.action"     companion notify  (action)                (args surface
-                                                                   revision_seen fields
-                                                                   queued_at))
-    ("state.changed"    companion notify  (id value)              (surface))
-    ;; Dialogs, toasts, pies, theme (SPEC §7) — dialog.show stays a
-    ;; notification in the first cut (SPEC-2 §4 staging note).
-    ("dialog.show"      client    notify  node)
-    ("dialog.dismiss"   client    notify  ()                      ())
-    ("pie_menu.show"    client    notify  (categories)            (center_label buffer))
-    ("pie_menu.dismiss" client    notify  ()                      ())
-    ("toast.show"       client    notify  (text)                  ())
-    ("theme.set"        client    notify  ()                      (dark colors syntax))
-    ;; Editor sync & completion (SPEC §8).  The companion→client legs
-    ;; (edit.open/delta/caret/close/complete/command) are §5 actions
-    ;; riding `event.action', not methods — only the client→companion
-    ;; legs appear here (first-cut staging; the §4 promotions come later).
-    ("completions.show" client    notify  (id request_id prefix candidates) ())
-    ("diagnostics.show" client    notify  (id session seq diags)  ())
-    ("eldoc.show"       client    notify  (id session text)       ())
-    ("fontify.show"     client    notify  (id session seq runs)   ())
-    ("edit.resync"      client    notify  (id session)            ())
-    ("edit.apply"       client    notify  (id session seq cursor) (start del text len
-                                                                   sel_start sel_end))
-    ;; Envelope-level channels (SPEC-2 §2.3)
-    ("log.error"        companion notify  (code message)          (data))
-    ("rpc.cancel"       both      notify  (id)                    ()))
+  ;; node tree rather than a fixed key set.  Derived from the contract's
+  ;; `methods' table (its "notification" is this table's `notify').
+  (cl-loop for (method . entry) in (jetpacs-lint--contract-get 'methods)
+           collect
+           (let ((direction (intern (alist-get 'direction entry)))
+                 (class (if (equal (alist-get 'type entry) "request")
+                            'request 'notify))
+                 (params (alist-get 'params entry)))
+             (if (equal params "node")
+                 (list (symbol-name method) direction class 'node)
+               (list (symbol-name method) direction class
+                     (jetpacs-lint--syms (alist-get 'required params))
+                     (jetpacs-lint--syms (alist-get 'optional params))))))
   "Method schema: JSON-RPC method → direction, class, and params keys.
-Mirrors `Method' in Envelope.kt and the method table of SPEC-2 §4 as
-staged for the first cut, authored from the reference implementations'
-actual send sites.  `jetpacs-lint-payload' enforces it (missing required
-= error, unknown key = warning); `build-contract.el' publishes it as
-`methods'.  Request results live in `jetpacs-lint-result-schema'.
-Action names (§5 registry entries, e.g. `trigger.fired', `edit.open')
-are deliberately NOT enumerated — they are negotiated vocabulary, not
-methods.")
+The contract's `methods' table — SPEC-2 §4 as staged for the first cut;
+mirror of `Method' in Envelope.kt.  `jetpacs-lint-payload' enforces it
+(missing required = error, unknown key = warning).  Request results live
+in `jetpacs-lint-result-schema'.  Action names (§5 registry entries,
+e.g. `trigger.fired', `edit.open') are deliberately NOT enumerated —
+they are negotiated vocabulary, not methods.")
 
 (defconst jetpacs-lint-result-schema
   ;; (METHOD REQUIRED OPTIONAL) — the `result' object each request
   ;; method's response carries.  An empty result means "success, nothing
   ;; to say", never failure (SPEC-2 §2.1).
-  '(("session.hello"    (nonce)                                   ())
-    ("auth.response"    (server_proof granted node_types surfaces
-                         queued_events)
-                        (protocol server device input_state can_disable))
-    ("capability.invoke" ()                                       (result))
-    ("queue.replay"     (delivered expired)                       (duplicate_request))
-    ("triggers.set"     ()                                        ())
-    ("reminders.set"    ()                                        ()))
-  "Result schema for each request method in `jetpacs-lint-kind-schema'.
-The challenge is `session.hello's result; the welcome (the treaty, v1's
-session.welcome fields intact) is `auth.response's.  Published to the
-contract as each method's `result'.")
+  (cl-loop for (method . entry) in (jetpacs-lint--contract-get 'methods)
+           when (equal (alist-get 'type entry) "request")
+           collect (let ((result (alist-get 'result entry)))
+                     (list (symbol-name method)
+                           (jetpacs-lint--syms (alist-get 'required result))
+                           (jetpacs-lint--syms (alist-get 'optional result)))))
+  "Result schema for each request method in `jetpacs-lint-kind-schema',
+from the contract's per-method `result'.  The challenge is
+`session.hello's result; the welcome (the treaty, v1's session.welcome
+fields intact) is `auth.response's.")
 
 (defconst jetpacs-lint-error-codes
   ;; (CODE KIND CONTEXT) — SPEC-2 §2.4.  KIND is the readable string
   ;; vocabulary riding `data.kind'; codes outside -32768..-32000 are
   ;; application codes.  32000 and -1 are landmines, never emitted.
-  '((-32700 "parse-error"      "unparseable frame")
-    (-32600 "invalid-request"  "not JSON-RPC 2.0 / prohibited batch / wrong direction or class")
-    (-32601 "method-not-found" "unknown request method")
-    (-32602 "invalid-params"   "JSON-RPC standard set, reserved")
-    (-32603 "internal"         "handler signalled")
-    (1001 "cap-unsupported"    "capability.invoke")
-    (1002 "cap-permission"     "capability.invoke; remedy rides data (perm, settings)")
-    (1003 "cap-failed"         "capability.invoke")
-    (1101 "triggers-rejected"  "triggers.set wholesale rejection")
-    (1200 "not-authenticated"  "any method before the proof completes")
-    (1201 "spec-invalid"       "malformed params")
-    (1202 "proto-version"      "protocol mismatch at hello")
-    (1203 "auth-failed"        "bad MAC")
-    (1301 "request-cancelled"  "the answer to a cancelled request")
-    (1400 "frame-too-large"    "frame-cap refusal, rides log.error")
-    (1401 "overloaded"         "bounded-queue exhaustion, rides log.error"))
-  "The error-code vocabulary (SPEC-2 §2.4), published as `error_codes'.
+  (cl-loop for (code . entry) in (jetpacs-lint--contract-get 'error_codes)
+           collect (list (string-to-number (symbol-name code))
+                         (alist-get 'kind entry)
+                         (alist-get 'context entry)))
+  "The error-code vocabulary (SPEC-2 §2.4) — the contract's `error_codes'.
 A conforming implementation emits no code outside this list; growing it
 is an ordinary amendment.")
 
@@ -3445,33 +4431,42 @@ is an ordinary amendment.")
 (defconst jetpacs-lint--color-attrs '(color bg)
   "Attributes whose value must be a hex string or a theme token.")
 
-(defconst jetpacs-lint--toolbar-ops '(snippet line on_tap menu command)
+(defconst jetpacs-lint--toolbar-ops
+  (jetpacs-lint--syms (jetpacs-lint--contract-get 'toolbar 'ops))
   "The op fields of an editor toolbar item — exactly one per item (SPEC §9).
+The contract's `toolbar.ops'.
 A `command' item runs an Emacs command in the editor's live sync session
 at the phone's point/region (needs the `:complete' bridge); companions
 predating 1.26 render the chip as a no-op, per the §9 unknown-op rule.")
 
-(defconst jetpacs-lint--toolbar-placements '("cursor" "line-start" "block")
-  "Valid `placement' values on a toolbar snippet item.")
+(defconst jetpacs-lint--toolbar-placements
+  (jetpacs-lint--contract-get 'toolbar 'placements)
+  "Valid `placement' values on a toolbar snippet item (`toolbar.placements').")
 
-(defconst jetpacs-lint--toolbar-line-ops '("promote" "demote" "move-up" "move-down")
-  "Valid builtin `line' op names on a toolbar item.")
+(defconst jetpacs-lint--toolbar-line-ops
+  (jetpacs-lint--contract-get 'toolbar 'line_ops)
+  "Valid builtin `line' op names on a toolbar item (`toolbar.line_ops').")
 
 ;; ─── Declarative view specs (jetpacs-spec.el) ────────────────────────────────
 
-(defconst jetpacs-lint-spec-layouts '("list" "board" "calendar")
-  "Layouts a declarative view `:spec' may request.")
+(defconst jetpacs-lint-spec-layouts
+  (jetpacs-lint--contract-get 'binding 'layouts)
+  "Layouts a declarative view `:spec' may request (`binding.layouts').")
 
 (defconst jetpacs-lint-spec-transforms
-  '("raw" "string" "date" "date-label" "tags-list" "count" "bool" "ref")
-  "The closed transform names a template placeholder's `as' may name.")
+  (jetpacs-lint--contract-get 'binding 'transforms)
+  "The closed transform names a template placeholder's `as' may name
+\(`binding.transforms').")
 
 (defconst jetpacs-lint-spec-keys
-  '(:source :params :layout :template :header :group-by :empty-state :chrome)
-  "The keys a view `:spec' plist may carry.")
+  (mapcar (lambda (name) (intern (concat ":" name)))
+          (jetpacs-lint--contract-get 'binding 'spec_keys))
+  "The keys a view `:spec' plist may carry — the contract's
+`binding.spec_keys', re-keyworded.")
 
-(defconst jetpacs-lint-spec-chrome-kinds '("tab" "nav")
-  "The `:kind' values a spec `:chrome' may declare.")
+(defconst jetpacs-lint-spec-chrome-kinds
+  (jetpacs-lint--contract-get 'binding 'chrome_kinds)
+  "The `:kind' values a spec `:chrome' may declare (`binding.chrome_kinds').")
 
 ;; ─── Shape predicates ────────────────────────────────────────────────────────
 
@@ -4911,10 +5906,12 @@ calls HANDLER.  Register it: (jetpacs-defaction \"app.save\"
 
 (require 'cl-lib)
 (require 'jetpacs-surfaces)             ; jetpacs--claim / --unclaim / --owned-names / current-owner
+(require 'jetpacs-lint)                 ; the parsed wire contract
 
 (defconst jetpacs-source-field-types
-  '("text" "number" "boolean" "date" "string-list" "enum" "ref")
+  (jetpacs-lint--contract-get 'binding 'source_field_types)
   "The closed, domain-neutral field/param types a source declares.
+The contract's `binding.source_field_types'.
 A source normalizes engine-specific data (Org timestamps, TODO keywords,
 tags) into these before core sees it; an `enum' requires a `:values' vector.")
 

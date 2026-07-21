@@ -89,21 +89,24 @@ however good the feature.
    change needs to know about Glasspane, it's cut at the wrong altitude.
 4. **The bundle is generated.** Root `jetpacs-core.el` comes from
    `emacs --batch -l emacs/build-bundle.el` — never edit it by hand;
-   regenerate after any `emacs/` source change and commit the result.
+   regenerate after any `emacs/` source change **or ebp submodule bump**
+   (the bundle embeds the contract) and commit the result.
 5. **The wire truth is authored in ebp; this repo conforms.** (Ebp
    SPEC-CHANGES #30 — the inversion.) `ebp/contract.json` and
-   `ebp/goldens/` are the hand-owned contract; the drift and golden
-   tests prove this implementation's projection byte-matches them.
-   For an INTENTIONAL wire change the flow is two commits, one
-   direction: land the amendment in ebp first (SPEC-CHANGES row +
-   spec + contract/golden edits; tag if the spec or protocol version
-   moved) → make the lint tables/constructors here match → regenerate
-   and byte-compare
+   `ebp/goldens/` are the hand-owned contract, and the lint vocabulary
+   DERIVES from `ebp/contract.json` at load — the drift and golden
+   tests prove this implementation's projection byte-matches the
+   committed files. For an INTENTIONAL wire change the flow is two
+   commits, one direction: land the amendment in ebp first
+   (SPEC-CHANGES row + spec + contract/golden edits; tag if the spec
+   or protocol version moved) → bump the submodule pointer here (the
+   lint tables follow automatically; touch only the constructor or
+   renderer code the change needs) → regenerate and byte-compare
    (`emacs -Q --batch -l test/jetpacs-tests.el -f jetpacs-tests-regen-widget-golden`
    / `-f jetpacs-tests-regen-frame-golden` /
    `emacs --batch -l emacs/build-contract.el -f jetpacs-contract-write`
-   must reproduce the committed files) → bump the submodule pointer in
-   this repo. Wire additions must be
+   must reproduce the committed files) → regenerate the bundle (it
+   embeds the contract). Wire additions must be
    additive — unknown kinds/attrs are ignored, never fatal. If the
    Kotlin counterpart can't land in the same PR, the elisp side must
    degrade cleanly without it.

@@ -24,10 +24,12 @@
 
 (require 'cl-lib)
 (require 'jetpacs-surfaces)             ; jetpacs--claim / --unclaim / --owned-names / current-owner
+(require 'jetpacs-lint)                 ; the parsed wire contract
 
 (defconst jetpacs-source-field-types
-  '("text" "number" "boolean" "date" "string-list" "enum" "ref")
+  (jetpacs-lint--contract-get 'binding 'source_field_types)
   "The closed, domain-neutral field/param types a source declares.
+The contract's `binding.source_field_types'.
 A source normalizes engine-specific data (Org timestamps, TODO keywords,
 tags) into these before core sees it; an `enum' requires a `:values' vector.")
 

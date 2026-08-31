@@ -1,0 +1,196 @@
+#+TITLE: Development Log
+
+* About
+The literature.org is for the current state of the program. This file is for a chronological record of the actions taken.
+
+** Operations
+To start, I would like to use a datetree for organizing the Development Log. Ideally a reverse datetree, but I don't want to take the time to set that up today.
+
+I will start with a quick capture template in my configuration for adding entries.
+
+#+begin_src emacs-lisp
+(add-to-list 'org-capture-templates
+             '("d" "Dev Log" entry
+               (file+datetree "~/path/to/your/devlog.org")
+               "* %U - %?\n:PROPERTIES:\n:AUTHOR: %n\n:END:\n%a\n\n%i\n"
+               :empty-lines 1))
+#+end_src
+
+Initially, I will also clock into this entry for time tracking.
+
+I will also create a capture template for quickly logging LLM prompts, conversations and context.
+
+
+
+* 2026
+** 2026-08 August
+*** 2026-08-30 Sunday
+
+**** [2026-08-30 Sun 10:26] - Day 1
+:PROPERTIES:
+:AUTHOR: Caleb Christensen
+:END:
+:LOGBOOK:
+CLOCK: [2026-08-30 Sun 17:54]--[2026-08-30 Sun 19:58] =>  2:04
+CLOCK: [2026-08-30 Sun 10:27]--[2026-08-30 Sun 17:30] =>  7:03
+:END:
+
+[[file:llm-disclosure.org][Relevant LLM Conversations]]
+
+***** Toolchain
+
+****** Cheat sheet
+
+******* Machine-level facts
+-------------------
+Where JDK 25 is installed
+Where the Android SDK is installed
+Where Emacs is installed
+
+******* Project-level requirements
+--------------------------
+This project expects JDK 25 to run Gradle
+This project targets JVM 17
+This project expects Android API 37.0
+This project requires tangling before building
+
+****** WSL2 / Debian 13 canonical development host
+****** Git 2.47.3
+****** Emacs 31.1
+******* Org 9.8.7
+****** Kotlin: 2.4.10
+****** Compose Multiplatform: 1.12.0
+****** Gradle: 9.5.0
+
+Why:
+Upper end of Kotlin 2.4.10's fully supported Gradle range.
+
+Constraint:
+Must satisfy both Kotlin Gradle Plugin and Android Gradle Plugin
+compatibility.
+
+Change when:
+A Kotlin upgrade expands the supported Gradle range, or a newer Gradle
+release provides a specific benefit we need.
+
+****** Android Gradle Plugin: 9.1.1
+
+Why:
+Minimum AGP version supporting Android API 37.0 while remaining only
+one patch beyond Kotlin 2.4.10's published fully-tested AGP range.
+
+Constraint:
+AGP 9.1.1 supports Android API 37.0 and below.
+
+Change when:
+Kotlin officially supports a newer AGP generation, or another Android
+SDK level requires it.
+
+****** Gradle runtime JDK: 25
+
+Why:
+Current LTS, supported by Gradle, and useful for learning modern JVM
+tooling.
+
+Constraint:
+Gradle and required plugins must support running on JDK 25.
+AGP requires at least JDK 17.
+
+Change when:
+A required plugin proves incompatible with 25, or a future JDK becomes
+our deliberately selected build runtime.
+
+****** JVM compatibility target: 17
+
+Why:
+No current requirement for JVM 21/25 APIs. JVM 17 gives us broader
+Desktop/JVM compatibility while allowing the build itself to run on
+JDK 25.
+
+Change when:
+The application gains a concrete requirement for a newer JVM API or
+runtime capability.
+
+****** Android SDK
+
+Android CLI:            1.0.15985488
+Command-line Tools:     22.0
+Platform Tools:         37.0.1
+SDK Platform:           Android 17 / API 37.0, revision 2
+SDK Build Tools:        37.0.0
+
+ANDROID_HOME:
+${XDG_DATA_HOME:-$HOME/.local/share}/android-sdk
+
+****** compileSdk: 37
+
+Why:
+Compile against the current Android 17 / API 37.0 API surface.
+
+Constraint:
+Requires AGP 9.1.1 or newer.
+
+****** targetSdk: 37
+
+Why:
+This is a new application, so there is no legacy target behavior we
+need to preserve.
+
+****** minSdk: TBD
+
+This controls the oldest Android release on which the application may
+be installed. It is a product-support decision rather than a compiler
+toolchain decision.
+
+****** Build Tools Gradle configuration
+
+Do not explicitly set buildToolsVersion initially.
+
+Build Tools 37.0.0 is installed in the SDK, but AGP is allowed to
+select its compatible Build Tools version unless we have a reason to
+override it.
+
+****** Kotlin Multiplatform
+******* commonMain
+******* jvmMain
+******* androidMain
+****** JVM target
+****** Android library target
+****** Compose Multiplatform plugin
+****** Compose compiler
+****** Shared @Composable UI
+****** Desktop window
+******* main()
+****** Android Activity
+****** APK
+****** AndroidManifest
+****** installable Android app
+
+
+  - Add a short, non-normative browser Companion decision section to literature.org.
+  - Scope the first browser design to local Emacs only—not remote/LAN operation.
+  - Preserve platform boundaries: protocol reducers, models, and renderer logic in common code;
+    WebSocket, persistent browser storage, origin policy, and lifecycle handling behind platform
+    adapters.
+
+  - Optionally add a tiny wasmJs smoke target that only renders the existing shared App. That is
+    inexpensive now and catches incompatible dependencies early.
+
+  - Keep browser implementation outside the critical path after that smoke test.
+
+    add a tiny wasmJs smoke target that only renders the existing shared App. That is
+    inexpensive now and catches incompatible dependencies early.
+
+  - Keep browser implementation outside the critical path after that smoke test.
+
+  Then promote it to the EBP SPEC only after one browser vertical slice proves:
+
+  - session.hello and mutual HMAC authentication;
+  - one cached surface rendered;
+  - one semantic action returned;
+  - disconnect/reconnect and synchronization;
+  - durable state surviving page reload;
+  - oversized-message handling and bounded sending;
+  - unauthorized-origin rejection;
+  - deterministic behavior when two tabs share one pairing.
+

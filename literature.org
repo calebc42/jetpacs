@@ -1,0 +1,1128 @@
+#+TITLE: Jetpacs Literate Development
+#+PROPERTY: header-args :mkdirp yes
+
+* Literate Development
+The purpose of this document is to conduct the re-write of the Jetpacs Proof of Concept while also helping me practice a literate development workflow. Ideally, I would really love for this project to serve as a blueprint for what modern application development could look like. Particularly the process of moving from an LLM Generated proof of concept to production. The purpose of literate development is to ensure that I myself, a beginner, fully understand the codebase and every single decision. It is
+intended to be a chronological/procedural log of my architectural and implementation decisions in plain English for any Layman to follow and understand. If I, as a layman/beginner can write it, then you should be able to understand it.
+
+** Mission
+
+** Foundation
+
+At its soul, Jetpacs aspires to be nothing more than yet another implementation
+of the ever elusive Lisp Machine. Specifically, Jetpacs sets its sights on being
+optimized for mobile form factors and touchscreen interaction models. Instead of
+rebuilding a Lisp Interpreter from scratch, Jetpacs positions itself to leverage
+the existing Lisp Machine experience already ported for Android: Emacs.
+
+At its core, Jetpacs is an Android-focused Companion implementation of the Emacs
+Bridge Protocol, a bi-directional implementation of JSON-RPC that
+can be transported to any Companion (not just Jetpacs) that can hold a socket
+and draw pixels to a canvas. Jetpacs stands atop the EBP to extend the
+mobile-native half of the equation to Emacs without either side regressing to
+approximations. The EBP wires a formally-specified structured-input that is
+interpreted by the Companion who holds no application logic; Emacs computes the
+declarations of what to draw, the Companion faithfully renders, caches snapshots
+and queues your inputs. By design, Emacs is the source of truth and Elisp
+remains the only whole programming language in the system.
+
+This path has been trodden and had its routes carved over decades:
+server.el/emacsclient in the 1980s, TCP serving in Emacs 22, =elnode= and
+=simple-httpd= in the early-2010s.  This "Emacs-as-a-server" battle-testing
+carried the foundational presumption right over to
+"smartphone-as-a-client". However, here Emacs promptly hits a wall: even after
+constructing infrastructure for NAT traversal and weathering latency, it finds
+that it needs a persistent connection or polling from a wireless, intermittent
+device whose Operating System is optimized for battery life by aggressively
+killing background processes. Emacs diligently listens for a remote dialer who
+has been rendered mute by an outright hostile host. Then, in 2009, Richard
+Moreland recognized that the state must live on the phone and that a local state
+would require a native parser which led to implementing MobileOrg and this
+approach was ratified by the core Org Mode with the introduction of
+=org-mobile.el=. This Emacs-approximation has been the only rational
+implementation: eliminate the link entirely, sync the files, parse them, and
+approximate the logic with lossy, destructive round-trips. This approach was
+carried through Orgzly, organice, Orgro, beorg, each one shouldering the
+Herculean task of reimplementing the file format per platform per question Emacs
+had already answered.
+
+Recently, with the advent of Po Lu's diligent Android port released in Emacs 30,
+this duplicated org-parsing and application logic can be returned to its home in
+Elisp where its introspection and configuration is restored. However, we
+promptly find ourselves presented with a program built before graphical
+interaction was a baseline and demand it render interactive buttons,
+high-refresh animations, create home screen widgets, interop with vCal, access a
+hardware camera. Even if the user doesn't care for such niceties, it is only a
+matter of time before the Lisp Machine in their hand emboldens them to ask
+questions like: "If the phone knows my location, how do I get location
+based-reminders?", "Why can't I input using the hardware camera as a barcode
+scanner?", or "What if I could execute elisp by scanning an NFC Tag/QR
+Code?". We have successfully mobilized our Lisp Machine experience into the
+modern world only to find that it requires lugging around an external keyboard
+or installing a litany of third-party keyboards that lack sufficient FST
+algorithms, workable auto-complete, or spell-check all just to use an
+interaction model not built for the form-factor. To implement any such native
+functionalities in Emacs is tantamount to open-heart surgery: rewrite the
+display engine for animation, bind Android's camera APIs into the C core, write
+an elisp software keyboard. In the end, each one of them is an inversion of the
+exact approximation mistakes from the Org parsers of the past. Ultimately, Emacs
+finds itself a foreign-citizen with no viable path to assimilation.
+
+Contrary to the traditional architecture in =emacs --daemon= where the durable,
+long-lived thing listens and the ephemeral client dials, on Android every
+process is continually deprioritized specifically so it can be killed for memory
+management. For our environment, Jetpacs cannot rely on the traditional
+Server-Client approach, therefore, our job is to design for durability when the
+only process guaranteed to be alive when you're tapping on the screen is the app
+you're looking at. Since we have determined that Emacs should not approximate a
+phone, the user's interactions are directed towards the Companion. As the
+Companion takes the foreground-app designation it pushes Emacs closer to the
+chopping block regardless of what foreground-services it employs per the manual:
+
+#+begin_quote
+"Application processes are treated as disposable entities by the system.  When
+  all Emacs frames move to the background, Emacs might be terminated by the
+  system at any time."
+#+end_quote
+
+Further, as soon as the display is off, the Companion itself no longer holds the
+foreground-app leaving both processes subject to =Doze= for battery
+optimizations. Therefore, the durability must be built into the Companion's disk
+cache and the manifest's entry-points. Even though Emacs is the back-end, it is
+unable to hold the socket so it is unable to be the listener as shown in AOSP's
+own Documentation for Cached Apps Freezer:
+
+#+begin_quote
+"App processes in the cached state are frozen 10 seconds after entering the
+cached state." (Android 14+)
+
+"If all processes for a particular app are frozen, the system terminates any
+active TCP sockets maintained by the app."
+#+end_quote
+
+Regardless of what concessions are granted to Emacs in order to keep it running,
+the goal post is moved across OS versions, per OEM, per user-setting and has
+been proven unstable at best. In an unstable environment where all processes are
+ephemeral, the listener cannot also be the back-end. If the back-end is to be
+presumed dead and only dials when it is alive, then the listener must cache,
+deduplicate, queue the users actions. This internal cache can only be read by
+the app that wrote it. Reconstructing the traditional Client-Server interaction
+model entails designing the Companion process so that it can die freely, be
+revived, rebuilt from disk, make a handshake, then flush the queue. Therefore,
+on Android, the Companion, the "client", listens on the socket that Emacs, the
+"server", dials into whenever it runs in order to process queued actions and
+have state re-derived.
+
+The Lisp Machine experience has been nicely folded into your pocket, but it
+remains isolated from interaction in the real world. Emacs has been embodied
+with no access to its senses and granted a face whose functions rely upon
+non-existent appendages. These are the landmarks of Jetpacs' roadmap.
+
+Ultimately, Jetpacs succeeds when the line between it and Emacs disappears.
+
+#+begin_example
+┌─────────────────────────────────┐
+│  Jetpacs (Android Companion)    │
+│  • Foreground service           │
+│  • Renders whatever Emacs sends │
+│  • Caches last-known UI state   │
+│  • Queues offline actions       │
+└──────────────┬──────────────────┘
+               │  Emacs Bridge Protocol: JSON-RPC bridge
+               │  (loopback socket → signed Unix socket)
+┌──────────────┴──────────────────┐
+│  Emacs (the source of truth)    │
+│  • Pushes native UI specs       │
+│  • Handles user action events   │
+│  • Runs all the actual logic    │
+└─────────────────────────────────┘
+#+end_example
+
+** The Envelope
+The Roadmap begins with deciding the closed vocabulary, message shape and framing for the what rides the wire.
+
+Three things The Envelope has that plain JSON-RPC doesn't, all portable as conventions on top of JSON-RPC:
+
+Self-describing answers. An ebp reply carries its own kind, so a single logged frame is understandable in isolation. A JSON-RPC response is just {id: 7, result: …} — to know what it means you must find request 7. Small, but real for eyeball-debugging.
+Direction annotations. The contract declares who may send each kind (client, companion, both). JSON-RPC has no concept of direction. Keep that table.
+Readable string codes. cap-permission beats -32001 for a human. JSON-RPC allows app-defined codes, so you can keep the strings inside error.data.
+
+
+#+begin_example
+closed vocabulary      ebp: methods, payloads, direction rules,
+                       handshake, offline queue, node trees
+─────────────────────────────────────────────────────
+message shape          JSON-RPC 2.0: request/notification/
+                       response/error
+─────────────────────────────────d────────────────────
+framing                Content-Length headers as required
+                       by jsonrpc.el
+─────────────────────────────────────────────────────
+transport              TCP on loopback
+#+end_example
+
+** Envelope Transport
+Need to hammer out the different transport methods, IPC, UDP, HTTP/TCP, ZeroMQ, NNG, Intents, emacsclient, shared memory and make sure the position is fully argued. 
+
+** Tooling
+*** Project Environment
+
+Jetpacs uses direnv to establish its project-local development
+environment.
+
+The host operating system's default Java installation is not changed.
+Instead, entering the project directory selects JDK 25 for the build
+environment.
+
+The Android SDK is stored according to the XDG user-data convention
+under =~/.local/share/android-sdk= unless =XDG_DATA_HOME= overrides the
+default.
+
+#+begin_src sh :tangle .envrc
+export JAVA_HOME="/usr/lib/jvm/java-25-openjdk-amd64"
+export ANDROID_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/android-sdk"
+
+PATH_add "$JAVA_HOME/bin"
+PATH_add "$ANDROID_HOME/cmdline-tools/latest/bin"
+PATH_add "$ANDROID_HOME/platform-tools"
+#+end_src
+*** Git
+
+.gitignore
+#+begin_src conf :tangle .gitignore
+# ---------------------------------------------------------------------------
+# Literate build outputs
+# ---------------------------------------------------------------------------
+#
+# literature.org is authoritative. These files/directories are produced by
+# tangling and therefore are not committed.
+
+.envrc
+
+/settings.gradle.kts
+/build.gradle.kts
+/gradle/libs.versions.toml
+
+/shared/
+/desktopApp/
+/androidApp/
+
+# Add when introduced:
+# /webApp/
+
+
+# ---------------------------------------------------------------------------
+# Gradle local state and build outputs
+# ---------------------------------------------------------------------------
+
+.gradle/
+.kotlin/
+
+build/
+**/build/
+
+out/
+**/out/
+
+
+# ---------------------------------------------------------------------------
+# Android local state
+# ---------------------------------------------------------------------------
+
+local.properties
+
+*.apk
+*.aab
+*.aar
+
+# Signing material should never be committed accidentally.
+*.jks
+*.keystore
+
+
+# ---------------------------------------------------------------------------
+# IDE state
+# ---------------------------------------------------------------------------
+
+.idea/
+*.iml
+
+
+# ---------------------------------------------------------------------------
+# direnv local state
+# ---------------------------------------------------------------------------
+
+.direnv/
+
+
+# ---------------------------------------------------------------------------
+# Emacs temporary files
+# ---------------------------------------------------------------------------
+
+.#*
+#*#
+*~
+
+auto-save-list/
+
+
+# ---------------------------------------------------------------------------
+# JVM crash/runtime artifacts
+# ---------------------------------------------------------------------------
+
+hs_err_pid*
+replay_pid*
+
+
+# ---------------------------------------------------------------------------
+# Operating-system metadata
+# ---------------------------------------------------------------------------
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+#+end_src
+*** Gradle Build
+
+**** Dependency and Plugin Resolution
+
+Gradle resolves build plugins separately from libraries used by the
+application.
+
+The =pluginManagement= block defines where Gradle searches for plugins
+such as Kotlin, Compose Multiplatform, and the Android Gradle Plugin.
+
+The =dependencyResolutionManagement= block defines where project
+dependencies are resolved.
+
+#+begin_src kotlin :tangle settings.gradle.kts
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "jetpacs"
+
+include(":shared")
+include(":desktopApp")
+include(":androidApp")
+#+end_src
+
+***** Gradle's project-path separator.
+The syntax: =include(":shared")=
+means:
+#+begin_example
+Gradle build
+├── :
+│   └── root project "jetpacs"
+│
+└── :shared
+    └── subproject
+#+end_example
+The colon is Gradle's project-path separator.
+Later:
+: :androidApp
+: :desktopApp
+will be siblings of =:shared=.
+
+***** Why =FAIL_ON_PROJECT_REPOS=?
+Without it, a future module could quietly do this:
+#+begin_example
+repositories {
+    someRandomRepository()
+}
+#+end_example
+and Gradle would start resolving dependencies from somewhere outside the repository policy we established in settings.gradle.kts.
+
+**** Root Plugin Declarations
+
+The root project declares the plugins used by subprojects without
+applying those plugins to the root project itself.
+
+This validates plugin resolution and centralizes the plugin versions
+while keeping the root project free of Kotlin, Android, or Compose
+behavior.
+
+#+begin_src kotlin :tangle build.gradle.kts
+plugins {
+    alias(libs.plugins.kotlinMultiplatform) apply false
+    alias(libs.plugins.kotlinJvm) apply false
+    alias(libs.plugins.composeMultiplatform) apply false
+    alias(libs.plugins.composeCompiler) apply false
+    alias(libs.plugins.androidKmpLibrary) apply false
+    alias(libs.plugins.androidApplication) apply false
+}
+#+end_src
+
+**** Bootstrap Gradle 9.5.0
+We have the classic chicken-and-egg problem:
+#+begin_example
+We want:
+./gradlew
+
+but:
+./gradlew does not exist
+
+because:
+Gradle generates the Wrapper
+#+end_example
+
+So we'll temporarily download the real Gradle 9.5.0 binary distribution, verify it, use it to generate the Wrapper, and then stop using the bootstrap Gradle.
+Gradle's official 9.5.0 binary distribution SHA-256 is:
+#+begin_example
+553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
+#+end_example
+
+[[https://gradle.org/release-checksums/?utm_source=chatgpt.com][Gradle publishes that checksum itself.]]
+
+From inside Jetpacs:
+#+begin_src sh
+cd ~/workspace/jetpacs
+#+end_src
+
+Set some shell variables:
+#+begin_src sh
+GRADLE_VERSION="9.5.0"
+
+GRADLE_SHA256="553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746"
+
+GRADLE_BOOTSTRAP_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/jetpacs/bootstrap/gradle"
+#+end_src
+Notice these are ordinary shell variables, not exports.
+
+Create the cache:
+#+begin_src sh
+mkdir -p "$GRADLE_BOOTSTRAP_DIR"
+
+cd "$GRADLE_BOOTSTRAP_DIR"
+#+end_src
+
+Download the binary-only distribution:
+
+#+begin_src sh
+curl -fL \
+  "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+  -o "gradle-${GRADLE_VERSION}-bin.zip"
+#+end_src
+
+The -bin distribution contains the Gradle runtime needed to execute builds. [[https://docs.gradle.org/current/userguide/gradle_wrapper.html?utm_source=chatgpt.com][Gradle recommends it]] for most builds instead of the larger -all distribution.
+
+Verify what we downloaded
+Before executing it:
+#+begin_src sh
+printf '%s  %s\n' \
+  "$GRADLE_SHA256" \
+  "gradle-${GRADLE_VERSION}-bin.zip" \
+  | sha256sum --check
+#+end_src
+
+Expected:
+#+begin_example
+gradle-9.5.0-bin.zip: OK
+#+end_example
+
+Extract it
+#+begin_src sh
+unzip -q \
+  "gradle-${GRADLE_VERSION}-bin.zip" \
+  -d "$GRADLE_BOOTSTRAP_DIR"
+#+end_src
+
+You should now have:
+#+begin_example
+~/.cache/jetpacs/bootstrap/gradle/
+├── gradle-9.5.0-bin.zip
+└── gradle-9.5.0/
+    ├── bin/
+    │   ├── gradle
+    │   └── gradle.bat
+    ├── lib/
+    └── ...
+#+end_example
+
+Define a convenient variable:
+#+begin_src sh
+BOOTSTRAP_GRADLE="$GRADLE_BOOTSTRAP_DIR/gradle-${GRADLE_VERSION}/bin/gradle"
+#+end_src
+
+Check it:
+#+begin_src sh
+cd ~/workspace/jetpacs/
+#+end_src
+
+Expected:
+#+begin_example
+direnv: loading ...
+#+end_example
+
+Verify:
+#+begin_src sh
+printf 'JAVA_HOME=%s\n' "$JAVA_HOME"
+java --version
+#+end_src
+
+Expected:
+#+begin_example
+JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64
+openjdk 25.0.4.1
+#+end_example
+
+At this moment we still do not have a Wrapper.
+
+Check:
+#+begin_src sh
+ls gradlew gradlew.bat gradle/wrapper 2>/dev/null
+#+end_src
+
+Ideally nothing appears.
+
+Go ahead and tangle the 3 blocks in this file.
+
+Now ask the temporary Gradle to inspect our tiny build:
+#+begin_src sh
+"$BOOTSTRAP_GRADLE" projects
+#+end_src
+You should get something like:
+#+begin_example
+> Task :projects
+
+Projects:
+
+------------------------------------------------------------
+Root project 'jetpacs'
+------------------------------------------------------------
+
+Location: /home/calebc42/workspace/jetpacs
+#+end_example
+
+Generate the Wrapper
+#+begin_src shell
+"$BOOTSTRAP_GRADLE" :wrapper \
+  --gradle-version "$GRADLE_VERSION" \
+  --distribution-type bin \
+  --gradle-distribution-sha256-sum "$GRADLE_SHA256"
+#+end_src
+
+Why =:wrapper= rather than simply =wrapper=?
+The colon explicitly means:
+#+begin_example
+:
+└── root project
+
+:wrapper
+└── wrapper task belonging to root project
+#+end_example
+Gradle now recommends addressing the root Wrapper task explicitly this way. Gradle Documentation
+The other arguments mean:
+#+begin_example
+--gradle-version 9.5.0
+
+    The Wrapper shall use exactly Gradle 9.5.0.
+
+
+--distribution-type bin
+
+    Download the smaller binary distribution,
+    not sources/docs.
+
+
+--gradle-distribution-sha256-sum 553c...
+
+    When the Wrapper downloads Gradle 9.5.0,
+    verify its bytes against this digest.
+#+end_example
+
+Gradle specifically supports distributionSha256Sum so Wrapper downloads can be cryptographically checked before use.
+
+Inspect What Gradle just generated
+#+begin_src sh
+find . \
+  -maxdepth 3 \
+  \( -name 'gradlew' \
+     -o -name 'gradlew.bat' \
+     -o -name 'gradle-wrapper.jar' \
+     -o -name 'gradle-wrapper.properties' \) \
+  -print
+#+end_src
+
+You should have:
+#+begin_example
+./gradlew
+./gradlew.bat
+./gradle/wrapper/gradle-wrapper.jar
+./gradle/wrapper/gradle-wrapper.properties
+#+end_example
+
+Verify the Wrapper JAR too
+#+begin_src sh
+printf '%s  %s\n' \
+  '497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7' \
+  'gradle/wrapper/gradle-wrapper.jar' \
+  | sha256sum --check
+#+end_src
+
+#+begin_example
+gradle/wrapper/gradle-wrapper.jar: OK
+#+end_example
+
+Now abandon the bootstrap Gradle
+From this point forward, do not use:
+#+begin_src sh
+gradle
+#+end_src
+
+Jetpacs now has its own entry point:
+#+begin_src sh
+./gradlew
+#+end_src
+verify
+#+begin_src sh
+./gradlew --version
+#+end_src
+
+Finally, our actual milestone
+#+begin_src sh
+./gradlew projects
+#+end_src
+Then:
+#+begin_src sh
+./gradlew tasks
+#+end_src
+
+**** Version Catalog
+
+Gradle automatically imports =gradle/libs.versions.toml= as a version
+catalog named =libs=.
+
+The catalog centralizes versions and coordinates for external Gradle
+plugins and, later, application libraries.
+
+It does not contain every version-like number in the project. Gradle
+itself is pinned by the Gradle Wrapper; the JDK is controlled by the
+development environment and Gradle toolchains; Android SDK levels are
+build configuration.
+
+#+begin_src toml :tangle gradle/libs.versions.toml
+[versions]
+kotlin = "2.4.10"
+composeMultiplatform = "1.12.0"
+androidGradlePlugin = "9.1.1"
+androidxActivity = "1.13.0"
+
+[plugins]
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "androidGradlePlugin" }
+androidApplication = { id = "com.android.application", version.ref = "androidGradlePlugin" }
+
+[libraries]
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMultiplatform" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMultiplatform" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
+#+end_src
+
+Notice what is *not* there:
+#+begin_example
+Gradle 9.5.0       → gradle-wrapper.properties
+JDK 25             → .envrc / Gradle runtime
+JVM target 17      → Kotlin compiler configuration later
+compileSdk 37      → Android module configuration later
+targetSdk 37       → Android application configuration later
+minSdk             → Android configuration later
+Build Tools        → Android SDK inventory / AGP
+#+end_example
+I want us to resist turning libs.versions.toml into a generic constants file.
+
+**** 6. Ask Gradle to parse the configuration
+
+#+begin_src sh
+./gradlew help
+#+end_src
+
+**** Kotlin Multiplatform
+4A
+Create :shared
+Apply only Kotlin Multiplatform
+Create commonMain
+Compile trivial common Kotlin
+**** Shared Kotlin Multiplatform Module
+
+The =shared= project contains Kotlin and Compose UI code intended to be
+shared across platform applications.
+
+It currently targets:
+
+- JVM, which will later be consumed by the desktop application.
+- Android, using the Android Gradle Plugin's Kotlin Multiplatform
+  library target.
+
+The Gradle build itself runs on JDK 25, while Kotlin/JVM output targets
+JVM 17 compatibility.
+
+#+begin_src kotlin :tangle shared/build.gradle.kts
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.androidKmpLibrary)
+}
+
+kotlin {
+    jvm {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
+    android {
+        namespace = "jetpacs.shared"
+        compileSdk = 37
+        minSdk = 35
+
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            implementation(libs.compose.runtime)
+            implementation(libs.compose.foundation)
+            implementation(libs.compose.ui)
+        }
+    }
+}
+#+end_src
+
+The plugins block:
+#+begin_example
+plugins {
+    alias(libs.plugins.kotlinMultiplatform)
+}
+#+end_example
+
+now differs importantly from the root declaration:
+
+#+begin_example
+alias(libs.plugins.kotlinMultiplatform) apply false
+#+end_example
+
+At the root we said:
+Make this plugin available.
+
+Here we're saying:
+Actually apply Kotlin Multiplatform behavior to :shared.
+
+We declare a Kotlin target named =jvm=
+
+Conceptually:
+#+begin_example
+Kotlin Multiplatform module
+          │
+          ▼
+       JVM target
+          │
+          ├── main compilation
+          │       ▲
+          │       │
+          │   ┌───┴───────┐
+          │   │           │
+          │ commonMain   jvmMain
+          │
+          └── test compilation
+                  ▲
+              ┌───┴───────┐
+              │           │
+         commonTest     jvmTest
+#+end_example
+
+We are not yet introducing a separate JDK 17 compiler toolchain. Right now JDK 25 runs the compiler, while the Kotlin compiler emits JVM-17-compatible bytecode.
+
+***** First Common Kotlin Source
+
+The =commonMain= source set contains production Kotlin code shared by
+every target declared by the module.
+
+For now, the code deliberately depends only on Kotlin's common API.
+
+#+begin_src kotlin :tangle shared/src/commonMain/kotlin/jetpacs/Greeting.kt :mkdirp yes
+package jetpacs
+
+fun greeting(): String =
+    "Hello from commonMain"
+#+end_src
+
+Tangle Then Run:
+#+begin_src sh
+./gradlew projects
+#+end_src
+
+Expected output:
+#+begin_src sh
+Root project 'jetpacs'
+------------------------------------------------------------
+
+Location: /home/calebc42/workspace/jetpacs
+
+Project hierarchy:
+
+Root project 'jetpacs'
+\--- Project ':shared'
+
+Project locations:
+
+project ':shared' - /shared
+#+end_src
+
+Compile commonMain
+#+begin_src sh
+./gradlew :shared:compileKotlinJvm
+#+end_src
+
+***** Shared Compose UI
+
+The application's shared UI begins in =commonMain=.
+
+At this stage =App= has no platform-specific dependencies. Both the
+desktop and Android hosts will eventually invoke this same composable.
+
+#+begin_src kotlin :tangle shared/src/commonMain/kotlin/jetpacs/App.kt :mkdirp yes
+package jetpacs
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+
+@Composable
+fun App() {
+    Column {
+        BasicText(greeting())
+        BasicText("Compose Multiplatform is active.")
+    }
+}
+#+end_src
+
+***** JVM Platform Source
+
+The =jvmMain= source set contains code available only to the JVM
+target.
+
+Unlike =commonMain=, this source set may use JVM APIs such as
+=java.lang.System=.
+
+#+begin_src kotlin :tangle shared/src/jvmMain/kotlin/jetpacs/JvmPlatform.kt :mkdirp yes
+package jetpacs
+
+fun jvmPlatformDescription(): String =
+    "JVM ${System.getProperty("java.version")} on ${System.getProperty("os.name")}"
+#+end_src
+
+***** Android Platform Source
+
+The =androidMain= source set contains Kotlin code compiled only for the
+Android target.
+
+It may use Android framework APIs that are unavailable to other
+targets.
+
+#+begin_src kotlin :tangle shared/src/androidMain/kotlin/jetpacs/AndroidPlatform.kt :mkdirp yes
+package jetpacs
+
+import android.os.Build
+
+fun androidPlatformDescription(): String =
+    "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+#+end_src
+
+Compile commonMain + jvmMain
+
+#+begin_src sh
+./gradlew :shared:compileKotlinJvm
+#+end_src
+
+compile android
+
+#+begin_src sh
+./gradlew :shared:compileAndroidMain
+#+end_src
+
+once both comps succeed, run a broad build.
+
+#+begin_src sh
+./gradlew :shared:build
+#+end_src
+
+**** Desktop Application
+
+The =desktopApp= project is a JVM application that provides the desktop
+entry point for Jetpacs.
+
+It owns desktop process and window lifecycle, while application UI and
+shared behavior remain in =:shared=.
+
+The build runs on JDK 25 while emitted JVM bytecode remains compatible
+with JVM 17.
+
+#+begin_src kotlin :tangle desktopApp/build.gradle.kts :mkdirp yes
+import org.gradle.api.JavaVersion
+import org.gradle.api.tasks.compile.JavaCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    alias(libs.plugins.kotlinJvm)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(17)
+}
+
+dependencies {
+    implementation(project(":shared"))
+    implementation(compose.desktop.currentOs)
+}
+
+compose.desktop {
+    application {
+        mainClass = "jetpacs.desktop.MainKt"
+    }
+}
+#+end_src
+
+One subtlety: Kotlin's jvmTarget = 17 controls bytecode compatibility but does not by itself prevent Kotlin code from referencing JDK APIs newer than 17. Kotlin has a corresponding -Xjdk-release=17 capability for that purpose. Kotlin I would not add that raw compiler flag yet. A cleaner long-term solution, if we decide strict JDK-17 API enforcement is important, is a real Gradle Java 17 toolchain. Gradle and Kotlin both support separating that toolchain from the JDK 25 that runs Gradle. [fn:1] 
+
+
+***** Desktop Entry Point
+
+The desktop application's =main= function owns desktop process and
+window lifecycle.
+
+The actual application UI is imported from =:shared=.
+
+#+begin_src kotlin :tangle desktopApp/src/main/kotlin/jetpacs/desktop/Main.kt :mkdirp yes
+package jetpacs.desktop
+
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.application
+import jetpacs.App
+
+fun main() =
+    application {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = "Jetpacs",
+        ) {
+            App()
+        }
+    }
+#+end_src
+
+Tangle, then:
+#+begin_src sh
+./gradlew projects
+#+end_src
+
+Expected output:
+#+begin_example
+Root project 'jetpacs'
+------------------------------------------------------------
+
+Location: /home/calebc42/workspace/jetpacs
+
+Project hierarchy:
+
+Root project 'jetpacs'
++--- Project ':desktopApp'
+\--- Project ':shared'
+
+Project locations:
+
+project ':desktopApp' - /desktopApp
+project ':shared' - /shared
+#+end_example
+
+#+begin_src sh
+./gradlew :desktopApp:run
+#+end_src
+
+And you should have Hello World for the desktop! Next is Android.
+
+***** Android Application
+
+The =androidApp= project provides the Android application entry point.
+
+It depends on =:shared= for shared Kotlin and Compose UI. Android
+process, Activity, manifest, application identity, and lifecycle
+configuration remain platform-specific.
+
+AGP 9 provides built-in Kotlin support, so the legacy
+=org.jetbrains.kotlin.android= plugin is intentionally not applied.
+
+#+begin_src kotlin :tangle androidApp/build.gradle.kts :mkdirp yes
+import org.gradle.api.JavaVersion
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    alias(libs.plugins.androidApplication)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+}
+
+android {
+    namespace = "dev.jetpacs"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "dev.jetpacs"
+
+        minSdk = 35
+        targetSdk = 37
+
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        compose = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+dependencies {
+    implementation(project(":shared"))
+    implementation(libs.androidx.activity.compose)
+}
+#+end_src
+
+****** Android Entry Point
+
+The Android entry point is a =ComponentActivity=.
+
+It owns Android lifecycle integration and installs the same shared
+=:shared= Compose UI used by the desktop application.
+
+#+begin_src kotlin :tangle androidApp/src/main/kotlin/dev/jetpacs/MainActivity.kt :mkdirp yes
+package dev.jetpacs
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import jetpacs.App
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        setContent {
+            App()
+        }
+    }
+}
+#+end_src
+
+****** Android Manifest
+
+The Android manifest declares the application and its launcher Activity.
+
+#+begin_src xml :tangle androidApp/src/main/AndroidManifest.xml :mkdirp yes
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="Jetpacs"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+    </application>
+
+</manifest>
+#+end_src
+
+Tangle, then inspect Gradle
+#+begin_src sh
+./gradlew projects
+#+end_src
+
+Build an APK before worrying about a device
+#+begin_src sh
+./gradlew :androidApp:assembleDebug
+#+end_src
+
+Once the APK builds, we'll test:
+#+begin_src sh
+adb install -r \
+  androidApp/build/outputs/apk/debug/androidApp-debug.apk
+#+end_src
+
+***** Known Toolchain Warnings
+
+****** Android SDK XML Version
+
+AGP 9.1.1 currently emits:
+
+#+begin_example
+Warning: SDK processing. This version only understands SDK XML versions
+up to 3 but an SDK XML file of version 4 was encountered.
+#+end_example
+
+The Android target nevertheless compiles successfully, and AGP 9.1.1
+officially supports Android API 37.0.
+
+This warning is treated as a known Android tooling compatibility warning
+rather than a build failure.
+
+Revisit when upgrading AGP or if SDK processing begins to fail.
+
+* Footnotes
+
+[fn:1] https://docs.gradle.org/current/userguide/toolchains.html?utm_source=chatgpt.com 

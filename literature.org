@@ -187,8 +187,6 @@ PATH_add "$ANDROID_HOME/cmdline-tools/latest/bin"
 PATH_add "$ANDROID_HOME/platform-tools"
 #+end_src
 *** Git
-
-.gitignore
 #+begin_src conf :tangle .gitignore
 # ---------------------------------------------------------------------------
 # Literate build outputs
@@ -202,6 +200,7 @@ PATH_add "$ANDROID_HOME/platform-tools"
 /settings.gradle.kts
 /build.gradle.kts
 /gradle/libs.versions.toml
+/gradle.properties
 
 /shared/
 /desktopApp/
@@ -219,10 +218,10 @@ PATH_add "$ANDROID_HOME/platform-tools"
 .kotlin/
 
 build/
-**/build/
+,**/build/
 
 out/
-**/out/
+,**/out/
 
 
 # ---------------------------------------------------------------------------
@@ -231,13 +230,13 @@ out/
 
 local.properties
 
-*.apk
-*.aab
-*.aar
+,*.apk
+,*.aab
+,*.aar
 
 # Signing material should never be committed accidentally.
-*.jks
-*.keystore
+,*.jks
+,*.keystore
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +244,7 @@ local.properties
 # ---------------------------------------------------------------------------
 
 .idea/
-*.iml
+,*.iml
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +260,7 @@ local.properties
 
 .#*
 #*#
-*~
+,*~
 
 auto-save-list/
 
@@ -284,7 +283,7 @@ Desktop.ini
 #+end_src
 *** Gradle Build
 
-**** Dependency and Plugin Resolution
+**** Settings for Dependency and Plugin Resolution
 
 Gradle resolves build plugins separately from libraries used by the
 application.
@@ -305,8 +304,15 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    // repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    
+    // Kotlin/Wasm provisions build tools such as Node.js, Yarn, and
+    // Binaryen through repositories added by the Kotlin Gradle Plugin.
+    // FAIL_ON_PROJECT_REPOS is therefore incompatible with the current
+    // Kotlin/Wasm toolchain.
 
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
+    
     repositories {
         google()
         mavenCentral()
@@ -318,6 +324,7 @@ rootProject.name = "jetpacs"
 include(":shared")
 include(":desktopApp")
 include(":androidApp")
+include(":webApp")
 #+end_src
 
 ***** Gradle's project-path separator.
@@ -345,7 +352,18 @@ repositories {
 }
 #+end_example
 and Gradle would start resolving dependencies from somewhere outside the repository policy we established in settings.gradle.kts.
+**** Gradle Runtime Properties
 
+Kotlin/Wasm compilation requires substantially more compiler heap than
+the JVM and Android compilations used by the initial project.
+
+The Kotlin compiler daemon is therefore given a 5 GiB maximum heap.
+This affects the compiler process, not the memory available to the
+resulting applications.
+
+#+begin_src properties :tangle gradle.properties
+kotlin.daemon.jvmargs=-Xmx5g -Xms512m
+#+end_src
 **** Root Plugin Declarations
 
 The root project declares the plugins used by subprojects without
@@ -654,7 +672,7 @@ I want us to resist turning libs.versions.toml into a generic constants file.
 ./gradlew help
 #+end_src
 
-**** Kotlin Multiplatform
+*** Kotlin Multiplatform
 4A
 Create :shared
 Apply only Kotlin Multiplatform
@@ -699,6 +717,10 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
+    }
+
+    wasmJs {
+        browser()
     }
 
     sourceSets {
@@ -819,7 +841,7 @@ fun App() {
 }
 #+end_src
 
-***** JVM Platform Source
+**** JVM Platform Source
 
 The =jvmMain= source set contains code available only to the JVM
 target.
@@ -834,7 +856,7 @@ fun jvmPlatformDescription(): String =
     "JVM ${System.getProperty("java.version")} on ${System.getProperty("os.name")}"
 #+end_src
 
-***** Android Platform Source
+**** Android Platform Source
 
 The =androidMain= source set contains Kotlin code compiled only for the
 Android target.
@@ -976,7 +998,7 @@ project ':shared' - /shared
 
 And you should have Hello World for the desktop! Next is Android.
 
-***** Android Application
+**** Android Application
 
 The =androidApp= project provides the Android application entry point.
 
@@ -1033,7 +1055,7 @@ dependencies {
 }
 #+end_src
 
-****** Android Entry Point
+***** Android Entry Point
 
 The Android entry point is a =ComponentActivity=.
 
@@ -1059,7 +1081,7 @@ class MainActivity : ComponentActivity() {
 }
 #+end_src
 
-****** Android Manifest
+***** Android Manifest
 
 The Android manifest declares the application and its launcher Activity.
 
@@ -1104,9 +1126,117 @@ adb install -r \
   androidApp/build/outputs/apk/debug/androidApp-debug.apk
 #+end_src
 
-***** Known Toolchain Warnings
+**** Web / WASM
+The =webApp= project provides the browser entry point for Jetpacs.
 
-****** Android SDK XML Version
+It targets Kotlin/Wasm for JavaScript-hosted WebAssembly and depends on
+=:shared= for the common Compose application UI.
+
+=:shared= remains a library. =:webApp= is responsible for producing the
+browser executable and web resources.
+
+#+begin_src kotlin :tangle webApp/build.gradle.kts :mkdirp yes
+plugins {
+    alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+}
+
+kotlin {
+    wasmJs {
+        browser {
+            commonWebpackConfig {
+                outputFileName = "webApp.js"
+            }
+        }
+
+        binaries.executable()
+    }
+
+    sourceSets {
+        wasmJsMain.dependencies {
+            implementation(project(":shared"))
+            implementation(libs.compose.ui)
+        }
+    }
+}
+#+end_src
+
+***** Web Entry Point
+
+The web entry point attaches the same shared =App()= composable to an
+HTML container.
+
+#+begin_src kotlin :tangle webApp/src/wasmJsMain/kotlin/dev/jetpacs/web/Main.kt :mkdirp yes
+package dev.jetpacs.web
+
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.window.ComposeViewport
+import jetpacs.App
+
+@OptIn(ExperimentalComposeUiApi::class)
+fun main() {
+    ComposeViewport(viewportContainerId = "webApp") {
+        App()
+    }
+}
+#+end_src
+
+***** Web HTML Host
+
+#+begin_src html :tangle webApp/src/wasmJsMain/resources/index.html :mkdirp yes
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>Jetpacs</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div id="webApp"></div>
+
+    <script src="webApp.js"></script>
+</body>
+</html>
+#+end_src
+
+***** Web Styles
+
+#+begin_src css :tangle webApp/src/wasmJsMain/resources/styles.css :mkdirp yes
+html,
+body,
+#webApp {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    overflow: hidden;
+}
+#+end_src
+
+Tangle, then compile
+#+begin_src sh
+./gradlew :shared:compileKotlinWasmJs
+#+end_src
+
+Compile webApp
+#+begin_src sh
+./gradlew :webApp:tasks --all | grep -i wasm
+#+end_src
+
+
+
+* Known Toolchain Warnings
+
+** Android SDK XML Version
 
 AGP 9.1.1 currently emits:
 
@@ -1122,6 +1252,9 @@ This warning is treated as a known Android tooling compatibility warning
 rather than a build failure.
 
 Revisit when upgrading AGP or if SDK processing begins to fail.
+
+** FAIL_ON_PROJECT_REPO
+Gradle documents that FAIL_ON_PROJECT_REPOS fails even when the repository is added by a plugin, and Kotlin has an open/history issue for exactly this Wasm scenario.
 
 * Footnotes
 

@@ -31,6 +31,7 @@ I will also create a capture template for quickly logging LLM prompts, conversat
 :AUTHOR: Caleb Christensen
 :END:
 :LOGBOOK:
+CLOCK: [2026-08-30 Sun 20:22]
 CLOCK: [2026-08-30 Sun 17:54]--[2026-08-30 Sun 19:58] =>  2:04
 CLOCK: [2026-08-30 Sun 10:27]--[2026-08-30 Sun 17:30] =>  7:03
 :END:

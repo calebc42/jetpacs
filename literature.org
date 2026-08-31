@@ -205,9 +205,17 @@ PATH_add "$ANDROID_HOME/platform-tools"
 /shared/
 /desktopApp/
 /androidApp/
+/webApp/
 
-# Add when introduced:
-# /webApp/
+
+# ---------------------------------------------------------------------------
+# Independent repositories and workspace-local archives
+# ---------------------------------------------------------------------------
+
+/.claude/
+/ebp/
+/git-safety/
+/jetpacs-poc/
 
 
 # ---------------------------------------------------------------------------

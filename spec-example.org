@@ -1,0 +1,143 @@
+#+TITLE: GDRP 0.1 — Garage Door Remote Protocol (worked example)
+# ============================================================
+# A deliberately tiny COMPLETE spec for a fictional protocol,
+# so you can study the form inhabited. Not EBP. Every organ of
+# a real spec appears once, at miniature scale. Margin notes in
+# [brackets] point at the craft move being demonstrated.
+# ============================================================
+
+* Overview
+GDRP is a wire contract for conveying named commands from a handheld
+remote to a garage-door opener, and door status in return. The radio
+link is assumed lossy; either device may sleep at any time.
+
+# [Informative. No keywords. Says what crosses, in each
+#  direction, and names the environment's hostility up front.]
+
+* Conventions
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+"SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
+document are to be interpreted as described in BCP 14 [RFC2119]
+[RFC8174] when, and only when, they appear in all capitals.
+
+Messages are JSON objects, one per radio frame. Frames carry no
+ordering guarantee. Batch frames (top-level arrays) are prohibited: a
+Sender MUST NOT transmit a frame whose top level is an array.
+
+# [The boilerplate cites BOTH RFCs. The batch decision is made
+#  explicitly — silence would have meant "allowed". Note the
+#  batch law is actor-first: "a Sender MUST NOT", not "frames
+#  must not be arrays".]
+
+* Terminology
+- Opener :: the party that owns the door's true state and executes
+  commands against it.
+- Remote :: the party that originates user intent and may display
+  status.
+- Paired :: the state in which the Opener has durably recorded a
+  Remote's identity (§Pairing).
+
+# [Definitions define. No radio details (transport-variable), no
+#  laws, no doctrine. "Paired" was added because a law below
+#  needed it — terms are minted on demand.]
+
+* Doctrine
+The Opener is the sole authority on door state.
+
+An Opener MUST NOT infer door state from command history. A Remote
+MUST NOT display a door state it has not received from the Opener.
+
+# [One informative principle, then two testable prohibitions —
+#  each actor-first, each convictable: you could audit a
+#  Remote's firmware against the second sentence.]
+
+* Direction Table
+| Method         | Originator | Class        |
+|----------------+------------+--------------|
+| pair.request   | Remote     | request      |
+| door.command   | Remote     | request      |
+| status.changed | Opener     | notification |
+
+# [Three rows. Minted from one walkthrough: pair, press button,
+#  see status. Nothing speculative. status.changed is a
+#  notification because the Opener cannot afford to wait for a
+#  sleeping Remote — the class column encodes liveness reality.]
+
+* Methods
+** door.command
+- Originator :: Remote
+- Class :: request
+- Capability gate :: none
+- Params ::
+  | key    | type   | req? | meaning                    |
+  |--------+--------+------+----------------------------|
+  | action | string | yes  | one of "open" "close" "stop" |
+- Result ::
+  | key   | type   | req? | meaning                     |
+  |-------+--------+------+-----------------------------|
+  | state | string | yes  | door state after acceptance |
+- Errors :: 1 (unpaired), 2 (obstruction), 3 (busy)
+- Since :: 0.1
+
+The Opener MUST NOT execute a door.command from a Remote that is not
+Paired; it MUST answer such a request with error 1. The Opener MUST
+answer every door.command exactly once.
+
+A Remote SHOULD retransmit an unanswered door.command once after
+500ms. The exception that justifies SHOULD: a Remote in a
+battery-critical state may prefer to fail visibly rather than spend
+the transmission.
+
+An Opener MAY support multiple Paired Remotes. Consequently a Remote
+MUST NOT assume it is the only Paired Remote, and MUST tolerate
+status.changed notifications it did not provoke.
+
+# [The full per-method template, once. Then three craft moves:
+#  1. Fail-closed law with its error code attached.
+#  2. A SHOULD with its "unless" written down — a SHOULD that
+#     cannot name its exception is a MUST that lost its nerve.
+#  3. A MAY immediately followed by the reciprocal obligation it
+#     creates on the OTHER party. MAYs are never free.]
+
+Golden frame:
+#+begin_example
+{"jsonrpc":"2.0","id":4,"method":"door.command","params":{"action":"open"}}
+#+end_example
+
+* Errors
+| code | meaning     | data          | recoverable?      |
+|------+-------------+---------------+-------------------|
+|    1 | unpaired    | —             | yes — run pairing |
+|    2 | obstruction | {sensor}      | yes — clear, retry |
+|    3 | busy        | {retry_ms}    | yes — wait, retry |
+
+Codes 1–99 are reserved for GDRP. Codes 100+ are available to
+vendor extensions.
+
+# [Registry as data; the remedy rides the error (retry_ms tells
+#  the Remote WHAT to do); the space is partitioned on day one.]
+
+* Conformance
+A conforming minimal Remote implements pair.request and door.command
+only. Status display is a negotiated capability, not a mandate: an
+Opener MUST function against a Remote that ignores status.changed.
+
+# [Names the conformance floor explicitly, and states the
+#  obligation the floor creates on the peer.]
+
+* Security Considerations
+Replay of a recorded door.command frame is the primary threat; the
+radio profile MUST provide per-frame freshness (e.g. rolling codes).
+Pairing MUST require physical access to the Opener.
+
+* Open Questions
+1. Multi-door Openers: one session per door, or door ids in params?
+2. Remote-initiated unpairing: worth a method, or physical-only?
+
+# [Published WITH the spec. Reviewers now argue about these two
+#  questions instead of relitigating the direction table.]
+
+* Amendment Log
+| # | date | sections | change | fixtures | ratified |
+|---+------+----------+--------+----------+----------|
+| — | —    | —        | —      | —        | —        |

@@ -1,0 +1,3 @@
+#+begin_src sh
+rsync -a --exclude='.git/' --exclude='build/' --exclude='.idea/' ~/pkb/projects/jetpacs/jetpacs/ /mnt/c/Users/caleb/AndroidStudioProjects/jetpacs-build/
+#+end_src

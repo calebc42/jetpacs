@@ -1,0 +1,140 @@
+These are my rough notes from my experience re-writing the Jetpacs Proof of Concept.
+* Jetpacs succeeds when it disappears into Emacs. It MUST be purely additive, no reductions or regressions of Emacs core.
+** (a) with jetpacs loaded but no session active, stock Emacs behavior is unchanged;
+** (b) no reimplementation of a facility Emacs ships without a written decision record saying why;
+** (c) any advice on core functions is inert outside jetpacs action handlers.
+* Who binds and who dials is a per-deployment fact, and therefore the protocol must not define its roles in terms of it.
+
+
+* Proof of Concept Current State
+
+- ~21,600 lines of elisp across 41 modules, ~14,200 lines of Kotlin across 55 files, two spec documents of ~70–100KB that are ~80% identical prose with deliberate divergences, a machine-readable contract.json, ~120 golden test lines, a validator, and about 40 PLAN/AUDIT docs recording every problem the LLM hit.
+
+- Two protocol generations coexist: v1 (custom 5-field NDJSON envelope) and v2 (rebuilt on JSON-RPC 2.0).
+
+  - "Purely additive, no reductions or regressions of Emacs core" is your deepest value, and here's the *most uncomfortable finding: the PoC's loudest violation of it is that it hand-rolled the entire JSON-RPC transport — framing, correlation, dispatch, ~450 lines on a raw make-network-process — while jsonrpc.el ships inside Emacs and does exactly that job. It even hand-rolled HMAC-SHA256 in pure elisp (that one has a real justification: the Android build's gnutls gap — but it was never written down as a decision)*. Your manifesto should make this class of drift impossible with an operational test, something like: (a) with jetpacs loaded but no session active, stock Emacs behavior is unchanged; (b) no reimplementation of a facility Emacs ships without a written decision record saying why; (c) any advice on core functions is inert outside jetpacs action handlers.
+
+I am starting by writing a manifesto and then writing the spec first.
+** Road to Hello World:
+  - "Hello world" is not one moment — it's six first-lights
+    For a protocol project, the demoralizing mistake is defining hello world as "the app works," which puts the first dopamine hit months away. The right move is to *engineer a ladder where something new becomes visible at every rung*, and — this is the part I want you to internalize — the ladder and the spec are the same object. Remember the write-order skeleton from last time: step 6 was "one vertical slice, fully specified, with its first goldens." The road to hello world is that vertical slice, taken one layer at a time. Each rung is: write the spec sections it needs → capture the frames as goldens → build just enough to make the light turn on. Nothing rides the wire that the spec hasn't named — but the spec never gets more than one rung ahead of something you can see.
+*** Rung 1 — First frame: see your protocol with your own eyes
+Needs: spec §1 (roles — your Lesson 1 homework), §2 (artifact precedence), §3 (JSON-RPC profile & transport binding).
+Build: almost nothing. In one terminal, nc -l 8765 plays the companion. In Emacs, a few lines using jsonrpc.el dial loopback and send hello.
+The light: a Content-Length header and a JSON-RPC request appear in netcat, byte for byte as your spec §3 says they must. Your draft called this value "eyeball-debugging" — this rung is that value made real. Save what you see: it's your first golden file.
+
+This rung also settles decision ledger #3 experimentally: you'll learn within an hour whether jsonrpc.el speaks your §3 or fights it — evidence, not vibes, for the purely-additive test.
+
+*** Rung 2 — First conversation: you are the companion
+Needs: spec §5 (lifecycle & handshake — hello/welcome shapes and the session state machine).
+Build: pre-write the companion's reply frames (welcome.txt etc.) as files and cat them into netcat when Emacs dials.
+The light: Emacs completes a handshake with a human. There is no better way to learn your own handshake than personally performing one side of it. Every reply file you hand-craft becomes a golden for the companion-emitted direction — which, remember, is exactly the half of the wire the PoC had zero goldens for.
+
+One honest spec decision this forces early: the PoC paired with an HMAC token exchange. Decide consciously whether your spec permits a dev-mode profile with auth stubbed (written down as such, fail-closed everywhere else), or auth from day one. Either is defensible; drifting into "I'll add auth later" without the spec saying so is not.
+
+*** Rung 3 — First pixel: the phone renders one node
+Needs: spec §6 begins — the minimal node vocabulary. Three types: column, text, button. Plus surface.update with its revision rule.
+Build: the smallest possible Android app — a plain Activity, a socket listener, handshake, and a renderer that walks a three-type tree. No foreground service, no Room, no cache, no notification yet. (You already have a working Android toolchain from the PoC's build cycle, and cribbing gradle plumbing from llm-poc is archaeology, not copying — build wiring carries no application logic.)
+The light: text you typed in elisp appears on your phone. This is the rung people frame screenshots of.
+
+*** Rung 4 — First round trip: THE hello world
+Needs: spec §6 completes — event.action, the action registry rule (names, never code), on_tap, and args.value. Also §7's first two error codes, because this rung will surface them.
+Build: elisp side: an action registry and one handler. The canonical demo is a counter: a text node saying "Taps: 3" and a button whose on_tap names an action; the handler increments and re-pushes.
+The light: tap the phone → elisp runs → screen updates. Emacs computed, the companion rendered, the wire carried a name and never code. Every claim in your manifesto's core paragraph is now demonstrated, and the counter app becomes the spec's permanent worked example — the PoC's equivalent (jetpacs-hello.el) was 74 lines of app code, to give you a sense of the destination's size.
+
+*** Rung 5 — First resurrection: the manifesto's thesis, performed
+Needs: the revision/cache semantics of §6 made normative (monotonic revisions, reject-non-newer, welcome carries the revision snapshot) — plus your first durable disk format, versioned from day one.
+Build: the companion persists the last surface and renders from cache at startup; Emacs reconnects with backoff and absorbs the revision floor from the welcome.
+The light: kill -9 Emacs — the phone doesn't flinch. Force-stop the companion — it comes back showing the same screen before any connection exists. Restart Emacs — reconnect, re-push, no stale-revision rejection. This is "die freely and rebuild from disk" as a live demo, and it's the moment your crash-only paragraph stops being rhetoric.
+
+*** Rung 6 — First offline tap: the soul of the design
+Needs: spec §8 — the queue, when_offline, and the replay state machine (the one the PoC discovered by failure; you get to design it).
+Build: queue persistence and queue.replay.
+The light: Emacs dead, tap the counter three times, restart Emacs — watch the count jump by three. When that works, hello world is finished: every architectural organ of the system — push, render, act, survive, queue, replay — exists in miniature. Everything after (editor, widgets, triggers, org) is growth, not construction.
+
+** Why this ladder protects your motivation
+The gaps are small. No rung asks for more than one new subsystem, and rungs 1–2 need barely any code at all — the early lights come fast, while you're still mostly writing spec.
+Nothing is throwaway. The netcat frames become goldens; the reply files become the companion-direction corpus; the counter becomes the spec's worked example; the rung-5 kill-test becomes a permanent conformance check. Eagerness gets banked, not spent.
+Each rung retires real decisions from the ledger — 1 and 2 settle roles, envelope, and jsonrpc.el; 4 settles the action boundary; 5 settles revisions and durability; 6 settles replay. The road to hello world quietly writes most of your spec's normative core.
+And notice where the road starts: rung 1 cannot open a socket until someone has decided who listens and who dials, and what the two parties are called — which is precisely the Lesson 1 homework you already have. The road to hello world begins at the paragraph you're rewriting this week.
+
+* Manifesto Adversarial Review
+- Your argument proves the foreground case and silently skips the background one. "The only process guaranteed to be alive when you're tapping" covers the interactive case — but home-screen widgets, location reminders, and NFC triggers are precisely the screen-off case your manifesto uses as motivation. The durability argument has to cover both.
+- Factual wobbles (a spec-writer's manifesto must survive a pedant): the mouse predates Emacs — Engelbart's demo was 1968, Emacs is 1976 — so say "built before graphical interaction was assumed"; TCP serving arrived with Emacs 22 (2007), not with 1980s server.el/emacsclient (which used a helper over local sockets); and the MobileOrg sentence is a retrofitted just-so story — it was Richard Moreland's 2009 iPhone app, with org-mobile.el added to support it, not the outcome of a community deliberation about failed persistent connections. The argument survives all three corrections; make them so nobody gets to dismiss the whole piece over a date.
+- Both processes live on the same phone, talking over loopback — which is why NAT traversal and network latency are irrelevant. That's the single most important deployment fact in the whole design and it never appears in a sentence. Promote it.
+-
+
+* SPEC Adversarial Review
+The envelope is specified twice with drift already: the manifesto says direction is contract metadata ("client, companion, both"), the spec fragment says it's a wire field (from = "emacs"/"companion"). Preview of a real decision: a from field on the wire is redundant with the direction table and spoofable. One section must be normative; the other must defer.
+
+* (There's also a cluster of small prose issues — "for the what rides the wire," "a non-existent appendages," "JSON Scheme" — worth a pass when you revise; the full line-by-line list is in poc-audit/draftCritique.md.)
+
+* From studying how JSON-RPC 2.0, LSP, DAP, Wayland, and IETF RFCs are built (full survey in poc-audit/specAnatomy.md):
+
+** Every requirement is one UPPERCASE-keyword sentence addressed to a named role. "The Companion MUST reject a surface.update whose revision is not greater than the cached revision." Adopt RFC 2119/8174 keywords (MUST/SHOULD/MAY, normative only in caps) in a conventions section. This single habit is what makes a spec testable: each MUST becomes exactly one conformance item, and eventually one golden test. The PoC never did this — its rules are declarative prose braided into history essays, and a conforming implementer can't extract a checklist.
+
+** Separate normative from informative structurally, not by vibes. The PoC hand-tagged maybe a dozen paragraphs "(normative)," implying everything else was negotiable. Rationale is good — the PoC's rationale is often excellent — but it lives in marked asides or the manifesto, never braided into requirements.
+
+** One machine-readable source of truth for shapes; prose owns behavior; goldens are witnesses — with a stated precedence rule. This is Wayland's lesson: hand-copied type definitions are where specs rot. The PoC ended with three sources of truth (prose ahead, contract.json behind, the reference implementation in between) reconciled by a hand-maintained debt ledger — and its validator checked key-presence only, with zero goldens for the entire companion-emitted half of the wire. Your conformance corpus must cover both directions, responses, errors, and handshake vectors.
+
+** Write in dependency order, not document order: terminology & roles → artifact-precedence clause → JSON-RPC profile & transport binding → versioning/compatibility policy → lifecycle & handshake → one full vertical slice (push a two-widget screen, receive one named action back, with its contract entries and first goldens) → error registry → the full method reference → the widget catalog → conformance clause → security considerations → the pretty informative overview last, so it describes the spec you wrote rather than the one you planned.
+* Syllubus
+These are the architectural decisions we'll challenge one at a time, each grounded in what the PoC did (details in poc-audit/; SPEC-2 §16's seven reserved decisions get answered along the way):
+
+* 1. Who is the server? Roles, dial direction, durability, foreground-ness — Lesson 1, below.
+** 1a. Who binds the socket, and who dials? (The PoC: companion listens on loopback :8765, Emacs dials with backoff-reconnect — note this makes Emacs the protocol client, inverting your draft's   early "smartphone-as-a-client" framing.) Bonus, and it matters for your "any companion that can hold a socket" ambition: the PoC's roadmap deliberately split who dials from who speaks first, so a future browser companion can invert the transport without a breaking change. Do you define roles by dial direction, or by who sends hello?
+*** Conversation
+**** Caleb:
+To be clear, when I introduce "smartphone-as-a-client" it was to demonstrate that would be the first logical assumption when bringing Emacs to a mobile phone, for example, using SSH clients to reach a remote emacs. Or even with the org-parsing apps, they would use the smartphone as a client for the file format while syncing back to Emacs as the server. Additionally, here we also run into further problems, the client-server question changes depending on platform I believe. For example, if someone wanted to use EBP to build a "modern desktop Notion clone" that uses Emacs as a back-end, they would have access to traditional UNIX sockets and would likely preserve the client-server relationship. If someone used the EBP to build an iOS Swift application I am pretty sure they would need to access their Emacs remotely and likely tunneled for WAN access. Same if someone wanted to make an alternative to Jetpacs that uses their Desktop Emacs instead of on their phone.
+
+From my understanding this problem is purely one held by Jetpacs, and it is a problem that mostly only exists because Jetpacs isn't part of "core Emacs", If the two shared a UNIX socket it would simplify this architecture immensely. Part of the motivation for the re-write is to make it FSF eligible and hopefully one day the Emacs Android port can ship with an "Emacs" app and a "Emacs(Client)", completely removing the Jetpacs brand all together. However, since it is Jetpack-Compose and gradle dependant, I am not sure if that can ever happen, it would probably need a whole new re-write at that time into pure Java.
+**** Fable:
+*Here's the challenge question, and I want you to sit with it: what exactly would a shared Unix socket fix?*
+Being in core would simplify the pairing ceremony; nothing in-core can repeal the process-lifetime asymmetry — that is a property of Android, and EBP is the answer to it.
+**** Me:
+To be clear, when I introduce "smartphone-as-a-client" it was to demonstrate that would be the first logical assumption when bringing Emacs to a mobile phone, for example, using SSH clients to reach a remote emacs. Or even with the org-parsing apps, they would use the smartphone as a client for the file format while syncing back to Emacs as the server. Additionally, here we also run into further problems, the client-server question changes depending on platform I believe. For example, if someone wanted to use EBP to build a "modern desktop Notion clone" that uses Emacs as a back-end, they would have access to traditional UNIX sockets and would likely preserve the client-server relationship. If someone used the EBP to build an iOS Swift application I am pretty sure they would need to access their Emacs remotely and likely tunneled for WAN access. Same if someone wanted to make an alternative to Jetpacs that uses their Desktop Emacs instead of on their phone.
+
+From my understanding this problem is purely one held by Jetpacs, and it is a problem that mostly only exists because Jetpacs isn't part of "core Emacs", If the two shared a UNIX socket it would simplify this architecture immensely. Part of the motivation for the re-write is to make it FSF eligible and hopefully one day the Emacs Android port can ship with an "Emacs" app and a "Emacs(Client)", completely removing the Jetpacs brand all together. However, since it is Jetpack-Compose and gradle dependant, I am not sure if that can ever happen, it would probably need a whole new re-write at that time into pure Java.
+**** Fable:
+Your Compose anxiety is pointed at the wrong artifact. You're right about the precedent: the in-tree Android port is deliberately gradle-free, plain Java, built through the ordinary Emacs build system — a Kotlin/Compose/gradle subtree is never going in the Emacs source tree. (The obstacle isn't freedom — Kotlin, Compose, and gradle are all free software — it's GNU build-culture and self-containment.) But look at what actually upstreams in your dream scenario:
+
+the elisp side → Emacs core or GNU ELPA. There is a named precedent for exactly this: Eglot, the LSP client, was merged into core — and jsonrpc.el, the library your envelope rents, is already there.
+the spec + contract + goldens → a freestanding standard anyone can implement.
+the Compose companion → stays downstream forever, as one conforming companion among several. A future GNU-blessed plain-Java companion isn't "a whole new re-write" of Jetpacs — it's simply a second conforming implementation, built by strangers, from your spec, without reading a line of Kotlin.
+Do you see what that means? The thing you feared — "it would probably need a whole new re-write" — is not a failure mode. It is the protocol's success condition, and it's exactly why Lesson 0's conformance discipline (goldens for both directions, handshake vectors, per-MUST test items — everything the PoC skipped) is not bureaucracy. Every golden file you write is a brick in the road to the app store listing that says "Emacs" with no Jetpacs branding anywhere.
+****
+
+
+** 1b. Who is durable, and what is durability physically? If the honest answer is "the disk," then the spec must eventually name the durable artifacts (surface cache, action queue, trigger table, pairing token) — because disk formats need versioning too, and the PoC dragged legacy queue columns forever because it skipped this.
+
+** 1c. What must still work when no screen is on and Emacs is dead? Widgets, reminders, triggers. This determines how much autonomy the companion needs — the deepest boundary in the entire design — and it's the case your current durability argument skips.
+
+** 1d. Pick your two role names — one word each, used everywhere, forever. Your draft uses client/companion/both, then emacs/companion, and "client" flips referents mid-document. (The PoC drifted the same way and had to write a paragraph untangling protocol roles from transport roles.) Every MUST-sentence you ever write will hang on these two words.
+
+2. Rent or own the envelope. The PoC did both: v1 hand-rolled, v2 rented JSON-RPC 2.0. Renting is probably right, but it imports documented landmines — above all that jsonrpc.el's default dispatcher fails open (unhandled requests get success-shaped null), so "refuse everything pre-handshake" must be a normative rule. Also: where do your three deltas (self-describing kind, direction, string codes) live without breaking the JSON-RPC conformance you claim?
+
+3. Use jsonrpc.el or justify not. The purely-additive test case #1.
+
+4. Full-snapshot pushes with monotonic revisions. The PoC's elegant core move: the revision guard makes pushes idempotent, replay-safe, and self-acknowledging — which is why surface.update is a notification, not a request. Costs: every update re-ships the tree, the 4 MiB frame cap becomes the real ceiling, and reconciliation identity (:key on list children) had to be retrofitted over three releases. Decide: snapshots as the contract, keys from day one, and a reserved sentence for a future delta channel.
+
+5. The never-code boundary. "The wire declares UI one way and named actions the other; never code" — your best sentence, and the PoC's best-argued section. But the escape hatches (bridged M-x, edit.command, intent.start, on_fire) each got individually justified. Enumerate them in one place with the normative test: the user, not the wire, chooses.
+
+6. The offline queue and replay. Per-action when_offline: queue/drop/wake policy is good design; but the replay ordering (absorb welcome → push surfaces → replay → drain summary) was discovered by failure, not designed — specify it as a state machine with every early-exit defined. And on modern Android, "wake" can only mean ask the human (silent app starts are banned).
+
+7. Text editing. Shadow buffers, seq-numbered deltas, resync-not-merge, and the best invariant in the whole PoC — "wrong state can only cost a feature, never a wrong edit" — keep it verbatim. The decision you must write down: concurrent desktop+phone editing is a non-goal, or this whole design is disqualified.
+
+8. How much may the companion do while Emacs is dead? Triggers, when gates, on_fire — the PoC held a deliberately non-Turing line ("no conditionals, no loops; a rule that needs logic while Emacs is dead means keep Emacs alive") and its automation-compiler doc distilled the principle: widen only toward Emacs, never toward autonomy. Yet application opinion still leaked into Kotlin repeatedly — a hardcoded org toolbar, invented back-stack heuristics, completion UX policy half-duplicating capf. Doctrine wasn't enough; you'll need a mechanical tripwire (conformance table + CI greps).
+
+9. The additive-growth law. The PoC's hardest-won protocol lesson: a companion that leniently ignores unknown keys turns additive growth into a safety inversion — an old companion handed a when-gated trigger armed it ungated: "notify below 20%" silently became "notify always." Hence the cosmetic/QoS/constraining field taxonomy, and the rule skip the whole thing, never strip-and-push — with an unknown-key rule stated per object class.
+
+10. Versioning and governance. The PoC grew four version numbers and burned one; renamed a field to fix a name collision, then un-renamed it in the successor spec. Decide: what a release is, what a consumer pins, which artifact governs on disagreement, and an amendment discipline bound to something that actually runs (CI green, a cooling-off day) — not a reviewer signature that stays blank in a one-person project.
+
+
+* Deliverables for next session: (a) the durability paragraph rewritten as three separate claims, (b) a first draft of the spec's §1 — Conformance and Terminology: your two role names, one sentence stating what the system is, and the RFC 8174 keyword boilerplate. That's deliberately small. Get the ground truthful and the vocabulary fixed, and everything we build on it gets easier.
+
+future upstream patch: if the Emacs APK exported a signature-protected service, the Companion could bind to it while foreground, which (as of my knowledge) starts the Emacs process silently, no UI flash, and props up its process importance for as long as the binding holds. That would make foreground wake smooth. But the moment the Companion goes background, the importance prop disappears and Emacs is killable again.
+
+* SPEC
+** §1: "Liveness is best-effort on every profile; durability is only ever the Companion's disk."
+Emacs: the party that is the source of truth for all application state and initiates the session by sending hello.
+Companion: the party that renders declared UI, caches it durably, and queues user input.

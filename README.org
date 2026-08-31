@@ -1,0 +1,55 @@
+#+TITLE: Jetpacs README
+
+* Commits
+A conventional Kotlin project would normally commit:
+settings.gradle.kts
+build.gradle.kts
+gradle/libs.versions.toml
+shared/src/...
+desktopApp/src/...
+androidApp/src/...
+But that's not your development model.
+For Jetpacs:
+literature.org
+      │
+      │ authoritative source
+      ▼
+Org Babel
+      │
+      ├── settings.gradle.kts
+      ├── build.gradle.kts
+      ├── gradle/libs.versions.toml
+      ├── shared/
+      ├── desktopApp/
+      ├── androidApp/
+      └── .envrc
+So committing both sides would create two apparent sources of truth.
+Ignoring the tangled outputs enforces the rule:
+If you want to change the project, change literature.org, then tangle it.
+
+That fits the workflow you've chosen.
+But commit the Gradle Wrapper
+Do not ignore these:
+gradlew
+gradlew.bat
+gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.properties
+I would commit all four.
+They're different from your tangled Gradle configuration:
+literature.org
+    → defines our build
+
+Gradle Wrapper
+    → bootstraps the Gradle implementation needed to interpret that build
+So a checkout becomes:
+git clone
+   ↓
+Gradle Wrapper already present
+   +
+literature.org already present
+   ↓
+Emacs tangle
+   ↓
+Gradle project appears
+   ↓
+./gradlew build

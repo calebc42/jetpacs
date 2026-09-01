@@ -8247,7 +8247,7 @@ What are the first two gradle files and the instructions to bootstrap 9.5.0 and 
 
 Exactly. We now want the smallest thing that Gradle itself recognizes as a build.
 
-## 1. `settings.gradle.kts`
+******* 1. `settings.gradle.kts`
 
 This file describes the **Gradle build as a whole**. Later it will define modules such as `shared`, `desktopApp`, and `androidApp`; eventually it will also participate in plugin/dependency repository configuration.
 
@@ -9314,7 +9314,7 @@ Gradle explicitly treats plugin repositories separately from project dependency 
 Replace your current `settings.gradle.kts` source block with:
 
 ```org
-***** Dependency and Plugin Resolution
+#***** Dependency and Plugin Resolution
 
 Gradle resolves build plugins separately from libraries used by the
 application.
@@ -9764,7 +9764,7 @@ fun greeting(): String =
 #+end_src
 ```
 
-Org will create missing parent directories before tangling. That behavior is built into Org's `mkdirp` header argument.
+Org will create missing parent directories before tangling. That behavior is built into Org's `mkdirp` header argument. 
 
 Since your literate workflow will create lots of nested files, I would **not** repeat `:mkdirp yes` on every source block. Set it once for the whole Org file near the top:
 
@@ -9781,7 +9781,7 @@ fun greeting(): String =
 #+end_src
 ```
 
-You can still override it on an individual block if needed because block-local header arguments take precedence over file-level defaults.
+You can still override it on an individual block if needed because block-local header arguments take precedence over file-level defaults. 
 
 So I'd recommend your `literature.org` start with something conceptually like:
 
@@ -9814,7 +9814,7 @@ Do you want `:mkdirp yes` **file-wide** or **only on tangled blocks**?
 ****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 10:45]
 
@@ -9991,16 +9991,13 @@ The most useful next lesson is to contrast `commonMain` with platform-specific `
 
 **Next: inspect bytecode first, or add `jvmMain` next?**
 
-
 ***** PROMPT: First JVM and Android Activity Comp
 [2026-08-31 Mon 10:48]
 
 
 Let's add JVM main Android target and compose multiplatform.
 
-*** 2026-08-31 Monday
-
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
 :MODEL: Sol 5.6
@@ -10021,7 +10018,7 @@ androidMain
 └── Android-specific Kotlin
 ```
 
-The Android KMP library plugin is now the supported way to put an Android target in a shared KMP library. With AGP 9.1.1, the current DSL is `kotlin { android { ... } }`; the older `androidLibrary {}` form is deprecated.
+The Android KMP library plugin is now the supported way to put an Android target in a shared KMP library. With AGP 9.1.1, the current DSL is `kotlin { android { ... } }`; the older `androidLibrary {}` form is deprecated. 
 
 ## 1. Verify the plugin aliases
 
@@ -10041,7 +10038,7 @@ androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.r
 androidApplication = { id = "com.android.application", version.ref = "androidGradlePlugin" }
 ```
 
-Compose modules should apply both `org.jetbrains.compose` and the Compose compiler plugin `org.jetbrains.kotlin.plugin.compose`; the compiler plugin version tracks Kotlin itself.
+Compose modules should apply both `org.jetbrains.compose` and the Compose compiler plugin `org.jetbrains.kotlin.plugin.compose`; the compiler plugin version tracks Kotlin itself. 
 
 And your root `build.gradle.kts` should already have:
 
@@ -10062,7 +10059,7 @@ plugins {
 I would now make the shared-module block in `literature.org`:
 
 ```org
-**** Shared Kotlin Multiplatform Module
+#***** Shared Kotlin Multiplatform Module
 
 The =shared= project contains Kotlin and Compose UI code intended to be
 shared across platform applications.
@@ -10153,7 +10150,7 @@ android {
 }
 ```
 
-The new Android-KMP plugin puts its Android configuration into the KMP target itself.
+The new Android-KMP plugin puts its Android configuration into the KMP target itself. 
 
 ### `compileSdk = 37`
 
@@ -10201,7 +10198,7 @@ implementation(compose.ui)
 
 and **not Material3 yet**.
 
-Compose Multiplatform 1.12.0 itself is stable, but its current Material3 artifact is `1.12.0-alpha03`. We don't need to introduce that alpha dependency merely to prove Compose works.
+Compose Multiplatform 1.12.0 itself is stable, but its current Material3 artifact is `1.12.0-alpha03`. We don't need to introduce that alpha dependency merely to prove Compose works. 
 
 These three give us:
 
@@ -10227,7 +10224,7 @@ I think this is a good point to leave the default package behind.
 Change it to:
 
 ```org
-**** Greeting
+#***** Greeting
 
 #+begin_src kotlin :tangle shared/src/commonMain/kotlin/jetpacs/Greeting.kt
 package jetpacs
@@ -10256,7 +10253,7 @@ That is an important literate-programming caveat:
 Now create our first common composable:
 
 ```org
-**** Shared Compose UI
+#***** Shared Compose UI
 
 The application's shared UI begins in =commonMain=.
 
@@ -10299,7 +10296,7 @@ later compiled for Wasm
 later potentially compiled for Apple
 ```
 
-Compose Multiplatform's current project model explicitly uses `commonMain` for shared UI and `jvmMain`/`androidMain` for platform-specific source code.
+Compose Multiplatform's current project model explicitly uses `commonMain` for shared UI and `jvmMain`/`androidMain` for platform-specific source code. 
 
 ---
 
@@ -10308,7 +10305,7 @@ Compose Multiplatform's current project model explicitly uses `commonMain` for s
 Let's put something unmistakably JVM-specific there.
 
 ```org
-**** JVM Platform Source
+#***** JVM Platform Source
 
 The =jvmMain= source set contains code available only to the JVM
 target.
@@ -10345,7 +10342,7 @@ That demonstrates why `jvmMain` exists.
 Do the same for Android:
 
 ```org
-**** Android Platform Source
+#***** Android Platform Source
 
 The =androidMain= source set contains Kotlin code compiled only for the
 Android target.
@@ -10408,7 +10405,7 @@ shared/
                 └── AndroidPlatform.kt
 ```
 
-The Android-KMP plugin's source layout uses `src/androidMain`, rather than traditional Android library `src/main`, for the Android target.
+The Android-KMP plugin's source layout uses `src/androidMain`, rather than traditional Android library `src/main`, for the Android target. 
 
 ---
 
@@ -10434,7 +10431,7 @@ commonMain + androidMain
 compileAndroidMain
 ```
 
-The new Android KMP target names its primary Android compilation `androidMain`.
+The new Android KMP target names its primary Android compilation `androidMain`. 
 
 ---
 
@@ -10474,7 +10471,7 @@ Now:
 ./gradlew :shared:compileAndroidMain
 ```
 
-That task name is used by the new Android KMP plugin for its main Android compilation.
+That task name is used by the new Android KMP plugin for its main Android compilation. 
 
 This compiles:
 
@@ -10587,13 +10584,13 @@ or:
 
 > Start an Android Activity and display `App()`.
 
-That responsibility belongs to separate platform application modules, which is exactly the architecture we wanted from the start. The current Kotlin guidance likewise separates shared modules from platform application hosts.
+That responsibility belongs to separate platform application modules, which is exactly the architecture we wanted from the start. The current Kotlin guidance likewise separates shared modules from platform application hosts. 
 
 One cleanup detail: if your old un-packaged `shared/src/commonMain/kotlin/Greeting.kt` remains after retangling, delete it before compiling or you'll have two `greeting()` declarations.
 
 **After tangling, which checkpoint do you want to run first: `JVM compile`, `Android compile`, or `both build`?**
 
-**** PROMPT: Compile troubleshooting
+***** PROMPT: Compile troubleshooting
 [2026-08-31 Mon 10:58]
 
 calebc42\@desktop:\~/workspace/jetpacs$ ./gradlew :shared:tasks --all
@@ -10824,7 +10821,7 @@ BUILD SUCCESSFUL in 6s
 Consider enabling configuration cache to speed up this build: [https://docs.gradle.org/9.5.0/userguide/configuration\_cache\_enabling.html](https://docs.gradle.org/9.5.0/userguide/configuration_cache_enabling.html)
 calebc42\@desktop:\~/workspace/jetpacs$
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
 :MODEL: Sol 5.6
@@ -10849,7 +10846,7 @@ These warnings:
 'val ui: String' is deprecated. Specify dependency directly.
 ```
 
-are expected with modern Compose Multiplatform. The old Gradle-plugin aliases such as `compose.runtime` and `compose.ui` have been deprecated since Compose Multiplatform 1.10; JetBrains now recommends ordinary dependency coordinates, preferably through your version catalog.
+are expected with modern Compose Multiplatform. The old Gradle-plugin aliases such as `compose.runtime` and `compose.ui` have been deprecated since Compose Multiplatform 1.10; JetBrains now recommends ordinary dependency coordinates, preferably through your version catalog. 
 
 Add to `gradle/libs.versions.toml`:
 
@@ -10890,7 +10887,7 @@ libs.versions.toml
     → actual Compose library coordinates + versions
 ```
 
-JetBrains currently publishes Compose 1.12.0 Runtime, Foundation, and UI at exactly those coordinates.
+JetBrains currently publishes Compose 1.12.0 Runtime, Foundation, and UI at exactly those coordinates. 
 
 After tangling:
 
@@ -10911,7 +10908,7 @@ up to 3 but an SDK XML file of version 4 was encountered.
 
 is coming during the **Gradle/AGP Android build**, not from the `sdkmanager` you already upgraded.
 
-There is an open Android tooling issue around this SDK XML-version warning, including with relatively recent command-line tools.
+There is an open Android tooling issue around this SDK XML-version warning, including with relatively recent command-line tools. 
 
 More importantly, our actual combination is officially valid:
 
@@ -10921,7 +10918,7 @@ compileSdk 37.0
 Gradle 9.5.0
 ```
 
-Google explicitly says AGP 9.1.1 supports Android API **37.0 and below**, requires Gradle at least 9.3.1, and uses Build Tools 36.0.0 as its default.
+Google explicitly says AGP 9.1.1 supports Android API **37.0 and below**, requires Gradle at least 9.3.1, and uses Build Tools 36.0.0 as its default. 
 
 And your Android compilation and full build succeeded.
 
@@ -10930,9 +10927,9 @@ So I would **not change our frozen toolchain merely to remove this warning**.
 Instead, put a note in `literature.org`:
 
 ```org
-***** Known Toolchain Warnings
+#****** Known Toolchain Warnings
 
-****** Android SDK XML Version
+#******* Android SDK XML Version
 
 AGP 9.1.1 currently emits:
 
@@ -10986,7 +10983,7 @@ hotRunJvm
 hotReloadJvmMain
 ```
 
-because Compose Multiplatform is already adding JVM/Desktop-oriented tooling. Compose 1.12 also includes the current Compose Hot Reload tooling.
+because Compose Multiplatform is already adding JVM/Desktop-oriented tooling. Compose 1.12 also includes the current Compose Hot Reload tooling. 
 
 But `:shared` still should **not become the desktop application**. Keeping it as a library/module preserves the architecture we decided on.
 
@@ -11012,16 +11009,16 @@ That will give us our **first visible application window**, while `shared` remai
 
 Would you like to do **desktopApp next** or **inspect the shared artifacts first**?
 
-**** PROMPT: Desktop App
+***** PROMPT: Desktop App
 [2026-08-31 Mon 11:00]
 
 
 Let's go ahead with the desktopApp.
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:05]
 
@@ -11035,7 +11032,7 @@ open native desktop window
 call jetpacs.App()
 ```
 
-That matches the current recommended KMP structure: a separate `desktopApp` depends on the shared module.
+That matches the current recommended KMP structure: a separate `desktopApp` depends on the shared module. 
 
 ## 1. Add the Kotlin JVM plugin
 
@@ -11076,7 +11073,7 @@ plugins {
 }
 ```
 
-Current JetBrains guidance uses exactly this separation: KMP for shared modules, Kotlin/JVM for the desktop application.
+Current JetBrains guidance uses exactly this separation: KMP for shared modules, Kotlin/JVM for the desktop application. 
 
 ---
 
@@ -11120,7 +11117,7 @@ Soon we'll add the dependency edge:
 Add this literate block:
 
 ```org
-**** Desktop Application
+#***** Desktop Application
 
 The =desktopApp= project is a JVM application that provides the desktop
 entry point for Jetpacs.
@@ -11247,7 +11244,7 @@ ui
 
 but actually rendering a desktop Compose application requires native desktop/runtime pieces as well.
 
-`currentOs` selects the Compose Desktop runtime appropriate for the **machine doing the build/run**. Current JetBrains desktop documentation still uses this dependency for Compose Desktop applications.
+`currentOs` selects the Compose Desktop runtime appropriate for the **machine doing the build/run**. Current JetBrains desktop documentation still uses this dependency for Compose Desktop applications. 
 
 On your current canonical environment:
 
@@ -11297,7 +11294,7 @@ It tells Compose:
 
 > There is an executable desktop application whose JVM entry point is `jetpacs.desktop.MainKt`.
 
-The current Compose Desktop plugin uses this `application` DSL for running and packaging desktop programs.
+The current Compose Desktop plugin uses this `application` DSL for running and packaging desktop programs. 
 
 Later this same block can contain:
 
@@ -11323,7 +11320,7 @@ First we want a window.
 Now add:
 
 ```org
-**** Desktop Entry Point
+#***** Desktop Entry Point
 
 The desktop application's =main= function owns desktop process and
 window lifecycle.
@@ -11618,11 +11615,11 @@ yet.
 
 Running an application and **distributing** an application are different problems.
 
-Compose Desktop supports native packages for Linux, Windows, and macOS, but native package generation is host-specific: you can't generate all platform installers from one host.
+Compose Desktop supports native packages for Linux, Windows, and macOS, but native package generation is host-specific: you can't generate all platform installers from one host. 
 
 We'll address that after we prove development execution works.
 
-Also, Compose Multiplatform 1.12.0 explicitly supports desktop on Windows 10+, macOS 13+ ARM64, and Linux Ubuntu 20.04+ on supported 64-bit architectures, so your eventual three-desktop-platform goal is valid.
+Also, Compose Multiplatform 1.12.0 explicitly supports desktop on Windows 10+, macOS 13+ ARM64, and Linux Ubuntu 20.04+ on supported 64-bit architectures, so your eventual three-desktop-platform goal is valid. 
 
 Your immediate checkpoint is:
 
@@ -11633,7 +11630,7 @@ Your immediate checkpoint is:
 
 **Which result do you get: `window opens`, `compile fails`, or `runtime/display fails`?**
 
-**** PROMPT: JVM Troubleshooting
+***** PROMPT: JVM Troubleshooting
 [2026-08-31 Mon 11:06]
 
 calebc42\@desktop:\~/workspace/jetpacs$ ./gradlew projects
@@ -11789,10 +11786,10 @@ BUILD FAILED in 3s
 7 actionable tasks: 5 executed, 2 up-to-date
 calebc42\@desktop:\~/workspace/jetpacs$
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:13]
 
@@ -11930,20 +11927,20 @@ javac --release
   └── 17
 ```
 
-Kotlin officially validates related Java/Kotlin tasks this way and supports manually aligning `jvmTarget` with Java's target compatibility.  Gradle recommends `--release` when compiling on a newer JDK while restricting Java code to an older Java API level.
+Kotlin officially validates related Java/Kotlin tasks this way and supports manually aligning `jvmTarget` with Java's target compatibility.  Gradle recommends `--release` when compiling on a newer JDK while restricting Java code to an older Java API level. 
 
 After removing the duplicate import, does `compileKotlin` **succeed** or return the **17-vs-25 mismatch** again?
 
-**** PROMPT: Android Comp
+***** PROMPT: Android Comp
 [2026-08-31 Mon 11:13]
 
 
 compiled successfully.
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:14]
 
@@ -11988,13 +11985,13 @@ But it isn’t necessary for proceeding now that compilation succeeded.
 
 **Next: `run desktop window` or `inspect JVM toolchains`?**
 
-**** PROMPT: Android Activity
+***** PROMPT: Android Activity
 [2026-08-31 Mon 11:14]
 
 
 Okay, they all worked. Next is the android activity, right?
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
 :MODEL: Sol 5.6
@@ -12015,11 +12012,11 @@ The architecture becomes:
         Window { App() }  Activity → setContent { App() }
 ```
 
-With AGP 9, this separation is mandatory: `com.android.application` should live in its own module rather than alongside the KMP plugin. AGP 9 also has built-in Kotlin support, so we **do not apply `org.jetbrains.kotlin.android`** to `androidApp`.
+With AGP 9, this separation is mandatory: `com.android.application` should live in its own module rather than alongside the KMP plugin. AGP 9 also has built-in Kotlin support, so we **do not apply `org.jetbrains.kotlin.android`** to `androidApp`. 
 
 ## 1. Add Activity Compose to the version catalog
 
-AndroidX Activity Compose's current stable release is **1.13.0**.
+AndroidX Activity Compose's current stable release is **1.13.0**. 
 
 Add:
 
@@ -12055,14 +12052,14 @@ include(":desktopApp")
 include(":androidApp")
 ```
 
-The Android application entry point belongs in this separate application module.
+The Android application entry point belongs in this separate application module. 
 
 ## 3. Create `androidApp/build.gradle.kts`
 
 I suggest this literate block:
 
 ```org
-**** Android Application
+#***** Android Application
 
 The =androidApp= project provides the Android application entry point.
 
@@ -12120,7 +12117,7 @@ dependencies {
 #+end_src
 ```
 
-This matches the current AGP 9 pattern: application plugin + Compose plugins, built-in Kotlin, a separate `android {}` application configuration, and a dependency on the shared KMP module.
+This matches the current AGP 9 pattern: application plugin + Compose plugins, built-in Kotlin, a separate `android {}` application configuration, and a dependency on the shared KMP module. 
 
 A few important things are happening here.
 
@@ -12156,7 +12153,7 @@ namespace = "dev.jetpacs"
 
 is the namespace used by generated Android code such as `R`.
 
-This must be different from the namespace of your KMP library. AGP 9 now enforces unique package namespaces more strictly.
+This must be different from the namespace of your KMP library. AGP 9 now enforces unique package namespaces more strictly. 
 
 ### `targetSdk` finally appears
 
@@ -12195,7 +12192,7 @@ Kotlin compilation
 17
 ```
 
-AGP 9's built-in Kotlin can infer Kotlin's JVM target from Android's Java `targetCompatibility`, but keeping both explicit at this learning stage makes the contract visible. Google's migration docs confirm built-in Kotlin uses the new `kotlin { compilerOptions {} }` DSL.
+AGP 9's built-in Kotlin can infer Kotlin's JVM target from Android's Java `targetCompatibility`, but keeping both explicit at this learning stage makes the contract visible. Google's migration docs confirm built-in Kotlin uses the new `kotlin { compilerOptions {} }` DSL. 
 
 ---
 
@@ -12204,7 +12201,7 @@ AGP 9's built-in Kotlin can infer Kotlin's JVM target from Android's Java `targe
 Add:
 
 ```org
-**** Android Entry Point
+#***** Android Entry Point
 
 The Android entry point is a =ComponentActivity=.
 
@@ -12260,7 +12257,7 @@ Android needs to know that `MainActivity` exists and is the application launcher
 Add:
 
 ```org
-**** Android Manifest
+#***** Android Manifest
 
 The Android manifest declares the application and its launcher Activity.
 
@@ -12332,7 +12329,7 @@ not:
 androidApp/src/androidMain/
 ```
 
-`androidApp` is a normal Android application module, not KMP. The current KMP migration documentation explicitly moves Android entry-point source into `androidApp/src/main`.
+`androidApp` is a normal Android application module, not KMP. The current KMP migration documentation explicitly moves Android entry-point source into `androidApp/src/main`. 
 
 ## 7. Tangle, then inspect Gradle
 
@@ -12448,12 +12445,12 @@ Same shared composable. Two genuinely different application hosts.
 
 After tangling, run `./gradlew :androidApp:assembleDebug`; does it end with **`BUILD SUCCESSFUL`**, a **compile error**, or a **manifest/resource error**?
 
-**** PROMPT: Success
+***** PROMPT: Success
 [2026-08-31 Mon 11:19]
 
 Everything it working. What is next?
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
 :MODEL: Sol 5.6
@@ -12482,9 +12479,9 @@ There are two pieces to that milestone:
 1. Add a `wasmJs` target to `:shared`, so `App.kt` and the rest of `commonMain` are actually compiled for WebAssembly. `jvmMain` and `androidMain` remain platform-specific and simply do not participate in that compilation.
 2. Create a separate `:webApp` executable module whose browser entry point depends on `:shared` and mounts the same `App()` UI in a browser.
 
-Kotlin currently recommends **Kotlin/Wasm for web applications that share both UI and business logic**, which matches what we are building. Compose Multiplatform Web is currently **Beta**, while Android/Desktop/iOS are stable. Modern browsers with WasmGC support can run it directly; Chrome has supported the necessary WasmGC functionality by default since version 119.
+Kotlin currently recommends **Kotlin/Wasm for web applications that share both UI and business logic**, which matches what we are building. Compose Multiplatform Web is currently **Beta**, while Android/Desktop/iOS are stable. Modern browsers with WasmGC support can run it directly; Chrome has supported the necessary WasmGC functionality by default since version 119. 
 
-The official current project structure also explicitly supports a separate `webApp` module with a `wasmJs { browser(); binaries.executable() }` target, rather than turning the shared module itself into the executable application.
+The official current project structure also explicitly supports a separate `webApp` module with a `wasmJs { browser(); binaries.executable() }` target, rather than turning the shared module itself into the executable application. 
 
 Once that works, we'll have proved:
 
@@ -12517,20 +12514,20 @@ prototype capability audit
 begin real application architecture
 ```
 
-The browser target is also nice operationally because the standard development task launches a local dev server, while `wasmJsBrowserDistribution` produces static publishable artifacts.
+The browser target is also nice operationally because the standard development task launches a local dev server, while `wasmJsBrowserDistribution` produces static publishable artifacts. 
 
 **Next: `Git checkpoint` or `Wasm immediately`?**
 
-**** PROMPT: Initial Commit
+***** PROMPT: Initial Commit
 [2026-08-31 Mon 11:22]
 
 
 Let's go ahead and get everything committed. What should be in my .gitignore? I don't have one yet.
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:22]
 
@@ -12671,7 +12668,7 @@ Ignoring the tangled outputs enforces the rule:
 
 > If you want to change the project, change `literature.org`, then tangle it.
 
-That fits the workflow you've chosen.
+That fits the workflow you've chosen. 
 
 ### But commit the Gradle Wrapper
 
@@ -12822,20 +12819,20 @@ before `git add`, rather than immediately doing `git add .`, so we can verify th
 
 Do you want the first commit to include **all your Org/dev notes**, **only project docs**, or **just `literature.org` + bootstrap files**?
 
-**** PROMPT: Web / WASM
+***** PROMPT: Web / WASM
 [2026-08-31 Mon 11:24]
 
 
 Okay, let's go ahead and start on the WASM.
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:27]
 
-Yes. I’d add **Wasm only first**, not the JS fallback. That gives us the cleanest test of whether `commonMain` really survives a non-JVM backend. Compose Multiplatform 1.12 supports Web via Kotlin/Wasm, though Web support is still Beta.
+Yes. I’d add **Wasm only first**, not the JS fallback. That gives us the cleanest test of whether `commonMain` really survives a non-JVM backend. Compose Multiplatform 1.12 supports Web via Kotlin/Wasm, though Web support is still Beta. 
 
 ## 1. Add Wasm to `:shared`
 
@@ -12873,7 +12870,7 @@ With Kotlin 2.4.10, you should **not** copy older examples that use:
 @OptIn(ExperimentalWasmDsl::class)
 ```
 
-That annotation was removed in Kotlin 2.4.0.
+That annotation was removed in Kotlin 2.4.0. 
 
 This changes the meaning of `commonMain` significantly:
 
@@ -12906,7 +12903,7 @@ Your hierarchy becomes:
 └── :webApp
 ```
 
-The current recommended Compose Multiplatform structure also uses a separate `webApp` module rather than making the shared module the browser executable.
+The current recommended Compose Multiplatform structure also uses a separate `webApp` module rather than making the shared module the browser executable. 
 
 ---
 
@@ -12915,7 +12912,7 @@ The current recommended Compose Multiplatform structure also uses a separate `we
 Add this to `literature.org`:
 
 ```org
-**** Web Application
+#***** Web Application
 
 The =webApp= project provides the browser entry point for Jetpacs.
 
@@ -12971,18 +12968,18 @@ wasmJs {
         └── runnable browser application
 ```
 
-`binaries.executable()` is what tells Kotlin to produce an executable Web/Wasm application rather than only library output.
+`binaries.executable()` is what tells Kotlin to produce an executable Web/Wasm application rather than only library output. 
 
 ---
 
 ## 4. Create the web entry point
 
-Compose's current browser entry API is `ComposeViewport`; older examples using `CanvasBasedWindow` are deprecated.
+Compose's current browser entry API is `ComposeViewport`; older examples using `CanvasBasedWindow` are deprecated. 
 
 Add:
 
 ```org
-**** Web Entry Point
+#***** Web Entry Point
 
 The web entry point attaches the same shared =App()= composable to an
 HTML container.
@@ -13031,7 +13028,7 @@ Three platform shells, one common UI.
 The browser still needs an HTML document that loads the generated JavaScript/Wasm bootstrap.
 
 ```org
-**** Web HTML Host
+#***** Web HTML Host
 
 #+begin_src html :tangle webApp/src/wasmJsMain/resources/index.html
 <!doctype html>
@@ -13067,10 +13064,10 @@ in Gradle means this HTML filename isn't relying on some implicit project-name c
 
 ## 6. Add CSS
 
-`ComposeViewport` deliberately doesn't mutate the surrounding page's CSS anymore, so we need to specify how the viewport should fill the browser. JetBrains specifically recommends explicit layout CSS for this.
+`ComposeViewport` deliberately doesn't mutate the surrounding page's CSS anymore, so we need to specify how the viewport should fill the browser. JetBrains specifically recommends explicit layout CSS for this. 
 
 ```org
-**** Web Styles
+#***** Web Styles
 
 #+begin_src css :tangle webApp/src/wasmJsMain/resources/styles.css
 html,
@@ -13186,7 +13183,7 @@ The current official quickstart uses:
 ./gradlew :webApp:wasmJsBrowserDevelopmentRun
 ```
 
-as the browser-development task.
+as the browser-development task. 
 
 ---
 
@@ -13212,11 +13209,11 @@ start development web server
 serve index.html + Wasm application
 ```
 
-It generally uses port 8080 if available, but the actual port is printed in the Gradle output.
+It generally uses port 8080 if available, but the actual port is printed in the Gradle output. 
 
 Because you're developing inside WSL, whether it automatically opens the Windows browser may depend on your environment. Even if browser launching doesn't happen, the server itself can work; open the printed `localhost` URL manually.
 
-Modern Chromium-based browsers 119+, Firefox 120+, and Safari 18.2+ support the Wasm features Kotlin currently requires.
+Modern Chromium-based browsers 119+, Firefox 120+, and Safari 18.2+ support the Wasm features Kotlin currently requires. 
 
 ---
 
@@ -13234,7 +13231,7 @@ The publishable output should appear under approximately:
 webApp/build/dist/wasmJs/productionExecutable/
 ```
 
-Those are static web artifacts that can eventually be hosted by a normal web server.
+Those are static web artifacts that can eventually be hosted by a normal web server. 
 
 ---
 
@@ -13247,7 +13244,7 @@ js { ... }
 wasmJs { ... }
 ```
 
-so older browsers can fall back from Wasm to JavaScript. Compose can produce a compatibility distribution containing both.
+so older browsers can fall back from Wasm to JavaScript. Compose can produce a compatibility distribution containing both. 
 
 We're deliberately **not doing that yet**.
 
@@ -13275,7 +13272,7 @@ same App() in browser
 
 Start with `:shared:compileKotlinWasmJs` or tangle the full `:webApp` first?
 
-**** PROMPT: WASM Comp troubleshooting
+***** PROMPT: WASM Comp workaround
 [2026-08-31 Mon 11:30]
 
 I got to the development run before it failed.&#x20;
@@ -13305,14 +13302,14 @@ Could not determine the dependencies of task ':kotlinWasmNodeJsSetup'.
 BUILD FAILED in 2s
 calebc42@desktop:~/workspace/jetpacs$
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:35]
 
-This is a known collision between **Gradle repository centralization** and Kotlin/Wasm's tool provisioning. Your Wasm code compiled; the failure happens because Kotlin's Gradle plugin wants to add a special repository for downloading Node.js, while we told Gradle to fail if *any plugin* adds a project-level repository. Gradle documents that `FAIL_ON_PROJECT_REPOS` fails even when the repository is added by a plugin, and Kotlin has an open/history issue for exactly this Wasm scenario.
+This is a known collision between **Gradle repository centralization** and Kotlin/Wasm's tool provisioning. Your Wasm code compiled; the failure happens because Kotlin's Gradle plugin wants to add a special repository for downloading Node.js, while we told Gradle to fail if *any plugin* adds a project-level repository. Gradle documents that `FAIL_ON_PROJECT_REPOS` fails even when the repository is added by a plugin, and Kotlin has an open/history issue for exactly this Wasm scenario. 
 
 I would change our policy rather than fight the Kotlin tooling.
 
@@ -13369,7 +13366,7 @@ PREFER_PROJECT
     permits project/plugin repositories
 ```
 
-`PREFER_SETTINGS` isn't really the answer either: it would simply ignore the Node distribution repository Kotlin is trying to provide. `PREFER_PROJECT` is Gradle's default mode and allows this kind of plugin-managed tool repository.
+`PREFER_SETTINGS` isn't really the answer either: it would simply ignore the Node distribution repository Kotlin is trying to provide. `PREFER_PROJECT` is Gradle's default mode and allows this kind of plugin-managed tool repository. 
 
 For ordinary Jetpacs dependencies we still declare:
 
@@ -13414,7 +13411,7 @@ browser executes Wasm
 
 So Node is a **build-time tool**, much like JDK 25 is a build-time tool for our Android project.
 
-Kotlin's plugin automatically provisions Node by default rather than requiring the user to install it manually. Current Kotlin documentation says it can alternatively use an already-installed Node instance.
+Kotlin's plugin automatically provisions Node by default rather than requiring the user to install it manually. Current Kotlin documentation says it can alternatively use an already-installed Node instance. 
 
 That means you'll probably see Kotlin download its own Node installation even though you already have Node through NVM. That's okay for now. In fact, I prefer letting KGP manage its expected version while we're establishing the baseline rather than accidentally depending on whatever NVM happens to select.
 
@@ -13439,7 +13436,7 @@ Tool-distribution repositories
 
 The stricter version would be to retain `FAIL_ON_PROJECT_REPOS`, manually declare the exact Ivy repositories for Node/Yarn/Binaryen in `settings.gradle.kts`, and configure Kotlin's various `*EnvSpec` objects not to register repositories itself.
 
-That is possible in principle, but Kotlin's own issue history shows this area has changed across releases and has had bugs around Binaryen and the Wasm tooling.
+That is possible in principle, but Kotlin's own issue history shows this area has changed across releases and has had bugs around Binaryen and the Wasm tooling. 
 
 I don't think that's a good abstraction for us to own yet.
 
@@ -13473,11 +13470,11 @@ are performance/scalability diagnostics. They are not why the build stopped. I w
 
 Also, once the Wasm build starts generating npm dependency state, we should inspect its lockfiles. Kotlin explicitly recommends version-control of its dependency lock state because it prevents npm dependencies from silently changing between machines.  That's especially relevant to your reproducibility requirement.
 
-So: change **only** `FAIL_ON_PROJECT_REPOS → PREFER_PROJECT`, tangle, and rerun the same development task.
+So: change **only** `FAIL_ON_PROJECT_REPOS → PREFER_PROJECT`, tangle, and rerun the same development task. 
 
 Did it reach **`dev server started`** or hit **another tool-repository error**?
 
-**** PROMPT: WASM comp heap
+***** PROMPT: WASM comp heap
 [2026-08-31 Mon 11:35]
 
 calebc42\@desktop:\~/workspace/jetpacs$ ./gradlew :webApp:wasmJsBrowserDevelopmentRun
@@ -13555,10 +13552,10 @@ BUILD FAILED in 1m 11s
 32 actionable tasks: 30 executed, 2 up-to-date
 calebc42\@desktop:\~/workspace/jetpacs$
 
-**** RESPONSE
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 11:36]
 
@@ -13577,14 +13574,14 @@ and Kotlin is explicitly telling us which process needs more memory:
 kotlin.daemon.jvmargs=-Xmx<size>
 ```
 
-The Kotlin compiler daemon is a **separate JVM process** from the Gradle daemon and can have its own heap limit. JetBrains documents `kotlin.daemon.jvmargs` specifically for this purpose.
+The Kotlin compiler daemon is a **separate JVM process** from the Gradle daemon and can have its own heap limit. JetBrains documents `kotlin.daemon.jvmargs` specifically for this purpose. 
 
 ## Add `gradle.properties`
 
 Since `literature.org` is authoritative, add:
 
 ```org
-**** Gradle Runtime Properties
+#***** Gradle Runtime Properties
 
 Kotlin/Wasm compilation requires substantially more compiler heap than
 the JVM and Android compilations used by the initial project.
@@ -13600,7 +13597,7 @@ kotlin.daemon.jvmargs=-Xmx5g -Xms512m
 
 I would start with **5 GiB**, not 2 GiB or 8 GiB.
 
-JetBrains' current troubleshooting guidance specifically uses `-Xmx5g` for Kotlin compiler out-of-memory failures and suggests 3 GiB for lower-memory systems. Your machine has plenty of physical RAM for 5 GiB to be a reasonable starting point.
+JetBrains' current troubleshooting guidance specifically uses `-Xmx5g` for Kotlin compiler out-of-memory failures and suggests 3 GiB for lower-memory systems. Your machine has plenty of physical RAM for 5 GiB to be a reasonable starting point. 
 
 And because this is another tangled output, add:
 
@@ -13634,7 +13631,7 @@ Kotlin compiler daemon
 Kotlin/Wasm compiler
 ```
 
-Gradle itself defaults to a 512 MiB maximum heap unless `org.gradle.jvmargs` is configured.
+Gradle itself defaults to a 512 MiB maximum heap unless `org.gradle.jvmargs` is configured. 
 
 But Gradle did **not** run out of memory here.
 
@@ -13674,7 +13671,7 @@ Then stop the current Gradle/Kotlin daemon relationship so the next compilation 
 ./gradlew --stop
 ```
 
-Kotlin documents that its daemon is tied to the Gradle daemon lifecycle, so restarting here gives us a clean experiment.
+Kotlin documents that its daemon is tied to the Gradle daemon lifecycle, so restarting here gives us a clean experiment. 
 
 Then run exactly the same task again:
 
@@ -13726,14 +13723,28 @@ One other useful check, especially under WSL, is:
 free -h
 ```
 
-If WSL itself has several GiB available, `-Xmx5g` should be fine. If Windows has restricted WSL memory through `.wslconfig`, the JVM cannot actually consume memory the VM doesn't have; WSL's VM-wide limits are controlled separately.
+If WSL itself has several GiB available, `-Xmx5g` should be fine. If Windows has restricted WSL memory through `.wslconfig`, the JVM cannot actually consume memory the VM doesn't have; WSL's VM-wide limits are controlled separately. 
 
 After changing `gradle.properties`, does the Wasm run **start the dev server**, **OOM again**, or **fail somewhere new**?
 
-**** RESPONSE
+
+*** 2026-08-31 Monday
+
+**** Conversation
+
+
+**** Conversation.
+
+***** PROMPT: Adversarial Review
+[2026-08-31 Mon 13:03]
+
+
+Inspect the uploaded /mnt/data/literature.org only from the ** Tooling heading onward. Produce an adversarial technical review of the project so far, focusing on contradictions, build reproducibility, Gradle/Kotlin/Compose/Android/Wasm correctness, architecture, security/trust, literate-programming workflow risks, and misleading or stale documentation. Do not inspect or use devlog.org and do not review anything before Tooling.
+
+****** RESPONSE
 :PROPERTIES:
 :PROVIDER: OpenAI
-:MODEL:
+:MODEL: 
 :END:
 [2026-08-31 Mon 13:05]
 
@@ -13846,82 +13857,74 @@ I reviewed `literature.org` only from `** Tooling` at line 167 onward, using `de
 8. Add clean-checkout JVM, Android, and Wasm CI tests.
 
 Temporary reconstruction and downloaded build artifacts used for this review were removed; no project files were changed.
-*** Conversation.
-
-**** PROMPT: Adversarial Review
-[2026-08-31 Mon 13:03]
-
-
-Inspect the uploaded /mnt/data/literature.org only from the ** Tooling heading onward. Produce an adversarial technical review of the project so far, focusing on contradictions, build reproducibility, Gradle/Kotlin/Compose/Android/Wasm correctness, architecture, security/trust, literate-programming workflow risks, and misleading or stale documentation. Do not inspect or use devlog.org and do not review anything before Tooling.
-
 
 * Footnotes
-[fn:58] https://developer.android.com/studio/run/emulator-acceleration?utm_source=chatgpt.com
+[fn:58] https://developer.android.com/studio/run/emulator-acceleration?utm_source=chatgpt.com 
 
-[fn:57] https://developer.android.com/studio/run/device?utm_source=chatgpt.com
-[fn:56] https://kotlinlang.org/docs/multiplatform/compose-native-distribution.html?utm_source=chatgpt.com
+[fn:57] https://developer.android.com/studio/run/device?utm_source=chatgpt.com 
+[fn:56] https://kotlinlang.org/docs/multiplatform/compose-native-distribution.html?utm_source=chatgpt.com 
 
-[fn:55] https://kotlinlang.org/compose-multiplatform/?utm_source=chatgpt.com
-[fn:54] https://kotlinlang.org/compose-multiplatform/?utm_source=chatgpt.com
+[fn:55] https://kotlinlang.org/compose-multiplatform/?utm_source=chatgpt.com 
+[fn:54] https://kotlinlang.org/compose-multiplatform/?utm_source=chatgpt.com 
 
-[fn:53] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
-[fn:52] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com
+[fn:53] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
+[fn:52] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com 
 
-[fn:51] https://developer.android.com/studio/write/java8-support?authuser=00&hl=en&utm_source=chatgpt.com
-[fn:50] https://docs.gradle.org/current/userguide/building_java_projects.html?utm_source=chatgpt.com
+[fn:51] https://developer.android.com/studio/write/java8-support?authuser=00&hl=en&utm_source=chatgpt.com 
+[fn:50] https://docs.gradle.org/current/userguide/building_java_projects.html?utm_source=chatgpt.com 
 
-[fn:49] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
-[fn:48] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com
+[fn:49] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
+[fn:48] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com 
 
-[fn:47] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com
-[fn:46] https://docs.gradle.org/current/userguide/upgrading_major_version_9.html?utm_source=chatgpt.com
+[fn:47] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com 
+[fn:46] https://docs.gradle.org/current/userguide/upgrading_major_version_9.html?utm_source=chatgpt.com 
 
-[fn:45] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
-[fn:44] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
+[fn:45] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
+[fn:44] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
 
-[fn:43] https://kotlinlang.org/docs/gradle-configure-project.html?utm_source=chatgpt.com
-[fn:42] https://kotlinlang.org/docs/gradle-compiler-options.html?utm_source=chatgpt.com
+[fn:43] https://kotlinlang.org/docs/gradle-configure-project.html?utm_source=chatgpt.com 
+[fn:42] https://kotlinlang.org/docs/gradle-compiler-options.html?utm_source=chatgpt.com 
 
-[fn:41] https://kotlinlang.org/docs/gradle-configure-project.html?utm_source=chatgpt.com
-[fn:40]
+[fn:41] https://kotlinlang.org/docs/gradle-configure-project.html?utm_source=chatgpt.com 
+[fn:40] 
 
-[fn:39] https://docs.gradle.org/current/userguide/toolchains.html?utm_source=chatgpt.com
-[fn:38] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com
+[fn:39] https://docs.gradle.org/current/userguide/toolchains.html?utm_source=chatgpt.com 
+[fn:38] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com 
 
-[fn:37] https://openjdk.org/jeps/0?sck=39531ac0-e3b7-4c03-997d-00ac6cce856c%7C%7C&utm_source=chatgpt.com
-[fn:36] https://cr.openjdk.org/~gbierman/jep440%2B441/jep440%2B441-20230406/specs/patterns-switch-record-patterns-jls.html?utm_source=chatgpt.com
+[fn:37] https://openjdk.org/jeps/0?sck=39531ac0-e3b7-4c03-997d-00ac6cce856c%7C%7C&utm_source=chatgpt.com 
+[fn:36] https://cr.openjdk.org/~gbierman/jep440%2B441/jep440%2B441-20230406/specs/patterns-switch-record-patterns-jls.html?utm_source=chatgpt.com 
 
-[fn:35] https://openjdk.org/jeps/444?utm_source=chatgpt.com
-[fn:34] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com
+[fn:35] https://openjdk.org/jeps/444?utm_source=chatgpt.com 
+[fn:34] https://developer.android.com/build/jdks?authuser=19&hl=en&utm_source=chatgpt.com 
 
-[fn:33] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com
-[fn:32] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
+[fn:33] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com 
+[fn:32] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
 
-[fn:31] https://developer.android.com/reference/tools/gradle-api/8.5/com/android/build/api/dsl/CommonExtension?utm_source=chatgpt.com
-[fn:30] https://developer.android.com/tools/releases/build-tools?authuser=0&utm_source=chatgpt.com
+[fn:31] https://developer.android.com/reference/tools/gradle-api/8.5/com/android/build/api/dsl/CommonExtension?utm_source=chatgpt.com 
+[fn:30] https://developer.android.com/tools/releases/build-tools?authuser=0&utm_source=chatgpt.com 
 
-[fn:29] https://developer.android.com/about/versions/17/setup-sdk?hl=en&utm_source=chatgpt.com
-[fn:28] https://developer.android.com/build/releases/agp-9-3-0-release-notes?authuser=31&utm_source=chatgpt.com
+[fn:29] https://developer.android.com/about/versions/17/setup-sdk?hl=en&utm_source=chatgpt.com 
+[fn:28] https://developer.android.com/build/releases/agp-9-3-0-release-notes?authuser=31&utm_source=chatgpt.com 
 
-[fn:27] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com
-[fn:26] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
+[fn:27] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com 
+[fn:26] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
 
-[fn:25] https://www.oracle.com/ca-en/news/announcement/oracle-releases-java-25-2025-09-16/?utm_source=chatgpt.com
-[fn:24] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com
+[fn:25] https://www.oracle.com/ca-en/news/announcement/oracle-releases-java-25-2025-09-16/?utm_source=chatgpt.com 
+[fn:24] https://developer.android.com/build/releases/agp-9-1-0-release-notes?hl=en&utm_source=chatgpt.com 
 
-[fn:23] https://developer.android.com/build/releases/about-agp?utm_source=chatgpt.com
-[fn:22] https://developer.android.com/guide/topics/manifest/uses-sdk-element?utm_source=chatgpt.com
+[fn:23] https://developer.android.com/build/releases/about-agp?utm_source=chatgpt.com 
+[fn:22] https://developer.android.com/guide/topics/manifest/uses-sdk-element?utm_source=chatgpt.com 
 
-[fn:21] https://developer.android.com/blog/posts/android-17-is-here?hl=en&utm_source=chatgpt.com
-[fn:20] https://developer.android.com/build/releases/about-agp?utm_source=chatgpt.com
+[fn:21] https://developer.android.com/blog/posts/android-17-is-here?hl=en&utm_source=chatgpt.com 
+[fn:20] https://developer.android.com/build/releases/about-agp?utm_source=chatgpt.com 
 
-[fn:19] https://developer.android.com/studio/releases/fixed-bugs/studio/2026.1.2?utm_source=chatgpt.com
-[fn:18] https://developer.android.com/build/releases/agp-9-3-0-release-notes?authuser=31&utm_source=chatgpt.com
+[fn:19] https://developer.android.com/studio/releases/fixed-bugs/studio/2026.1.2?utm_source=chatgpt.com 
+[fn:18] https://developer.android.com/build/releases/agp-9-3-0-release-notes?authuser=31&utm_source=chatgpt.com 
 
-[fn:17] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com
-[fn:16]
+[fn:17] https://docs.gradle.org/current/userguide/compatibility.html?utm_source=chatgpt.com 
+[fn:16] 
 
-[fn:15] https://gradle.org/releases/?utm_source=chatgpt.com
+[fn:15] https://gradle.org/releases/?utm_source=chatgpt.com 
 [fn:14] https://kotlinlang.org/docs/multiplatform-mobile-setup.html?utm_source=chatgpt.com
 
 [fn:13] https://kotlinlang.org/docs/gradle-configure-project.html?utm_source=chatgpt.com
@@ -13930,11 +13933,11 @@ Inspect the uploaded /mnt/data/literature.org only from the ** Tooling heading o
 
 [fn:11] https://blog.jetbrains.com/kotlin/2026/05/new-kmp-default-structure/?utm_source=chatgpt.com
 
-[fn:10] https://developer.android.com/build/releases/agp-9-1-0-release-notes?utm_source=chatgpt.com
+[fn:10] https://developer.android.com/build/releases/agp-9-1-0-release-notes?utm_source=chatgpt.com 
 
 [fn:9]https://developer.android.com/google/play/requirements/target-sdk?utm_source=chatgpt.com
 
-[fn:8] https://developer.android.com/build/releases/agp-9-1-0-release-notes?utm_source=chatgpt.com
+[fn:8] https://developer.android.com/build/releases/agp-9-1-0-release-notes?utm_source=chatgpt.com 
 
 [fn:7] https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html?utm_source=chatgpt.com
 

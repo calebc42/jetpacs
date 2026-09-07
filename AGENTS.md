@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This directory is an umbrella workspace, not a single build. `jetpacs-poc/jetpacs/` is the standalone Jetpacs POC repository. `jetpacs-poc/ebp-poc/` groups the separate EBP POC repositories: `ebp/` owns the protocol specification, `ebp.el/` the Emacs implementation, `ebp-kmp/` the Kotlin implementation, `ebp-compose/` the neutral Compose renderer, and `ebp-org/` the reusable Org integration. Developer utilities live in `jetpacs-poc/jetpacs-platform-tools/` and `jetpacs-poc/jetpacs-applet-mcp/`; `jetpacs-poc/glasspane/` is an applet. Root-level `.org` files are research and planning notes.
+This repository holds the research and hand rewrite; the POC and its dependencies are separate sibling repositories. `../jetpacs-poc/` is the standalone Jetpacs POC repository. The sibling EBP POC repositories are: `ebp/` owns the protocol specification, `ebp.el/` the Emacs implementation, `ebp-kmp/` the Kotlin implementation, `ebp-compose/` the neutral Compose renderer, and `ebp-org/` the reusable Org integration. Developer utilities live in `../jetpacs-poc/jetpacs-platform-tools/` and `../jetpacs-poc/jetpacs-applet-mcp/`; `../glasspane/` is an applet. Root-level `.org` files are research and planning notes.
 
 Before editing a child tree, read its nearest `AGENTS.md` and check its own `git status`. Historical Jetpacs versions live at the `poc/v1`, `poc/v2`, and `poc/v3-pre-split` tags rather than in worktrees.
 
@@ -11,10 +11,10 @@ Before editing a child tree, read its nearest `AGENTS.md` and check its own `git
 Run commands from the owning project:
 
 ```sh
-(cd jetpacs-poc/ebp-poc/ebp && python3 validate.py) # Validate contract and golden fixtures
-(cd jetpacs-poc/jetpacs && ./test/run-tests.sh) # Full Elisp/Python suite
-(cd jetpacs-poc/jetpacs/companion && ./gradlew testDebugUnitTest assembleDebug)
-(cd jetpacs-poc/jetpacs-platform-tools && ./gradlew clean test installDist)
+(cd ../ebp && python3 validate.py) # Validate contract and golden fixtures
+(cd ../jetpacs-poc && ./test/run-tests.sh) # Full Elisp/Python suite
+(cd ../jetpacs-poc/companion && ./gradlew testDebugUnitTest assembleDebug)
+(cd ../jetpacs-poc/jetpacs-platform-tools && ./gradlew clean test installDist)
 ```
 
 Use each checked-in Gradle wrapper. Prefer a focused ERT or Gradle test before running the broader suite.
@@ -25,7 +25,7 @@ Emacs Lisp uses lexical binding, two-space indentation, public docstrings, and f
 
 ## Testing Guidelines
 
-Add regression tests beside the owning layer: ERT under `test/`, Kotlin tests under `src/test/kotlin`, and protocol fixtures under `jetpacs-poc/ebp-poc/ebp/goldens/`. There is no numeric coverage threshold; cover success, malformed input, boundary, and determinism cases. Protocol changes must update the governing spec, contract projection, fixtures, and amendment log together. UI or persistence behavior crossing the Android boundary needs a device check when practical.
+Add regression tests beside the owning layer: ERT under `test/`, Kotlin tests under `src/test/kotlin`, and protocol fixtures under `../ebp/goldens/`. There is no numeric coverage threshold; cover success, malformed input, boundary, and determinism cases. Protocol changes must update the governing spec, contract projection, fixtures, and amendment log together. UI or persistence behavior crossing the Android boundary needs a device check when practical.
 
 ## Commit & Pull Request Guidelines
 

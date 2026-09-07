@@ -13730,9 +13730,6 @@ After changing `gradle.properties`, does the Wasm run **start the dev server**, 
 
 *** 2026-08-31 Monday
 
-**** Conversation
-
-
 **** Conversation.
 
 ***** PROMPT: Adversarial Review
@@ -13857,6 +13854,147 @@ I reviewed `literature.org` only from `** Tooling` at line 167 onward, using `de
 8. Add clean-checkout JVM, Android, and Wasm CI tests.
 
 Temporary reconstruction and downloaded build artifacts used for this review were removed; no project files were changed.
+
+**** PROMPT: Reproducible
+[2026-08-31 Mon 21:47]
+
+Audit gradle-bootstrap.org against the actual project assumptions in literature.org, focusing on both bootstrap reproducibility and what remains outside its trust/reproducibility boundary.
+
+**** RESPONSE
+:PROPERTIES:
+:PROVIDER: OpenAI
+:MODEL: Sol 5.6
+:END:
+[2026-08-31 Mon 21:49]
+
+No. :chatgpt-content-reference{index="0"} provides a good verified Gradle seed, but it is not yet a fully reproducible bootstrap—and Gradle bootstrapping alone cannot make the KMP project reproducible.
+
+The two Gradle 9.5.0 hashes are correct:
+
+- Distribution: `553c78…b746`
+- Wrapper JAR: `497c8c…a9c7`
+
+They match Gradle’s official [checksum registry](https://gradle.org/release-checksums/).
+
+## Immediate defects
+
+1. **The shell blocks do not compose when executed through Org Babel.**
+
+   Variables and `cd` changes made in one block do not normally persist into the next block. For example, `GRADLE_VERSION` will be unset when a later block runs unless everything happens in one Babel session.
+
+   Make the procedure one tangled script, such as `tools/bootstrap-gradle`, containing:
+
+   ```bash
+   #!/usr/bin/env bash
+   set -Eeuo pipefail
+   ```
+
+   The prose can still explain it incrementally using noweb fragments.
+
+2. **“Tangle the 3 blocks in this file” is incorrect.**
+
+   There are only two blocks with `:tangle`: `settings.gradle.kts` and `build.gradle.kts`. The expected `.envrc` comes from :chatgpt-content-reference{index="1"}, so the bootstrap is not self-contained.
+
+   State the prerequisite explicitly: tangle the `Project Environment` section of `literature.org` first.
+
+3. **Several headings use Markdown syntax.**
+
+   `# Bootstrap Gradle 9.5.0` and lines such as `Generate the Wrapper` are not Org headings. Likewise, the fenced ` ```text ` block is Markdown rather than an Org example block. That weakens navigation and makes the document’s execution structure ambiguous.
+
+4. **It is unsafe to rerun against an existing cache.**
+
+   `unzip` into an existing `gradle-9.5.0/` can prompt, merge stale files, or produce a tree containing files that were not in the verified archive.
+
+   Extract into a new temporary directory, verify the expected executable, and atomically rename it into place. Either reuse an already-verified archive or replace it deliberately.
+
+5. **The repository path is hard-coded.**
+
+   `~/workspace/jetpacs` makes the process Caleb-machine-reproducible, not checkout-reproducible. Determine the repository root from the script location or accept it as an explicit argument.
+
+6. **No clean-state preconditions are enforced.**
+
+   The script should refuse to overwrite an existing Wrapper unless invoked with an explicit regeneration option. It should also confirm it is operating in the expected repository.
+
+7. **It verifies only two of the four Wrapper artifacts.**
+
+   Verifying the JAR is the critical part, and Gradle specifically recommends it because the JAR executes before normal build safeguards. Still, after generation you should also assert the exact `distributionUrl` and `distributionSha256Sum`, and ideally record expected hashes for both launcher scripts. See Gradle’s [Wrapper verification guidance](https://docs.gradle.org/current/userguide/gradle_wrapper.html).
+
+## What the current bootstrap actually guarantees
+
+| Layer | Current state |
+|---|---|
+| Gradle ZIP integrity | Good: pinned SHA-256 |
+| Wrapper JAR integrity | Good: official SHA-256 checked |
+| Repeatable execution from Org | Broken by separate shell state |
+| Clean/idempotent regeneration | Not guaranteed |
+| JDK reproducibility | Not provided |
+| Android SDK reproducibility | Not provided |
+| Dependency graph reproducibility | Not provided |
+| Dependency byte integrity | Not provided |
+| Bit-identical APK/JAR output | Not established |
+
+The hard-coded checksum is useful only because the Git revision containing it is part of your trust root. It protects against altered download bytes; it does not independently prove who chose the checksum.
+
+## How far to expand this file
+
+Expand it, but keep its responsibility narrow:
+
+> Starting from a trusted checkout, Emacs, a POSIX userland, and the declared JDK, deterministically produce and verify the four Gradle Wrapper files.
+
+It should not become the home of every KMP reproducibility concern.
+
+A suitable sequence would be:
+
+1. Assert required commands: `curl`, `sha256sum`, `unzip`, `java`.
+2. Assert the expected Java vendor/version or runtime fingerprint.
+3. Download into a temporary file with retries.
+4. Verify the distribution before extraction.
+5. Extract into a fresh temporary directory.
+6. Generate the Wrapper from the minimal tangled build.
+7. Verify the Wrapper JAR.
+8. Parse and verify `gradle-wrapper.properties`.
+9. Run `./gradlew --version`.
+10. Print hashes of all four generated Wrapper files.
+11. Remove temporary material or retain only the verified ZIP.
+12. Refuse accidental regeneration over tracked artifacts.
+
+Commit these four files:
+
+```text
+gradlew
+gradlew.bat
+gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.properties
+```
+
+That is compatible with your “tangling required before building” policy: the Wrapper can be present while `settings.gradle.kts`, `build.gradle.kts`, and the modules remain absent. Treat the Wrapper as checked-in bootstrap material, not disposable tangled output.
+
+## What belongs elsewhere
+
+Strict KMP reproducibility requires additional layers in `literature.org` or a dedicated toolchain document:
+
+- **JDK:** `/usr/lib/jvm/java-25-openjdk-amd64` selects a path, not immutable bytes. Debian can replace the package behind that path.
+- **Android SDK:** pin command-line tools, platform-tools, build-tools, and platform package revisions; record how each is acquired and verified.
+- **Gradle dependencies:** generate and retain dependency locks for the complete resolved graph. Gradle describes locking as the mechanism that preserves resolved versions across builds: [dependency locking](https://docs.gradle.org/current/userguide/dependency_locking.html).
+- **Artifact integrity:** add `gradle/verification-metadata.xml` so plugins, libraries, and transitive artifacts are checksum-verified. Gradle treats locking and verification as different protections: [dependency verification](https://docs.gradle.org/current/userguide/dependency_verification.html).
+- **Wasm-provisioned tools:** include Kotlin/Wasm’s Node, Yarn, Binaryen, and npm lock state in the reproducibility boundary.
+- **Locale and encoding:** pin at least `LC_ALL`, `TZ`, and `-Dfile.encoding=UTF-8`.
+- **Output proof:** build twice from clean checkouts with separate Gradle homes and caches, compare hashes, and investigate differences with `diffoscope`.
+
+Your ignore policy will also need an exception for machine-generated but authoritative freeze artifacts. Wrapper files, dependency lockfiles, verification metadata, and package-manager lockfiles are not ordinary build output. If they are discarded because `literature.org` is the only authority, dependency resolution will happen again against mutable repositories.
+
+My recommended standard for this stage is:
+
+> Reproducible toolchain resolution and verified inputs first; bit-for-bit APK reproducibility as a separately tested milestone.
+
+That gives you a defensible foundation without prematurely claiming hermetic or bit-identical builds.
+
+**** PROMPT: Script conversion
+[2026-08-31 Mon 21:49]
+
+> Reproducible toolchain resolution and verified inputs first; bit-for-bit APK reproducibility as a separately tested milestone.&#x20;
+
+this sounds great, lets go ahead and get started on number one, you are absolutely right that this should be tangled into a script. can you walk me through that process?
 
 * Footnotes
 [fn:58] https://developer.android.com/studio/run/emulator-acceleration?utm_source=chatgpt.com 

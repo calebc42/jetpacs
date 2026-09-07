@@ -1,0 +1,318 @@
+#+TITLE: Bootstrap Gradle Toolchain from Org
+#+SUBTITLE: Reproducible literate code document
+* Minimal Gradle Build
+
+** Settings
+The Gradle settings file defines the structure of the build. At this
+stage the build contains only its root project.
+
+#+begin_src kotlin :tangle settings.gradle.kts
+rootProject.name = "jetpacs"
+#+end_src
+
+** Root Build Script
+
+The root build script configures the root Gradle project.
+
+It is intentionally empty during the Gradle bootstrap. No Kotlin,
+Android, Compose, or other plugins have been introduced yet.
+
+#+begin_src kotlin :tangle build.gradle.kts
+// Intentionally empty during the Gradle bootstrap.
+#+end_src
+
+After tangling, your repository should contain:
+
+```text
+jetpacs/
+├── .envrc
+├── literature.org
+├── settings.gradle.kts
+└── build.gradle.kts
+```
+
+* Gradle Wrapper Bootstrap
+
+:PROPERTIES:
+:header-args:sh: :tangle tools/bootstrap-gradle :mkdirp yes :shebang "#!/usr/bin/env bash"
+:END:
+
+** Establish Strict Execution
+
+The bootstrap stops when a command fails, when an unset variable is
+read, or when any command within a pipeline fails.
+
+A fixed locale, timezone, and file-creation mask reduce ambient
+environment differences.
+
+#+begin_src sh
+set -Eeuo pipefail
+
+umask 022
+
+export LC_ALL=C
+export TZ=UTC
+#+end_src
+
+** Check Host Prerequisites
+
+This bootstrap currently assumes a POSIX userland containing Bash,
+curl, unzip, and SHA-256 utilities.
+
+#+begin_src sh
+require_command() {
+    local command_name="$1"
+
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        printf 'Required command is unavailable: %s\n' "$command_name" >&2
+        exit 1
+    fi
+}
+
+require_command curl
+require_command dirname
+require_command grep
+require_command mktemp
+require_command mv
+require_command sha256sum
+require_command tar
+require_command unzip
+
+if [[ ! -f settings.gradle.kts || ! -f build.gradle.kts ]]; then
+    printf '%s\n' \
+        'The minimal Gradle build has not been tangled.' \
+        'Tangle gradle-bootstrap.org before running this script.' >&2
+    exit 1
+fi
+#+end_src
+
+** Locate the Repository
+
+The bootstrap derives the repository root from its own location. It
+therefore works no matter where the Jetpacs checkout is located.
+
+#+begin_src sh
+readonly SCRIPT_DIR="$(
+    CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &&
+    pwd
+)"
+
+readonly REPOSITORY_ROOT="$(
+    CDPATH= cd -- "${SCRIPT_DIR}/.." &&
+    pwd
+)"
+
+cd "$REPOSITORY_ROOT"
+#+end_src
+
+** Pin the JDK Distribution
+
+The bootstrap uses Eclipse Temurin's Linux x64 HotSpot JDK. The URL
+selects an exact release artifact, while the committed SHA-256 digest
+identifies its exact bytes.
+
+#+begin_src sh
+readonly JDK_VERSION="25.0.4.1+1"
+readonly JDK_ARCHIVE_NAME="OpenJDK25U-jdk_x64_linux_hotspot_25.0.4.1_1.tar.gz"
+
+readonly JDK_ARCHIVE_URL="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/${JDK_ARCHIVE_NAME}"
+
+readonly JDK_ARCHIVE_SHA256="19dcf052948c889489c857b2335389c833ed21e15a3f2a2f656a8b002de70bd4"
+#+end_src
+
+** Verify the Provisioned JDK
+:PROPERTIES:
+:ORDERED:  t
+:END:
+
+The archive digest is the authoritative byte-level verification. The
+version output is an additional semantic assertion and diagnostic.
+
+#+begin_src sh
+readonly JAVA_EXECUTABLE="${JAVA_HOME}/bin/java"
+
+if [[ ! -x "$JAVA_EXECUTABLE" ]]; then
+    printf 'Provisioned Java executable is unavailable: %s\n' \
+        "$JAVA_EXECUTABLE" >&2
+    exit 1
+fi
+
+JAVA_VERSION_OUTPUT="$("$JAVA_EXECUTABLE" --version 2>&1)"
+
+if ! grep -Fq "$EXPECTED_JAVA_VERSION_TEXT" <<<"$JAVA_VERSION_OUTPUT"; then
+    printf '%s\n' \
+        'The provisioned JDK did not report the expected version:' \
+        "$JAVA_VERSION_OUTPUT" >&2
+    exit 1
+fi
+
+printf 'Repository: %s\n' "$REPOSITORY_ROOT"
+printf 'JAVA_HOME: %s\n' "$JAVA_HOME"
+printf '%s\n' "$JAVA_VERSION_OUTPUT"
+#+end_src
+
+** Pin the Gradle Distribution
+
+Both the version and expected digest are inputs to the bootstrap.
+
+#+begin_src sh
+readonly GRADLE_VERSION="9.5.0"
+readonly GRADLE_DISTRIBUTION_SHA256="553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746"
+readonly GRADLE_WRAPPER_JAR_SHA256="497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7"
+
+readonly GRADLE_DISTRIBUTION_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+
+readonly GRADLE_BOOTSTRAP_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/jetpacs/bootstrap/gradle"
+readonly GRADLE_DISTRIBUTION_ARCHIVE="${GRADLE_BOOTSTRAP_CACHE}/gradle-${GRADLE_VERSION}-bin.zip"
+#+end_src
+
+** Protect Existing Wrapper Files
+
+The bootstrap will not silently overwrite an existing Wrapper. Wrapper
+regeneration is a separate, deliberate operation.
+
+#+begin_src sh
+readonly WRAPPER_SCRIPT="gradlew"
+readonly WINDOWS_WRAPPER_SCRIPT="gradlew.bat"
+readonly WRAPPER_JAR="gradle/wrapper/gradle-wrapper.jar"
+readonly WRAPPER_PROPERTIES="gradle/wrapper/gradle-wrapper.properties"
+
+for wrapper_file in \
+    "$WRAPPER_SCRIPT" \
+    "$WINDOWS_WRAPPER_SCRIPT" \
+    "$WRAPPER_JAR" \
+    "$WRAPPER_PROPERTIES"
+do
+    if [[ -e "$wrapper_file" ]]; then
+        printf 'Refusing to overwrite existing Wrapper file: %s\n' \
+            "$wrapper_file" >&2
+        exit 1
+    fi
+done
+#+end_src
+
+** Create Temporary Working Storage
+
+Temporary extraction prevents stale files from an earlier Gradle
+installation from entering the bootstrap.
+
+#+begin_src sh
+mkdir -p "$GRADLE_BOOTSTRAP_CACHE"
+
+readonly TEMPORARY_DIRECTORY="$(
+    mktemp -d "${GRADLE_BOOTSTRAP_CACHE}/bootstrap.XXXXXXXX"
+)"
+
+cleanup() {
+    rm -rf -- "$TEMPORARY_DIRECTORY"
+}
+
+trap cleanup EXIT
+#+end_src
+
+** Acquire the Verified Distribution
+
+An existing cached archive is never trusted merely because it has the
+expected filename. Its digest is checked on every invocation.
+
+#+begin_src sh
+if [[ -f "$GRADLE_DISTRIBUTION_ARCHIVE" ]]; then
+    printf '%s  %s\n' \
+        "$GRADLE_DISTRIBUTION_SHA256" \
+        "$GRADLE_DISTRIBUTION_ARCHIVE" |
+        sha256sum --check
+else
+    readonly TEMPORARY_ARCHIVE="${TEMPORARY_DIRECTORY}/gradle.zip"
+
+    curl \
+        --fail \
+        --location \
+        --proto '=https' \
+        --retry 3 \
+        --tlsv1.2 \
+        --output "$TEMPORARY_ARCHIVE" \
+        "$GRADLE_DISTRIBUTION_URL"
+
+    printf '%s  %s\n' \
+        "$GRADLE_DISTRIBUTION_SHA256" \
+        "$TEMPORARY_ARCHIVE" |
+        sha256sum --check
+
+    mv -- "$TEMPORARY_ARCHIVE" "$GRADLE_DISTRIBUTION_ARCHIVE"
+fi
+#+end_src
+
+** Extract the Temporary Gradle Runtime
+
+The verified archive is extracted freshly on every bootstrap rather
+than merged into a persistent installation directory.
+
+#+begin_src sh
+readonly EXTRACTION_DIRECTORY="${TEMPORARY_DIRECTORY}/extracted"
+
+mkdir -p "$EXTRACTION_DIRECTORY"
+
+unzip -q \
+    "$GRADLE_DISTRIBUTION_ARCHIVE" \
+    -d "$EXTRACTION_DIRECTORY"
+
+readonly BOOTSTRAP_GRADLE="${EXTRACTION_DIRECTORY}/gradle-${GRADLE_VERSION}/bin/gradle"
+
+if [[ ! -x "$BOOTSTRAP_GRADLE" ]]; then
+    printf 'Expected Gradle executable was not extracted: %s\n' \
+        "$BOOTSTRAP_GRADLE" >&2
+    exit 1
+fi
+#+end_src
+
+This is slightly slower than caching the extracted directory, but it creates a much cleaner trust argument: every extracted file comes from the archive whose digest was just verified.
+
+** Generate the Gradle Wrapper
+
+The temporary Gradle runtime executes only the root project's Wrapper
+task.
+
+#+begin_src sh
+"$BOOTSTRAP_GRADLE" \
+    --no-daemon \
+    :wrapper \
+    --gradle-version "$GRADLE_VERSION" \
+    --distribution-type bin \
+    --gradle-distribution-sha256-sum "$GRADLE_DISTRIBUTION_SHA256"
+#+end_src
+
+** Verify the Generated Wrapper
+
+#+begin_src sh
+printf '%s  %s\n' \
+    "$GRADLE_WRAPPER_JAR_SHA256" \
+    "$WRAPPER_JAR" |
+    sha256sum --check
+#+end_src
+
+And verify the properties rather than assuming the task wrote what was requested:
+
+#+begin_src sh
+readonly EXPECTED_DISTRIBUTION_URL="distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+readonly EXPECTED_DISTRIBUTION_SHA="distributionSha256Sum=${GRADLE_DISTRIBUTION_SHA256}"
+
+grep -Fqx \
+    "$EXPECTED_DISTRIBUTION_URL" \
+    "$WRAPPER_PROPERTIES"
+
+grep -Fqx \
+    "$EXPECTED_DISTRIBUTION_SHA" \
+    "$WRAPPER_PROPERTIES"
+#+end_src
+
+** Exercise the Verified Wrapper
+
+The generated Wrapper becomes the project's Gradle entry point.
+
+#+begin_src sh
+./gradlew --no-daemon --version
+./gradlew --no-daemon projects
+
+printf '%s\n' 'Gradle Wrapper bootstrap completed successfully.'
+#+end_src
+
